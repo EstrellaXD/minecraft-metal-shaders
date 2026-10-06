@@ -13,6 +13,6 @@ kernel void echo(constant ShadeFrame &f [[buffer(16)]], device float4 *o [[buffe
 	o[k++] = f.sunColor; o[k++] = f.ambientSky; o[k++] = f.ambientGround; o[k++] = f.ambientBlock; o[k++] = f.fogColor; o[k++] = f.fogRange; o[k++] = f.fogSky;
 	o[k++] = f.skyColor; o[k++] = f.zenithColor; for (int h = 0; h < 8; h++) o[k++] = f.horizon[h];
 	o[k++] = f.cascadeSplits; o[k++] = f.shadowParams; o[k++] = f.screen; o[k++] = f.time; o[k++] = f.weather; o[k++] = f.jitter; o[k++] = f.atmosphere;
-	o[k++] = f.ambientToward; o[k++] = f.ambientAway; o[k++] = float4(f.flags); o[k++] = float4(f.flags2); o[k++] = float4(f.flags3);
+	o[k++] = f.ambientToward; o[k++] = f.ambientAway; o[k++] = float4(f.flags); o[k++] = float4(f.flags2); o[k++] = f.sunPath;
 	o[k++] = float4(float(sizeof(ShadeFrame)));
 }

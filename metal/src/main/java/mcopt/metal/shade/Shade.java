@@ -43,6 +43,29 @@ public final class Shade {
 	public static final int SHADOW_RES = Integer.getInteger("mcopt.shade.shadowRes", 2048);
 	public static final int SHADOW_DIST = Integer.getInteger("mcopt.shade.shadowDist", 128);
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
+	/**
+	 * Sun path tilt in degrees (mcopt.shade.sunTilt, default 30): the sun and moon orbit rotated about world x so the noon sun
+	 * stands south of the zenith (toward +z) and casts visible shadows; sunrise and sunset stay due east and west. 0 is
+	 * vanilla's path. The shading (sun direction, sky), the shadow map and the moon all follow it.
+	 */
+	public static final float SUN_TILT = Math.max(-60f, Math.min(60f, floatProperty("mcopt.shade.sunTilt", 30f)));
+
+	private static float floatProperty(String key, float fallback) {
+		try {
+			String v = System.getProperty(key);
+			return v == null ? fallback : Float.parseFloat(v.trim());
+		} catch (NumberFormatException e) {
+			return fallback;
+		}
+	}
+
+	/** Celestial direction (-sin a, cos a, 0) for SkyRenderState angle a, tilted by SUN_TILT; into out (x, y, z). */
+	public static void celestial(double angle, double[] out) {
+		double t = Math.toRadians(SUN_TILT), y = Math.cos(angle);
+		out[0] = -Math.sin(angle);
+		out[1] = y * Math.cos(t);
+		out[2] = y * Math.sin(t);
+	}
 
 	/** Vertex colours without vanilla's directional face shade (the shaders light faces themselves); see CardinalLightingShadeMixin. */
 	private static volatile boolean faceShadeOff = ENABLED;

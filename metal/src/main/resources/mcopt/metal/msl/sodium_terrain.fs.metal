@@ -100,8 +100,24 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half3 albedo = shadeToLinear(half3(texel.rgb) * in.v_Color.rgb);
     int debug = sf.flags.w;
     if (debug == 3) albedo = half3(0.45h);
-    half shadow = shadeShadow(shadowMap, shadowCompare, sf, p, n, thin);
-    float3 radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, sf);
+#ifdef ALPHA_CUTOUT
+    bool foliage = !thin && ALPHA_CUTOUT > 0.25; // the cutout pass (not translucent): leaves, vines and the like
+#else
+    bool foliage = false;
+#endif
+    half shadow = shadeShadow(shadowMap, shadowCompare, sf, p, n, thin || foliage);
+    float3 radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf);
+    float alpha = color.w;
+#ifdef ALPHA_CUTOUT
+    // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
+    // colours) gets a sky reflection and a sun glint, seen from above water
+    half3 tint = in.v_Color.rgb;
+    if (ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0) {
+        float4 w = shadeWater(radiance, alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
+        radiance = w.rgb;
+        alpha = w.a;
+    }
+#endif
     radiance = shadeFogAir(radiance, p, fogValue, skyLut, skyLutSmplr, sf);
     float3 rgb = shadeFinish(radiance, fogValue, sf);
     if (debug == 2) rgb = float3(n) * 0.5 + 0.5;
@@ -110,7 +126,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         float3 tint = sf.flags.z == 0 ? float3(1.0, 0.3, 0.3) : d < sf.cascadeSplits.x ? float3(0.4, 1.0, 0.4) : d < sf.cascadeSplits.y ? float3(0.4, 0.6, 1.0) : float3(1.0);
         rgb = tint * (0.25 + 0.75 * float(shadow));
     }
-    out.fragColor = float4(rgb, color.w);
+    out.fragColor = float4(rgb, alpha);
     return out;
 #else
     float2 fog = saturate(float2(in.v_Fog));

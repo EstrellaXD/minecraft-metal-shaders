@@ -280,9 +280,11 @@ public final class ShadowPass {
 		// vanilla's celestial transform: RotY(-90) * RotX(angle) * (0, 1, 0) = (-sin a, cos a, 0)
 		// the same switch as the shade sky (ShadeSky.compute: the moon once the sun is 0.06 below the horizon), so the light
 		// the terrain is lit by and the one the map is drawn from are always the same
-		boolean useMoon = Math.cos(sunAngle) < -0.06;
+		boolean useMoon = Math.cos(sunAngle) * Math.cos(Math.toRadians(mcopt.metal.shade.Shade.SUN_TILT)) < -0.06;
 		double a = useMoon ? moon : sun;
-		double lx = -Math.sin(a), ly = Math.cos(a), lz = 0;
+		double[] d = new double[3];
+		mcopt.metal.shade.Shade.celestial(a, d); // vanilla's direction, tilted by the shared sun path tilt
+		double lx = d[0], ly = d[1], lz = d[2];
 		if (ly < MIN_ELEVATION) { // keep the projection sane at the horizon (direct light is ~0 there anyway)
 			double h = Math.sqrt(1 - MIN_ELEVATION * MIN_ELEVATION), n = Math.sqrt(lx * lx + lz * lz);
 			if (n < 1e-9) {

@@ -56,7 +56,7 @@ fragment float4 preview_fs(VOut in [[stage_in]], constant ShadeFrame &f [[buffer
 	float3 torch = float3(sin(0.3) * 11.0 - 2.6, 0.5, -cos(0.3) * 11.0 + 2.6);
 	half block = half(saturate(1.0 - length(p - torch) / 13.0));
 	half sky = f.flags2.w >= 15 ? half(1.0) : half(0.0);
-	float3 rad = shadeLit(shadeToLinear(half3(alb)), half3(n), sky, block, shadow, false, f);
+	float3 rad = shadeLit(shadeToLinear(half3(alb)), half3(n), sky, block, shadow, false, false, f);
 	float vf = shadeVanillaFog(p, f.fogRange.xy, f.fogRange.zw);
 	rad = shadeFogAir(rad, p, vf, lut, ls, f);
 	return float4(shadeFinish(rad, vf, f), 1.0);

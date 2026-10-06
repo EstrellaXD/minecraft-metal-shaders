@@ -49,6 +49,7 @@ public final class ShadeFrameUpdater {
 	private static boolean hasPrevious;
 	private static long lastNanos;
 	private static int lastDimension = -1;
+	private static final double[] DIR = new double[3];
 	private static final float[] MOON_BRIGHTNESS = {1f, 0.75f, 0.5f, 0.25f, 0f, 0.25f, 0.5f, 0.75f};
 
 	private ShadeFrameUpdater() {
@@ -111,8 +112,10 @@ public final class ShadeFrameUpdater {
 			: sky.skybox == DimensionType.Skybox.END ? ShadeFrame.DIM_END : ShadeFrame.DIM_NETHER;
 		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
 			// SkyRenderer: RotY(-90) * RotX(angle) * (0, 1, 0)
-			f.sunDir.set(-(float) Math.sin(sky.sunAngle), (float) Math.cos(sky.sunAngle), 0f);
-			f.moonDir.set(-(float) Math.sin(sky.moonAngle), (float) Math.cos(sky.moonAngle), 0f);
+			Shade.celestial(sky.sunAngle, DIR);
+			f.sunDir.set((float) DIR[0], (float) DIR[1], (float) DIR[2]);
+			Shade.celestial(sky.moonAngle, DIR);
+			f.moonDir.set((float) DIR[0], (float) DIR[1], (float) DIR[2]);
 			f.moonPhase = MOON_BRIGHTNESS[Math.floorMod(sky.moonPhase.index(), 8)];
 			f.starBrightness = sky.starBrightness;
 			f.dayTime = (float) (sky.sunAngle / (2 * Math.PI) - Math.floor(sky.sunAngle / (2 * Math.PI)));

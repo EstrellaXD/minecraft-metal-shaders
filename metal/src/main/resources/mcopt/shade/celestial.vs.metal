@@ -7,7 +7,7 @@
 // limitations under the License.
 //
 // minecraft:pipeline/celestial (vertex; vanilla's position_tex fragment is kept). The overworld sun's textured square is
-// dropped (the sky draws a round sun with limb darkening); the moon and the End flash draw as vanilla. Bodies are told
+// dropped (the sky draws a round sun with limb darkening); the moon follows the tilted sun path; the End flash draws as vanilla. Bodies are told
 // apart by size: SkyRenderer scales the sun's quad by 30, the moon's by 20 and the End flash's by 60 (the length of
 // ModelViewMat's first column, rotations leaving it unchanged).
 struct CelestialIn { float3 Position [[attribute(0)]]; float2 UV0 [[attribute(1)]]; };
@@ -23,7 +23,16 @@ vertex CelestialOut main0(CelestialIn in [[stage_in]], constant ShadeFrame& sf [
 		out.gl_Position = SHADE_DROPPED;
 		return out;
 	}
-	out.gl_Position = pr.ProjMat * dt.ModelViewMat * float4(in.Position, 1.0);
+	float4 viewPos = dt.ModelViewMat * float4(in.Position, 1.0);
+	if (sf.flags.x == SHADE_DIM_OVERWORLD && sf.sunPath.x != 0.0) {
+		// the moon follows the tilted sun path (mcopt.shade.sunTilt): to world, rotate about x, back to view
+		float3x3 v = float3x3(sf.view[0].xyz, sf.view[1].xyz, sf.view[2].xyz);
+		float3 w = transpose(v) * viewPos.xyz;
+		float s = sf.sunPath.x, c = sf.sunPath.y;
+		w = float3(w.x, c * w.y - s * w.z, s * w.y + c * w.z);
+		viewPos.xyz = v * w;
+	}
+	out.gl_Position = pr.ProjMat * viewPos;
 	out.gl_Position.y = -out.gl_Position.y;
 	return out;
 }

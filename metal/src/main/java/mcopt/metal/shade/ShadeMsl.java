@@ -33,6 +33,8 @@ import mcopt.metal.MetalShaderRegistry;
  * <li>minecraft:pipeline/sky: the atmosphere (sky.vs.metal, sky.fs.metal).</li>
  * <li>minecraft:pipeline/celestial: vanilla's sun quad dropped, moon kept (celestial.vs.metal).</li>
  * <li>minecraft:pipeline/sunrise_sunset: dropped in the overworld (sunrise_sunset.vs.metal).</li>
+ * <li>minecraft:pipeline/clouds, flat_clouds: lit clouds (clouds.fs.metal).</li>
+ * <li>minecraft:pipeline/weather: rain and snow re-lit (weather.metal, patched into the generated fragment).</li>
  * </ul>
  */
 public final class ShadeMsl {
@@ -41,7 +43,10 @@ public final class ShadeMsl {
 	public static final String SKY = "minecraft:pipeline/sky", CELESTIAL = "minecraft:pipeline/celestial", SUNRISE = "minecraft:pipeline/sunrise_sunset";
 	public static final List<String> TERRAIN = List.of("sodium:pipeline/solid_terrain", "sodium:pipeline/cutout_terrain", "sodium:pipeline/translucent_terrain");
 
-	private static volatile String prelude, skyVertex, skyFragment, celestialVertex, sunriseVertex;
+	public static final String WEATHER = "minecraft:pipeline/weather";
+	public static final List<String> CLOUDS = List.of("minecraft:pipeline/clouds", "minecraft:pipeline/flat_clouds");
+
+	private static volatile String prelude, skyVertex, skyFragment, celestialVertex, sunriseVertex, cloudFragment;
 
 	private ShadeMsl() {
 	}
@@ -75,16 +80,37 @@ public final class ShadeMsl {
 		return resource("shade_common.metal") + "\n" + resource("sky_lut.metal");
 	}
 
+	private static final String WEATHER_SIGNATURE = "fragment main0_out main0(main0_in in [[stage_in]]";
+	private static final String WEATHER_RESULT = "out.fragColor = calculateFinalColor(";
+
+	/**
+	 * minecraft:pipeline/weather (fragment): vanilla's generated rain and snow shader, with its result re-lit at the end
+	 * (shadeWeather in weather.metal: grey-white streaks in the light the terrain gets, through the same tone curve, instead
+	 * of vanilla's saturated blue). A textual patch of the generated source, since its texture slots are numbered by the
+	 * game; if the source doesn't have the expected shape, it's left as it is.
+	 */
+	public static String weather(String generated) {
+		int at = generated.indexOf(WEATHER_RESULT);
+		if (!generated.contains(WEATHER_SIGNATURE) || at < 0) return generated;
+		int end = generated.indexOf(';', at) + 1;
+		String patched = generated.substring(0, end) + "\n    out.fragColor = shadeWeather(out.fragColor, mcoptShadeFrame);" + generated.substring(end);
+		patched = patched.replace(WEATHER_SIGNATURE, WEATHER_SIGNATURE + ", constant ShadeFrame& mcoptShadeFrame [[buffer(16)]]");
+		return prelude() + resource("weather.metal") + "\n" + patched;
+	}
+
 	static void register() {
 		skyVertex = skyStage("sky.vs.metal");
 		skyFragment = skyStage("sky.fs.metal");
 		celestialVertex = skyStage("celestial.vs.metal");
 		sunriseVertex = skyStage("sunrise_sunset.vs.metal");
+		cloudFragment = prelude() + resource("clouds.fs.metal");
 		for (String name : TERRAIN) MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(ShadeMsl::terrain, ShadeMsl::terrain, List.of()));
 		List<String> matrices = List.of("DynamicTransforms", "Projection");
 		MetalShaderRegistry.register(SKY, new MetalShaderRegistry.Variant(generated -> skyVertex, generated -> skyFragment,
 			List.of("DynamicTransforms", "Projection", "Fog")));
 		MetalShaderRegistry.register(CELESTIAL, new MetalShaderRegistry.Variant(generated -> celestialVertex, null, matrices));
 		MetalShaderRegistry.register(SUNRISE, new MetalShaderRegistry.Variant(generated -> sunriseVertex, null, matrices));
+		for (String name : CLOUDS) MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(null, generated -> cloudFragment, List.of("CloudInfo")));
+		MetalShaderRegistry.register(WEATHER, new MetalShaderRegistry.Variant(null, ShadeMsl::weather, List.of()));
 	}
 }

@@ -34,5 +34,10 @@ for i in 0 1; do ./pipecheck pos variants/sky$i.vs.metal variants/sky$i.fs.metal
 ./pipecheck postex variants/celestial.vs.metal gen_position_tex.fs.metal || fail=1
 ./pipecheck poscolor variants/sunrise.vs.metal gen_position_color.fs.metal || fail=1
 ./pipecheck lut variants/sky_lut.metal variants/sky_lut.metal shade_lut_vs shade_lut_fs || fail=1
+# clouds / weather against vanilla's generated stages, when a dump dir is given (MCOPT_GEN_DIR=<-Dmcopt.metal.dumpMsl dir>)
+if [ -n "$MCOPT_GEN_DIR" ]; then
+	./pipecheck none "$MCOPT_GEN_DIR/minecraft_pipeline_clouds.vs.metal" variants/clouds.fs.metal || fail=1
+	[ -f variants/weather.fs.metal ] && { ./pipecheck compile variants/weather.fs.metal >/dev/null && echo "OK   variants/weather.fs.metal (compile)" || { ./pipecheck compile variants/weather.fs.metal; fail=1; }; }
+fi
 echo "validate: $([ $fail = 0 ] && echo ALL OK || echo FAILURES) ($OUT)"
 exit $fail

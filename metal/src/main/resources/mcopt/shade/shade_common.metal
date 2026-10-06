@@ -81,7 +81,8 @@ struct ShadeFrame {
 	int4 flags;                 // 960  x dimension (0 overworld, 1 nether / no sky, 2 end), y fog type (0 air, 1 water, 2 lava, 3 powder snow),
 	                            //      z shadows enabled (0/1), w debug mode (0 off, 1 shadow map, 2 normals, 3 lighting only)
 	int4 flags2;                // 976  x frame index (wraps), y underwater (0/1), z cascade count, w sky light at the camera (0..15)
-	int4 flags3;                // 992  reserved
+	float4 sunPath;             // 992  x sin, y cos of the sun path tilt (mcopt.shade.sunTilt: the sun and moon orbit rotated about
+	                            //      world x, toward +z at noon), zw 0
 };
 
 #define SHADE_DIM_OVERWORLD 0
@@ -239,10 +240,12 @@ static inline float shadeNoise(float2 pixel, int frame) {
 }
 
 // Overworld light on a surface (linear radiance, pre-exposure). albedo linear; n unit face normal; sky, block light 0..1;
-// shadow the light's visibility; thin: foliage and other two-sided cutouts (light passes through, no hard terminator).
-static float3 shadeLit(half3 albedo, half3 n, half sky, half block, half shadow, bool thin, constant ShadeFrame &f) {
+// shadow the light's visibility; thin: crossed plants and other slanted two-sided cutouts (light passes through, no hard
+// terminator); foliage: axis-aligned cutout faces (leaves, vines): wrapped light, so canopies glow a little where the light
+// passes through them instead of going flat on the sides and undersides (the map still shadows what's inside).
+static float3 shadeLit(half3 albedo, half3 n, half sky, half block, half shadow, bool thin, bool foliage, constant ShadeFrame &f) {
 	half ndl = half(dot(float3(n), f.lightDirWorld.xyz));
-	ndl = thin ? half(0.3) + half(0.5) * abs(ndl) : saturate(ndl);
+	ndl = thin ? half(0.3) + half(0.5) * abs(ndl) : foliage ? half(0.22) + half(0.78) * saturate(ndl) : saturate(ndl);
 	// Direct light needs open sky: with a shadow map the map does the work and this only keeps sunlight out of caves; without
 	// one, sky light is the only hint of what's overhead.
 	half gate = f.flags.z != 0 ? smoothstep(half(0.3), half(0.8), sky) : sky * sky * sky * sky;
@@ -306,6 +309,39 @@ static inline float3 shadeFogAir(float3 radiance, float3 p, float vanillaFog, te
 static inline float3 shadeFinish(float3 radiance, float vanillaFog, constant ShadeFrame &f) {
 	float3 c = shadeOutput(radiance, f);
 	return mix(c, f.fogColor.rgb, vanillaFog * f.fogColor.a);
+}
+
+// ---- water (M1: a still-water stand-in until M2's real water) ------------------------------------------------------------
+// Gentle wave normal for a water surface at camera-relative p: a few long sines over absolute world xz (whole cycles per 64
+// blocks, so the camera's block position can wrap at 64 exactly), fading flat with distance so nothing aliases without TAA.
+static float3 shadeWaterNormal(float3 p, constant ShadeFrame &f) {
+	float2 w = p.xz + f.cameraFract.xz + fmod(f.cameraBlock.xz, 64.0);
+	float t = f.time.y;
+	const float k = 6.2831853 / 64.0;
+	float2 d1 = float2(7.0, 3.0) * k, d2 = float2(-4.0, 9.0) * k, d3 = float2(13.0, -11.0) * k, d4 = float2(-19.0, -6.0) * k;
+	float2 g = d1 * cos(dot(d1, w) + t * 1.1) * 0.050 + d2 * cos(dot(d2, w) + t * 1.4) * 0.040
+	         + d3 * cos(dot(d3, w) + t * 1.9) * 0.022 + d4 * cos(dot(d4, w) + t * 2.3) * 0.016;
+	float fade = 1.0 / (1.0 + length(p) * 0.03);
+	return normalize(float3(-g.x * fade, 1.0, -g.y * fade));
+}
+
+// A water surface seen from above: the lit water colour (radiance, alpha as drawn) under a Fresnel reflection of the
+// atmosphere (the sky-view LUT) and a sun glint, both only where the sky is open (sky light). Returns radiance and the
+// alpha to draw with: the reflection is opaque in proportion to its Fresnel weight. No terrain in the reflection (M2: SSR).
+static float4 shadeWater(float3 radiance, float alpha, float3 p, half sky, half shadow, texture2d<half> lut, sampler s, constant ShadeFrame &f) {
+	float3 v = normalize(p);
+	float3 n = shadeWaterNormal(p, f);
+	float cosT = saturate(dot(-v, n));
+	float fr = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
+	float3 r = reflect(v, n);
+	r.y = abs(r.y);
+	float open = float(shadeSkyCurve(sky));
+	float3 refl = shadeSkyLookup(r, lut, s, f) * open;
+	float glint = pow(saturate(dot(r, f.lightDirWorld.xyz)), 900.0) * 900.0 + pow(saturate(dot(r, f.lightDirWorld.xyz)), 60.0) * 6.0;
+	refl += f.sunColor.rgb * (glint * float(shadow) * open);
+	fr *= 0.35 + 0.65 * open;
+	float a = fr + (1.0 - fr) * alpha;
+	return float4((refl * fr + radiance * alpha * (1.0 - fr)) / max(a, 1e-3), a);
 }
 
 // ---- sky ------------------------------------------------------------------------------------------------------------------

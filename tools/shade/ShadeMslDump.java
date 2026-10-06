@@ -41,5 +41,14 @@ public class ShadeMslDump {
 		String s3 = MetalShaderRegistry.slotDefines(List.of("DynamicTransforms", "Projection"));
 		Files.writeString(out.resolve("sunrise.vs.metal"), s3 + ShadeMsl.skyStage("sunrise_sunset.vs.metal"));
 		Files.writeString(out.resolve("sky_lut.metal"), ShadeMsl.lut());
+		// clouds: own fragment (CloudInfo slot from the defines); vanilla's generated vertex stage comes from a dump if given
+		String s4 = MetalShaderRegistry.slotDefines(List.of("CloudInfo", "Projection", "DynamicTransforms", "Fog"));
+		Files.writeString(out.resolve("clouds.fs.metal"), s4 + ShadeMsl.prelude() + ShadeMsl.resource("clouds.fs.metal"));
+		// weather: patched generated fragment, from a -Dmcopt.metal.dumpMsl directory (MCOPT_GEN_DIR) when available
+		String gen = System.getenv("MCOPT_GEN_DIR");
+		if (gen != null) {
+			java.nio.file.Path w = java.nio.file.Path.of(gen, "minecraft_pipeline_weather.fs.metal");
+			if (Files.exists(w)) Files.writeString(out.resolve("weather.fs.metal"), ShadeMsl.weather(Files.readString(w)));
+		}
 	}
 }

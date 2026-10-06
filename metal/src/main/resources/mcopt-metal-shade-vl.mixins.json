@@ -1,0 +1,8 @@
+{
+	"required": true,
+	"package": "mcopt.metal.shade.vl.mixin",
+	"plugin": "mcopt.metal.shade.vl.mixin.VlMixinPlugin",
+	"compatibilityLevel": "JAVA_25",
+	"client": ["VlGameRendererMixin"],
+	"injectors": { "defaultRequire": 1 }
+}

@@ -77,6 +77,10 @@ public final class BenchDriver {
 	static final double TIMEOUT = dbl("mcbench.timeoutSec", 900);
 	static final double SPEED = dbl("mcbench.flightSpeed", 10);
 	static final String LABEL = System.getProperty("mcbench.label", "");
+	/** Target display: builtin (default; the Retina panel), main (SDL primary display), keep, or a name substring. */
+	static final String DISPLAY = System.getProperty("mcbench.display", "builtin").trim();
+	/** Go fullscreen on the target display after moving there (default true). Start the game windowed. */
+	static final boolean FULLSCREEN = !"false".equals(System.getProperty("mcbench.fullscreen", "true"));
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
 	private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
@@ -201,6 +205,7 @@ public final class BenchDriver {
 		boolean shotsOn = SCENES.equals("all") || SCENES.equals("shots");
 		if (!perf && !shotsOn) throw new IllegalArgumentException("mcbench.scenes must be all|perf|shots, got " + SCENES);
 		steps.add(new WaitBoot());
+		steps.add(new PlaceWindow());
 		steps.add(new OpenWorld());
 		steps.add(new WaitInWorld());
 		steps.add(new Setup());
@@ -373,6 +378,116 @@ public final class BenchDriver {
 			if (readySince == 0) readySince = now;
 			return secs(now - readySince) >= 2;
 		}
+	}
+
+	/**
+	 * Put the window on the target display (-Dmcbench.display) and go fullscreen there (-Dmcbench.fullscreen). With an
+	 * external monitor as the macOS main display the game would otherwise open (and go fullscreen) on that monitor.
+	 * Exclusive fullscreen on the built-in 14" panel uses its 1512x982@120 mode = a 3024x1964 framebuffer.
+	 */
+	static final class PlaceWindow extends Step {
+		int state;
+		long t;
+		int lastW, lastH;
+		long sizeSince;
+		int target;
+
+		PlaceWindow() {
+			super("place-window", 30);
+		}
+
+		@Override
+		void start(Minecraft mc, long now) {
+			target = findDisplay(mc);
+			t = now;
+		}
+
+		@Override
+		boolean poll(Minecraft mc, long now) {
+			Window w = mc.getWindow();
+			long h = w.handle();
+			switch (state) {
+				case 0 -> { // leave fullscreen if the options started us there
+					if (target != 0 && org.lwjgl.sdl.SDLVideo.SDL_GetDisplayForWindow(h) != target) {
+						if (mc.options.fullscreen().get()) {
+							w.setFullscreen(false);
+							mc.options.fullscreen().set(false);
+						}
+						state = 1;
+					} else state = 2;
+					t = now;
+				}
+				case 1 -> { // move (windowed) once out of fullscreen
+					if (secs(now - t) < 1) return false;
+					org.lwjgl.sdl.SDLVideo.SDL_SetWindowPosition(h, org.lwjgl.sdl.SDLVideo.SDL_WINDOWPOS_CENTERED_DISPLAY(target),
+						org.lwjgl.sdl.SDLVideo.SDL_WINDOWPOS_CENTERED_DISPLAY(target));
+					state = 2;
+					t = now;
+				}
+				case 2 -> {
+					if (secs(now - t) < 1) return false;
+					if (target != 0 && org.lwjgl.sdl.SDLVideo.SDL_GetDisplayForWindow(h) != target)
+						warnings.add("window did not move to display " + org.lwjgl.sdl.SDLVideo.SDL_GetDisplayName(target));
+					if (FULLSCREEN) w.setFullscreen(true);
+					else if (isFullscreen(w)) w.setFullscreen(false);
+					state = 3;
+					t = now;
+					sizeSince = now;
+				}
+				case 3 -> { // wait for the framebuffer size to settle
+					if (w.getWidth() != lastW || w.getHeight() != lastH) {
+						lastW = w.getWidth();
+						lastH = w.getHeight();
+						sizeSince = now;
+					}
+					if (secs(now - t) >= 2 && secs(now - sizeSince) >= 1.5) {
+						log("window on " + org.lwjgl.sdl.SDLVideo.SDL_GetDisplayName(org.lwjgl.sdl.SDLVideo.SDL_GetDisplayForWindow(h)) + ", framebuffer " + lastW + "x" + lastH
+							+ (FULLSCREEN ? " fullscreen" : " windowed"));
+						return true;
+					}
+				}
+				default -> {
+				}
+			}
+			return false;
+		}
+
+		@Override
+		void onTimeout(Minecraft mc, long now) {
+			warnings.add("place-window timed out in state " + state);
+			cur = null;
+		}
+	}
+
+	static boolean isFullscreen(Window w) {
+		return (org.lwjgl.sdl.SDLVideo.SDL_GetWindowFlags(w.handle()) & 1L) != 0; // SDL_WINDOW_FULLSCREEN
+	}
+
+	/** 0 = keep the current display. */
+	static int findDisplay(Minecraft mc) {
+		if (DISPLAY.equals("keep")) return 0;
+		if (DISPLAY.equals("main")) return org.lwjgl.sdl.SDLVideo.SDL_GetPrimaryDisplay();
+		java.nio.IntBuffer ids = org.lwjgl.sdl.SDLVideo.SDL_GetDisplays();
+		if (ids == null) return 0;
+		int best = 0;
+		float bestScale = 0;
+		List<String> names = new ArrayList<>();
+		for (int i = 0; i < ids.remaining(); i++) {
+			int id = ids.get(ids.position() + i);
+			String name = String.valueOf(org.lwjgl.sdl.SDLVideo.SDL_GetDisplayName(id));
+			float scale = org.lwjgl.sdl.SDLVideo.SDL_GetDisplayContentScale(id);
+			names.add(name + " (scale " + scale + ")");
+			if (DISPLAY.equals("builtin")) {
+				float score = scale + (name.toLowerCase(java.util.Locale.ROOT).contains("built-in") ? 10 : 0);
+				if (score > bestScale) {
+					bestScale = score;
+					best = id;
+				}
+			} else if (name.toLowerCase(java.util.Locale.ROOT).contains(DISPLAY.toLowerCase(java.util.Locale.ROOT))) best = id;
+		}
+		results.put("displaysSeen", names);
+		if (best == 0) warnings.add("no display matching '" + DISPLAY + "' among " + names);
+		return best;
 	}
 
 	static final class OpenWorld extends Step {
@@ -847,6 +962,16 @@ public final class BenchDriver {
 		m.put("fullscreenOption", mc.options.fullscreen().get());
 		m.put("exclusiveFullscreen", mc.options.exclusiveFullscreen().get());
 		m.put("windowFocused", w.isFocused());
+		try {
+			int d = org.lwjgl.sdl.SDLVideo.SDL_GetDisplayForWindow(w.handle());
+			m.put("displayName", org.lwjgl.sdl.SDLVideo.SDL_GetDisplayName(d));
+			m.put("displayContentScale", org.lwjgl.sdl.SDLVideo.SDL_GetDisplayContentScale(d));
+			var mode = w.getActiveVideoMode();
+			if (mode != null) m.put("displayMode", mode.toString());
+		} catch (Throwable e) {
+			m.put("displayName", "unknown: " + e);
+		}
+		m.put("windowFullscreen", isFullscreen(w));
 		try {
 			var info = RenderSystem.getDevice().getDeviceInfo();
 			m.put("gpuBackend", info.backendName());

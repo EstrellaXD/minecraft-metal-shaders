@@ -30,6 +30,8 @@ package mcopt.metal.shade;
  * <li>{@code mcopt.shade.debug} (0): 1 shadow visibility and cascades, 2 normals, 3 lighting only (grey albedo).</li>
  * </ul>
  *
+ * <p>This class stays free of game types: the mixin plugin loads it while mixins bootstrap.
+ *
  * <p>Pieces: ShadeFrame (per-frame uniforms, buffer 16), ShadeFrameUpdater (fills it at LevelRenderer.render HEAD),
  * ShadeBindings (binds buffer 16, texture 16/17, samplers 12/13 on every render encoder; the sky LUT pass), ShadeMsl (the
  * in-jar MSL registered for Sodium terrain and the sky pipelines), the face-shade-off mixin, and the shadow pass.
@@ -69,8 +71,7 @@ public final class Shade {
 	public static void setFaceShadeOff(boolean off) {
 		if (faceShadeOff == off) return;
 		faceShadeOff = off;
-		net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-		if (mc != null && mc.level != null) mc.execute(() -> mc.levelExtractor.allChanged());
+		ShadeFrameUpdater.rebuildChunks();
 	}
 
 	/** This frame's uniform values (the shadow pass reads the light direction and writes its matrices with setShadow). */

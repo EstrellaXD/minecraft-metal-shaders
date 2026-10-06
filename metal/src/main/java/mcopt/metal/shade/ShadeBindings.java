@@ -118,6 +118,14 @@ public final class ShadeBindings {
 		if (state != 0) publish();
 	}
 
+	/**
+	 * The sky-view LUT (MTLTexture, RGBA16Float, ShadeMsl.LUT_WIDTH x LUT_HEIGHT, bound at texture(17)): the atmosphere's
+	 * radiance for this frame, e.g. for reflections; 0 before setup.
+	 */
+	public static long skyLutTexture() {
+		return state != 0 ? ShadeNative.lutTexture(state) : 0;
+	}
+
 	/** The comparison sampler bound at sampler(12) (linear, clamp, GreaterEqual), for the shadow pass's own use. */
 	public static long compareSampler() {
 		return compareSampler;

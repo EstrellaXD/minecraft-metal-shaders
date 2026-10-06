@@ -54,6 +54,12 @@ public final class ShadeFrameUpdater {
 	private ShadeFrameUpdater() {
 	}
 
+	/** Every chunk meshed again (F3+A), e.g. after the face shade setting changed. */
+	static void rebuildChunks() {
+		Minecraft mc = Minecraft.getInstance();
+		if (mc != null && mc.level != null) mc.execute(() -> mc.levelExtractor.allChanged());
+	}
+
 	/** Called with the matrix RenderSystem.setProjectionMatrix receives in GameRenderer.renderLevel. */
 	public static void projection(Matrix4fc projection) {
 		PROJECTION.set(projection);

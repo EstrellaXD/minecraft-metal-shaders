@@ -34,6 +34,7 @@ final class ShadeNative {
 	private static final MethodHandle BIND = fn("mc_shade_bind", true, null, JAVA_LONG);
 	private static final MethodHandle LUT_INIT = fn("mc_shade_lut_init", false, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle LUT_RENDER = fn("mc_shade_lut_render", false, null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle LUT_TEXTURE = fn("mc_shade_lut_texture", true, JAVA_LONG, JAVA_LONG);
 
 	private ShadeNative() {
 	}
@@ -56,5 +57,6 @@ final class ShadeNative {
 	static void set(long frame, long offset, long shadow, long sampler) { try { SET.invokeExact(frame, offset, shadow, sampler); } catch (Throwable t) { throw rethrow(t); } }
 	static void bind(long enc) { try { BIND.invokeExact(enc); } catch (Throwable t) { throw rethrow(t); } }
 	static int lutInit(long state, long ctx, long source, int width, int height, long err, int errCap) { try { return (int) LUT_INIT.invokeExact(state, ctx, source, width, height, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
+	static long lutTexture(long state) { try { return (long) LUT_TEXTURE.invokeExact(state); } catch (Throwable t) { throw rethrow(t); } }
 	static void lutRender(long enc, long state) { try { LUT_RENDER.invokeExact(enc, state); } catch (Throwable t) { throw rethrow(t); } }
 }

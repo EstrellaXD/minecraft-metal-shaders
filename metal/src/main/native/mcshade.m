@@ -76,6 +76,10 @@ id<MTLSamplerState> mc_shade_compare_sampler(ShadeState *s) {
 	return s->compare;
 }
 
+id<MTLTexture> mc_shade_lut_texture(ShadeState *s) {
+	return s->lut;
+}
+
 void mc_shade_free(ShadeState *s) {
 	if (!s) return;
 	if (state == s) state = NULL;

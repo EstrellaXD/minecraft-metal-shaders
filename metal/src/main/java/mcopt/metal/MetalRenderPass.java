@@ -53,6 +53,8 @@ final class MetalRenderPass implements RenderPassBackend {
 	private final @Nullable GpuBufferSlice[] vertexBuffers = new GpuBufferSlice[4];
 	private final byte[] pushConstants = new byte[128];
 	private int pushConstantsLength;
+	/** Native shading's water module took its scene copy in this pass (at the first translucent terrain pipeline). */
+	private boolean waterCaptured;
 
 	private final boolean hasDepth;
 	/** Shaderpack runtime: draws this pass's pipelines with its own (see MetalHooks); null on the backend's own path. */
@@ -95,6 +97,10 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (terrain) this.encoder.terrain.terrainPixels = (long) this.areaWidth * this.areaHeight;
 		this.flushTerrain(record);
 		if (this.encoder.tracing()) this.encoder.trace("  pipeline", p.name, "after draws:", this.draws, "triangles:", this.indices / 3);
+		if (mcopt.metal.shade.water.ShadeWater.ON && this.hasDepth && !this.waterCaptured && p.name.equals(mcopt.metal.shade.water.ShadeWater.TRANSLUCENT)) {
+			this.waterCaptured = true; // native shading's scene copy for water (bible hook H6), once per pass
+			if (mcopt.metal.shade.water.ShadeWater.capture(this.encoder.ctx, this.enc)) this.restoreAfterReopen();
+		}
 		this.pipeline = p;
 		this.recording = record ? p : null;
 		Native.pipeline(this.enc, this.hasDepth ? p.withDepth : p.withoutDepth, p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
@@ -160,6 +166,27 @@ final class MetalRenderPass implements RenderPassBackend {
 			ByteBuffer bytes = stack.malloc(this.pushConstantsLength).put(this.pushConstants, 0, this.pushConstantsLength).flip();
 			Native.bytes(this.enc, MetalConst.PUSH_CONSTANTS_INDEX, MemoryUtil.memAddress(bytes), this.pushConstantsLength);
 		}
+	}
+
+	/**
+	 * The water capture ended and reopened the encoder in setPipeline (before the new pipeline is set): put back what the
+	 * frontend set that outlives a pipeline switch (scissor, vertex buffers, push constants) and the shade globals. The new
+	 * pipeline's uniforms bind at its first draw (the frontend re-sends them all on a switch; bound is cleared).
+	 */
+	private void restoreAfterReopen() {
+		Arrays.fill(this.bound, null);
+		Native.scissor(this.enc, this.scissor[0], this.scissor[1], this.scissor[2], this.scissor[3]);
+		for (int slot = 0; slot < this.vertexBuffers.length; slot++) {
+			GpuBufferSlice vb = this.vertexBuffers[slot];
+			if (vb != null) Native.vertexBuffer(this.enc, MetalConst.VERTEX_BUFFER_BASE + slot, this.encoder.use(vb.buffer()).handle, vb.offset());
+		}
+		if (this.pushConstantsLength > 0) {
+			try (MemoryStack stack = MemoryStack.stackPush()) {
+				ByteBuffer bytes = stack.malloc(this.pushConstantsLength).put(this.pushConstants, 0, this.pushConstantsLength).flip();
+				Native.bytes(this.enc, MetalConst.PUSH_CONSTANTS_INDEX, MemoryUtil.memAddress(bytes), this.pushConstantsLength);
+			}
+		}
+		mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc);
 	}
 
 	/** Binds again what p's draws are bound with now (its uniforms and the scissor), for MetalTerrain to draw more of them after a split. */

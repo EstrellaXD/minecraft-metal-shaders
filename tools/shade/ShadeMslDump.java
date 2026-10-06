@@ -24,6 +24,11 @@ public class ShadeMslDump {
 			// shaded
 			Files.writeString(out.resolve("shade_" + e.getKey() + ".vs.metal"), slotsT + ShadeMsl.terrain(vs));
 			Files.writeString(out.resolve("shade_" + e.getKey() + ".fs.metal"), slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			if (e.getKey().equals("translucent")) {
+				// the translucent fragment without the water module (mcopt.shade.water=false: M1's water)
+				Files.writeString(out.resolve("shade_translucentnowater.vs.metal"), slotsT + ShadeMsl.terrain(vs));
+				Files.writeString(out.resolve("shade_translucentnowater.fs.metal"), slotsT + ShadeMsl.terrain(e.getValue() + fs, false));
+			}
 			if (!e.getKey().equals("translucent")) {
 				Files.writeString(out.resolve("up_" + e.getKey() + ".pulled.vs.metal"), "#define PULLED\n" + vs);
 				Files.writeString(out.resolve("shade_" + e.getKey() + ".pulled.vs.metal"), slotsT + ShadeMsl.terrain("#define PULLED\n" + vs));

@@ -217,6 +217,9 @@ public final class ShadeFrameUpdater {
 		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
 		ShadeShadows.beforePack(camera, f);
 
+		if (mcopt.metal.shade.water.ShadeWater.ON) {
+			mcopt.metal.shade.water.WaterFrame.update(ShadeBindings.ctx(), level, x, y, z, f.underwater, f.rain);
+		}
 		f.pack(ShadeBindings.nextSlot());
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);

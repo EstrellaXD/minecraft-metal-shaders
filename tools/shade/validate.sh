@@ -24,6 +24,7 @@ fail=0
 for f in variants/*.metal; do
 	./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f"; fail=1; }
 done
+./pipecheck sodium variants/shade_translucentnowater.vs.metal variants/shade_translucentnowater.fs.metal || fail=1
 for k in solid cutout translucent; do
 	for p in up shade; do
 		./pipecheck sodium variants/${p}_$k.vs.metal variants/${p}_$k.fs.metal || fail=1

@@ -10,7 +10,10 @@
 // texel is lit per pixel in the overworld: sun or moon light with the shadow map, directional sky light by sky level, warm
 // block light, vanilla's baked AO kept in the vertex colour, fog into the sky behind it, exposure and tone curve. Outside
 // the overworld it is vanilla's lightmapped colour and fog. Debug views (mcopt.shade.debug): 1 shadow/cascades, 2 normals,
-// 3 lighting only.
+// 3 lighting only. With SHADE_WATER also defined (the translucent pass; mcopt.shade.water, the loader prepends
+// mcopt/shade/water.metal) water is recognized by its atlas sprites and shaded by shadeWaterSurface: waves, reflections
+// (screen space over the sky), refraction, absorption, caustics, foam, the surface from below; it composites what is
+// behind it from the scene copy taken at the switch to this pass and is drawn opaque.
 #include <metal_stdlib>
 using namespace metal;
 
@@ -59,6 +62,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef MCOPT_SHADE
                          , constant ShadeFrame& sf [[buffer(16)]], depth2d_array<float> shadowMap [[texture(16)]], sampler shadowCompare [[sampler(12)]],
                          texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]], float4 fragCoord [[position]]
+#ifdef SHADE_WATER
+                         , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
+#endif
 #endif
                          )
 {
@@ -67,7 +73,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     float2 du = dfdx(uv);
     float2 dv = dfdy(uv);
 #ifdef MCOPT_SHADE
-    float3 nf = cross(dfdx(in.v_Pos), dfdy(in.v_Pos)); // before any discard: the whole 2x2 quad takes part
+    float3 dpx = dfdx(in.v_Pos), dpy = dfdy(in.v_Pos);
+    float3 nf = cross(dpx, dpy); // before any discard: the whole 2x2 quad takes part
+#ifdef SHADE_WATER
+    float waterFootprint = max(length(dpx), length(dpy));
+    float2 waterFlow = shadeWaterFlowDir(dpx, dpy, du, dv);
+#endif
 #endif
     float2 texelScreenSize = sqrt(du * du + dv * dv);
     float4 color = sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
@@ -127,10 +138,36 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half3 tint = in.v_Color.rgb;
     bool water = ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0
         && !shadeDev(sf, SHADE_DEV_NO_WATER);
+#ifdef SHADE_WATER
+    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
+    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
+    int waterSprite = shadeWaterSprite(uv, wp);
+    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
+    if (waterSprite == 0) water = false;
+#endif
 #else
     bool water = false;
 #endif
     float3 radiance;
+#ifdef SHADE_WATER
+    if (waterFull) {
+        half3 up = half3(0.0h, 1.0h, 0.0h);
+        ShadeWaterIn wi;
+        wi.p = p;
+        wi.nFace = float3(n);
+        wi.footprint = waterFootprint;
+        wi.flowDir = waterSprite == 2 && n.y > 0.5h ? waterFlow : float2(0.0);
+        wi.pixel = fragCoord.xy;
+        wi.depth = fragCoord.z;
+        wi.tint = tint;
+        wi.sky = in.v_Light.y;
+        wi.shadow = shadow;
+        wi.lit = shadeLit(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf);
+        radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy);
+        alpha = 1.0; // the water composited what is behind it from the scene copy
+        if (debug == 4) radiance = float3(saturate(wi.footprint * 4.0), float(waterSprite == 2), saturate(length(p) / 128.0)) / max(sf.time.z, 1e-3);
+    } else
+#endif
     if (water) {
 #ifdef ALPHA_CUTOUT
         float3 lit = shadeLit(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf);

@@ -67,7 +67,8 @@ Both modes read Sodium's section render data directly:
 - per-slot vertex count and facing list.
 
 They build the same ranges Sodium's `DefaultChunkRenderer` would build, filtered by facing, merged, and cut into
-64-quad chunks. Nothing in Sodium is written, so the result does not depend on mcopt's `cpu.lists`, `cullRecover` and
+32-quad chunks (64 until the M1 review: about a third of the vertex launches were padding past each range's last quad;
+`ShadowCasters.CHUNK_QUADS` and `mcshadow.m` `CHUNK_QUADS` must match). Nothing in Sodium is written, so the result does not depend on mcopt's `cpu.lists`, `cullRecover` and
 `cullReuse` mixins (critique C9).
 
 - **`camera` (default, "step 1")** uses the sections in Sodium's render lists for *this* frame
@@ -263,6 +264,15 @@ branch.
   `ShadeFrame` file and paste the block in.
 
 ## 9. Known limits and next steps
+
+- **Frames in flight share one shadow map and one sky LUT.** Both are tracked (non-heap) textures on mcopt's single
+  queue, so Metal's automatic hazard tracking orders frame N+1's LUT pass and near-cascade clear after frame N's last
+  reads: correct, but it removes some overlap between frames. Never move them to a heap or untracked mode without a
+  ring of 2-3 textures (rebound per frame through `ShadeBindings.setShadowMap`, as the ShadeFrame ring already is);
+  that would also be the experiment to price the lost overlap.
+- **Far cascade spike:** with light-space casters it redraws 250-460k quads every 4th frame (+0.3 ms spin, +0.5 ms
+  flight on that frame, measured from gputimes.csv mod-4 phases in the M1 review). Options: cull far casters to the
+  camera frustum extruded along -L with a margin, or amortize the redraw over its 4 frames into a back slice.
 
 - Measure the current build in game (§6). If the far cascade is still heavy, two options:
   - split its redraw over its 4 frames into a back slice: per-frame lists by section hash, then one 16 MB copy into

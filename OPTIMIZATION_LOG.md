@@ -75,18 +75,49 @@ route: twice the 120 fps target.
 | Idea | Status |
 |---|---|
 | Lower Mie (haze) in clear weather to make the horizon bluer (`mie 1 → 0.55`) | **Rejected**: the horizon colour barely changed (the whitening is Rayleigh optical depth, not Mie), and sunsets lost glow. Used a sky saturation factor (1.3) instead |
-| Water fog colour darkened under water | **Rejected**: when underwater the frame's clear colour (vanilla fog colour) shows behind distant geometry, so a different fog colour on terrain made a bright band. Kept vanilla's colour; daylight under water is filtered instead |
+| Water fog colour darkened under water | **Superseded in the review round**: `ShadeFogMixin` now changes the game's fog colour itself under water (which is also the clear colour), so the clear colour and the terrain fog agree: no band |
 | Display-space sky LUT (bake exposure, tone curve and vanilla fog-mix into the LUT, so a sky pixel is one sample) | **Deferred to M2**: saves at most ~0.2 ms. The M2 HDR target and post tonemap change this code anyway |
 | Per-vertex fog/sky colour (move the LUT lookup to the vertex stage) | **Deferred**: terrain is vertex-heavy on Apple, and an extra half3 varying costs every vertex. Not worth it at ~4 ms |
 | Split the far cascade redraw over 4 frames (even cost per frame) | **Deferred**: with light-space casters the far redraw is ~0.6–0.8 ms every 4th frame. Frame-time data shows no 4-frame periodicity in the slow frames (they come in clusters at specific view directions), so it isn't the cause of the 1% lows |
 | Depth16 shadow map | **Not needed**: same speed in the headless bench, and memory is not tight |
 
-## Open: 1% lows
+## 1% lows (diagnosed in the M1 review)
 
-- Shade on: spin 1% low 65–120 fps, flight 1% low 64–80 fps. Shade off: 200–230 / 200.
-- In the spin, slow frames (>8 ms) come in clusters at fixed view directions (t ≈ 3.6, 15.1–15.3 and 18.0–18.3 s of
-  the 20 s spin in m1-e), with long command buffers on the GPU side. They are not periodic with the far cascade.
-- Suspects:
-  - shader variant compilation the first time a view shows a new pipeline (PSO variants);
-  - Sodium uploads coinciding with the heavier GPU frame.
-- Next step: run `-Dmcopt.metal.trace=spin+<frame of a spike>` around a cluster.
+- The earlier reading ("slow frames are long on the GPU, in clusters at fixed view directions; suspects PSO compiles and
+  Sodium uploads") was wrong. The bench CSVs show render-thread stalls instead: CPU frames of 15-22 ms while GPU frames
+  stay at 3-6 ms, followed by GPU idle gaps of 7-12 ms (m1-final4: 41 of 70 slow spin frames sit next to an idle gap
+  over 4 ms, only 6 are long on the GPU). The spin turns once in 20 s, so a "fixed view direction" is never revisited.
+- Mechanism: the drawable is acquired on the render thread and presented from the frame's own command buffer. With
+  ~4 ms GPU frames, 2 frames in flight and more presents than the 120 Hz panel shows, the drawables stay held long
+  enough that `nextDrawable` blocks the render thread. At 1.7 ms (shade off) they free up sooner.
+- Ruled out: GC (about 10 G1 pauses in 40 s against ~150 slow frames), shadow caster listing (0.07-0.10 ms CPU per
+  frame), the ShadeFrame ring.
+- **Fix (kept): `-Dmcopt.metal.presentQueue=acquire` is the default while `mcopt.shade=true`** (Shade.init sets it when
+  the user didn't set the property; mcopt's own opt-in second-queue present that also acquires the drawable on the
+  present side). Same-session A/B on the previous jar (occ pinned off): spin 1% low 93/71 -> 152 fps, flight 59 -> 111
+  fps; it costs ~0.25 ms of GPU per frame (the staging copy).
+
+## M1 review round (look and cost)
+
+Same-session A/B, `-Dmcopt.metal.occ=false` pinned, perf scenes only (ab-old*/ab-new*/tr-* under
+work/bench-results/20261006-15*/16*):
+
+| Build | Spin GPU ms/frame | Flight GPU ms/frame | Notes |
+|---|---|---|---|
+| m1-final4 jar | 3.74-3.75 | 4.51-4.52 | presentQueue off |
+| review build, first cut | 4.48-4.60 | 5.19-5.22 | presentQueue acquire (+~0.25) |
+| review build, presentQueue off | 4.26 | 5.04 | |
+| review build, cheaper tone curve, presentQueue off | 4.04 | 4.78 | trace run |
+
+Per-encoder (trace, main pass): vertex 1389 -> 1085 us (no quad-normal corner fetches: the face normal now comes from
+the position's screen derivatives in the fragment stage; vertex outputs 56 -> 52 B), fragment 2681 -> 2802 us (the
+hue-preserving tone curve, emissive and foliage terms; the per-channel part of the curve now runs only for pixels
+above 0.6 output). Net cost of the new look: ~+0.2 ms per frame; with the present queue ~+0.45 ms.
+
+Other changes: 32-quad shadow chunks (fewer padding vertex launches). Not done: the far-cascade 4-frame spike (see
+SHADOW.md section 9).
+
+Method notes for future pricing: pin `-Dmcopt.metal.occ` (MetalOccPick alternates split and plain blocks during its
+trials and the profile otherwise compares different render paths; its pick is now logged with println), interleave
+A/B runs, and check `ioreg -r -c IOAccelerator | grep "Device Utilization"` before a run: during this review other apps
+kept the GPU 50-90 % busy with no game running, which doubled shade-off frame times in some runs.

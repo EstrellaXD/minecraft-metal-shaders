@@ -43,7 +43,7 @@ public final class ShadeSky {
 	/** How far the sky's fill light is pulled toward grey: physically it's deep blue, which reads cold on pixel art. */
 	public static final float AMBIENT_DESATURATE = 0.4f;
 	/** Exposure: the average scene luminance maps to this; clamped to the range below, adapted over ADAPT_SECONDS. */
-	public static final float KEY = 0.5f, EXPOSURE_MIN = 0.1f, EXPOSURE_MAX = 2.6f, ADAPT_SECONDS = 1.2f;
+	public static final float KEY = 0.5f, EXPOSURE_MIN = 0.1f, EXPOSURE_MAX = 2.1f, ADAPT_SECONDS = 1.2f;
 	/** How much of a brightness change the eye compensates: 1 = all of it (every scene as bright), 0 = none. */
 	public static final float ADAPTATION = 0.7f;
 

@@ -93,6 +93,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         out.fragColor = float4(mix(color.xyz, g.u_FogColor.xyz, float3(fogValue * g.u_FogColor.w)), color.w);
         return out;
     }
+    if (shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
+        out.fragColor = float4(color.rgb, color.w);
+        return out;
+    }
     half3 n = normalize(in.v_NormalFade.xyz);
     if (dot(float3(n), p) > 0.0) n = -n; // the side facing the camera (also lights both sides of two-sided cutouts)
     half3 a = abs(n);
@@ -105,14 +109,15 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
     bool foliage = false;
 #endif
-    half shadow = shadeShadow(shadowMap, shadowCompare, sf, p, n, thin || foliage);
+    // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4)
+    half shadow = in.v_Light.y > 0.3h ? shadeShadow(shadowMap, shadowCompare, sf, p, n, thin || foliage) : half(1.0);
     float3 radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf);
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
     // colours) gets a sky reflection and a sun glint, seen from above water
     half3 tint = in.v_Color.rgb;
-    if (ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0) {
+    if (ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0 && !shadeDev(sf, SHADE_DEV_NO_WATER)) {
         float4 w = shadeWater(radiance, alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
         radiance = w.rgb;
         alpha = w.a;

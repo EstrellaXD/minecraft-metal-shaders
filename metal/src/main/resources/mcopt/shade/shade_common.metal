@@ -82,8 +82,16 @@ struct ShadeFrame {
 	                            //      z shadows enabled (0/1), w debug mode (0 off, 1 shadow map, 2 normals, 3 lighting only)
 	int4 flags2;                // 976  x frame index (wraps), y underwater (0/1), z cascade count, w sky light at the camera (0..15)
 	float4 sunPath;             // 992  x sin, y cos of the sun path tilt (mcopt.shade.sunTilt: the sun and moon orbit rotated about
-	                            //      world x, toward +z at noon), zw 0
+	                            //      world x, toward +z at noon), z dev bits (mcopt.shade.dev, for pricing features: SHADE_DEV_*), w 0
 };
+
+// mcopt.shade.dev bits (sunPath.z): switch features off to price them in game; 0 in normal use.
+#define SHADE_DEV_NO_FOG_LUT 1    // terrain fog without the LUT lookup (constant horizon colour)
+#define SHADE_DEV_NO_SHADOW 2     // terrain without shadow map lookups
+#define SHADE_DEV_FLAT_SKY 4      // sky pixels: the zenith colour only
+#define SHADE_DEV_NO_WATER 8      // no water reflection
+#define SHADE_DEV_FLAT_LIGHT 16   // terrain: albedo * constant (no lighting, fog or tone curve maths)
+static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0
 #define SHADE_DIM_NETHER 1
@@ -256,6 +264,10 @@ static float3 shadeLit(half3 albedo, half3 n, half sky, half block, half shadow,
 	half3 ambient = n.y >= half(0.0) ? mix(side, half3(f.ambientSky.xyz), n.y) : mix(side, half3(f.ambientGround.xyz), -n.y);
 	ambient *= shadeSkyCurve(sky);
 	half3 torch = half3(f.ambientBlock.xyz) * shadeBlockCurve(block);
+	if (f.flags2.y != 0) { // the camera is under water: daylight arrives filtered by the water above, blue-green and weaker
+		direct *= half3(0.22h, 0.5h, 0.62h);
+		ambient *= half3(0.35h, 0.62h, 0.8h);
+	}
 	return float3(albedo) * float3(direct + ambient + torch + half(f.ambientBlock.w));
 }
 
@@ -271,15 +283,16 @@ static inline float shadeVanillaFog(float3 p, float2 env, float2 renderDistance)
 // ---- sky-view LUT -------------------------------------------------------------------------------------------------------
 // Texel (u, v) holds shadeSkyRadiance toward: azimuth phi = 2 asin(u) away from the sun's (u = sin(phi / 2): linear near
 // the sun, where the Mie glow needs texels, and a sqrt instead of an acos to look up; the sky is mirror-symmetric about the
-// vertical plane through the sun, and the moon sits in that plane too), elevation v^2 * pi / 2 (dense near the horizon).
+// vertical plane through the sun, and the moon sits in that plane too), and height dir.y = v^2 (dense near the horizon; a
+// sqrt to look up, no asin: the lookup runs for every sky and fogged terrain pixel).
 #define SHADE_LUT_W 128
 #define SHADE_LUT_H 80
 
 static inline float3 shadeLutDirection(float2 uv, constant ShadeFrame &f) {
 	float2 axis = shadeSkyAxis(f);
-	float phi = 2.0 * asin(saturate(uv.x)), e = uv.y * uv.y * 1.5707963;
+	float phi = 2.0 * asin(saturate(uv.x)), y = uv.y * uv.y, c = sqrt(max(1.0 - y * y, 0.0));
 	float2 h = axis * cos(phi) + float2(-axis.y, axis.x) * sin(phi);
-	return float3(h.x * cos(e), sin(e), h.y * cos(e));
+	return float3(h.x * c, y, h.y * c);
 }
 
 // The atmosphere's radiance toward dir (linear, pre-exposure) from the LUT; directions below the horizon read the horizon
@@ -290,7 +303,7 @@ static inline float3 shadeSkyLookup(float3 dir, texture2d<half> lut, sampler s, 
 	float hl2 = dot(hz, hz);
 	float c = hl2 > 1e-8 ? dot(hz, axis) * rsqrt(hl2) : 1.0;
 	float u = sqrt(saturate(0.5 - 0.5 * c));
-	float v = sqrt(saturate(fast::asin(saturate(dir.y)) * 0.63661977));
+	float v = sqrt(saturate(dir.y));
 	float2 uv = (float2(u, v) * float2(SHADE_LUT_W - 1, SHADE_LUT_H - 1) + 0.5) / float2(SHADE_LUT_W, SHADE_LUT_H);
 	float3 sky = float3(lut.sample(s, uv, level(0.0)).rgb);
 	return dir.y < 0.0 ? sky * mix(1.0, 0.55, saturate(-dir.y * 3.0)) : sky;
@@ -301,7 +314,8 @@ static inline float3 shadeSkyLookup(float3 dir, texture2d<half> lut, sampler s, 
 static inline float3 shadeFogAir(float3 radiance, float3 p, float vanillaFog, texture2d<half> lut, sampler s, constant ShadeFrame &f) {
 	float haze = (1.0 - exp(-length(p) * f.fogSky.z)) * f.fogSky.w;
 	float a = max(vanillaFog, haze) * (1.0 - f.fogColor.a);
-	return a > 0.0 ? mix(radiance, shadeSkyLookup(normalize(p), lut, s, f), a) : radiance;
+	if (shadeDev(f, SHADE_DEV_NO_FOG_LUT)) return mix(radiance, f.horizon[4].rgb, a);
+	return a > 0.002 ? mix(radiance, shadeSkyLookup(normalize(p), lut, s, f), a) : radiance; // near the camera: no lookup
 }
 
 // Final colour of a shaded surface: exposure, tone curve, sRGB, then the game's own fog colour where it applies (water,
@@ -350,6 +364,7 @@ static float4 shadeWater(float3 radiance, float alpha, float3 p, half sky, half 
 // The sky's final colour toward unit dir (sRGB, what the target stores): the atmosphere (LUT), the sun disc with limb
 // darkening in the colour of the light reaching the ground, and the game's fog colour under water and the like.
 static float3 shadeSkyColor(float3 dir, texture2d<half> lut, sampler s, constant ShadeFrame &f) {
+	if (shadeDev(f, SHADE_DEV_FLAT_SKY)) return float3(0.3, 0.5, 0.8);
 	float3 sky = shadeSkyLookup(dir, lut, s, f);
 	float cosA = dot(dir, f.sunDirWorld.xyz);
 	float x = (1.0 - cosA) / (1.0 - cos(SHADE_SUN_RADIUS)); // ~ (angle / radius)^2
@@ -390,7 +405,7 @@ static inline float shadeShadowCascade(depth2d_array<float> map, sampler cmp, ui
 // light (f.lightDirWorld). thin: two-sided foliage, offset toward the light only. 1 when shadows are off, past the far
 // cascade (fading out over its outer 15%), and for faces turned away from the light (N.L is 0 there anyway).
 static half shadeShadow(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, float3 p, half3 n, bool thin) {
-	if (f.flags.z == 0) return half(1.0);
+	if (f.flags.z == 0 || shadeDev(f, SHADE_DEV_NO_SHADOW)) return half(1.0);
 	float3 L = f.lightDirWorld.xyz;
 	float nl = thin ? 1.0 : dot(float3(n), L);
 	if (nl <= 0.0) return half(1.0);

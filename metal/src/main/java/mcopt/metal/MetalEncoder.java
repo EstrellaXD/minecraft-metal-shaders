@@ -38,7 +38,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 	 * -Dmcopt.metal.trace=N prints every encoder operation of submit N, the tool for finding pass boundaries worth removing,
 	 * and the average per-encoder GPU time of submits N to N + PROFILE_FRAMES - 1. Traced runs are a few % slower; don't bench them.
 	 */
-	private static final long TRACE_SUBMIT = Long.getLong("mcopt.metal.trace", -1);
+	private static long TRACE_SUBMIT = TracePhase.fixed(); // -Dmcopt.metal.trace=N, or PHASE+N (TracePhase) once the bench reaches it
 	/** Above this, an upload is cheaper as an async GPU blit than as a memcpy on the render thread. */
 	private static final long CPU_COPY_MAX = 256 << 10;
 	private static final int PROFILE_FRAMES = 100, PROFILE_ENCODERS = 16;
@@ -151,6 +151,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 			this.afterThisFrame.add(() -> this.accumulateProfile(cmd, s, n));
 		}
 		this.inFlight.add(new Frame(this.submitIndex++, cmd, this.afterThisFrame));
+		if (TracePhase.PHASE != null && TRACE_SUBMIT < 0 && TracePhase.in()) TRACE_SUBMIT = this.submitIndex + TracePhase.OFFSET;
 		if (mcopt.metal.cpu.Cpu.FENCE_STATS) mcopt.metal.cpu.Cpu.fenceTick(this.submitIndex); // opt-in
 		this.afterThisFrame = new ArrayList<>();
 		this.encoderIndex = 0;
@@ -201,9 +202,9 @@ final class MetalEncoder implements CommandEncoderBackend {
 		}
 		if (++this.profiledFrames < PROFILE_FRAMES) return;
 		double[] avg = Arrays.stream(this.profileSums).map(v -> v / PROFILE_FRAMES).toArray();
-		System.out.printf("mcopt-metal gpu: submits %d-%d took %.0f us on the GPU on average%n", TRACE_SUBMIT, TRACE_SUBMIT + PROFILE_FRAMES - 1, avg[0]);
+		System.out.println(String.format("mcopt-metal gpu: submits %d-%d took %.0f us on the GPU on average", TRACE_SUBMIT, TRACE_SUBMIT + PROFILE_FRAMES - 1, avg[0])); // println: the game's log captures it, printf it drops
 		for (int e = 0; e < PROFILE_ENCODERS && avg[1 + 2 * e] + avg[2 + 2 * e] > 0; e++) {
-			System.out.printf("mcopt-metal gpu: #%d vertex %6.0f us, fragment %6.0f us%n", e, avg[1 + 2 * e], avg[2 + 2 * e]);
+			System.out.println(String.format("mcopt-metal gpu: #%d vertex %6.0f us, fragment %6.0f us", e, avg[1 + 2 * e], avg[2 + 2 * e]));
 		}
 	}
 

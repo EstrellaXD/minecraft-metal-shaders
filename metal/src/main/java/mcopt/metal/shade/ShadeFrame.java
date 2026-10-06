@@ -38,6 +38,9 @@ public final class ShadeFrame {
 		WEATHER = 880, JITTER = 896, ATMOSPHERE = 912, AMBIENT_TOWARD = 928, AMBIENT_AWAY = 944, FLAGS = 960, FLAGS2 = 976, SUN_PATH = 992;
 	public static final int SIZE = 1008;
 
+	/** mcopt.shade.dev: feature-off bits for pricing them in game (SHADE_DEV_* in shade_common.metal); 0 normally. */
+	static final int DEV_BITS = Integer.getInteger("mcopt.shade.dev", 0);
+
 	public static final int DIM_OVERWORLD = 0, DIM_NETHER = 1, DIM_END = 2;
 	public static final int FOG_AIR = 0, FOG_WATER = 1, FOG_LAVA = 2, FOG_POWDER_SNOW = 3;
 
@@ -50,7 +53,7 @@ public final class ShadeFrame {
 	public float moonPhase = 1f;
 	public final ShadeSky.Result sky = new ShadeSky.Result();
 	public float sunIntensity, moonIntensity, mie = 1f;
-	public final float[] blockLight = {1.0f, 0.62f, 0.34f};
+	public final float[] blockLight = {1.5f, 0.78f, 0.36f}; // torches: warm orange, strong enough to read at night
 	public float minAmbient = 0.004f;
 	/** sRGB fog colour and weight, vanilla fog distances (FogData). */
 	public final float[] fogColor = new float[4];
@@ -139,7 +142,7 @@ public final class ShadeFrame {
 		put3(b, AMBIENT_AWAY, this.sky.ambientAway, 0);
 		b.putInt(FLAGS, this.dimension).putInt(FLAGS + 4, this.fogType).putInt(FLAGS + 8, this.shadowsEnabled ? 1 : 0).putInt(FLAGS + 12, this.debug);
 		b.putInt(FLAGS2, this.frameIndex).putInt(FLAGS2 + 4, this.underwater ? 1 : 0).putInt(FLAGS2 + 8, this.cascades).putInt(FLAGS2 + 12, this.eyeSkyLight);
-		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(ShadeSky.SUN_TILT)), (float) Math.cos(Math.toRadians(ShadeSky.SUN_TILT)), 0, 0);
+		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(ShadeSky.SUN_TILT)), (float) Math.cos(Math.toRadians(ShadeSky.SUN_TILT)), DEV_BITS, 0);
 	}
 
 	/** Only the shadow fields, for patching a slot already packed this frame. */

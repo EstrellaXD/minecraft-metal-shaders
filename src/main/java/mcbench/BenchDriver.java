@@ -62,6 +62,7 @@ import net.minecraft.world.phys.Vec3;
  * <li>{@code -Dmcbench.shotWait=S} hold before each screenshot (default 2), {@code -Dmcbench.flightSpeed=B} blocks/s (10),
  * {@code -Dmcbench.timeoutSec=S} in-game watchdog (default 900), {@code -Dmcbench.label=TEXT}</li>
  * <li>{@code -Dmcbench.stress=reload,resize,nether} (opt-in, default none): robustness events after perf, before shots</li>
+ * <li>{@code -Dmcbench.godRays=true} (opt-in): god-ray screenshots found in the world after the standard shots (GodRayShots)</li>
  * </ul>
  * Output: results.json, frametimes.csv, screenshots/*.png, gputimes.csv (with mcopt -Dmcopt.metal.gpuTimes=true),
  * error.txt on failure. The game then quits (Minecraft.stop).
@@ -234,6 +235,7 @@ public final class BenchDriver {
 			shotScene("night_torches", 18000, false, () -> spot.night, SHOT_WAIT);
 			shotScene("rain", 6000, true, () -> spot.overview, Math.max(SHOT_WAIT, 4));
 			extraShots();
+			GodRayShots.plan(steps); // opt-in -Dmcbench.godRays=true
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)

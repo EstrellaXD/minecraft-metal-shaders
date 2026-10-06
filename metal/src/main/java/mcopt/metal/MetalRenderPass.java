@@ -283,6 +283,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		String name = Objects.requireNonNull(this.pipeline).name;
 		boolean clouds = name.equals("minecraft:pipeline/clouds") || name.equals("minecraft:pipeline/flat_clouds");
 		if (this.encoder.terrain.split && clouds && instanceCount == 1 && firstIndex == 0 && vertexOffset == 0 && this.drawClouds(indexCount / 6)) return;
+		if (indexCount <= 0 || instanceCount <= 0) return; // an empty draw (Metal's validation rejects zero counts)
 		Native.drawIndexed(this.enc, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 	}
 
@@ -357,6 +358,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (!this.delegated()) return;
 		this.bindUniforms(1);
 		this.indices += (long) vertexCount * instanceCount;
+		if (vertexCount <= 0 || instanceCount <= 0) return; // an empty draw (Metal's validation rejects zero counts)
 		Native.draw(this.enc, vertexCount, instanceCount, firstVertex, firstInstance);
 	}
 

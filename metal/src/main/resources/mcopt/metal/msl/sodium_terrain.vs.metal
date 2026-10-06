@@ -83,8 +83,14 @@ static main0_out shade(uint2 a_Position, float4 a_Color, uint2 a_TexCoord, uint4
 
     float cylindrical = max(length(position.xz), abs(position.y));
     float spherical = length(position);
-    out.v_Fog = half2((spherical - g.u_EnvironmentFog.x) / (g.u_EnvironmentFog.y - g.u_EnvironmentFog.x),
-                      (cylindrical - g.u_RenderFog.x) / (g.u_RenderFog.y - g.u_RenderFog.x));
+    // Sodium's linear fog tests d <= start before d >= end, so a range with start >= end means "no fog up to start" (Distant
+    // Horizons turns vanilla fog off that way: start 4.2e14, end = render distance). Dividing by end - start would give ~1
+    // there (every chunk in fog colour); a tiny positive span gives a huge negative value instead, which saturates to 0
+    // like Sodium, and start == end still steps from 0 to 1 at that distance. Clamped before narrowing so half stays
+    // finite. (Fog-span clamp after mcopt PR #4 by CazzaCoder.)
+    float2 fogSpan = max(float2(g.u_EnvironmentFog.y - g.u_EnvironmentFog.x, g.u_RenderFog.y - g.u_RenderFog.x), float2(1e-4));
+    float2 fogT = (float2(spherical, cylindrical) - float2(g.u_EnvironmentFog.x, g.u_RenderFog.x)) / fogSpan;
+    out.v_Fog = half2(clamp(fogT, float2(-HALF_MAX), float2(HALF_MAX)));
 
     int chunkFade = sectionTimeInfo.read(r.id * 256u + drawId).x;
     half fade = chunkFade < 0 ? 1.0h : half(clamp(float(r.time - chunkFade) * g.u_FadePeriodInv, 0.0, 1.0));

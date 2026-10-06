@@ -22,6 +22,16 @@ class MetalBuffer extends BaseGpuBuffer {
 	/** Memory rename() moved off and the GPU is done with, for the next rename. */
 	private final ArrayDeque<Long> spares = new ArrayDeque<>();
 
+	/**
+	 * New MTLBuffer memory for a buffer of {@code size} bytes, rounded up to 16. Uniform blocks are often allocated at their
+	 * packed size (a lone vec3: 12 bytes; Distant Horizons' and vanilla's blocks ending in a scalar), while the MSL struct
+	 * the shader declares is padded to 16; Metal's API validation then reports the bound buffer as too short for the
+	 * argument, although the padding is never read. The buffer keeps reporting the size it was asked for.
+	 */
+	static long allocate(long ctx, long size) {
+		return Native.bufferNew(ctx, size > 0 ? (size + 15) & ~15L : size);
+	}
+
 	MetalBuffer(MetalEncoder encoder, long handle, @GpuBuffer.Usage int usage, long size) {
 		this(encoder, handle, usage, size, Native.bufferContents(handle));
 	}
@@ -57,7 +67,7 @@ class MetalBuffer extends BaseGpuBuffer {
 		if (this.mapped || this.arena) return false;
 		long old = this.handle;
 		Long spare = this.spares.poll();
-		this.handle = spare != null ? spare : Native.bufferNew(this.encoder.ctx, this.size());
+		this.handle = spare != null ? spare : allocate(this.encoder.ctx, this.size());
 		this.address = Native.bufferContents(this.handle);
 		this.lastUse = -1;
 		this.encoder.afterGpuFinishes(() -> {

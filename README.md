@@ -35,9 +35,10 @@ fps spinning / flying, same test world, 1920x1080, render distance 16, VSync off
 
 - Only Sodium 0.9.3 works. With another version, Fabric stops at launch and says which one to install.
 - Mods that call OpenGL directly can't draw on the Metal backend. `-Dmcopt.metal=false` switches mcopt's renderer off.
-- Distant Horizons only works on OpenGL. mcopt detects it and stays on OpenGL, so it runs without the Metal renderer's
-  speedup; mcopt's other optimizations stay on. (0.2.0-alpha.1 crashed with it instead: add `mcopt.metal=false` to
-  `config/mcopt.properties` there.)
+- Distant Horizons 3.3.3-3.3.4 (MC 26.3, needs Fabric API) runs on the Metal backend: its Blaze3D renderer draws through
+  mcopt (compatibility after PR #4 by CazzaCoder). mcopt falls back to OpenGL with DH when Iris is installed too, when
+  DH's `renderingEngine` is `OPEN_GL`, or with an untested DH version (`-Dmcopt.dh.anyVersion=true` tries Metal anyway).
+  mcopt's own far terrain (`mcopt.lod`) is switched off while DH is installed. `-Dmcopt.metal=false` forces OpenGL.
 - Far terrain is experimental. On Macs with fewer than 10 GPU cores, it costs most of the fps.
 - With fewer than 10 GPU cores, or 8 GB of memory or less, the profile leaves out the bigger chunk cache.
 - With Lithium, C2ME or ScalableLux installed, some of mcopt's chunk patches step aside on purpose.

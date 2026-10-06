@@ -279,7 +279,9 @@ final class MetalEncoder implements CommandEncoderBackend {
 				}
 				OptionalDouble explicit = depth.clearValue();
 				clearDepth = explicit.isPresent() || !Double.isNaN(texture.pendingDepthClear);
-				depthValue = explicit.orElse(texture.pendingDepthClear);
+				// Only read when clearing; NaN (no pending clear) would put an out-of-range clear depth on a loading pass,
+				// which Metal's API validation reports.
+				depthValue = clearDepth ? explicit.orElse(texture.pendingDepthClear) : 0;
 				texture.pendingDepthClear = Double.NaN;
 			}
 			this.forgetSettledClears();

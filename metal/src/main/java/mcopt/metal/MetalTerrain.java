@@ -132,7 +132,7 @@ final class MetalTerrain {
 		for (int q = 0, i = 0; q < CHUNK_QUADS; q++) {
 			for (int corner : new int[] {0, 1, 2, 2, 3, 0}) MemoryUtil.memPutShort(address + 2L * i++, (short) (q * 4 + corner));
 		}
-		this.indices = new MetalBuffer(encoder, Native.bufferPrivate(encoder.ctx, shared, size), GpuBuffer.USAGE_INDEX, size);
+		this.indices = new MetalBuffer(encoder, Native.bufferPrivate(encoder.ctx, shared, size), GpuBuffer.USAGE_INDEX, size, 0L); // private: no CPU address (asking for one trips Metal's API validation)
 		Native.release(shared);
 		if (!OCC) {
 			this.handle = 0;

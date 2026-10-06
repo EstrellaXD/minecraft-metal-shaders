@@ -224,6 +224,21 @@ public final class BenchDriver {
 			shotScene("night_torches", 18000, false, () -> spot.night, SHOT_WAIT);
 			shotScene("rain", 6000, true, () -> spot.overview, Math.max(SHOT_WAIT, 4));
 		}
+		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
+		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)
+		steps.add(new Step("cleanup", 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				MinecraftServer s = server(mc);
+				cmd(s, "weather clear");
+				cmd(s, "time set 6000");
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				return secs(now - curStart) >= 1.5;
+			}
+		});
 		steps.add(new Finish());
 	}
 

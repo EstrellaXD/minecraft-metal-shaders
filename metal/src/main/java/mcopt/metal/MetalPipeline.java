@@ -119,9 +119,9 @@ final class MetalPipeline implements BackendRenderPipeline {
 				f = new Translated("// " + UNCACHED_NONCE + "\n" + f.msl, f.entry);
 			}
 			t1 = System.nanoTime();
-			vlib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(v.msl)), err, 4096);
+			vlib = libraryNew(ctx, stack, v.msl, err);
 			if (vlib == 0) throw new IllegalStateException(info.name() + " vertex: " + MemoryUtil.memUTF8(err) + "\n" + v.msl);
-			flib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(f.msl)), err, 4096);
+			flib = libraryNew(ctx, stack, f.msl, err);
 			if (flib == 0) throw new IllegalStateException(info.name() + " fragment: " + MemoryUtil.memUTF8(err) + "\n" + f.msl);
 			t2 = System.nanoTime();
 			long vname = MemoryUtil.memAddress(stack.UTF8(v.entry)), fname = MemoryUtil.memAddress(stack.UTF8(f.entry));
@@ -140,7 +140,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 				String twin = "#define PULLED\n" + resource("sodium_terrain.vs.metal");
 				if (registered != null && registered.vertex() != null) twin = apply(registered.vertex(), registered.vertexEntry(), new Translated(twin, v.entry), info).msl;
 				pulledSource = twin;
-				plib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(twin)), err, 4096);
+				plib = libraryNew(ctx, stack, twin, err);
 				if (plib == 0) throw new IllegalStateException(info.name() + " pulled vertex: " + MemoryUtil.memUTF8(err));
 				pulled = Native.pipelineNew(ctx, plib, vname, flib, fname, describe(stack, info, true, false), err, 4096);
 				if (pulled == 0) throw new IllegalStateException(info.name() + " pulled: " + MemoryUtil.memUTF8(err));
@@ -174,6 +174,20 @@ final class MetalPipeline implements BackendRenderPipeline {
 	 * or -Dmcopt.metal.retainMsl=true; off, pipelines are exactly upstream's.
 	 */
 	static final boolean RETAIN = Boolean.getBoolean("mcopt.shade") || Boolean.getBoolean("mcopt.metal.retainMsl");
+
+	/**
+	 * mc_library_new on msl. Sources over 16 KB go through a malloc'd copy instead of the thread's MemoryStack (64 KB by
+	 * default): native shading prepends ~25 KB of shared MSL, and a pipeline's stages are encoded on the same stack.
+	 */
+	private static long libraryNew(long ctx, MemoryStack stack, String msl, long err) {
+		if (msl.length() < 16384) return Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(msl)), err, 4096);
+		java.nio.ByteBuffer source = MemoryUtil.memUTF8(msl);
+		try {
+			return Native.libraryNew(ctx, MemoryUtil.memAddress(source), err, 4096);
+		} finally {
+			MemoryUtil.memFree(source);
+		}
+	}
 
 	private record Retained(Translated vertex, Translated fragment, @Nullable String pulled) {
 	}
@@ -427,9 +441,9 @@ final class MetalPipeline implements BackendRenderPipeline {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
 			String vsrc = pulled ? this.pulledMsl : this.vertexMsl;
-			vlib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(vsrc)), err, 4096);
+			vlib = libraryNew(ctx, stack, vsrc, err);
 			if (vlib == 0) throw new IllegalStateException(this.name + " variant vertex: " + MemoryUtil.memUTF8(err));
-			flib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(this.fragmentMsl)), err, 4096);
+			flib = libraryNew(ctx, stack, this.fragmentMsl, err);
 			if (flib == 0) throw new IllegalStateException(this.name + " variant fragment: " + MemoryUtil.memUTF8(err));
 			long vname = MemoryUtil.memAddress(stack.UTF8(this.vertexEntry)), fname = MemoryUtil.memAddress(stack.UTF8(this.fragmentEntry));
 			long pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, colorFormats), err, 4096);

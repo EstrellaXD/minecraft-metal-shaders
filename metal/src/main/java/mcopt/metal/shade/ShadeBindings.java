@@ -66,11 +66,14 @@ public final class ShadeBindings {
 				views[i] = MemoryUtil.memByteBuffer(MetalBridge.bufferContents(buffers[i]), SLOT_SIZE);
 				ShadeFrameUpdater.FRAME.pack(views[i]); // defaults until the first level frame: never an unwritten buffer
 			}
+			ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.lut()); // too big for the thread's MemoryStack
 			try (MemoryStack stack = MemoryStack.stackPush()) {
 				long err = stack.nmalloc(1, 4096);
-				if (ShadeNative.lutInit(state, context, MemoryUtil.memAddress(stack.UTF8(ShadeMsl.lut())), ShadeMsl.LUT_WIDTH, ShadeMsl.LUT_HEIGHT, err, 4096) != 0) {
+				if (ShadeNative.lutInit(state, context, MemoryUtil.memAddress(source), ShadeMsl.LUT_WIDTH, ShadeMsl.LUT_HEIGHT, err, 4096) != 0) {
 					throw new IllegalStateException("sky LUT: " + MemoryUtil.memUTF8(err));
 				}
+			} finally {
+				MemoryUtil.memFree(source);
 			}
 			publish();
 			return true;

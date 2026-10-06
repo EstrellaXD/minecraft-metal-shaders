@@ -16,10 +16,11 @@ package mcopt.metal.shade.shadow;
  * <li>{@code mcopt.shade.shadowFarEvery} (4): the far cascade is redrawn every N frames, or sooner when the light direction
  * (quantized to {@code mcopt.shade.shadowSunStep} degrees, default 0.1) changes or the camera moved an eighth of the
  * cascade.</li>
- * <li>{@code mcopt.shade.shadowCull} (camera): which sections cast. {@code camera}: Sodium's render list for the camera this
- * frame (cheap, proven; misses casters outside the view, e.g. behind the player). {@code light}: every loaded section
- * inside the cascade's light-space box (a read-only scan of Sodium's regions, independent of the camera's occlusion
- * culling and of mcopt's list mixins).</li>
+ * <li>{@code mcopt.shade.shadowCull} (light): which sections cast. {@code light} (default since the M1 integration: verified
+ * in game, about +0.15 ms GPU per frame on the bench route for ~250-390k far-cascade quads every 4 frames): every loaded
+ * section inside the cascade's light-space box (a read-only scan of Sodium's regions, independent of the camera's
+ * occlusion culling and of mcopt's list mixins), so shadows don't pop when turning. {@code camera}: Sodium's render list
+ * for the camera this frame (cheaper; misses casters outside the view, e.g. behind the player).</li>
  * <li>{@code mcopt.shade.shadowFaces} (sun): {@code sun} draws only the face directions that face the light (plus
  * unassigned quads), using Sodium's per-facing vertex ranges; {@code all} draws every face.</li>
  * <li>{@code mcopt.shade.shadowBias} (1.0): slope-scaled raster bias (per unit of depth slope, pushes casters away).</li>
@@ -43,7 +44,7 @@ public final class ShadowConfig {
 	public static final float NEAR = clamp(floatProp("mcopt.shade.shadowNear", DIST / 4f), 4f, DIST);
 	public static final int FAR_EVERY = clamp(Integer.getInteger("mcopt.shade.shadowFarEvery", 4), 1, 64);
 	public static final double SUN_STEP_DEGREES = clamp(floatProp("mcopt.shade.shadowSunStep", 0.1f), 0f, 5f);
-	public static final boolean CULL_LIGHT = "light".equals(System.getProperty("mcopt.shade.shadowCull", "camera"));
+	public static final boolean CULL_LIGHT = !"camera".equals(System.getProperty("mcopt.shade.shadowCull", "light"));
 	public static final boolean ALL_FACES = "all".equals(System.getProperty("mcopt.shade.shadowFaces", "sun"));
 	public static final float BIAS_SLOPE = floatProp("mcopt.shade.shadowBias", 1.0f);
 	public static final float BIAS_TEXELS = floatProp("mcopt.shade.shadowBiasTexels", 1.0f);

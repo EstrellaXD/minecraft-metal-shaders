@@ -298,6 +298,28 @@ int main(int argc, const char **argv) {
 		depthAlways = [dev newDepthStencilStateWithDescriptor:dd];
 		printf("OK   taa.metal compiled, pipelines built on %s\n", name);
 
+		if (strcmp(argv[2], "compile") == 0) { // validate.sh: both TAA_HDR variants, a resolve into each destination format
+			for (int hdr = 0; hdr < 2; hdr++) {
+				Taa *t = mc_taa_new(ctx, src.UTF8String, hdr, err, sizeof err);
+				if (!t) { printf("FAIL compile taa.metal (hdr %d): %s\n", hdr, err); return 1; }
+				mc_taa_resize(t, ctx, 64, 64);
+				id<MTLTexture> c = tex(MTLPixelFormatRGBA8Unorm, 48, 48, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+				id<MTLTexture> d = tex(MTLPixelFormatDepth32Float, 48, 48, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+				MTLPixelFormat formats[2] = {MTLPixelFormatRGBA8Unorm, MTLPixelFormatRGBA16Float};
+				for (int k = 0; k < 2; k++) {
+					id<MTLTexture> o = tex(formats[k], 64, 64, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
+					Params p = {matrix_identity_float4x4, matrix_identity_float4x4, simd_make_float4(0, 0, 0, 1), simd_make_float4(48, 48, 0, 0),
+						simd_make_float4(64, 64, 1 / 64.0f, 1 / 64.0f), simd_make_float4(0, 0, 0.75f, 0.75f), simd_make_float4(0.1f, 1, 32, 1),
+						simd_make_float4(1, 0, 0, 0), simd_make_float4(0.3f, 0, 0, 0)};
+					mc_taa_resolve(enc, t, c, d, nil, o, &p, sizeof p);
+					id<MTLCommandBuffer> cb = mc_enc_commit(enc);
+					[cb waitUntilCompleted];
+					if (cb.error) { printf("FAIL taa resolve (hdr %d, format %lu): %s\n", hdr, (unsigned long) formats[k], cb.error.description.UTF8String); return 1; }
+				}
+				printf("OK   taa.metal: TAAU resolve (TAA_HDR %d) + output to RGBA8Unorm and RGBA16Float\n", hdr);
+			}
+			return 0;
+		}
 		if (strcmp(argv[2], "perf") == 0) {
 			int W = argc > 3 ? atoi(argv[3]) : 3024, H = argc > 4 ? atoi(argv[4]) : 1964;
 			float s = argc > 5 ? atof(argv[5]) : 0.67f;

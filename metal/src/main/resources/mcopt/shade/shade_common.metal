@@ -44,12 +44,13 @@ using namespace metal;
 struct ShadeFrame {
 	float4x4 view;              //   0  world -> view (rotation only)
 	float4x4 proj;              //  64  view -> clip as the world is drawn (view bobbing, hurt tilt and nausea included);
-	                            //      MetalFX's sub-pixel jitter is in it only with -Dmcopt.fx.scale < 1 (jitter.xy)
+	                            //      the TAA sub-pixel jitter (mcopt.shade.taa) is in it (jitter.xy)
 	float4x4 viewProj;          // 128  proj * view
 	float4x4 invViewProj;       // 192  inverse(viewProj): clip -> world
 	float4x4 prevViewProj;      // 256  last frame's viewProj, re-based on this frame's camera: world (now) -> last frame's clip
 	float4x4 shadowViewProj[2]; // 320  world -> shadow clip per cascade (identity while shadows are off)
-	float4 cameraBlock;         // 448  xyz floor(camera position) (exact below 2^24), w 0
+	float4 cameraBlock;         // 448  xyz floor(camera position) (exact below 2^24), w texture gradient scale for the TAA render
+	                            //      scale (mip bias log2 of it; 1 at native; M2: moves to ShadeLook.renderScale)
 	float4 cameraFract;         // 464  xyz camera position - cameraBlock, w camera height above sea level (y - 63) in blocks
 	float4 sunDirWorld;         // 480  xyz unit vector toward the sun, w = its y (sine of the sun's elevation)
 	float4 sunDirView;          // 496  xyz the same in view space, w 0
@@ -70,11 +71,11 @@ struct ShadeFrame {
 	                            //      (index i <-> x = i / 3.5 - 1; the sun moves in the x-y plane, so x alone sets the angle to it)
 	float4 cascadeSplits;       // 816  x, y distance (blocks) within which cascade 0 / 1 covers every direction; z, w blocks per texel of cascade 0 / 1
 	float4 shadowParams;        // 832  x 1 / map size, y map size (texels), z depth bias (clip z), w normal offset (texels)
-	float4 screen;              // 848  xy render target size (pixels), zw 1 / size
+	float4 screen;              // 848  xy render size (pixels: the live sub-rect under TAA dynamic resolution), zw 1 / size
 	float4 time;                // 864  x day time: 0 noon, 0.25 sunset, 0.5 midnight, 0.75 sunrise; y game time in seconds (wraps every hour);
 	                            //      z exposure (pre-tonemap scale, eye-adapted); w partial tick
 	float4 weather;             // 880  x rain 0..1, y thunder 0..1, z night vision 0..1, w star brightness
-	float4 jitter;              // 896  xy NDC jitter in proj this frame, zw last frame's (0 without MetalFX)
+	float4 jitter;              // 896  xy NDC jitter in proj this frame, zw last frame's (0 without TAA)
 	float4 atmosphere;          // 912  x sun intensity, y moon intensity, z Mie amount (haze, rain), w sky brightness multiplier
 	float4 ambientToward;       // 928  rgb sky (+ half the ground's) light on a vertical face turned toward the sun's azimuth (shadeSkyAxis), w 0
 	float4 ambientAway;         // 944  rgb the same for a vertical face turned away from it, w 0

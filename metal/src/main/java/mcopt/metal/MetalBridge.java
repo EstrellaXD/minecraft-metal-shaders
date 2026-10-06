@@ -179,6 +179,15 @@ public final class MetalBridge {
 		Native.discard(enc, texture);
 	}
 
+	/**
+	 * Native shading's dynamic resolution: from now on, passes drawing to color or depth (either) render into the sub-rect
+	 * (0, 0, width, height) of their attachments (viewport, scissor and the pass's own size, e.g. for terrain occlusion) instead
+	 * of the whole texture. width 0 (or null textures) turns it off. Render thread only; inert unless native shading is on.
+	 */
+	public static void setSubRect(Object encoder, @Nullable GpuTexture color, @Nullable GpuTexture depth, int width, int height) {
+		((MetalEncoder) encoder).setSubRect(color, depth, width, height);
+	}
+
 	/** A pending (deferred) clear of texture written to memory now, for reading it outside a render pass. */
 	public static void flushClear(Object encoder, GpuTexture texture) {
 		((MetalEncoder) encoder).flushClear(texture);

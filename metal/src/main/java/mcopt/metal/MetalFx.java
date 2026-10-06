@@ -53,6 +53,11 @@ public final class MetalFx {
 	/** The upscaler, when render scale is on and the game runs on the Metal backend; null otherwise. */
 	public static @Nullable MetalFx get() {
 		if (instance != null || failed || SCALE >= 1) return instance;
+		if (mcopt.metal.shade.taa.ShadeTaa.ON) { // native shading's own TAAU owns the render scale (mcopt.shade.taa=false gives it back)
+			failed = true;
+			System.out.println("mcopt-metal: -Dmcopt.fx.scale ignored: native shading's TAA upscales (mcopt.shade.preset / mcopt.shade.scale)");
+			return null;
+		}
 		if (!(((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend() instanceof MetalEncoder encoder)) {
 			failed = true;
 			return null;

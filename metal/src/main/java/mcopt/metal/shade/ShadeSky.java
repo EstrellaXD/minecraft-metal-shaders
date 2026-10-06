@@ -50,6 +50,30 @@ public final class ShadeSky {
 	private ShadeSky() {
 	}
 
+	/**
+	 * Sun path tilt in degrees (mcopt.shade.sunTilt, default 30): the sun and moon orbit rotated about world x so the noon sun
+	 * stands south of the zenith (toward +z) and casts visible shadows; sunrise and sunset stay due east and west. 0 is
+	 * vanilla's path. The shading (sun direction, sky), the shadow map and the moon all follow it.
+	 */
+	public static final float SUN_TILT = Math.max(-60f, Math.min(60f, floatProperty("mcopt.shade.sunTilt", 30f)));
+
+	private static float floatProperty(String key, float fallback) {
+		try {
+			String v = System.getProperty(key);
+			return v == null ? fallback : Float.parseFloat(v.trim());
+		} catch (NumberFormatException e) {
+			return fallback;
+		}
+	}
+
+	/** Celestial direction (-sin a, cos a, 0) for SkyRenderState angle a, tilted by SUN_TILT; into out (x, y, z). */
+	public static void celestial(double angle, double[] out) {
+		double t = Math.toRadians(SUN_TILT), y = Math.cos(angle);
+		out[0] = -Math.sin(angle);
+		out[1] = y * Math.cos(t);
+		out[2] = y * Math.sin(t);
+	}
+
 	static float column(float r, float mu, float h) {
 		float c = (float) Math.sqrt(r / h * 1.5707963f);
 		if (mu >= 0f) return h * (float) Math.exp((R_GROUND - r) / h) * c / ((c - 1f) * mu + 1f);

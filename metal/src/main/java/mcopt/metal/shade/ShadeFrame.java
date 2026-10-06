@@ -139,7 +139,7 @@ public final class ShadeFrame {
 		put3(b, AMBIENT_AWAY, this.sky.ambientAway, 0);
 		b.putInt(FLAGS, this.dimension).putInt(FLAGS + 4, this.fogType).putInt(FLAGS + 8, this.shadowsEnabled ? 1 : 0).putInt(FLAGS + 12, this.debug);
 		b.putInt(FLAGS2, this.frameIndex).putInt(FLAGS2 + 4, this.underwater ? 1 : 0).putInt(FLAGS2 + 8, this.cascades).putInt(FLAGS2 + 12, this.eyeSkyLight);
-		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(Shade.SUN_TILT)), (float) Math.cos(Math.toRadians(Shade.SUN_TILT)), 0, 0);
+		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(ShadeSky.SUN_TILT)), (float) Math.cos(Math.toRadians(ShadeSky.SUN_TILT)), 0, 0);
 	}
 
 	/** Only the shadow fields, for patching a slot already packed this frame. */

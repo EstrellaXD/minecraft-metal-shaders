@@ -27,9 +27,9 @@ public class ShadePreviewFrames {
 		for (Object[] s : sc) {
 			ShadeFrame f = new ShadeFrame();
 			float sunAngle = (float) Math.toRadians((Float) s[1]);
-			f.sunDir.set(-(float) Math.sin(sunAngle), (float) Math.cos(sunAngle), 0f);
-			// Minecraft's sun path is tilted only by the RotY(-90); add a slight tilt so shadows aren't axis-aligned in the preview
-			f.sunDir.add(0, 0, 0.25f).normalize();
+			double[] d = new double[3];
+			mcopt.metal.shade.ShadeSky.celestial(sunAngle, d); // the game's direction with the sun path tilt (mcopt.shade.sunTilt)
+			f.sunDir.set((float) d[0], (float) d[1], (float) d[2]);
 			f.moonDir.set(f.sunDir).negate();
 			f.moonPhase = 1f;
 			f.rain = (Float) s[2];

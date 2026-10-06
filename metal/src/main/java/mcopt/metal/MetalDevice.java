@@ -131,7 +131,7 @@ final class MetalDevice implements GpuDeviceBackend {
 				// The next one a second later: provisioning takes memory, and this frame is already finding some for the arena's use.
 				if (!this.arenaReserved) this.arenaReserved = this.reserveArena(handle != 0 ? 1000 : 0);
 			}
-			buffer = new MetalBuffer(this.encoder, handle != 0 ? handle : Native.bufferNew(this.ctx, size), usage, actual);
+			buffer = new MetalBuffer(this.encoder, handle != 0 ? handle : MetalBuffer.allocate(this.ctx, size), usage, actual);
 		} finally {
 			MetalEvents.end(event);
 		}
@@ -143,7 +143,7 @@ final class MetalDevice implements GpuDeviceBackend {
 	@Override
 	public GpuBuffer createBuffer(@Nullable Supplier<String> label, @GpuBuffer.Usage int usage, ByteBuffer data) {
 		// A brand-new buffer isn't referenced by any command yet, so the data can go straight into its memory.
-		MetalBuffer buffer = new MetalBuffer(this.encoder, Native.bufferNew(this.ctx, data.remaining()), usage, data.remaining());
+		MetalBuffer buffer = new MetalBuffer(this.encoder, MetalBuffer.allocate(this.ctx, data.remaining()), usage, data.remaining());
 		MemoryUtil.memCopy(MemoryUtil.memAddress(data), buffer.address, data.remaining());
 		return buffer;
 	}

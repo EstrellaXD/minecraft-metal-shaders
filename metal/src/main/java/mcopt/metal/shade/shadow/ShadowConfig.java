@@ -24,6 +24,10 @@ package mcopt.metal.shade.shadow;
  * unassigned quads), using Sodium's per-facing vertex ranges; {@code all} draws every face.</li>
  * <li>{@code mcopt.shade.shadowBias} (1.0): slope-scaled raster bias (per unit of depth slope, pushes casters away).</li>
  * <li>{@code mcopt.shade.shadowBiasTexels} (1.0): constant raster bias, in shadow texels of world distance along the light.</li>
+ * <li>{@code mcopt.shade.shadowFarCutout} (opaque): in the far cascade (1/8 block per texel, coarser than a leaf's holes)
+ * axis-aligned cutout faces are drawn as opaque, without the alpha test, and unassigned cutout quads (grass, flowers) are
+ * left out; {@code test} alpha-tests them as the near cascade always does.</li>
+ * <li>{@code mcopt.shade.shadowStats} (false): every ~5 s, print what each cascade drew and the CPU time spent listing it.</li>
  * <li>{@code mcopt.shade.debug} (0): 1 overlays both cascades in the top-right corner of the screen.</li>
  * </ul>
  */
@@ -44,6 +48,8 @@ public final class ShadowConfig {
 	public static final float BIAS_SLOPE = floatProp("mcopt.shade.shadowBias", 1.0f);
 	public static final float BIAS_TEXELS = floatProp("mcopt.shade.shadowBiasTexels", 1.0f);
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
+	public static final boolean FAR_CUTOUT_OPAQUE = !"test".equals(System.getProperty("mcopt.shade.shadowFarCutout", "opaque"));
+	public static final boolean STATS = Boolean.getBoolean("mcopt.shade.shadowStats");
 
 	private static float floatProp(String key, float fallback) {
 		String v = System.getProperty(key);

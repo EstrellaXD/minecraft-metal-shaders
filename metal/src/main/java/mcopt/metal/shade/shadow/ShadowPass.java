@@ -47,6 +47,12 @@ public final class ShadowPass {
 	private static final int CASCADE_BYTES = 80, DRAW_BYTES = 24, DEBUG_BYTES = 16;
 	/** Light below this elevation (sin) is raised to it for the shadow projection, so maps never degenerate at the horizon. */
 	private static final double MIN_ELEVATION = Math.sin(Math.toRadians(2.0));
+	/**
+	 * Light-space depth kept beyond each cascade's half-width: behind its center (away from the light; receivers deeper than
+	 * this fall back to the far cascade, or are lit past it) and in front of it, plus how far past that casters are still
+	 * listed (they're pancaked onto depth 1 by the clamped depth clip).
+	 */
+	private static final double NEAR_BACK = 96, FAR_BACK = 64, DEPTH_FRONT = 32, CASTER_REACH = 192;
 
 	private static @Nullable ShadowPass instance;
 	private static boolean failed;
@@ -251,7 +257,7 @@ public final class ShadowPass {
 		// near: every frame, pushed ahead of the view so more of it covers what's on screen
 		Vector3f f = cam.orientation.transform(new Vector3f(0, 0, -1));
 		double near = ShadowConfig.NEAR, shift = 0.4 * near;
-		this.cascades[0].fit(this.light, x + f.x * shift, y + f.y * shift, z + f.z * shift, near, res, 16, 16, 192);
+		this.cascades[0].fit(this.light, x + f.x * shift, y + f.y * shift, z + f.z * shift, near, res, NEAR_BACK, DEPTH_FRONT, CASTER_REACH);
 		this.draw[0] = true;
 		// far: kept between redraws, anchored in the world
 		ShadowCascade far = this.cascades[1];
@@ -259,7 +265,7 @@ public final class ShadowPass {
 		double dx = x - far.cx, dy = y - far.cy, dz = z - far.cz;
 		boolean moved = dx * dx + dy * dy + dz * dz > (dist / 8) * (dist / 8);
 		if (!far.valid || this.framesSinceFar >= ShadowConfig.FAR_EVERY - 1 || this.farLightKey != this.lightKey || moved) {
-			far.fit(this.light, x, y, z, dist, res, 16, 16, 192);
+			far.fit(this.light, x, y, z, dist, res, FAR_BACK, DEPTH_FRONT, CASTER_REACH);
 			this.draw[1] = true;
 		}
 		this.cascades[0].matrix(x, y, z, this.matrices, 0);
@@ -314,7 +320,10 @@ public final class ShadowPass {
 		}
 		if (this.shadow == 0) this.create(MetalBridge.ctx(encoder));
 		int faceMask = ShadowCasters.faceMask(this.light, ShadowConfig.ALL_FACES);
-		if (!this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT)) {
+		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
+		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT);
+		if (ShadowConfig.STATS) this.statBuildNanos += System.nanoTime() - t0;
+		if (!built) {
 			this.problem(this.casters.problem);
 			this.unrendered();
 			return;
@@ -361,9 +370,14 @@ public final class ShadowPass {
 				int gpuEncoder = ShadowNative.render(enc, this.shadow, c, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
 					regions.slice().offset(), draws, n, atlas, -ShadowConfig.BIAS_SLOPE, -8f * depthPerTexel);
 				if (tracing) {
-					System.out.printf("[mcopt] shade trace: shadow cascade %d: %d sections, %d quads, %d chunks in %d draws%s%n", c, this.casters.sections[c],
+					System.out.println(String.format("[mcopt] shade trace: shadow cascade %d: %d sections, %d quads, %d chunks in %d draws%s", c, this.casters.sections[c],
 						this.casters.quads[c], lists.stream().mapToInt(l -> l.count).sum(), n,
-						gpuEncoder >= 0 ? " (gpu encoder #" + gpuEncoder + " in the profile below; later game encoders shift by one)" : "");
+						gpuEncoder >= 0 ? " (gpu encoder #" + gpuEncoder + " in the profile below; later game encoders shift by one)" : ""));
+				}
+				if (ShadowConfig.STATS) {
+					this.statQuads[c] += this.casters.quads[c];
+					this.statSections[c] += this.casters.sections[c];
+					this.statDraws[c]++;
 				}
 			}
 		}
@@ -375,10 +389,33 @@ public final class ShadowPass {
 		}
 		this.renderOk = true;
 		this.draw[0] = this.draw[1] = false;
+		if (ShadowConfig.STATS) this.stats();
 		if (this.lastProblem != null) {
 			System.out.println("[mcopt] shade: shadow pass running again");
 			this.lastProblem = null;
 		}
+	}
+
+	private final long[] statQuads = new long[2], statSections = new long[2];
+	private final int[] statDraws = new int[2];
+	private long statBuildNanos, statStart, statFrames;
+
+	/** -Dmcopt.shade.shadowStats: averages every ~5 s (stdout; println, which the game's log captures). */
+	private void stats() {
+		long now = System.nanoTime();
+		if (this.statStart == 0) this.statStart = now;
+		this.statFrames++;
+		if (now - this.statStart < 5_000_000_000L) return;
+		System.out.println(String.format("[mcopt] shade stats: %d frames; near drawn %d x, avg %d sections / %d quads; far drawn %d x, avg %d sections / %d quads; "
+			+ "caster listing %.3f ms/frame CPU; casters: %s", this.statFrames, this.statDraws[0], this.statSections[0] / Math.max(1, this.statDraws[0]),
+			this.statQuads[0] / Math.max(1, this.statDraws[0]), this.statDraws[1], this.statSections[1] / Math.max(1, this.statDraws[1]),
+			this.statQuads[1] / Math.max(1, this.statDraws[1]), this.statBuildNanos / 1e6 / this.statFrames, ShadowConfig.CULL_LIGHT ? "light" : "camera"));
+		java.util.Arrays.fill(this.statQuads, 0);
+		java.util.Arrays.fill(this.statSections, 0);
+		java.util.Arrays.fill(this.statDraws, 0);
+		this.statBuildNanos = 0;
+		this.statFrames = 0;
+		this.statStart = now;
 	}
 
 	private void problem(@Nullable String why) {
@@ -403,10 +440,10 @@ public final class ShadowPass {
 		}
 		this.texture = ShadowNative.texture(this.shadow);
 		this.compareSampler = ShadowNative.compareSampler(this.shadow);
-		System.out.printf("[mcopt] shade: shadow map %dx%d x %d cascades (%s, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s%n",
+		System.out.println(String.format("[mcopt] shade: shadow map %dx%d x %d cascades (%s, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s, far cutout: %s",
 			ShadowConfig.RES, ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS == 16 ? "Depth16Unorm" : "Depth32Float",
 			CASCADES * (ShadowConfig.DEPTH_BITS / 8.0) * ShadowConfig.RES * ShadowConfig.RES / (1 << 20), ShadowConfig.NEAR, ShadowConfig.DIST,
-			ShadowConfig.CULL_LIGHT ? "light" : "camera", ShadowConfig.ALL_FACES ? "all" : "sun-facing");
+			ShadowConfig.CULL_LIGHT ? "light" : "camera", ShadowConfig.ALL_FACES ? "all" : "sun-facing", ShadowConfig.FAR_CUTOUT_OPAQUE ? "opaque" : "alpha test"));
 	}
 
 	/** mcopt.shade.debug=1: both cascades as tiles in the top-right corner of the main target (near left, far right). */
@@ -420,16 +457,17 @@ public final class ShadowPass {
 		long enc = MetalBridge.enc(encoder);
 		int size = Math.max(64, main.height / 4), margin = Math.max(4, main.height / 100);
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			long params = stack.ncalloc(16, DEBUG_BYTES, 1);
+			long params = stack.ncalloc(16, CASCADES * DEBUG_BYTES, 1);
 			for (int c = 0; c < CASCADES; c++) {
 				ShadowCascade cascade = this.cascades[c];
-				MemoryUtil.memPutInt(params, c);
-				MemoryUtil.memPutFloat(params + 4, (float) cascade.depthOf(this.camX, this.camY, this.camZ));
-				MemoryUtil.memPutFloat(params + 8, (float) (cascade.depthRange() / 64.0)); // +-32 blocks around the camera: black..white
-				int x = main.width - (CASCADES - c) * (size + margin);
-				int y = main.height - size - margin; // GL row order: high rows are the top of the screen
-				ShadowNative.debug(enc, this.shadow, MetalBridge.textureHandle(color), x, y, size, params, DEBUG_BYTES);
+				long at = params + (long) c * DEBUG_BYTES;
+				MemoryUtil.memPutInt(at, c);
+				MemoryUtil.memPutFloat(at + 4, (float) cascade.depthOf(this.camX, this.camY, this.camZ));
+				MemoryUtil.memPutFloat(at + 8, (float) cascade.depthRange());
 			}
+			int x = main.width - CASCADES * (size + margin);
+			int y = main.height - size - margin; // GL row order: high rows are the top of the screen
+			ShadowNative.debug(enc, this.shadow, MetalBridge.textureHandle(color), x, y, size, margin, params, DEBUG_BYTES);
 		}
 	}
 }

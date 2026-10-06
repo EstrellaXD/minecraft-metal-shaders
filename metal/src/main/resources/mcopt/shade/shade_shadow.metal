@@ -48,14 +48,15 @@ static inline float3 shade_shadow_offset(float3 nrm, float3 light, float nl, flo
 }
 
 // Visibility (1 lit, 0 shadow) of a camera-relative position in cascade `layer`, with clip-space footprint m = max |x|, |y|
-// returned (>= 1: outside this cascade, result 1).
+// returned (>= 1: outside this cascade's square or depth range, result 1).
 static inline float shade_shadow_cascade(depth2d_array<float> map, sampler cmp, uint layer, float4x4 vp, float3 posCam, float3 nrm,
                                          float3 light, float nl, float texelWorld, float invRes, thread float &m)
 {
     float4 c = vp * float4(posCam + shade_shadow_offset(nrm, light, nl, texelWorld), 1.0);
     m = max(abs(c.x), abs(c.y));
-    if (m >= 1.0 || c.z <= 0.0) return 1.0;
-    return shade_shadow_pcf(map, cmp, layer, shade_shadow_uv(c), min(c.z, 1.0), invRes);
+    if (c.z <= 0.0 || c.z >= 1.0) m = 2.0; // outside this cascade's depth range: the next cascade answers
+    if (m >= 1.0) return 1.0;
+    return shade_shadow_pcf(map, cmp, layer, shade_shadow_uv(c), c.z, invRes);
 }
 
 // Sun visibility at a camera-relative world position.

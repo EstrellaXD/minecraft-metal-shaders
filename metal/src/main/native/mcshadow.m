@@ -15,8 +15,9 @@ typedef struct {
 	id<MTLDevice> device;
 	id<MTLLibrary> library;
 	id<MTLRenderPipelineState> solid, cutout;
-	id<MTLRenderPipelineState> debug;  // made for the first target format the debug view draws into
+	id<MTLRenderPipelineState> debug;  // made for the format of the target the debug view goes into
 	MTLPixelFormat debugFormat;
+	id<MTLTexture> debugTiles;         // the debug view's tiles, drawn here and blitted into the target
 	id<MTLDepthStencilState> depthWrite;
 	id<MTLSamplerState> compare;       // receivers: sampler(12)
 	id<MTLSamplerState> atlasSampler;  // cutout test: nearest, level 0
@@ -120,6 +121,7 @@ void mc_shadow_free(Shadow *s) {
 	[s->solid release];
 	[s->cutout release];
 	[s->debug release];
+	[s->debugTiles release];
 	[s->depthWrite release];
 	[s->compare release];
 	[s->atlasSampler release];
@@ -212,9 +214,11 @@ void mc_shadow_bind(Enc *enc, Shadow *s, int textureSlot, int samplerSlot) {
 	[r setFragmentSamplerState:s->compare atIndex:samplerSlot];
 }
 
-// Debug view: draws slice `layer` as a size x size tile at (x, y) (texture pixels, GL row order) into target, which keeps its
-// contents. params: the MSL ShadowDebugParams (16 bytes). Returns 0, or 1 when the debug pipeline can't be made.
-int mc_shadow_debug(Enc *enc, Shadow *s, id<MTLTexture> target, int x, int y, int size, const void *params, int paramsBytes) {
+// Debug view: every cascade as a size x size tile, drawn into a small texture of its own and blitted into target at
+// (x + c * (size + gap), y) (texture pixels, GL row order). A blit leaves the rest of the target alone: a render pass on it
+// would load and store all of it. params: one MSL ShadowDebugParams (paramBytes) per cascade. Returns 0, or 1 when the
+// debug pipeline can't be made.
+int mc_shadow_debug(Enc *enc, Shadow *s, id<MTLTexture> target, int x, int y, int size, int gap, const void *params, int paramBytes) {
 	if (!s->debug || s->debugFormat != target.pixelFormat) {
 		@autoreleasepool {
 			[s->debug release];
@@ -232,20 +236,37 @@ int mc_shadow_debug(Enc *enc, Shadow *s, id<MTLTexture> target, int x, int y, in
 			}
 		}
 	}
+	int width = s->layers * size;
+	if (x < 0 || y < 0 || x + width + (s->layers - 1) * gap > (int) target.width || y + size > (int) target.height) return 0;
+	if (!s->debugTiles || (int) s->debugTiles.width != width || (int) s->debugTiles.height != size || s->debugTiles.pixelFormat != target.pixelFormat) {
+		[s->debugTiles release];
+		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:target.pixelFormat width:width height:size mipmapped:NO];
+		td.usage = MTLTextureUsageRenderTarget;
+		td.storageMode = MTLStorageModePrivate;
+		s->debugTiles = [s->device newTextureWithDescriptor:td];
+	}
 	id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
 	@autoreleasepool {
 		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-		rp.colorAttachments[0].texture = target;
-		rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+		rp.colorAttachments[0].texture = s->debugTiles;
+		rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;  // the tiles cover all of it
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 		id<MTLRenderCommandEncoder> r = [cmd renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shadow debug";
-		[r setViewport:(MTLViewport) {x, y, size, size, 0, 1}];
 		[r setRenderPipelineState:s->debug];
 		[r setFragmentTexture:s->map atIndex:0];
-		[r setFragmentBytes:params length:paramsBytes atIndex:0];
-		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+		for (int c = 0; c < s->layers; c++) {
+			[r setViewport:(MTLViewport) {c * size, 0, size, size, 0, 1}];
+			[r setFragmentBytes:(const uint8_t *) params + c * paramBytes length:paramBytes atIndex:0];
+			[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+		}
 		[r endEncoding];
+		id<MTLBlitCommandEncoder> b = [cmd blitCommandEncoder];
+		for (int c = 0; c < s->layers; c++) {
+			[b copyFromTexture:s->debugTiles sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(c * size, 0, 0) sourceSize:MTLSizeMake(size, size, 1)
+				toTexture:target destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(x + c * (size + gap), y, 0)];
+		}
+		[b endEncoding];
 	}
 	return 0;
 }

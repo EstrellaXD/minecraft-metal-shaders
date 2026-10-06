@@ -122,10 +122,11 @@ final class ShadowCasters {
 				this.region(list.getRegion(), list, cascades, draw, faceMask, camera);
 			}
 		}
+		// solid (no fragment stage) before cutout (discard): what's drawn first lets hidden surface removal skip the rest
+		for (int c = 0; c < 2; c++) this.lists[c].sort(java.util.Comparator.comparingInt(l -> l.kind));
 		return true;
 	}
 
-	private final ArrayList<DrawList> regionLists = new ArrayList<>(4);
 	private final boolean[] sectionIn = new boolean[2];
 
 	/** One region: its sections that cast into a cascade being drawn, from list (camera mode) or all of them (light mode). */
@@ -145,27 +146,32 @@ final class ShadowCasters {
 			TerrainRenderPass pass = kind == KIND_SOLID ? DefaultTerrainRenderPasses.SOLID : DefaultTerrainRenderPasses.CUTOUT;
 			SectionRenderDataStorage storage = region.getStorage(pass);
 			if (storage == null) continue;
-			DrawList near = null, far = null;
-			if (list != null) {
-				var it = list.sectionsWithGeometryIterator(false);
-				if (it == null) return;
-				while (it.hasNext()) {
-					int section = it.nextByteAsInt();
-					if (!this.sectionCasts(region, section, cascades, draw)) continue;
-					if (regionIndex < 0) regionIndex = this.addRegion(region, camera);
-					if (draw[0] && this.sectionIn[0] && near == null) near = this.listFor(0, arena, kind);
-					if (draw[1] && this.sectionIn[1] && far == null) far = this.listFor(1, arena, kind);
-					this.emit(storage.getDataPointer(section), faceMask, regionIndex, this.sectionIn[0] ? near : null, this.sectionIn[1] ? far : null);
+			// Far cascade, cutout: at 1/8 block per texel a leaf's 1/16-block holes are below the map's resolution, so axis-aligned
+			// cutout faces (leaves, glass, vines) are drawn as opaque (no fragment stage, no discard: hidden surface removal keeps
+			// working) and unassigned cutout quads (grass, flowers, crops) are left out, whose distant shadows would only be noise.
+			boolean farOpaque = kind == KIND_CUTOUT && ShadowConfig.FAR_CUTOUT_OPAQUE;
+			int[] kinds = {kind, farOpaque ? KIND_SOLID : kind};
+			int[] masks = {faceMask, farOpaque ? faceMask & ~(1 << UNASSIGNED) : faceMask};
+			DrawList[] lists = new DrawList[2];
+			var it = list != null ? list.sectionsWithGeometryIterator(false) : null;
+			if (list != null && it == null) return;
+			for (int i = 0; ; i++) {
+				int section;
+				if (it != null) {
+					if (!it.hasNext()) break;
+					section = it.nextByteAsInt();
+				} else {
+					if (i == RenderRegion.REGION_SIZE) break;
+					section = i;
 				}
-			} else {
-				for (int section = 0; section < RenderRegion.REGION_SIZE; section++) {
-					long ptr = storage.getDataPointer(section);
-					if ((SectionRenderDataUnsafe.getSliceMask(ptr) & faceMask) == 0) continue;
-					if (!this.sectionCasts(region, section, cascades, draw)) continue;
-					if (regionIndex < 0) regionIndex = this.addRegion(region, camera);
-					if (draw[0] && this.sectionIn[0] && near == null) near = this.listFor(0, arena, kind);
-					if (draw[1] && this.sectionIn[1] && far == null) far = this.listFor(1, arena, kind);
-					this.emit(ptr, faceMask, regionIndex, this.sectionIn[0] ? near : null, this.sectionIn[1] ? far : null);
+				long ptr = storage.getDataPointer(section);
+				if ((SectionRenderDataUnsafe.getSliceMask(ptr) & faceMask) == 0) continue;
+				if (!this.sectionCasts(region, section, cascades, draw)) continue;
+				if (regionIndex < 0) regionIndex = this.addRegion(region, camera);
+				for (int c = 0; c < 2; c++) {
+					if (!this.sectionIn[c]) continue;
+					if (lists[c] == null) lists[c] = this.listFor(c, arena, kinds[c]);
+					this.emit(ptr, masks[c], regionIndex, lists[c], c);
 				}
 			}
 		}
@@ -204,12 +210,11 @@ final class ShadowCasters {
 	}
 
 	/**
-	 * A section's ranges whose facing is in faceMask, merged where consecutive, cut into 64-quad chunks, into near and/or far.
+	 * A section's ranges whose facing is in faceMask, merged where consecutive, cut into 64-quad chunks, into list (cascade c).
 	 * Layout as Sodium's renderer reads it: the section's vertices start at its base vertex, one range per storage slot i
 	 * (vertex count i), slot i holding facing (facingList >> 8 i) & 0xFF.
 	 */
-	private void emit(long ptr, int faceMask, int regionIndex, @Nullable DrawList near, @Nullable DrawList far) {
-		if (near == null && far == null) return;
+	private void emit(long ptr, int faceMask, int regionIndex, DrawList list, int c) {
 		if ((SectionRenderDataUnsafe.getSliceMask(ptr) & faceMask) == 0) return;
 		long facingList = SectionRenderDataUnsafe.getFacingList(ptr);
 		long vertex = SectionRenderDataUnsafe.getBaseVertex(ptr);
@@ -222,28 +227,21 @@ final class ShadowCasters {
 				if (start >= 0 && end == vertex) {
 					end = vertex + count;
 				} else {
-					if (start >= 0) this.range(start, end, regionIndex, near, far);
+					if (start >= 0) this.range(start, end, regionIndex, list, c);
 					start = vertex;
 					end = vertex + count;
 				}
 			}
 			vertex += count;
 		}
-		if (start >= 0) this.range(start, end, regionIndex, near, far);
-		if (near != null) this.sections[0]++;
-		if (far != null) this.sections[1]++;
+		if (start >= 0) this.range(start, end, regionIndex, list, c);
+		this.sections[c]++;
 	}
 
-	private void range(long start, long end, int regionIndex, @Nullable DrawList near, @Nullable DrawList far) {
+	private void range(long start, long end, int regionIndex, DrawList list, int c) {
 		long quads = (end - start) >> 2;
-		if (near != null) this.quads[0] += quads;
-		if (far != null) this.quads[1] += quads;
-		for (long q = 0; q < quads; q += CHUNK_QUADS) {
-			int first = (int) (start + q * 4);
-			int packed = (int) (Math.min(CHUNK_QUADS, quads - q) - 1) | regionIndex << 6;
-			if (near != null) near.add(first, packed);
-			if (far != null) far.add(first, packed);
-		}
+		this.quads[c] += quads;
+		for (long q = 0; q < quads; q += CHUNK_QUADS) list.add((int) (start + q * 4), (int) (Math.min(CHUNK_QUADS, quads - q) - 1) | regionIndex << 6);
 	}
 
 	/** The faces (ModelQuadFacing bits) that face direction l, plus UNASSIGNED; or all of them. */

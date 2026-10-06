@@ -102,7 +102,8 @@ fragment void shadow_cutout_fs(ShadowCutoutOut in [[stage_in]], texture2d<float>
 
 // ---- debug view (mcopt.shade.debug=1): one cascade per tile, drawn into the game's main color target ----
 
-struct ShadowDebugParams { uint layer; float centerDepth; float scale; float pad; };
+// centerDepth: the camera's depth in this cascade; range: the cascade's depth range in blocks.
+struct ShadowDebugParams { uint layer; float centerDepth; float range; float pad; };
 struct ShadowDebugOut { float4 pos [[position]]; float2 uv; };
 
 vertex ShadowDebugOut shadow_debug_vs(uint vid [[vertex_id]])
@@ -124,8 +125,9 @@ fragment float4 shadow_debug_fs(ShadowDebugOut in [[stage_in]], depth2d_array<fl
     float edge = step(0.995, max(abs(in.uv.x * 2.0 - 1.0), abs(in.uv.y * 2.0 - 1.0)));
     if (edge > 0.0) return float4(1.0, 0.85, 0.2, 1.0);
     if (d <= 0.0) return float4(0.05, 0.08, 0.25, 1.0); // cleared: no caster
-    float g = saturate(0.5 + (d - p.centerDepth) * p.scale);
-    // a faint 4-block contour band helps read heights
-    float band = fract((d - p.centerDepth) * p.scale * 8.0) < 0.08 ? 0.85 : 1.0;
+    // blocks toward the light from the camera: -96 (black) .. +96 (white), with a contour line every 4 blocks
+    float blocks = (d - p.centerDepth) * p.range;
+    float g = saturate(0.5 + blocks / 192.0);
+    float band = fract(blocks * 0.25) < 0.1 ? 0.75 : 1.0;
     return float4(float3(g * band), 1.0);
 }

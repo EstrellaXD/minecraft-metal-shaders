@@ -11,6 +11,7 @@ void mc_cmd_wait(id<MTLCommandBuffer> cmd);
 Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, int depthBits, char *err, int errCap);
 id<MTLTexture> mc_shadow_texture(Shadow *s);
 id<MTLSamplerState> mc_shadow_compare_sampler(Shadow *s);
+int mc_shadow_debug(Enc *enc, Shadow *s, id<MTLTexture> target, int x, int y, int size, int gap, const void *params, int paramBytes);
 int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp);
 
@@ -150,6 +151,13 @@ int main(int argc, char **argv) {
 		[be copyFromTexture:mc_shadow_texture(s) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(2048, 2048, 1)
 			toBuffer:depth destinationOffset:0 destinationBytesPerRow:2048 * (getenv("BITS") && atoi(getenv("BITS")) == 16 ? 2 : 4) destinationBytesPerImage:2048 * 2048 * (getenv("BITS") && atoi(getenv("BITS")) == 16 ? 2 : 4)];
 		[be endEncoding];
+		{  // the debug view into a small RGBA8 target (exercises mc_shadow_debug; run with MTL_DEBUG_LAYER=1 to validate)
+			MTLTextureDescriptor *dt = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:600 height:400 mipmapped:NO];
+			dt.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead; dt.storageMode = MTLStorageModePrivate;
+			id<MTLTexture> target = [[ctx->device newTextureWithDescriptor:dt] autorelease];
+			float dp[8] = {0}; uint32_t one = 1; dp[1] = 0.5f; dp[2] = 100; memcpy(&dp[4], &one, 4); dp[5] = 0.5f; dp[6] = 300;
+			if (mc_shadow_debug(enc, s, target, 600 - 2 * 104, 400 - 104, 100, 4, dp, 16)) { printf("FAIL debug view pipeline\n"); return 1; }
+		}
 		id<MTLCommandBuffer> done = mc_enc_commit(enc);
 		mc_cmd_wait(done);
 		if (done.error) { NSLog(@"GPU error %@", done.error); return 1; }

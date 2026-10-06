@@ -22,7 +22,7 @@ final class ShadowNative {
 	private static final MethodHandle RENDER = fn("mc_shadow_render", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
 		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT);
 	private static final MethodHandle BIND = fn("mc_shadow_bind", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
-	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 
 	private ShadowNative() {
 	}
@@ -82,9 +82,9 @@ final class ShadowNative {
 		}
 	}
 
-	static int debug(long enc, long shadow, long target, int x, int y, int size, long params, int paramsBytes) {
+	static int debug(long enc, long shadow, long target, int x, int y, int size, int gap, long params, int paramBytes) {
 		try {
-			return (int) DEBUG.invokeExact(enc, shadow, target, x, y, size, params, paramsBytes);
+			return (int) DEBUG.invokeExact(enc, shadow, target, x, y, size, gap, params, paramBytes);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

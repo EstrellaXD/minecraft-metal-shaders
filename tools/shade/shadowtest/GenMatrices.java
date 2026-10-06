@@ -10,8 +10,8 @@ public class GenMatrices {
     double[] l = {-Math.sin(ang), Math.cos(ang), 0};
     ShadowCascade near = new ShadowCascade(), far = new ShadowCascade();
     int res = 2048;
-    near.fit(l, camX, camY, camZ, 32, res, 16, 16, 192);
-    far.fit(l, camX, camY, camZ, 128, res, 16, 16, 192);
+    near.fit(l, camX, camY, camZ, 32, res, 96, 32, 192); // ShadowPass: NEAR_BACK, DEPTH_FRONT, CASTER_REACH
+    far.fit(l, camX, camY, camZ, 128, res, 64, 32, 192); // FAR_BACK, DEPTH_FRONT, CASTER_REACH
     float[] m = new float[32];
     near.matrix(camX, camY, camZ, m, 0);
     far.matrix(camX, camY, camZ, m, 16);

@@ -40,6 +40,8 @@ public final class ShadeSky {
 	public static final float SKY_BRIGHTNESS = 3.4f;
 	/** Sky light on terrain relative to the physical sky irradiance: softer shadows, the stylized look. */
 	public static final float AMBIENT_BOOST = 4.0f;
+	/** How far the sky's fill light is pulled toward grey: physically it's deep blue, which reads cold on pixel art. */
+	public static final float AMBIENT_DESATURATE = 0.3f;
 	/** Exposure: the average scene luminance maps to this; clamped to the range below, adapted over ADAPT_SECONDS. */
 	public static final float KEY = 0.5f, EXPOSURE_MIN = 0.1f, EXPOSURE_MAX = 2.6f, ADAPT_SECONDS = 1.2f;
 	/** How much of a brightness change the eye compensates: 1 = all of it (every scene as bright), 0 = none. */
@@ -200,17 +202,26 @@ public final class ShadeSky {
 			r.ambientSky[k] = up[k] * k1;
 			// a green-grey ground lit by the light and the sky
 			float albedo = k == 1 ? 0.10f : k == 0 ? 0.085f : 0.06f;
-			float ground = albedo * (r.light[k] * sunOnGround + up[k] / SKY_BRIGHTNESS / (float) Math.PI) * AMBIENT_BOOST * 0.6f;
+			float ground = albedo * (r.light[k] * sunOnGround + up[k] / SKY_BRIGHTNESS / (float) Math.PI) * 1.2f;
 			r.ambientGround[k] = ground + r.ambientSky[k] * 0.3f;
 			r.ambientToward[k] = toward[k] * k1 + 0.5f * ground;
 			r.ambientAway[k] = away[k] * k1 + 0.5f * ground;
 		}
+		desaturate(r.ambientSky, AMBIENT_DESATURATE);
+		desaturate(r.ambientToward, AMBIENT_DESATURATE);
+		desaturate(r.ambientAway, AMBIENT_DESATURATE);
+		desaturate(r.ambientGround, AMBIENT_DESATURATE);
 		radiance(s, 0f, 1f, 0f, r.zenith);
 		for (int i = 0; i < 8; i++) {
 			float x = i / 3.5f - 1f;
 			radiance(s, x, 0.0f, (float) Math.sqrt(Math.max(0f, 1f - x * x)), r.horizon[i]);
 		}
 		r.sceneLuma = luma(r.light[0], r.light[1], r.light[2]) * 0.55f * Math.max(r.lightDir[1], 0.15f) + luma(r.ambientSky[0], r.ambientSky[1], r.ambientSky[2]);
+	}
+
+	private static void desaturate(float[] c, float amount) {
+		float l = luma(c[0], c[1], c[2]);
+		for (int k = 0; k < 3; k++) c[k] = mix(c[k], l, amount);
 	}
 
 	static float luma(float r, float g, float b) {

@@ -261,14 +261,15 @@ static inline float shadeVanillaFog(float3 p, float2 env, float2 renderDistance)
 }
 
 // ---- sky-view LUT -------------------------------------------------------------------------------------------------------
-// Texel (u, v) holds shadeSkyRadiance toward: azimuth u * pi away from the sun's (the sky is mirror-symmetric about the
+// Texel (u, v) holds shadeSkyRadiance toward: azimuth phi = 2 asin(u) away from the sun's (u = sin(phi / 2): linear near
+// the sun, where the Mie glow needs texels, and a sqrt instead of an acos to look up; the sky is mirror-symmetric about the
 // vertical plane through the sun, and the moon sits in that plane too), elevation v^2 * pi / 2 (dense near the horizon).
 #define SHADE_LUT_W 128
 #define SHADE_LUT_H 80
 
 static inline float3 shadeLutDirection(float2 uv, constant ShadeFrame &f) {
 	float2 axis = shadeSkyAxis(f);
-	float phi = uv.x * 3.14159265, e = uv.y * uv.y * 1.5707963;
+	float phi = 2.0 * asin(saturate(uv.x)), e = uv.y * uv.y * 1.5707963;
 	float2 h = axis * cos(phi) + float2(-axis.y, axis.x) * sin(phi);
 	return float3(h.x * cos(e), sin(e), h.y * cos(e));
 }
@@ -278,9 +279,9 @@ static inline float3 shadeLutDirection(float2 uv, constant ShadeFrame &f) {
 static inline float3 shadeSkyLookup(float3 dir, texture2d<half> lut, sampler s, constant ShadeFrame &f) {
 	float2 axis = shadeSkyAxis(f);
 	float2 hz = dir.xz;
-	float hl = length(hz);
-	float c = hl > 1e-4 ? dot(hz / hl, axis) : 1.0;
-	float u = fast::acos(clamp(c, -1.0, 1.0)) * 0.31830989;
+	float hl2 = dot(hz, hz);
+	float c = hl2 > 1e-8 ? dot(hz, axis) * rsqrt(hl2) : 1.0;
+	float u = sqrt(saturate(0.5 - 0.5 * c));
 	float v = sqrt(saturate(fast::asin(saturate(dir.y)) * 0.63661977));
 	float2 uv = (float2(u, v) * float2(SHADE_LUT_W - 1, SHADE_LUT_H - 1) + 0.5) / float2(SHADE_LUT_W, SHADE_LUT_H);
 	float3 sky = float3(lut.sample(s, uv, level(0.0)).rgb);

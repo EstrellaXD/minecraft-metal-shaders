@@ -16,6 +16,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.world.level.dimension.DimensionType;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
@@ -112,13 +113,29 @@ public final class ShadowPass {
 		matrices(out, 0);
 	}
 
-	/** {near half-width, far half-width, near texel size, far texel size} in blocks: what the receiver's cascade blend uses. */
+	public static void matrices(Matrix4f cascade0, Matrix4f cascade1) {
+		float[] m = new float[32];
+		matrices(m, 0);
+		cascade0.set(m, 0);
+		cascade1.set(m, 16);
+	}
+
+	/**
+	 * ShadeFrame.cascadeSplits: {d0, d1, texel0, texel1}. d0 / d1: distance in blocks from the camera within which cascade 0
+	 * / 1 covers every direction inside its 85% blend margin (the near box is pushed ahead of the camera by 40% of its
+	 * half-width; the far box may lag the camera by an eighth of its half-width), for receivers that pick a cascade by
+	 * distance. shade_shadow.metal picks by the box itself, which covers more. texel0 / texel1: blocks per texel.
+	 */
 	public static void splits(float[] out) {
-		ShadowPass p = instance;
-		out[0] = ShadowConfig.NEAR;
-		out[1] = ShadowConfig.DIST;
-		out[2] = p == null ? 0 : (float) p.cascades[0].texelWorld();
-		out[3] = p == null ? 0 : (float) p.cascades[1].texelWorld();
+		out[0] = (float) ((0.85 - 0.4) * ShadowConfig.NEAR);
+		out[1] = (float) ((0.85 - 0.125) * ShadowConfig.DIST);
+		out[2] = texelSize(0);
+		out[3] = texelSize(1);
+	}
+
+	/** Receiver depth bias in clip z to use with this map: casters are already biased at raster time, so none is needed. */
+	public static float receiverDepthBias() {
+		return 0f;
 	}
 
 	/** World blocks per shadow texel of cascade i (for the receiver's normal offset). */

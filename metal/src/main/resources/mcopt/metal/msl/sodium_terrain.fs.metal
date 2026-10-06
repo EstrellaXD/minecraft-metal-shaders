@@ -33,8 +33,7 @@ struct main0_in {
     half4 v_Color [[user(locn0)]];
     float2 v_TexCoord [[user(locn1)]];
     float3 v_Pos [[user(locn2)]];
-    half4 v_NormalFade [[user(locn3)]];
-    half2 v_Light [[user(locn4)]];
+    half3 v_Light [[user(locn3)]]; // block, sky, chunk fade
 };
 #else
 struct main0_in {
@@ -67,6 +66,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     float2 pixelSize = g.u_TexelSize;
     float2 du = dfdx(uv);
     float2 dv = dfdy(uv);
+#ifdef MCOPT_SHADE
+    float3 nf = cross(dfdx(in.v_Pos), dfdy(in.v_Pos)); // before any discard: the whole 2x2 quad takes part
+#endif
     float2 texelScreenSize = sqrt(du * du + dv * dv);
     float4 color = sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
     if (g.u_UseRGSS != 0u) {
@@ -87,9 +89,20 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #endif
 #ifdef MCOPT_SHADE
     float3 p = in.v_Pos;
-    float fogValue = max(shadeVanillaFog(p, g.u_EnvironmentFog, g.u_RenderFog), 1.0 - float(in.v_NormalFade.w));
+    float fogValue = max(shadeVanillaFog(p, g.u_EnvironmentFog, g.u_RenderFog), 1.0 - float(in.v_Light.z));
+    // The face normal from the position's screen derivatives: a 2x2 pixel quad always shades one triangle, so this is that
+    // triangle's plane (flat, exact). Its sign is arbitrary: turned toward the camera, which also lights both sides of
+    // two-sided cutouts. Axis-aligned faces (nearly all of them) are snapped to their axis.
+    nf *= rsqrt(max(dot(nf, nf), 1e-30));
+    if (dot(nf, p) > 0.0) nf = -nf;
+    half3 n = half3(nf);
+    half3 a = abs(n);
+    half amax = max(max(a.x, a.y), a.z);
+    bool thin = amax < 0.9h; // crossed plants and other slanted cutouts
+    if (!thin) n = half3(a.x == amax ? sign(n.x) : 0.0h, a.x != amax && a.y == amax ? sign(n.y) : 0.0h, a.x != amax && a.y != amax ? sign(n.z) : 0.0h);
     main0_out out;
     if (sf.flags.x != SHADE_DIM_OVERWORLD) {
+        color.rgb *= float(shadeVanillaFace(n, sf.flags.x)); // the face-shade-off mixins removed it from the vertices
         out.fragColor = float4(mix(color.xyz, g.u_FogColor.xyz, float3(fogValue * g.u_FogColor.w)), color.w);
         return out;
     }
@@ -97,10 +110,6 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         out.fragColor = float4(color.rgb, color.w);
         return out;
     }
-    half3 n = normalize(in.v_NormalFade.xyz);
-    if (dot(float3(n), p) > 0.0) n = -n; // the side facing the camera (also lights both sides of two-sided cutouts)
-    half3 a = abs(n);
-    bool thin = max(max(a.x, a.y), a.z) < 0.9h; // crossed plants and other slanted cutouts
     half3 albedo = shadeToLinear(half3(texel.rgb) * in.v_Color.rgb);
     int debug = sf.flags.w;
     if (debug == 3) albedo = half3(0.45h);
@@ -111,18 +120,31 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #endif
     // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4)
     half shadow = in.v_Light.y > 0.3h ? shadeShadow(shadowMap, shadowCompare, sf, p, n, thin || foliage) : half(1.0);
-    float3 radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf);
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
-    // colours) gets a sky reflection and a sun glint, seen from above water
+    // colours) gets its own body colour, a sky reflection and a sun glint, seen from above water
     half3 tint = in.v_Color.rgb;
-    if (ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0 && !shadeDev(sf, SHADE_DEV_NO_WATER)) {
-        float4 w = shadeWater(radiance, alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
+    bool water = ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0
+        && !shadeDev(sf, SHADE_DEV_NO_WATER);
+#else
+    bool water = false;
+#endif
+    float3 radiance;
+    if (water) {
+#ifdef ALPHA_CUTOUT
+        float3 lit = shadeLit(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf);
+        float4 w = shadeWater(lit, tint, shadeLumaH(half3(texel.rgb)), alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
         radiance = w.rgb;
         alpha = w.a;
-    }
 #endif
+    } else {
+        radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf);
+        // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
+        // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
+        half tl = shadeLumaH(half3(texel.rgb));
+        if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12) radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * 2.2;
+    }
     radiance = shadeFogAir(radiance, p, fogValue, skyLut, skyLutSmplr, sf);
     float3 rgb = shadeFinish(radiance, fogValue, sf);
     if (debug == 2) rgb = float3(n) * 0.5 + 0.5;

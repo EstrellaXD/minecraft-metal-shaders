@@ -18,9 +18,10 @@
 //
 // With MCOPT_SHADE defined (mcopt native shading, -Dmcopt.shade=true; the loader prepends the define and
 // mcopt/shade/shade_common.metal) the outputs carry what per-pixel lighting needs instead of a lightmapped colour and fog
-// distances: the camera-relative position, the quad's face normal (from its four corners in the arena, the same for the
-// plain and pulled paths), the block and sky light levels and the chunk fade. 40 bytes per vertex. Outside the overworld
-// the colour keeps vanilla's lightmap and directional face shade (the face-shade-off mixin removed it from the vertices).
+// distances: the camera-relative position, the block and sky light levels and the chunk fade (the fragment stage derives
+// the face normal from the position's screen derivatives: exact for planar quads, and no corner fetches or normal output
+// here). 52 bytes per vertex with the position. Outside the overworld the colour keeps vanilla's lightmap; the fragment
+// stage puts back vanilla's directional face shade (the face-shade-off mixins removed it from the vertices).
 #include <metal_stdlib>
 using namespace metal;
 
@@ -38,11 +39,10 @@ struct u_Globals {
 
 #ifdef MCOPT_SHADE
 struct main0_out {
-    half4 v_Color [[user(locn0)]];      // biome tint x AO (no face shade), alpha; outside the overworld x lightmap x face shade
+    half4 v_Color [[user(locn0)]];      // biome tint x AO (no face shade), alpha; outside the overworld x lightmap
     float2 v_TexCoord [[user(locn1)]];
     float3 v_Pos [[user(locn2)]];       // camera-relative world position
-    half4 v_NormalFade [[user(locn3)]]; // face normal, chunk fade-in (1 = faded in)
-    half2 v_Light [[user(locn4)]];      // block, sky light 0..1
+    half3 v_Light [[user(locn3)]];      // block, sky light 0..1, chunk fade-in (1 = faded in)
     float4 gl_Position [[position]];
 };
 #else
@@ -57,29 +57,10 @@ struct main0_out {
 // What Sodium's push constants carry per region: camera-relative origin, ms since the region was created, region id.
 struct Region { packed_float3 origin; int time; uint id; };
 
-#ifdef MCOPT_SHADE
-// Section-local position of a compressed vertex's first two words (as shade() decodes them).
-static float3 cornerPosition(device const uint *v)
-{
-    uint3 hi = (uint3(v[0]) >> uint3(0u, 10u, 20u)) & uint3(1023u);
-    uint3 lo = (uint3(v[1]) >> uint3(0u, 10u, 20u)) & uint3(1023u);
-    return float3((hi << uint3(10u)) | lo) * 3.0517578125e-05;
-}
-
-// Face normal of the quad whose first vertex is quad (5 words per vertex): the cross product of its diagonals, which also
-// holds for quads with two corners merged. Its sign follows the winding; the fragment stage turns it toward the camera.
-static half3 quadNormal(device const uint *quad)
-{
-    float3 n = cross(cornerPosition(quad + 10) - cornerPosition(quad), cornerPosition(quad + 15) - cornerPosition(quad + 5));
-    float l = length(n);
-    return l > 1e-12 ? half3(n / l) : half3(0.0h, 1.0h, 0.0h);
-}
-#endif
-
 static main0_out shade(uint2 a_Position, float4 a_Color, uint2 a_TexCoord, uint4 a_LightAndData, Region r, constant u_Globals& g,
                        texture_buffer<int> sectionTimeInfo, texture2d<float> lightTex, sampler lightSampler
 #ifdef MCOPT_SHADE
-                       , half3 normal, constant ShadeFrame& sf
+                       , constant ShadeFrame& sf
 #endif
                        )
 {
@@ -94,13 +75,9 @@ static main0_out shade(uint2 a_Position, float4 a_Color, uint2 a_TexCoord, uint4
     int chunkFade = sectionTimeInfo.read(r.id * 256u + drawId).x;
     half fade = chunkFade < 0 ? 1.0h : half(clamp(float(r.time - chunkFade) * g.u_FadePeriodInv, 0.0, 1.0));
     out.v_Pos = position;
-    out.v_NormalFade = half4(normal, fade);
-    out.v_Light = half2(saturate(float2(a_LightAndData.xy) * (1.0 / 240.0)));
+    out.v_Light = half3(half2(saturate(float2(a_LightAndData.xy) * (1.0 / 240.0))), fade);
     half4 color = half4(a_Color);
-    if (sf.flags.x != SHADE_DIM_OVERWORLD) {
-        color *= half4(lightTex.sample(lightSampler, float2(a_LightAndData.xy) / 256.0, level(0.0)));
-        color.rgb *= shadeVanillaFace(normal, sf.flags.x);
-    }
+    if (sf.flags.x != SHADE_DIM_OVERWORLD) color *= half4(lightTex.sample(lightSampler, float2(a_LightAndData.xy) / 256.0, level(0.0)));
     out.v_Color = color;
 #else
 
@@ -150,7 +127,7 @@ vertex main0_out main0(uint vid [[vertex_id]], uint iid [[instance_id]], constan
     return shade(uint2(v[0], v[1]), unpack_unorm4x8_to_float(v[2]), uint2(tex & 0xFFFFu, tex >> 16), (uint4(light) >> uint4(0u, 8u, 16u, 24u)) & 0xFFu,
                  regions[q.packed >> 9], g, u_SectionTimeInfo, u_LightTex, u_LightTexSmplr
 #ifdef MCOPT_SHADE
-                 , quadNormal(quad), sf
+                 , sf
 #endif
                  );
 }
@@ -169,16 +146,14 @@ struct main0_in {
 vertex main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffer(0)]], constant PC& pc [[buffer(26)]],
                        texture_buffer<int> u_SectionTimeInfo [[texture(1)]], texture2d<float> u_LightTex [[texture(2)]], sampler u_LightTexSmplr [[sampler(2)]]
 #ifdef MCOPT_SHADE
-                       // the same arena slice the vertex fetch reads (slot 27); vertex_id includes the section's base vertex,
-                       // which needn't be a multiple of 4, so the quad's first vertex comes from the index's corner bits
-                       , uint vid [[vertex_id]], uint baseVertex [[base_vertex]], const device uint *arena [[buffer(27)]], constant ShadeFrame& sf [[buffer(16)]]
+                       , constant ShadeFrame& sf [[buffer(16)]]
 #endif
                        )
 {
     return shade(in.a_Position, in.a_Color, in.a_TexCoord, in.a_LightAndData, Region {pc.u_RegionOffset, pc.u_CurrentTime, pc.u_RegionID}, g,
                  u_SectionTimeInfo, u_LightTex, u_LightTexSmplr
 #ifdef MCOPT_SHADE
-                 , quadNormal(arena + (vid - ((vid - baseVertex) & 3u)) * 5u), sf
+                 , sf
 #endif
                  );
 }

@@ -79,6 +79,26 @@ public final class ShadeFrameUpdater {
 		return m > 0;
 	}
 
+	/**
+	 * The fog (and clear) colour under water while shading is on in the overworld (ShadeFogMixin): the light scattered in
+	 * the water toward the eye, from last frame's sun or moon and sky light, darker with depth (sky light at the eye), through
+	 * the frame's exposure and tone curve (ShadeFrame.output). Deep teal by day, near black at night. dest: sRGB, alpha kept.
+	 */
+	public static void waterFog(ClientLevel level, Vector4f dest) {
+		ShadeFrame f = FRAME;
+		if (!ShadeBindings.ready() || ShadeBindings.fallback() || f.dimension != ShadeFrame.DIM_OVERWORLD || !(f.exposure > 0f)) return;
+		float[] l = f.sky.light, a = f.sky.ambientSky;
+		float sun = Math.max(f.sky.lightDir[1], 0f) * 0.5f + 0.5f;
+		float eye = f.eyeSkyLight / 15f;
+		float depth = eye / (4f - 3f * eye) * 0.85f + 0.15f;
+		float[] c = {
+			(l[0] * sun * 0.02f + a[0] * 0.02f) * depth,
+			(l[1] * sun * 0.085f + a[1] * 0.07f) * depth,
+			(l[2] * sun * 0.11f + a[2] * 0.09f) * depth};
+		ShadeFrame.output(c, f.exposure, c);
+		dest.set(c[0], c[1], c[2], dest.w);
+	}
+
 	/** Called with the matrix RenderSystem.setProjectionMatrix receives in GameRenderer.renderLevel. */
 	public static void projection(Matrix4fc projection) {
 		PROJECTION.set(projection);

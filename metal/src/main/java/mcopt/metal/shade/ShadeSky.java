@@ -29,25 +29,28 @@ public final class ShadeSky {
 	static final float[] BETA_O = {0.650e-3f * 2.2f, 1.881e-3f * 2.2f, 0.085e-3f * 2.2f};
 	/** Moonlight tint, as the shader's shadeSkyRadiance applies it. */
 	static final float[] MOON_TINT = {0.85f, 0.95f, 1.25f};
-	static final float[] AIRGLOW = {0.0006f, 0.0009f, 0.0018f};
+	static final float[] AIRGLOW = {0.0003f, 0.00045f, 0.0009f};
 
 	// ---- art direction: the knobs, in one place ----
 	/** Sun irradiance in the scattering integral (arbitrary units; exposure maps them to the screen). */
 	public static final float SUN_INTENSITY = 20f;
 	/** Full-moon intensity relative to the sun: far brighter than reality so nights are playable. */
-	public static final float MOON_INTENSITY = SUN_INTENSITY * 0.012f;
+	public static final float MOON_INTENSITY = SUN_INTENSITY * 0.010f;
 	/** Sky and fog brightness relative to the physical single-scattering result (games show a brighter sky than physics). */
 	public static final float SKY_BRIGHTNESS = 3.4f;
 	/** Saturation of the sky's colour (1 = the physical single-scattering result, which reads greyish-lavender on the horizon). */
 	public static final float SKY_SATURATION = 1.3f;
-	/** Sky light on terrain relative to the physical sky irradiance: softer shadows, the stylized look. */
-	public static final float AMBIENT_BOOST = 8.0f;
+	/**
+	 * Sky light on terrain relative to the physical sky irradiance: softer shadows, the stylized look. At 4 the sun is about
+	 * 4-5x the fill at noon, so lit and shaded faces read clearly apart (8 flattened the frame back toward vanilla).
+	 */
+	public static final float AMBIENT_BOOST = 4.0f;
 	/** How far the sky's fill light is pulled toward grey: physically it's deep blue, which reads cold on pixel art. */
-	public static final float AMBIENT_DESATURATE = 0.4f;
+	public static final float AMBIENT_DESATURATE = 0.2f;
 	/** Exposure: the average scene luminance maps to this; clamped to the range below, adapted over ADAPT_SECONDS. */
-	public static final float KEY = 0.5f, EXPOSURE_MIN = 0.1f, EXPOSURE_MAX = 2.1f, ADAPT_SECONDS = 1.2f;
+	public static final float KEY = 0.61f, EXPOSURE_MIN = 0.1f, EXPOSURE_MAX = 1.6f, ADAPT_SECONDS = 1.2f;
 	/** How much of a brightness change the eye compensates: 1 = all of it (every scene as bright), 0 = none. */
-	public static final float ADAPTATION = 0.7f;
+	public static final float ADAPTATION = 0.5f;
 
 	private ShadeSky() {
 	}
@@ -143,7 +146,15 @@ public final class ShadeSky {
 		}
 
 		float mie() {
-			return 1f + 3f * this.rain;
+			return 0.75f + 3.25f * this.rain;
+		}
+
+		/**
+		 * Exposure bias by sun height: sunsets and twilight darken (the eye doesn't fully adapt back to day brightness, which
+		 * made a sunset read like an afternoon); 1 by day and at night.
+		 */
+		float exposureBias() {
+			return 1f - 0.25f * (1f - smoothstep(0.02f, 0.25f, this.sunY)) * smoothstep(-0.25f, -0.05f, this.sunY);
 		}
 	}
 
@@ -155,11 +166,19 @@ public final class ShadeSky {
 		if (moon > 0f) scatter(dx, dy, dz, s.moonX, s.moonY, s.moonZ, moon, s.mie(), MOON_TINT, out);
 		for (int k = 0; k < 3; k++) out[k] += AIRGLOW[k] * (1f - 0.5f * s.rain);
 		float l = luma(out[0], out[1], out[2]);
-		for (int k = 0; k < 3; k++) out[k] = Math.max(l + (out[k] - l) * SKY_SATURATION, 0f);
+		for (int k = 0; k < 3; k++) out[k] = Math.max(l + (out[k] - l) * SKY_SATURATION, out[k] * 0.5f);
+		float gh = goldenHourWeight(s.sunY, s.rain), h = 1f - Math.min(Math.abs(dy), 1f);
+		gh *= 0.55f + 0.45f * h * h * h;
+		out[0] *= 1f + 0.45f * gh; out[1] *= 1f + 0.02f * gh; out[2] *= 1f - 0.28f * gh;
 		float grey = 1f - 0.45f * s.thunder, w = s.rain * 0.75f;
 		out[0] = mix(out[0], l * 0.92f * grey, w) * SKY_BRIGHTNESS;
 		out[1] = mix(out[1], l * 0.96f * grey, w) * SKY_BRIGHTNESS;
 		out[2] = mix(out[2], l * grey, w) * SKY_BRIGHTNESS;
+	}
+
+	/** shade_common.metal's shadeGoldenHour weight: the warm grade on the sky while the sun is low. */
+	static float goldenHourWeight(float sunY, float rain) {
+		return smoothstep(0.32f, 0.02f, sunY) * smoothstep(-0.16f, -0.02f, sunY) * (1f - rain);
 	}
 
 	/** Light from the sun (or moon) through the atmosphere to the camera, per channel, for a light at unit (x, y, z). */
@@ -243,7 +262,7 @@ public final class ShadeSky {
 			float x = i / 3.5f - 1f;
 			radiance(s, x, 0.0f, (float) Math.sqrt(Math.max(0f, 1f - x * x)), r.horizon[i]);
 		}
-		r.sceneLuma = luma(r.light[0], r.light[1], r.light[2]) * 0.55f * Math.max(r.lightDir[1], 0.15f) + luma(r.ambientSky[0], r.ambientSky[1], r.ambientSky[2]);
+		r.sceneLuma = luma(r.light[0], r.light[1], r.light[2]) * 0.55f * Math.max(r.lightDir[1], 0.35f) + luma(r.ambientSky[0], r.ambientSky[1], r.ambientSky[2]);
 	}
 
 	private static void desaturate(float[] c, float amount) {

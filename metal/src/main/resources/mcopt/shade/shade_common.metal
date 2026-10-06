@@ -106,24 +106,35 @@ static inline half3 shadeToSrgb(half3 c) {
 static inline float shadeLuma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 static inline half shadeLumaH(half3 c) { return dot(c, half3(0.2126h, 0.7152h, 0.0722h)); }
 
-// Tone curve, straight to the display value: a rational fit (within 2/255 above black) of sRGB(1 - e^-1.05x), i.e. an
-// exponential shoulder that stays linear in the shadows so dark sides keep their detail, in a handful of half-precision ops
-// on t = sqrt(x). Before it: a slight saturation lift and a dim-light shift (rods: colours fade toward a cool grey at night)
-// that leaves torch-lit and daylit pixels alone. LDR output (M1); M2 moves this to an HDR target and a post pass.
-static inline half3 shadeTonemap(half3 x) {
-	half3 t = sqrt(max(x, half(0.0)));
-	return saturate(t * (half(1.08978453) * t + half(0.9984842)) / (t * (half(1.19790536) * t + half(0.32032119)) + half(1.0)));
+// Tone curve on linear values: an exponential shoulder (1 - e^-1.1x) with a slight toe (y^2 / (y + 0.006)), so shadows keep depth and
+// highlights roll off instead of clipping. Applied hue-preservingly (shadeOutput): the brightest channel goes through the
+// curve and the others keep their ratio to it, so saturated colours (a sunset horizon, a low sun) keep their hue instead of
+// clipping a channel to 0 or turning yellow-white; only near the top of the range does the colour blend toward the
+// per-channel result (bright light desaturates, like film). Night: a dim-light shift (rods) toward a cool grey, driven by
+// the scene's own luminance before exposure. LDR output (M1); M2 moves this to an HDR target and a post pass.
+static inline float shadeCurve(float x) {
+	float y = 1.0 - exp(-1.1 * max(x, 0.0));
+	return y * y * 1.006 / (y + 0.006);
+}
+static inline float3 shadeCurve3(float3 x) {
+	float3 y = 1.0 - exp(-1.1 * max(x, 0.0));
+	return y * y * 1.006 / (y + 0.006);
 }
 
 // Linear radiance (pre-exposure) -> the sRGB value the RGBA8 target stores.
 static inline float3 shadeOutput(float3 radiance, constant ShadeFrame &f) {
-	half3 c = half3(min(radiance * f.time.z, 60000.0));
-	half l = shadeLumaH(c);
-	c = max(mix(half3(l), c, half(1.12)), half(0.0));
-	half rods = half(smoothstep(1.4, 2.6, f.time.z)) * (half(1.0) - smoothstep(half(0.03), half(0.25), l));
-	c = mix(c, half3(l) * half3(0.78h, 0.9h, 1.22h), rods * half(0.65));
-	return float3(shadeTonemap(c));
+	float3 c = max(radiance, 0.0);
+	float lin = shadeLuma(c);                                                         // absolute (pre-exposure) luminance
+	float rods = (1.0 - smoothstep(0.004, 0.04, lin)) * 0.55;
+	c = mix(c, float3(lin) * float3(0.72, 0.88, 1.3), rods) * f.time.z;
+	float m = max(max(c.r, c.g), max(c.b, 1e-6));
+	float tm = shadeCurve(m);
+	float3 hue = c * (tm / m);
+	float3 o = mix(hue, shadeCurve3(c), smoothstep(0.6, 1.0, tm) * 0.6);
+	return float3(shadeToSrgb(half3(saturate(o))));
 }
+
+// The same curve for a single colour on the CPU side: ShadeFrame.output (underwater fog colour) mirrors shadeOutput.
 
 // ---- atmosphere ---------------------------------------------------------------------------------------------------------
 // Single scattering in a Rayleigh + Mie + ozone atmosphere (units: km), integrated along the view ray with 8 samples; the
@@ -195,6 +206,14 @@ static float3 shadeScatter(float3 dir, float3 lightDir, float intensity, float m
 	return intensity * (SHADE_BETA_R * pr * sumR + betaM * pm * sumM);
 }
 
+// Art grade on the single-scattering sky while the sun is low (ShadeSky.goldenHour mirrors it): warmer toward the horizon,
+// so a sunset reads golden and pink instead of a blue sky with a thin yellow line; nothing by day, at night or in rain.
+static inline float3 shadeGoldenHour(float dirY, float sunY, float rain) {
+	float w = (1.0 - smoothstep(0.02, 0.32, sunY)) * smoothstep(-0.16, -0.02, sunY) * (1.0 - rain);
+	float h = 1.0 - saturate(abs(dirY));
+	return mix(float3(1.0), float3(1.45, 1.02, 0.72), w * (0.55 + 0.45 * h * h * h));
+}
+
 // The sky's radiance along dir (no sun disc): sun and moon scattering, faint airglow, overcast in rain. Linear, pre-exposure.
 static float3 shadeSkyRadiance(float3 dir, constant ShadeFrame &f, thread float3 &transmittance) {
 	float3 sky = float3(0.0);
@@ -202,10 +221,11 @@ static float3 shadeSkyRadiance(float3 dir, constant ShadeFrame &f, thread float3
 	float mie = f.atmosphere.z;
 	if (f.sunDirWorld.w > -0.22) sky += shadeScatter(dir, f.sunDirWorld.xyz, f.atmosphere.x, mie, tr);
 	if (f.atmosphere.y > 0.0) sky += shadeScatter(dir, f.moonDirWorld.xyz, f.atmosphere.y, mie, tr) * float3(0.85, 0.95, 1.25);
-	sky += float3(0.0006, 0.0009, 0.0018) * (1.0 - 0.5 * f.weather.x);  // airglow: the night sky is never black
+	sky += float3(0.0003, 0.00045, 0.0009) * (1.0 - 0.5 * f.weather.x);  // airglow: the night sky is never black
 	float rain = f.weather.x;
 	float l = shadeLuma(sky);
-	sky = max(l + (sky - l) * SHADE_SKY_SATURATION, 0.0); // ShadeSky.SKY_SATURATION
+	sky = max(l + (sky - l) * SHADE_SKY_SATURATION, sky * 0.5); // ShadeSky.SKY_SATURATION, never below half the channel
+	sky *= shadeGoldenHour(dir.y, f.sunDirWorld.w, rain);
 	sky = mix(sky, float3(l) * float3(0.92, 0.96, 1.0) * (1.0 - 0.45 * f.weather.y), rain * 0.75) * f.atmosphere.w;
 	transmittance = tr;
 	return sky;
@@ -229,9 +249,9 @@ static inline float2 shadeSkyAxis(constant ShadeFrame &f) {
 // ---- lighting -----------------------------------------------------------------------------------------------------------
 // Light levels arrive as Sodium's lightmap coordinates (0..240 for levels 0..15), normalized to 0..1.
 static inline half shadeSkyCurve(half s) { return s / (half(4.0) - half(3.0) * s); }    // vanilla's brightness curve
-static inline half shadeBlockCurve(half b) {                                               // vanilla's, with a softer tail
+static inline half shadeBlockCurve(half b) {                                               // vanilla's, steeper: pools with edges
 	half v = b / (half(4.0) - half(3.0) * b);
-	return v * v * half(0.65) + v * half(0.35);
+	return v * v * (half(0.5) + half(0.5) * v);
 }
 
 // Vanilla's directional face shade for a face normal (what the face-shade-off mixin removed from the vertex colours),
@@ -254,8 +274,10 @@ static inline float shadeNoise(float2 pixel, int frame) {
 // terminator); foliage: axis-aligned cutout faces (leaves, vines): wrapped light, so canopies glow a little where the light
 // passes through them instead of going flat on the sides and undersides (the map still shadows what's inside).
 static float3 shadeLit(half3 albedo, half3 n, half sky, half block, half shadow, bool thin, bool foliage, constant ShadeFrame &f) {
-	half ndl = half(dot(float3(n), f.lightDirWorld.xyz));
-	ndl = thin ? half(0.3) + half(0.5) * abs(ndl) : foliage ? half(0.22) + half(0.78) * saturate(ndl) : saturate(ndl);
+	half nl = half(dot(float3(n), f.lightDirWorld.xyz));
+	// thin plants: light through them from either side; leaves: wrapped a little, plus light transmitted through faces
+	// turned away from it (backlit canopies glow)
+	half ndl = thin ? half(0.3) + half(0.5) * abs(nl) : foliage ? half(0.25) + half(0.75) * saturate(nl) + half(0.5) * saturate(-nl) : saturate(nl);
 	// Direct light needs open sky: with a shadow map the map does the work and this only keeps sunlight out of caves; without
 	// one, sky light is the only hint of what's overhead.
 	half gate = f.flags.z != 0 ? smoothstep(half(0.3), half(0.8), sky) : sky * sky * sky * sky;
@@ -264,7 +286,7 @@ static float3 shadeLit(half3 albedo, half3 n, half sky, half block, half shadow,
 	half towardSun = half(dot(float2(n.xz), axis)) * half(0.5) + half(0.5);
 	half3 side = mix(half3(f.ambientAway.xyz), half3(f.ambientToward.xyz), towardSun);
 	half3 ambient = n.y >= half(0.0) ? mix(side, half3(f.ambientSky.xyz), n.y) : mix(side, half3(f.ambientGround.xyz), -n.y);
-	ambient *= shadeSkyCurve(sky);
+	ambient *= shadeSkyCurve(sky) * (foliage ? half(1.35) : half(1.0)); // leaves scatter the sky's light too
 	half3 torch = half3(f.ambientBlock.xyz) * shadeBlockCurve(block);
 	if (f.flags2.y != 0) { // the camera is under water: daylight arrives filtered by the water above, blue-green and weaker
 		direct *= half3(0.22h, 0.5h, 0.62h);
@@ -324,7 +346,10 @@ static inline float3 shadeFogAir(float3 radiance, float3 p, float vanillaFog, te
 // lava, blindness...; f.fogColor.a), mixed after the tone curve like vanilla mixes it into its LDR colours.
 static inline float3 shadeFinish(float3 radiance, float vanillaFog, constant ShadeFrame &f) {
 	float3 c = shadeOutput(radiance, f);
-	return mix(c, f.fogColor.rgb, vanillaFog * f.fogColor.a);
+	float a = vanillaFog * f.fogColor.a;
+	// in water the fog takes red first, then green (the fog colour is the shaded water colour, ShadeFrame.waterFog)
+	float3 t = f.flags.y == 1 ? pow(1.0 - a, float3(2.6, 1.25, 1.0)) : float3(1.0 - a);
+	return c * t + f.fogColor.rgb * (1.0 - t);
 }
 
 // ---- water (M1: a still-water stand-in until M2's real water) ------------------------------------------------------------
@@ -341,23 +366,37 @@ static float3 shadeWaterNormal(float3 p, constant ShadeFrame &f) {
 	return normalize(float3(-g.x * fade, 1.0, -g.y * fade));
 }
 
-// A water surface seen from above: the lit water colour (radiance, alpha as drawn) under a Fresnel reflection of the
-// atmosphere (the sky-view LUT) and a sun glint, both only where the sky is open (sky light). Returns radiance and the
-// alpha to draw with: the reflection is opaque in proportion to its Fresnel weight. No terrain in the reflection (M2: SSR).
-static float4 shadeWater(float3 radiance, float alpha, float3 p, half sky, half shadow, texture2d<half> lut, sampler s, constant ShadeFrame &f) {
-	float3 v = normalize(p);
+// A water surface seen from above. Its body colour is a physically tinted base (the biome's water tint as absorption, lit
+// by the sky and a little sun) carrying only a trace of vanilla's texture (no tiled specks), under a Fresnel reflection of
+// the atmosphere (the sky-view LUT: water picks up the sky's colour, grey in rain) and a sun glint: an energy-normalized
+// lobe that widens with distance and wave slope (no clipped slab far away), clamped, with the shadow softened so its edge
+// doesn't step with shadow texels. Reflections only where the sky is open (sky light). Returns radiance and the alpha to
+// draw with: lower than vanilla's (the bottom shows through near the shore), the reflection opaque in proportion to its
+// Fresnel weight. No terrain in the reflection (M2: SSR).
+static float4 shadeWater(float3 lit, half3 tint, half texLuma, float alpha, float3 p, half sky, half shadow, texture2d<half> lut, sampler s,
+                         constant ShadeFrame &f) {
+	float d = length(p);
+	float3 v = p / max(d, 1e-4);
 	float3 n = shadeWaterNormal(p, f);
 	float cosT = saturate(dot(-v, n));
-	float fr = 0.02 + 0.98 * pow(1.0 - cosT, 5.0);
+	float fr = 0.025 + 0.975 * pow(1.0 - cosT, 4.0);
 	float3 r = reflect(v, n);
 	r.y = abs(r.y);
 	float open = float(shadeSkyCurve(sky));
 	float3 refl = shadeSkyLookup(r, lut, s, f) * open;
-	float glint = pow(saturate(dot(r, f.lightDirWorld.xyz)), 900.0) * 900.0 + pow(saturate(dot(r, f.lightDirWorld.xyz)), 60.0) * 6.0;
-	refl += f.sunColor.rgb * (glint * float(shadow) * open);
+	float rl = saturate(dot(r, f.lightDirWorld.xyz));
+	float e = mix(1200.0, 90.0, saturate(d / 90.0));                         // sharp near, broad and dim far away
+	float glint = min(pow(rl, e) * (e + 8.0) * 0.04, 40.0);                  // ~normalized Blinn-Phong lobe, clamped
+	float soft = smoothstep(0.15, 0.85, float(shadow));
+	refl += f.sunColor.rgb * (glint * soft * open);
 	fr *= 0.35 + 0.65 * open;
-	float a = fr + (1.0 - fr) * alpha;
-	return float4((refl * fr + radiance * alpha * (1.0 - fr)) / max(a, 1e-3), a);
+	// body: deep water absorbs red first; the tint's hue, a little of the texture's variation
+	float3 tl = float3(shadeToLinear(tint));
+	float3 body = mix(float3(shadeLuma(tl)), tl, 0.45) * float3(0.5, 0.85, 0.95) * (0.85 + 0.3 * float(texLuma));
+	float3 radiance = lit * body;
+	float bodyAlpha = alpha * 0.75;
+	float a = fr + (1.0 - fr) * bodyAlpha;
+	return float4((refl * fr + radiance * bodyAlpha * (1.0 - fr)) / max(a, 1e-3), a);
 }
 
 // ---- sky ------------------------------------------------------------------------------------------------------------------

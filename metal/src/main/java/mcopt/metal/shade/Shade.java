@@ -65,6 +65,10 @@ public final class Shade {
 		if (initialized || !ENABLED) return;
 		initialized = true;
 		ShadeMsl.register();
+		// Shaded frames take ~4 ms of GPU: presenting from the frame's own command buffer then holds drawables long enough
+		// that nextDrawable blocks the render thread (the 1% lows). Present (and acquire) on mcopt's second queue instead,
+		// unless the user chose otherwise.
+		if (System.getProperty("mcopt.metal.presentQueue") == null) System.setProperty("mcopt.metal.presentQueue", "acquire");
 		System.out.println("[mcopt] shade: native shading on (shadows " + SHADOWS + ", " + mcopt.metal.shade.shadow.ShadowConfig.RES + " px, "
 			+ mcopt.metal.shade.shadow.ShadowConfig.DIST + " blocks"
 			+ (DEBUG != 0 ? ", debug view " + DEBUG : "") + ")");

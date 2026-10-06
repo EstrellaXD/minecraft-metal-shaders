@@ -54,7 +54,7 @@ public final class ShadeFrame {
 	public float moonPhase = 1f;
 	public final ShadeSky.Result sky = new ShadeSky.Result();
 	public float sunIntensity, moonIntensity, mie = 1f;
-	public final float[] blockLight = {1.5f, 0.78f, 0.36f}; // torches: warm orange, strong enough to read at night
+	public final float[] blockLight = {2.4f, 1.2f, 0.48f}; // torches: warm (~2700 K), strong near, falling off fast (shadeBlockCurve)
 	public float minAmbient = 0.004f;
 	/** sRGB fog colour and weight, vanilla fog distances (FogData). */
 	public final float[] fogColor = new float[4];
@@ -86,7 +86,8 @@ public final class ShadeFrame {
 		this.sunIntensity = s.sunIntensity();
 		this.moonIntensity = s.moonIntensity();
 		this.mie = s.mie();
-		this.hazeDensity = 0.0008f * (1f + 4f * this.rain);
+		this.hazeDensity = 0.0008f * (1f + 8f * this.rain); // rain closes the distance in
+		this.hazeStrength = 0.5f + 0.4f * this.rain;
 		// Eye adaptation: the light around the camera. Outdoors (sky light 15 at the eye) that's the sky's; deeper in, torches.
 		float eye = this.eyeSkyLight / 15f;
 		float eyeCurve = eye / (4f - 3f * eye);
@@ -94,6 +95,7 @@ public final class ShadeFrame {
 		float target = ShadeSky.KEY / (float) Math.pow(Math.max(scene, 1e-4f), ShadeSky.ADAPTATION);
 		target *= 1f + 1.5f * this.nightVision;
 		target *= 1f - 0.3f * this.rain; // rain and storms read darker than a clear day, not adapted back up to it
+		target *= s.exposureBias();
 		target = Math.min(Math.max(target, ShadeSky.EXPOSURE_MIN), ShadeSky.EXPOSURE_MAX * (1f + this.nightVision));
 		if (snap || !(this.exposure > 0f)) {
 			this.exposure = target;
@@ -101,6 +103,26 @@ public final class ShadeFrame {
 			float k = 1f - (float) Math.exp(-Math.max(dtSeconds, 0f) / ShadeSky.ADAPT_SECONDS);
 			this.exposure = (float) Math.exp(Math.log(this.exposure) + (Math.log(target) - Math.log(this.exposure)) * k);
 		}
+	}
+
+	/** shade_common.metal's shadeOutput for one colour on the CPU (linear radiance, pre-exposure -> sRGB), without the rods shift. */
+	public static void output(float[] radiance, float exposure, float[] out) {
+		float r = Math.max(radiance[0], 0f) * exposure, g = Math.max(radiance[1], 0f) * exposure, b = Math.max(radiance[2], 0f) * exposure;
+		float m = Math.max(Math.max(r, g), Math.max(b, 1e-6f));
+		float tm = curve(m);
+		float w = ShadeSky.smoothstep(0.6f, 1f, tm) * 0.6f;
+		float[] c = {r, g, b};
+		for (int k = 0; k < 3; k++) {
+			float v = c[k] * tm / m;
+			v = v + (curve(c[k]) - v) * w;
+			v = Math.min(Math.max(v, 0f), 1f);
+			out[k] = v <= 0.0031308f ? v * 12.92f : 1.055f * (float) Math.pow(v, 1 / 2.4) - 0.055f;
+		}
+	}
+
+	private static float curve(float x) {
+		float y = 1f - (float) Math.exp(-1.1f * Math.max(x, 0f));
+		return y * y * 1.006f / (y + 0.006f);
 	}
 
 	/** Writes the struct at address (at least SIZE bytes, any alignment the buffer gives). */

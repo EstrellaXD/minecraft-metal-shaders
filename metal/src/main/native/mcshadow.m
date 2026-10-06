@@ -8,7 +8,8 @@
 #import "mcmetal.h"
 #include <string.h>
 
-#define QUAD_INDICES 384  // 64 quads x {0, 1, 2, 2, 3, 0}
+#define CHUNK_QUADS 32     // ShadowCasters.CHUNK_QUADS (32: a third of the vertex launches were padding with 64)
+#define QUAD_INDICES (CHUNK_QUADS * 6)  // {0, 1, 2, 2, 3, 0} per quad
 #define DRAW_BYTES 24     // per draw from Java: arena MTLBuffer (8), first chunk (4), chunk count (4), kind (4: 0 solid, 1 cutout), pad (4)
 
 typedef struct {
@@ -102,7 +103,7 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 
 		uint16_t indices[QUAD_INDICES];
 		static const uint16_t corners[6] = {0, 1, 2, 2, 3, 0};
-		for (int q = 0, i = 0; q < 64; q++) {
+		for (int q = 0, i = 0; q < CHUNK_QUADS; q++) {
 			for (int c = 0; c < 6; c++) indices[i++] = (uint16_t) (q * 4 + corners[c]);
 		}
 		s->quadIndices = [ctx->device newBufferWithBytes:indices length:sizeof indices options:MTLResourceStorageModeShared];

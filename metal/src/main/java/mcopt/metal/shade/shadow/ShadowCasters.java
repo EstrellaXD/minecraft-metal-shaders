@@ -33,7 +33,7 @@ import org.lwjgl.system.MemoryUtil;
  */
 final class ShadowCasters {
 	static final int KIND_SOLID = 0, KIND_CUTOUT = 1;
-	private static final int CHUNK_QUADS = 64;
+	private static final int CHUNK_QUADS = 32; // mcshadow.m QUAD_INDICES: 32-quad chunks halve the padding launches of 64
 	private static final int REGION_BYTES = 16, CHUNK_BYTES = 8;
 	private static final int UNASSIGNED = 6;
 	/** Sodium's RenderSectionManager, private in SodiumWorldRenderer (mcopt's Lod reads it the same way). */

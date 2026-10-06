@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
 		// one region record per 16x16 column; section index 0 (all geometry in local y -8..24 range of section 0)
 		int cols = (W / 16) * (W / 16);
 		float *regions = calloc(cols * 4, 4);
-		uint32_t *chunks = malloc(maxQuads / 64 * 8 * 2 + 1024);
+		uint32_t *chunks = malloc(maxQuads / 32 * 8 * 2 + 1024);
 		long quads = 0, chunkCount = 0;
 		for (int cz = 0; cz < W / 16; cz++) for (int cx = 0; cx < W / 16; cx++) {
 			int r = cz * (W / 16) + cx;
@@ -52,9 +52,9 @@ int main(int argc, char **argv) {
 					vert(o, x + 1, y, z, 0); vert(o + 5, x + 1, y + 1, z, 0); vert(o + 10, x + 1, y + 1, z + 1, 0); vert(o + 15, x + 1, y, z + 1, 0); quads++;
 				}
 			}
-			for (long qq = first; qq < quads; qq += 64) {
+			for (long qq = first; qq < quads; qq += 32) {
 				chunks[chunkCount * 2] = (uint32_t) (qq * 4);
-				chunks[chunkCount * 2 + 1] = (uint32_t) ((fmin(64, quads - qq) - 1)) | (r << 6);
+				chunks[chunkCount * 2 + 1] = (uint32_t) ((fmin(32, quads - qq) - 1)) | (r << 6);
 				chunkCount++;
 			}
 		}
@@ -78,6 +78,6 @@ int main(int argc, char **argv) {
 		}
 		total /= PER; N -= 2;
 		printf("res %d: %ld quads (%ld chunks, %.1f%% padding) in a 256x256 heightmap: %.3f ms GPU per cascade pass\n", res, quads, chunkCount,
-			100.0 * (chunkCount * 64 - quads) / (chunkCount * 64), total / N * 1000);
+			100.0 * (chunkCount * 32 - quads) / (chunkCount * 32), total / N * 1000);
 	}
 }

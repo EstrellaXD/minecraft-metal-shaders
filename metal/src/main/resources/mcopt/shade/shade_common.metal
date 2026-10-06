@@ -113,11 +113,11 @@ static inline half shadeLumaH(half3 c) { return dot(c, half3(0.2126h, 0.7152h, 0
 // per-channel result (bright light desaturates, like film). Night: a dim-light shift (rods) toward a cool grey, driven by
 // the scene's own luminance before exposure. LDR output (M1); M2 moves this to an HDR target and a post pass.
 static inline float shadeCurve(float x) {
-	float y = 1.0 - exp(-1.1 * max(x, 0.0));
+	float y = 1.0 - exp2(-1.5869637 * max(x, 0.0)); // 1 - e^-1.1x
 	return y * y * 1.006 / (y + 0.006);
 }
 static inline float3 shadeCurve3(float3 x) {
-	float3 y = 1.0 - exp(-1.1 * max(x, 0.0));
+	float3 y = 1.0 - exp2(-1.5869637 * max(x, 0.0));
 	return y * y * 1.006 / (y + 0.006);
 }
 
@@ -129,8 +129,8 @@ static inline float3 shadeOutput(float3 radiance, constant ShadeFrame &f) {
 	c = mix(c, float3(lin) * float3(0.72, 0.88, 1.3), rods) * f.time.z;
 	float m = max(max(c.r, c.g), max(c.b, 1e-6));
 	float tm = shadeCurve(m);
-	float3 hue = c * (tm / m);
-	float3 o = mix(hue, shadeCurve3(c), smoothstep(0.6, 1.0, tm) * 0.6);
+	float3 o = c * (tm / m);
+	if (tm > 0.6) o = mix(o, shadeCurve3(c), smoothstep(0.6, 1.0, tm) * 0.6); // only bright pixels pay for the per-channel curve
 	return float3(shadeToSrgb(half3(saturate(o))));
 }
 

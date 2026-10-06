@@ -9,8 +9,8 @@
 //    (1 = nearest to the light, 0 = farthest; the map is cleared to 0). No Y flip: clip y = +1 is texel row 0.
 //  - Depth clip mode is clamp ("pancaking"): casters between the light and the cascade's near plane land at depth 1.
 //
-// Geometry is pulled, not fetched: one instanced draw per (arena, pass kind) list. Each instance is a chunk of up to 64
-// consecutive quads of one Sodium section facing range; the 384-entry uint16 index buffer turns vertex_id into
+// Geometry is pulled, not fetched: one instanced draw per (arena, pass kind) list. Each instance is a chunk of up to 32
+// consecutive quads of one Sodium section facing range; the 192-entry uint16 index buffer turns vertex_id into
 // quad * 4 + corner (corners {0, 1, 2, 2, 3, 0}). Vertices are read straight from Sodium's geometry arena, in its
 // 20-byte compact format, which is decoded here from its documented bit layout:
 //   word 0: position high 10 bits of x, y, z (bits 0-9, 10-19, 20-29)

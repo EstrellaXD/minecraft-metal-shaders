@@ -150,6 +150,10 @@ public final class ShadeFrameUpdater {
 		float vanilla = f.fogType != ShadeFrame.FOG_AIR || f.dimension != ShadeFrame.DIM_OVERWORLD ? 1f
 			: Math.min(Math.max((64f - fog.environmentalEnd) / 32f, 0f), 1f);
 		f.fogColor[3] = vanilla;
+		if (f.fogType == ShadeFrame.FOG_WATER) { // vanilla's water fog is a vivid blue; a deeper, slightly greyer one under the shaded light
+			float l = 0.2126f * f.fogColor[0] + 0.7152f * f.fogColor[1] + 0.0722f * f.fogColor[2];
+			for (int k = 0; k < 3; k++) f.fogColor[k] = (f.fogColor[k] + (l - f.fogColor[k]) * 0.3f) * 0.7f;
+		}
 		f.fogEnvStart = fog.environmentalStart;
 		f.fogEnvEnd = fog.environmentalEnd;
 		f.fogRenderStart = fog.renderDistanceStart;

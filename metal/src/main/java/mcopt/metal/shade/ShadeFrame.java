@@ -92,6 +92,7 @@ public final class ShadeFrame {
 		float scene = this.sky.sceneLuma * eyeCurve + 0.05f * (1f - eyeCurve) + this.minAmbient;
 		float target = ShadeSky.KEY / (float) Math.pow(Math.max(scene, 1e-4f), ShadeSky.ADAPTATION);
 		target *= 1f + 1.5f * this.nightVision;
+		target *= 1f - 0.3f * this.rain; // rain and storms read darker than a clear day, not adapted back up to it
 		target = Math.min(Math.max(target, ShadeSky.EXPOSURE_MIN), ShadeSky.EXPOSURE_MAX * (1f + this.nightVision));
 		if (snap || !(this.exposure > 0f)) {
 			this.exposure = target;

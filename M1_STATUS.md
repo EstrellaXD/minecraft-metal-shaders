@@ -13,7 +13,7 @@ The output is `metal/build/libs/metal-0.2.0-alpha.3.jar`. Everything is behind `
 `mcopt.shade=true` in `config/mcopt.properties`.
 
 **Result:** M1 runs at native Retina 3024x1964 at ~215 fps in the spin and ~185 fps in the flight on a contended GPU
-(other apps kept it 50-98 % busy during the final runs), and an estimated ~235 / ~200 on a quiet machine: well above
+(other apps kept it 50-98 % busy during the final runs), and an estimated ~230 / ~195 on a quiet machine: well above
 the 120 fps target, about 10x Iris + Complementary at the same resolution. Since the review round the 1% lows are
 ~1.5-2x better (present queue) and the look is clearly different from vanilla by day (mean |shade on - off| over the
 terrain half of the frame: 26 / 20 at noon / forest, was 8 / 9). With the flag off the mod behaves like upstream.

@@ -1,0 +1,228 @@
+/*
+ * Copyright 2026 mcopt-shade contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package mcopt.metal.shade;
+
+/**
+ * The CPU twin of shade_common.metal's atmosphere (shadeColumn, shadeScatter, shadeSkyRadiance), line for line, plus what
+ * only the CPU computes once per frame from it: the light reaching the ground from the sun or moon, sky and ground ambient,
+ * the horizon colour table the terrain fogs into, and the exposure the eye adapts to. Keeping one model for the sky pixels,
+ * the terrain's light and its fog is what makes the horizon seamless. Pure math, no game types.
+ */
+public final class ShadeSky {
+	static final float R_GROUND = 6360f, R_TOP = 6420f, ALTITUDE = 0.5f, H_R = 8f, H_M = 1.2f, MIE_G = 0.78f;
+	static final int SAMPLES = 8;
+	static final float[] BETA_R = {5.802e-3f, 13.558e-3f, 33.1e-3f};
+	static final float BETA_M = 3.996e-3f, BETA_M_EXT = 4.440e-3f;
+	static final float[] BETA_O = {0.650e-3f * 2.2f, 1.881e-3f * 2.2f, 0.085e-3f * 2.2f};
+	/** Moonlight tint, as the shader's shadeSkyRadiance applies it. */
+	static final float[] MOON_TINT = {0.85f, 0.95f, 1.25f};
+	static final float[] AIRGLOW = {0.0006f, 0.0009f, 0.0018f};
+
+	// ---- art direction: the knobs, in one place ----
+	/** Sun irradiance in the scattering integral (arbitrary units; exposure maps them to the screen). */
+	public static final float SUN_INTENSITY = 20f;
+	/** Full-moon intensity relative to the sun: far brighter than reality so nights are playable. */
+	public static final float MOON_INTENSITY = SUN_INTENSITY * 0.012f;
+	/** Sky and fog brightness relative to the physical single-scattering result (games show a brighter sky than physics). */
+	public static final float SKY_BRIGHTNESS = 3.4f;
+	/** Sky light on terrain relative to the physical sky irradiance: softer shadows, the stylized look. */
+	public static final float AMBIENT_BOOST = 4.0f;
+	/** Exposure: the average scene luminance maps to this; clamped to the range below, adapted over ADAPT_SECONDS. */
+	public static final float KEY = 0.5f, EXPOSURE_MIN = 0.1f, EXPOSURE_MAX = 2.6f, ADAPT_SECONDS = 1.2f;
+	/** How much of a brightness change the eye compensates: 1 = all of it (every scene as bright), 0 = none. */
+	public static final float ADAPTATION = 0.7f;
+
+	private ShadeSky() {
+	}
+
+	static float column(float r, float mu, float h) {
+		float c = (float) Math.sqrt(r / h * 1.5707963f);
+		if (mu >= 0f) return h * (float) Math.exp((R_GROUND - r) / h) * c / ((c - 1f) * mu + 1f);
+		float rt = r * (float) Math.sqrt(Math.max(1f - mu * mu, 0f));
+		float deep = Math.max(R_GROUND - rt, 0f);
+		rt = Math.max(rt, R_GROUND);
+		float ct = (float) Math.sqrt(rt / h * 1.5707963f);
+		return h * (2f * ct * (float) Math.exp((R_GROUND - rt) / h) - (float) Math.exp((R_GROUND - r) / h) * c / ((c - 1f) * -mu + 1f)) + deep * 1.5f;
+	}
+
+	static float phaseR(float mu) {
+		return 0.0596831f * (1f + mu * mu);
+	}
+
+	static float phaseM(float mu, float g) {
+		float g2 = g * g;
+		return 0.1193662f * (1f - g2) * (1f + mu * mu) / ((2f + g2) * (float) Math.pow(Math.max(1f + g2 - 2f * g * mu, 1e-4f), 1.5));
+	}
+
+	/** shadeScatter: radiance along unit dir (x, y, z) from a light of intensity at unit lightDir; adds into out[0..2]. */
+	static void scatter(float dx, float dy, float dz, float lx, float ly, float lz, float intensity, float mie, float[] tint, float[] out) {
+		float r0 = R_GROUND + ALTITUDE;
+		float b = r0 * dy;
+		float tEnd = -b + (float) Math.sqrt(Math.max(b * b - r0 * r0 + R_TOP * R_TOP, 0f));
+		float dg = b * b - r0 * r0 + R_GROUND * R_GROUND;
+		if (dy < 0f && dg > 0f) tEnd = -b - (float) Math.sqrt(dg);
+		float mu = dx * lx + dy * ly + dz * lz;
+		float pr = phaseR(mu), pm = phaseM(mu, MIE_G);
+		float betaM = BETA_M * mie, betaMExt = BETA_M_EXT * mie;
+		float odR = 0, odM = 0, tPrev = 0;
+		float sr0 = 0, sr1 = 0, sr2 = 0, sm0 = 0, sm1 = 0, sm2 = 0;
+		for (int i = 0; i < SAMPLES; i++) {
+			float u = (float) (i + 1) / SAMPLES;
+			float t = tEnd * u * u, dt = t - tPrev, tm = 0.5f * (t + tPrev);
+			tPrev = t;
+			float px = dx * tm, py = r0 + dy * tm, pz = dz * tm;
+			float r = (float) Math.sqrt(px * px + py * py + pz * pz);
+			float dR = (float) Math.exp((R_GROUND - r) / H_R) * dt, dM = (float) Math.exp((R_GROUND - r) / H_M) * dt;
+			float muL = (px * lx + py * ly + pz * lz) / r;
+			float cR = odR + 0.5f * dR + column(r, muL, H_R), cM = odM + 0.5f * dM + column(r, muL, H_M);
+			float t0 = (float) Math.exp(-(BETA_R[0] + BETA_O[0]) * cR - betaMExt * cM);
+			float t1 = (float) Math.exp(-(BETA_R[1] + BETA_O[1]) * cR - betaMExt * cM);
+			float t2 = (float) Math.exp(-(BETA_R[2] + BETA_O[2]) * cR - betaMExt * cM);
+			sr0 += t0 * dR; sr1 += t1 * dR; sr2 += t2 * dR;
+			sm0 += t0 * dM; sm1 += t1 * dM; sm2 += t2 * dM;
+			odR += dR;
+			odM += dM;
+		}
+		out[0] += tint[0] * intensity * (BETA_R[0] * pr * sr0 + betaM * pm * sm0);
+		out[1] += tint[1] * intensity * (BETA_R[1] * pr * sr1 + betaM * pm * sm1);
+		out[2] += tint[2] * intensity * (BETA_R[2] * pr * sr2 + betaM * pm * sm2);
+	}
+
+	private static final float[] WHITE = {1f, 1f, 1f};
+
+	/** Everything the per-frame atmosphere depends on. */
+	public record Sky(float sunX, float sunY, float sunZ, float moonX, float moonY, float moonZ, float moonPhase, float rain, float thunder) {
+		float sunIntensity() {
+			return SUN_INTENSITY;
+		}
+
+		/** The moon fades in as the sun's last scattering fades out (the shader computes both only while both count). */
+		float moonIntensity() {
+			return MOON_INTENSITY * (0.35f + 0.65f * this.moonPhase) * smoothstep(-0.10f, -0.22f, this.sunY);
+		}
+
+		float mie() {
+			return 1f + 3f * this.rain;
+		}
+	}
+
+	/** shadeSkyRadiance: sky radiance (linear, pre-exposure, with SKY_BRIGHTNESS) along unit dir into out. */
+	public static void radiance(Sky s, float dx, float dy, float dz, float[] out) {
+		out[0] = out[1] = out[2] = 0f;
+		if (s.sunY > -0.22f) scatter(dx, dy, dz, s.sunX, s.sunY, s.sunZ, s.sunIntensity(), s.mie(), WHITE, out);
+		float moon = s.moonIntensity();
+		if (moon > 0f) scatter(dx, dy, dz, s.moonX, s.moonY, s.moonZ, moon, s.mie(), MOON_TINT, out);
+		for (int k = 0; k < 3; k++) out[k] += AIRGLOW[k] * (1f - 0.5f * s.rain);
+		float l = luma(out[0], out[1], out[2]);
+		float grey = 1f - 0.45f * s.thunder, w = s.rain * 0.75f;
+		out[0] = mix(out[0], l * 0.92f * grey, w) * SKY_BRIGHTNESS;
+		out[1] = mix(out[1], l * 0.96f * grey, w) * SKY_BRIGHTNESS;
+		out[2] = mix(out[2], l * grey, w) * SKY_BRIGHTNESS;
+	}
+
+	/** Light from the sun (or moon) through the atmosphere to the camera, per channel, for a light at unit (x, y, z). */
+	static void transmittance(float y, float mie, float[] out) {
+		float r0 = R_GROUND + ALTITUDE;
+		float cR = column(r0, y, H_R), cM = column(r0, y, H_M);
+		for (int k = 0; k < 3; k++) out[k] = (float) Math.exp(-(BETA_R[k] + BETA_O[k]) * cR - BETA_M_EXT * mie * cM);
+	}
+
+	/** What the frame's light and fog get from the atmosphere; see ShadeFrame for where each lands. */
+	public static final class Result {
+		public final float[] lightDir = new float[3];
+		public boolean sunLight;
+		/** Direct light reaching the ground, divided by pi. */
+		public final float[] light = new float[3];
+		public final float[] ambientSky = new float[3], ambientGround = new float[3], zenith = new float[3];
+		/** Sky (and half the ground) light on vertical faces turned toward / away from the sun's azimuth. */
+		public final float[] ambientToward = new float[3], ambientAway = new float[3];
+		public final float[][] horizon = new float[8][3];
+		/** Average scene luminance the exposure adapts to (before eye sky light). */
+		public float sceneLuma;
+	}
+
+	public static void compute(Sky s, Result r) {
+		float mie = s.mie();
+		float[] t = new float[3], tmp = new float[3];
+		// The light: the sun while it's up, the moon once the sun is well down (both are near zero at the switch).
+		r.sunLight = s.sunY > -0.06f;
+		if (r.sunLight) {
+			transmittance(s.sunY, mie, t);
+			float f = SUN_INTENSITY * smoothstep(-0.06f, 0.02f, s.sunY) * (1f - 0.85f * s.rain) * (1f - 0.5f * s.thunder) / (float) Math.PI;
+			for (int k = 0; k < 3; k++) r.light[k] = t[k] * f;
+			r.lightDir[0] = s.sunX; r.lightDir[1] = s.sunY; r.lightDir[2] = s.sunZ;
+		} else {
+			transmittance(Math.max(s.moonY, -1f), mie, t);
+			float f = s.moonIntensity() * smoothstep(-0.04f, 0.06f, s.moonY) * (1f - 0.85f * s.rain) / (float) Math.PI;
+			for (int k = 0; k < 3; k++) r.light[k] = t[k] * f * MOON_TINT[k];
+			r.lightDir[0] = s.moonX; r.lightDir[1] = s.moonY; r.lightDir[2] = s.moonZ;
+		}
+		// Sky light on an upward face and on vertical faces turned toward / away from the sun's azimuth: directions in rings,
+		// weighted by solid angle and the face's cosine; vertical faces also see half a hemisphere of ground.
+		float ax = s.sunX, az = s.sunZ, al = (float) Math.sqrt(ax * ax + az * az);
+		if (al > 1e-3f) { ax /= al; az /= al; } else { ax = 1f; az = 0f; }
+		float[] up = new float[3], toward = new float[3], away = new float[3];
+		float[][] bands = {{0f, 0.35f, 8}, {0.35f, 0.8f, 8}, {0.8f, 1.2f, 6}, {1.2f, 1.5707963f, 1}};
+		for (float[] band : bands) {
+			float lo = band[0], hi = band[1];
+			int n = (int) band[2];
+			float mid = 0.5f * (lo + hi);
+			float solid = (float) (2 * Math.PI * (Math.sin(hi) - Math.sin(lo))) / n;
+			float cy = (float) Math.sin(mid), ch = (float) Math.cos(mid);
+			for (int i = 0; i < n; i++) {
+				double a = (i + 0.5) * 2 * Math.PI / n;
+				float dx = ch * (float) Math.cos(a), dz = ch * (float) Math.sin(a);
+				radiance(s, dx, cy, dz, tmp);
+				float side = dx * ax + dz * az;
+				for (int k = 0; k < 3; k++) {
+					up[k] += tmp[k] * cy * solid;
+					toward[k] += tmp[k] * Math.max(side, 0f) * solid;
+					away[k] += tmp[k] * Math.max(-side, 0f) * solid;
+				}
+			}
+		}
+		float sunOnGround = Math.max(r.lightDir[1], 0f);
+		float k1 = AMBIENT_BOOST / SKY_BRIGHTNESS / (float) Math.PI;
+		for (int k = 0; k < 3; k++) {
+			r.ambientSky[k] = up[k] * k1;
+			// a green-grey ground lit by the light and the sky
+			float albedo = k == 1 ? 0.10f : k == 0 ? 0.085f : 0.06f;
+			float ground = albedo * (r.light[k] * sunOnGround + up[k] / SKY_BRIGHTNESS / (float) Math.PI) * AMBIENT_BOOST * 0.6f;
+			r.ambientGround[k] = ground + r.ambientSky[k] * 0.3f;
+			r.ambientToward[k] = toward[k] * k1 + 0.5f * ground;
+			r.ambientAway[k] = away[k] * k1 + 0.5f * ground;
+		}
+		radiance(s, 0f, 1f, 0f, r.zenith);
+		for (int i = 0; i < 8; i++) {
+			float x = i / 3.5f - 1f;
+			radiance(s, x, 0.0f, (float) Math.sqrt(Math.max(0f, 1f - x * x)), r.horizon[i]);
+		}
+		r.sceneLuma = luma(r.light[0], r.light[1], r.light[2]) * 0.55f * Math.max(r.lightDir[1], 0.15f) + luma(r.ambientSky[0], r.ambientSky[1], r.ambientSky[2]);
+	}
+
+	static float luma(float r, float g, float b) {
+		return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+	}
+
+	static float mix(float a, float b, float t) {
+		return a + (b - a) * t;
+	}
+
+	static float smoothstep(float e0, float e1, float x) {
+		float t = Math.min(Math.max((x - e0) / (e1 - e0), 0f), 1f);
+		return t * t * (3f - 2f * t);
+	}
+}

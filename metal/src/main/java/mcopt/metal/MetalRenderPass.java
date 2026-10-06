@@ -115,6 +115,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		Native.pipeline(this.enc, this.hasDepth ? p.withDepth : p.withoutDepth, p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
+		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc); // far terrain may have opened encoders of its own
 	}
 
 	/** Called by the encoder when the frontend ends the pass. */
@@ -146,6 +147,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	/** After MetalTerrain split the pass: the reopened encoder has none of the frontend's state, so bind it all again. */
 	private void rebind() {
+		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc);
 		Arrays.fill(this.bound, null);
 		this.dirtyUpTo = Objects.requireNonNull(this.pipeline).uniforms.size();
 		this.bindUniforms(0);

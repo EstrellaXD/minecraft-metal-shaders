@@ -1,0 +1,170 @@
+/*
+ * Copyright 2026 mcopt-shade contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package mcopt.metal.shade;
+
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.frontend.FrontendCommandEncoder;
+import mcopt.metal.MetalBridge;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.fog.FogData;
+import net.minecraft.client.renderer.state.GameRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.SkyRenderState;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.material.FogType;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
+import org.joml.Vector3fc;
+import org.joml.Vector4f;
+
+/**
+ * Fills the ShadeFrame once per frame, at LevelRenderer.render HEAD (ShadeLevelRendererMixin), from what the game
+ * extracted for this frame: the camera (matrices as the world is drawn, previous frame's for reprojection), the sky
+ * (sun and moon angles, phase, stars), weather, fog, the light around the camera; then writes it into the next ring slot,
+ * points the bindings at it, and renders the sky-view LUT before the sky pass draws.
+ */
+public final class ShadeFrameUpdater {
+	static final ShadeFrame FRAME = new ShadeFrame();
+	/** The projection the world is drawn with this frame (view bobbing, hurt tilt, nausea), from ShadeGameRendererMixin. */
+	private static final Matrix4f PROJECTION = new Matrix4f();
+	private static boolean projectionSet;
+	private static final Matrix4f PREVIOUS_VIEW_PROJ = new Matrix4f();
+	private static double prevX, prevY, prevZ;
+	private static boolean hasPrevious;
+	private static long lastNanos;
+	private static int lastDimension = -1;
+	private static final float[] MOON_BRIGHTNESS = {1f, 0.75f, 0.5f, 0.25f, 0f, 0.25f, 0.5f, 0.75f};
+
+	private ShadeFrameUpdater() {
+	}
+
+	/** Called with the matrix RenderSystem.setProjectionMatrix receives in GameRenderer.renderLevel. */
+	public static void projection(Matrix4fc projection) {
+		PROJECTION.set(projection);
+		projectionSet = true;
+	}
+
+	public static void update(CameraRenderState camera) {
+		Object encoder = MetalBridge.encoder(((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend());
+		if (encoder == null) return; // not on the Metal backend
+		long enc = MetalBridge.enc(encoder);
+		if (!ShadeBindings.ready() && !ShadeBindings.init(MetalBridge.ctx(encoder))) return;
+		Minecraft mc = Minecraft.getInstance();
+		ClientLevel level = mc.level;
+		GameRenderState game = mc.gameRenderer.gameRenderState();
+		LevelRenderState state = game.levelRenderState;
+		SkyRenderState sky = state.skyRenderState;
+		ShadeFrame f = FRAME;
+		float partial = state.worldPartialTicks;
+
+		// camera
+		f.view.set(camera.viewRotationMatrix);
+		f.proj.set(projectionSet ? PROJECTION : camera.projectionMatrix);
+		projectionSet = false;
+		f.proj.mul(f.view, f.viewProj);
+		f.viewProj.invert(f.invViewProj);
+		double x = camera.pos.x, y = camera.pos.y, z = camera.pos.z;
+		if (hasPrevious && Math.abs(x - prevX) + Math.abs(y - prevY) + Math.abs(z - prevZ) < 64) {
+			// last frame's clip space from this frame's camera-relative positions: shift by the camera's motion first
+			PREVIOUS_VIEW_PROJ.translate((float) (x - prevX), (float) (y - prevY), (float) (z - prevZ), f.prevViewProj);
+		} else {
+			f.prevViewProj.set(f.viewProj);
+		}
+		PREVIOUS_VIEW_PROJ.set(f.viewProj);
+		prevX = x;
+		prevY = y;
+		prevZ = z;
+		hasPrevious = true;
+		f.cameraX = x;
+		f.cameraY = y;
+		f.cameraZ = z;
+		f.prevJitterX = f.jitterX;
+		f.prevJitterY = f.jitterY;
+		var target = mc.gameRenderer.mainRenderTarget();
+		f.width = Math.max(1, target.width);
+		f.height = Math.max(1, target.height);
+
+		// sky, dimension
+		f.dimension = sky.skybox == DimensionType.Skybox.OVERWORLD ? ShadeFrame.DIM_OVERWORLD
+			: sky.skybox == DimensionType.Skybox.END ? ShadeFrame.DIM_END : ShadeFrame.DIM_NETHER;
+		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
+			// SkyRenderer: RotY(-90) * RotX(angle) * (0, 1, 0)
+			f.sunDir.set(-(float) Math.sin(sky.sunAngle), (float) Math.cos(sky.sunAngle), 0f);
+			f.moonDir.set(-(float) Math.sin(sky.moonAngle), (float) Math.cos(sky.moonAngle), 0f);
+			f.moonPhase = MOON_BRIGHTNESS[Math.floorMod(sky.moonPhase.index(), 8)];
+			f.starBrightness = sky.starBrightness;
+			f.dayTime = (float) (sky.sunAngle / (2 * Math.PI) - Math.floor(sky.sunAngle / (2 * Math.PI)));
+			Vector3fc skyColor = sky.skyColor;
+			if (skyColor != null) {
+				f.skyColor[0] = skyColor.x();
+				f.skyColor[1] = skyColor.y();
+				f.skyColor[2] = skyColor.z();
+			}
+		} else {
+			f.sunDir.set(0f, 1f, 0f);
+			f.moonDir.set(0f, -1f, 0f);
+			f.starBrightness = 0f;
+		}
+		f.rain = level != null ? level.getRainLevel(partial) : 0f;
+		f.thunder = level != null ? level.getThunderLevel(partial) : 0f;
+		f.gameTimeSeconds = ((state.gameTime % 72000L) + partial) / 20f;
+		f.partialTick = partial;
+
+		// fog
+		FogData fog = camera.fogData;
+		FogType fogType = camera.fogType;
+		f.fogType = fogType == FogType.WATER ? ShadeFrame.FOG_WATER : fogType == FogType.LAVA ? ShadeFrame.FOG_LAVA
+			: fogType == FogType.POWDER_SNOW ? ShadeFrame.FOG_POWDER_SNOW : ShadeFrame.FOG_AIR;
+		f.underwater = fogType == FogType.WATER;
+		Vector4f fogColor = fog.color;
+		f.fogColor[0] = fogColor.x;
+		f.fogColor[1] = fogColor.y;
+		f.fogColor[2] = fogColor.z;
+		// The game's fog colour wins under water, in lava and powder snow, outside the overworld, and with fog that closes in
+		// (blindness, darkness, the boss fog): there the atmosphere has nothing to say.
+		float vanilla = f.fogType != ShadeFrame.FOG_AIR || f.dimension != ShadeFrame.DIM_OVERWORLD ? 1f
+			: Math.min(Math.max((64f - fog.environmentalEnd) / 32f, 0f), 1f);
+		f.fogColor[3] = vanilla;
+		f.fogEnvStart = fog.environmentalStart;
+		f.fogEnvEnd = fog.environmentalEnd;
+		f.fogRenderStart = fog.renderDistanceStart;
+		f.fogRenderEnd = fog.renderDistanceEnd;
+		f.fogSkyEnd = fog.skyEnd;
+		f.fogCloudEnd = fog.cloudEnd;
+
+		// light around the camera, brightness, night vision
+		f.eyeSkyLight = level != null ? level.getBrightness(LightLayer.SKY, camera.blockPos) : 15;
+		var lightmap = game.lightmapRenderState;
+		f.nightVision = lightmap.nightVisionEffectIntensity;
+		f.minAmbient = 0.0025f + 0.02f * lightmap.brightness + 0.25f * f.nightVision;
+
+		f.debug = Shade.DEBUG;
+		f.frameIndex++;
+		long now = System.nanoTime();
+		float dt = lastNanos == 0 ? 0f : (now - lastNanos) / 1e9f;
+		lastNanos = now;
+		boolean snap = lastDimension != f.dimension || dt > 1f;
+		lastDimension = f.dimension;
+		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
+
+		f.pack(ShadeBindings.nextSlot());
+		ShadeBindings.publish();
+		ShadeBindings.renderSkyLut(enc);
+	}
+}

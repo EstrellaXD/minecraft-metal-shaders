@@ -307,6 +307,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 			}
 			int continued = Native.renderBegin(this.enc, colorCount, colorHandles, clears, depthHandle, clearDepth ? 1 : 0, (float) depthValue, width, height);
 			if (mcopt.metal.cpu.Cpu.PASS_AB) mcopt.metal.cpu.Cpu.PASS_TIMER.end();
+			if (mcopt.metal.shade.ShadeBindings.ON && continued == 0) mcopt.metal.shade.ShadeBindings.bind(this.ctx, this.enc); // a new encoder has no bindings
 			if (redirect != null) redirect.delegate().begin(this.enc, depthHandle != 0);
 			if (keptDelegate != null) keptDelegate.begin(this.enc, depthHandle != 0);
 			MetalHooks.Labeler labeler = MetalHooks.labeler;

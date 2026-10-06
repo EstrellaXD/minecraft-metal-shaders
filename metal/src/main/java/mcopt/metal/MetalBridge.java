@@ -216,4 +216,13 @@ public final class MetalBridge {
 	public static void release(long handle) {
 		Native.release(handle);
 	}
+
+	/**
+	 * The backend pipeline's PSO for other color attachment formats (MTLPixelFormat per color target, same count), with or
+	 * without the Depth32Float attachment, or its MetalTerrain pulled twin (0 if it has none): see MetalPipeline.variant.
+	 * Needs -Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true.
+	 */
+	public static long pipelineVariant(Object backendPipeline, int[] colorFormats, boolean depth, boolean pulled) {
+		return ((MetalPipeline) backendPipeline).variant(colorFormats, depth, pulled);
+	}
 }

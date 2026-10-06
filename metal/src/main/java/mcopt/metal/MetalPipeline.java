@@ -49,9 +49,25 @@ final class MetalPipeline implements BackendRenderPipeline {
 	final long pulled;
 	private final MetalEncoder encoder;
 	private boolean closed;
+	/**
+	 * What the pipeline was built from, kept (only when RETAIN) so variant() can build the same shaders for other attachment
+	 * formats (an HDR target, a G-buffer) without the frontend: the create info, both stages' final MSL and entry points,
+	 * and the pulled twin's vertex MSL (null without one). Upstream drops all of these after compiling.
+	 */
+	private final @Nullable CreateInfo info;
+	private final @Nullable String vertexMsl, fragmentMsl, pulledMsl, vertexEntry, fragmentEntry;
+	/** variant() PSOs by key, released with the pipeline. */
+	private final Map<String, Long> variants = new java.util.HashMap<>();
 
-	private MetalPipeline(MetalEncoder encoder, long withDepth, long withoutDepth, long pulled, long depthState, int depthCompare, CreateInfo info) {
+	private MetalPipeline(MetalEncoder encoder, long withDepth, long withoutDepth, long pulled, long depthState, int depthCompare, CreateInfo info,
+		@Nullable Retained retained) {
 		this.encoder = encoder;
+		this.info = retained != null ? info : null;
+		this.vertexMsl = retained != null ? retained.vertex.msl : null;
+		this.fragmentMsl = retained != null ? retained.fragment.msl : null;
+		this.vertexEntry = retained != null ? retained.vertex.entry : null;
+		this.fragmentEntry = retained != null ? retained.fragment.entry : null;
+		this.pulledMsl = retained != null ? retained.pulled : null;
 		this.withDepth = withDepth;
 		this.withoutDepth = withoutDepth;
 		this.pulled = pulled;
@@ -89,6 +105,11 @@ final class MetalPipeline implements BackendRenderPipeline {
 				v = new Translated(resource("sodium_terrain.vs.metal"), v.entry);
 				f = new Translated(defines + resource("sodium_terrain.fs.metal"), f.entry);
 			}
+			MetalShaderRegistry.Variant registered = registered(info);
+			if (registered != null) {
+				v = apply(registered.vertex(), registered.vertexEntry(), v, info);
+				f = apply(registered.fragment(), registered.fragmentEntry(), f, info);
+			}
 			if (OVERRIDE_DIR != null) {
 				v = override(info.name() + ".vs.metal", v);
 				f = override(info.name() + ".fs.metal", f);
@@ -113,9 +134,12 @@ final class MetalPipeline implements BackendRenderPipeline {
 				if (withoutDepth == 0) throw new IllegalStateException(info.name() + ": " + MemoryUtil.memUTF8(err));
 			}
 			long pulled = 0;
+			String pulledSource = null;
 			if (defines != null && MetalTerrain.OCC && !info.name().contains("translucent")) {
 				// Translucent stays on Sodium's own draws: its quads are drawn in sorted index-buffer order.
 				String twin = "#define PULLED\n" + resource("sodium_terrain.vs.metal");
+				if (registered != null && registered.vertex() != null) twin = apply(registered.vertex(), registered.vertexEntry(), new Translated(twin, v.entry), info).msl;
+				pulledSource = twin;
 				plib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(twin)), err, 4096);
 				if (plib == 0) throw new IllegalStateException(info.name() + " pulled vertex: " + MemoryUtil.memUTF8(err));
 				pulled = Native.pipelineNew(ctx, plib, vname, flib, fname, describe(stack, info, true, false), err, 4096);
@@ -123,7 +147,8 @@ final class MetalPipeline implements BackendRenderPipeline {
 			}
 			int compare = depth == null ? 7 : MetalConst.compare(depth.depthTest());
 			long depthState = Native.depthStateNew(ctx, compare, depth != null && depth.writeDepth() ? 1 : 0);
-			MetalPipeline pipeline = new MetalPipeline(encoder, withDepth, withoutDepth, pulled, depthState, compare, info);
+			MetalPipeline pipeline = new MetalPipeline(encoder, withDepth, withoutDepth, pulled, depthState, compare, info,
+				RETAIN ? new Retained(v, f, pulledSource) : null);
 			return pipeline;
 		} finally {
 			if (vlib != 0) Native.release(vlib);
@@ -143,6 +168,36 @@ final class MetalPipeline implements BackendRenderPipeline {
 	private static final @Nullable String DUMP_DIR = System.getProperty("mcopt.metal.dumpMsl");
 	/** -Dmcopt.metal.overrideMsl=DIR uses DIR/NAME.{vs,fs}.metal instead of the generated source when present: shader experiments without a rebuild. */
 	private static final @Nullable String OVERRIDE_DIR = System.getProperty("mcopt.metal.overrideMsl");
+
+	/**
+	 * Keep each pipeline's create info and final MSL for variant(): on with the native shading pipeline (-Dmcopt.shade=true)
+	 * or -Dmcopt.metal.retainMsl=true; off, pipelines are exactly upstream's.
+	 */
+	static final boolean RETAIN = Boolean.getBoolean("mcopt.shade") || Boolean.getBoolean("mcopt.metal.retainMsl");
+
+	private record Retained(Translated vertex, Translated fragment, @Nullable String pulled) {
+	}
+
+	/** Pipelines whose registry variant was skipped (missing uniforms), logged once each. */
+	private static final java.util.Set<String> SKIPPED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	private static MetalShaderRegistry.@Nullable Variant registered(CreateInfo info) {
+		MetalShaderRegistry.Variant variant = MetalShaderRegistry.get(info.name());
+		if (variant == null) return null;
+		for (String required : variant.required()) {
+			if (info.uniforms().stream().noneMatch(u -> u.name().equals(required))) {
+				if (SKIPPED.add(info.name())) System.out.println("mcopt-metal: registry MSL for " + info.name() + " skipped, the pipeline has no uniform " + required);
+				return null;
+			}
+		}
+		return variant;
+	}
+
+	private static Translated apply(java.util.function.@Nullable UnaryOperator<String> stage, String entry, Translated current, CreateInfo info) {
+		if (stage == null) return current;
+		List<String> names = info.uniforms().stream().map(BindGroupLayout.UniformDescription::name).toList();
+		return new Translated(MetalShaderRegistry.slotDefines(names) + stage.apply(current.msl), entry);
+	}
 
 	/**
 	 * -Dmcopt.metal.uncachedMsl=true gives every source a per-launch prefix so Metal's on-disk shader cache misses: what the
@@ -202,6 +257,11 @@ final class MetalPipeline implements BackendRenderPipeline {
 
 	/** Packs the pipeline layout into the int array mc_pipeline_new reads (see mcmetal.m); no vertex input for shaders that pull their own. */
 	private static long describe(MemoryStack stack, CreateInfo info, boolean hasDepth, boolean vertexInput) {
+		return describe(stack, info, hasDepth, vertexInput, null);
+	}
+
+	/** colorFormats: MTLPixelFormat per color target in place of the pipeline's own (same count), or null to keep them. */
+	private static long describe(MemoryStack stack, CreateInfo info, boolean hasDepth, boolean vertexInput, int @Nullable [] colorFormats) {
 		IntBuffer d = stack.mallocInt(5 + info.vertexBuffers().size() * 3 + info.attribBindings().size() * 4 + info.colorTargetStates().size() * 9);
 		List<CreateInfo.VertexBuffer> buffers = vertexInput ? info.vertexBuffers() : List.of();
 		List<CreateInfo.AttribBinding> attributes = vertexInput ? info.attribBindings() : List.of();
@@ -212,14 +272,16 @@ final class MetalPipeline implements BackendRenderPipeline {
 			d.put(a.location()).put(MetalConst.VERTEX_BUFFER_BASE + a.bufferSlot()).put(a.offset()).put(MetalConst.vertexFormat(a.format()));
 		}
 		d.put(info.colorTargetStates().size());
+		int target = 0;
 		for (@Nullable ColorTargetState c : info.colorTargetStates()) {
+			int index = target++;
 			if (c == null) {
 				d.put(new int[9]);
 				continue;
 			}
 			// MTLColorWriteMask is ABGR-ordered (red = 8), renderpearl's is RGBA-ordered (red = 1).
 			int mask = (c.writeRed() ? 8 : 0) | (c.writeGreen() ? 4 : 0) | (c.writeBlue() ? 2 : 0) | (c.writeAlpha() ? 1 : 0);
-			d.put(MetalConst.pixelFormat(c.format())).put(mask);
+			d.put(colorFormats != null ? colorFormats[index] : MetalConst.pixelFormat(c.format())).put(mask);
 			if (c.blendFunction().isPresent()) {
 				var b = c.blendFunction().get();
 				d.put(1).put(MetalConst.blendFactor(b.color().sourceFactor())).put(MetalConst.blendFactor(b.color().destFactor())).put(MetalConst.blendOp(b.color().op()))
@@ -345,6 +407,41 @@ final class MetalPipeline implements BackendRenderPipeline {
 		}
 	}
 
+	/**
+	 * This pipeline's shaders and state for other color attachment formats: colorFormats holds an MTLPixelFormat per color
+	 * target (same count as the pipeline's), depth whether the pass has a (Depth32Float) depth attachment, pulled the
+	 * MetalTerrain twin (0 when there is none). Built on first use from the retained MSL (Metal's shader cache makes the
+	 * recompile cheap) and cached until the pipeline closes. Needs RETAIN (-Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true).
+	 */
+	synchronized long variant(int[] colorFormats, boolean depth, boolean pulled) {
+		if (this.closed) throw new IllegalStateException(this.name + " is closed");
+		if (this.info == null) throw new IllegalStateException("MetalPipeline.variant needs -Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true");
+		if (colorFormats.length != this.info.colorTargetStates().size()) {
+			throw new IllegalArgumentException(this.name + " has " + this.info.colorTargetStates().size() + " color targets, not " + colorFormats.length);
+		}
+		if (pulled && this.pulledMsl == null) return 0;
+		String key = java.util.Arrays.toString(colorFormats) + (depth ? "+d" : "") + (pulled ? "+p" : "");
+		Long cached = this.variants.get(key);
+		if (cached != null) return cached;
+		long ctx = this.encoder.ctx, vlib = 0, flib = 0;
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			long err = stack.nmalloc(1, 4096);
+			String vsrc = pulled ? this.pulledMsl : this.vertexMsl;
+			vlib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(vsrc)), err, 4096);
+			if (vlib == 0) throw new IllegalStateException(this.name + " variant vertex: " + MemoryUtil.memUTF8(err));
+			flib = Native.libraryNew(ctx, MemoryUtil.memAddress(stack.UTF8(this.fragmentMsl)), err, 4096);
+			if (flib == 0) throw new IllegalStateException(this.name + " variant fragment: " + MemoryUtil.memUTF8(err));
+			long vname = MemoryUtil.memAddress(stack.UTF8(this.vertexEntry)), fname = MemoryUtil.memAddress(stack.UTF8(this.fragmentEntry));
+			long pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, colorFormats), err, 4096);
+			if (pso == 0) throw new IllegalStateException(this.name + " variant " + key + ": " + MemoryUtil.memUTF8(err));
+			this.variants.put(key, pso);
+			return pso;
+		} finally {
+			if (vlib != 0) Native.release(vlib);
+			if (flib != 0) Native.release(flib);
+		}
+	}
+
 	@Override
 	public boolean isClosed() {
 		return this.closed;
@@ -358,6 +455,10 @@ final class MetalPipeline implements BackendRenderPipeline {
 			if (this.withoutDepth != 0) this.encoder.releaseLater(this.withoutDepth);
 			if (this.pulled != 0) this.encoder.releaseLater(this.pulled);
 			this.encoder.releaseLater(this.depthState);
+			synchronized (this) {
+				for (long pso : this.variants.values()) this.encoder.releaseLater(pso);
+				this.variants.clear();
+			}
 		}
 	}
 }

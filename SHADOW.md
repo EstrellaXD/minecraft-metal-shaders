@@ -38,13 +38,21 @@ the light into a 2-slice depth array texture. The game's world passes ("Sky", "M
   - Receivers apply `shade_shadow_offset()`: 0.75 texel along the normal, plus (0.5 + 0.75·tanθ) texels toward the light.
   - Depth clip mode is *clamp* ("pancaking"). Casters between the light and the cascade's near plane, up to 192 blocks
     toward the light, are drawn at depth 1, so the depth range stays tight.
+  - Depth range per cascade: half-width + 32 blocks toward the light, and half-width + 96 (near) or + 64 (far) blocks away
+    from it. A receiver outside a cascade's depth range falls back to the next cascade.
 - **Faces:** with `mcopt.shade.shadowFaces=sun` (the default), only the face directions that face the light are drawn,
   plus Sodium's UNASSIGNED quads (plants, non-axis-aligned). This uses Sodium's per-facing vertex ranges.
   - Faces turned away from the light are in shadow by N·L ≤ 0 anyway.
   - `all` draws every face.
-- **Cutout:** leaves, grass and flowers are drawn with a fragment stage that discards when atlas alpha (level 0, nearest)
-  × vertex alpha < 0.5. Sodium's cutout pass uses the same test. Solid terrain has no fragment function at all.
-  Translucent terrain (water, glass) does not cast.
+- **Cutout:**
+  - Near cascade: leaves, grass and flowers are drawn with a fragment stage that discards when atlas alpha (level 0,
+    nearest) × vertex alpha < 0.5. Sodium's cutout pass uses the same test.
+  - Far cascade (`mcopt.shade.shadowFarCutout=opaque`, the default): at 1/8 block per texel, a leaf's 1/16-block holes
+    are below the map's resolution. So axis-aligned cutout faces (leaves, glass, vines) are drawn as opaque, with no
+    fragment stage and no discard, which keeps hidden surface removal working. Unassigned cutout quads (grass, flowers,
+    crops) are left out of the far cascade. `test` alpha-tests them there too.
+  - Solid terrain has no fragment function at all, and solid lists are drawn before cutout ones.
+  - Translucent terrain (water, stained glass) does not cast.
 
 ## 2. Casters: `mcopt.shade.shadowCull=camera|light`
 
@@ -150,9 +158,10 @@ Native side (`metal/src/main/native/mcshadow.m`, in libmcmetal):
 Two tiles in the top-right corner of the screen: near cascade on the left, far on the right. Each is a quarter of the
 screen height, with a yellow border.
 
-- Dark blue: cleared (nothing casts there).
-- Gray: depth. ±32 blocks around the camera's light depth map to black..white.
-- A faint contour band every 4 blocks.
+- Dark blue: cleared (nothing casts there), or beyond the cascade's depth range.
+- Gray: blocks toward the light from the camera, -96 (black) to +96 (white). A darker contour line every 4 blocks.
+- The tiles are drawn into a small texture of their own and blitted into the main target, so the debug view costs
+  almost nothing. The first version drew straight into the main target, which loaded and stored all of it.
 - Orientation: light-space +x is to the right and +y is up. With vanilla's sun path, light-space y is world +Z.
 
 In-game check list:
@@ -186,6 +195,31 @@ In-game check list:
   game's trace numbering.
 - Encoders are labelled `mcopt shadow cascade 0/1` for Xcode GPU captures.
 
+**One in-game sanity run** (`mcbench-run`, instance "mcopt DEV", 3024×1964 fullscreen, result dir
+`work/bench-results/20261006-130614-m1-shadow-debug`). Flags: `-Dmcopt.shade=true -Dmcopt.shade.debug=1
+-Dmcopt.shade.shadowCull=light`. It ran an *earlier* build (commit `ab2f9bf`).
+
+- It ran all scenes without errors or crashes, and the debug tiles show terrain in both cascades.
+- In that build the debug view loaded and stored the whole main target, and the far cascade alpha-tested every cutout quad.
+- GPU per frame compared with the same instance's baseline runs on the same day (`test3-fs`, `test6`):
+
+  | Scene | Baseline | This run | Difference |
+  |---|---|---|---|
+  | spin | 1.6–1.75 ms | 3.22 ms | +1.5 ms |
+  | flight | 2.0–2.1 ms | 4.45 ms | +2.4 ms |
+
+- That is over the ≤ 1 ms budget. The likely contributors, all fixed since:
+  - the full-target debug pass (≈ 0.5–0.8 ms at 5.9 Mpx);
+  - discard-based cutout over thousands of leaf blocks in the 256 × 256 far cascade;
+  - `light` mode listing everything in the box.
+- The next run should A/B, without debug and with `-Dmcopt.shade.shadowStats=true`:
+  - `shadowCull=camera` vs `light`;
+  - `shadowFarCutout=opaque` vs `test`;
+  - `shadowDist` 128 vs 96.
+
+  The stats line gives quads per cascade. At about 2 ns per quad in the vertex stage (headless bench), it tells whether
+  the far cascade needs splitting over frames or a smaller default.
+
 ## 7. Verification done (headless)
 
 `tools/shade/shadowtest/run.sh` builds against the jar's `libmcmetal.dylib` and the real `shadow.metal`,
@@ -204,8 +238,9 @@ In-game check list:
    0, 3·10⁴ and 2.9·10⁷ blocks.
 5. Checks that cascade snapping keeps static points on the same texel phase while the camera moves.
 
-**Not verified:** anything in game (mixin injection, Sodium state at the hook, the overlay). `mcbench-run` was not
-available while this was built.
+**In game:** one sanity run (§6). The mixins inject, Sodium's state is usable at the hook, the cascades render and the
+overlay shows them. Shadow quality on receivers can't be judged yet, because terrain lighting lives on the infrastructure
+branch.
 
 ## 8. Files
 
@@ -224,6 +259,11 @@ available while this was built.
   `ShadeFrame` file and paste the block in.
 
 ## 9. Known limits and next steps
+
+- Measure the current build in game (§6). If the far cascade is still heavy, two options:
+  - split its redraw over its 4 frames into a back slice: per-frame lists by section hash, then one 16 MB copy into
+    slice 1. That makes the cost even across frames;
+  - default `shadowDist` to 96.
 
 - `camera` casters miss off-screen casters. Verify `light` in game and make it the default.
 - Entities, block entities and particles don't cast (M3). Translucent terrain doesn't cast; coloured glass shadows are M3.

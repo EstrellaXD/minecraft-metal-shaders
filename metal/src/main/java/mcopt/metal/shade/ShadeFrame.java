@@ -54,7 +54,7 @@ public final class ShadeFrame {
 	public float minAmbient = 0.004f;
 	/** sRGB fog colour and weight, vanilla fog distances (FogData). */
 	public final float[] fogColor = new float[4];
-	public float fogEnvStart, fogEnvEnd = 1e6f, fogRenderStart, fogRenderEnd = 1e6f, fogSkyEnd = 1e6f, fogCloudEnd = 1e6f, hazeDensity = 0.0012f, hazeStrength = 0.65f;
+	public float fogEnvStart, fogEnvEnd = 1e6f, fogRenderStart, fogRenderEnd = 1e6f, fogSkyEnd = 1e6f, fogCloudEnd = 1e6f, hazeDensity = 0.0008f, hazeStrength = 0.45f;
 	public final float[] skyColor = {0.5f, 0.7f, 1f};
 	public float rain, thunder, nightVision, starBrightness;
 	public float cascadeSplit0 = 32, cascadeSplit1 = 128;
@@ -82,7 +82,7 @@ public final class ShadeFrame {
 		this.sunIntensity = s.sunIntensity();
 		this.moonIntensity = s.moonIntensity();
 		this.mie = s.mie();
-		this.hazeDensity = 0.0012f * (1f + 3f * this.rain);
+		this.hazeDensity = 0.0008f * (1f + 4f * this.rain);
 		// Eye adaptation: the light around the camera. Outdoors (sky light 15 at the eye) that's the sky's; deeper in, torches.
 		float eye = this.eyeSkyLight / 15f;
 		float eyeCurve = eye / (4f - 3f * eye);

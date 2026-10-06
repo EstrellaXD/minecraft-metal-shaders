@@ -62,17 +62,21 @@ public final class Profile {
 		}
 		System.setProperty("mcopt.lod", "false");
 		System.clearProperty("mcopt.lod.radius");
-		if (System.getProperty("mcopt.metal") != null) {
-			System.out.println("[mcopt] Distant Horizons " + version + " detected: mcopt.metal=" + System.getProperty("mcopt.metal") + " (set explicitly)");
-			return;
-		}
 		String gl = null;
 		if (DhCompat.irisLoaded()) gl = "Iris is loaded (DH then uses its OpenGL engine)";
 		else if ("OPEN_GL".equals(DhCompat.renderingEngine(gameDir()))) gl = "its renderingEngine is OPEN_GL in config/DistantHorizons.toml";
 		else if (!DhCompat.versionSupported()) gl = "only DH " + DhCompat.range() + " is tested on Metal (-Dmcopt.dh.anyVersion=true tries it anyway)";
+		String explicit = System.getProperty("mcopt.metal");
+		if (explicit != null) {
+			// In each of the gl cases DH crashes on the Metal backend (GL engine, or the compat mixin left out), so say so.
+			System.out.println("[mcopt] Distant Horizons " + version + " detected: mcopt.metal=" + explicit + " (set explicitly)"
+				+ (gl != null && Boolean.parseBoolean(explicit) ? "; WARNING: DH will likely crash on Metal here: " + gl : ""));
+			return;
+		}
 		if (gl != null) {
 			System.setProperty("mcopt.metal", "false");
-			System.out.println("[mcopt] Distant Horizons " + version + " detected, using OpenGL: " + gl + "; mcopt's other optimizations stay on (-Dmcopt.metal=true overrides)");
+			// No "-Dmcopt.metal=true overrides" hint: in every one of these cases DH would crash on Metal.
+			System.out.println("[mcopt] Distant Horizons " + version + " detected, using OpenGL: " + gl + "; mcopt's other optimizations stay on");
 		} else {
 			System.out.println("[mcopt] Distant Horizons " + version + " detected: staying on Metal (DH's Blaze3D renderer runs on mcopt's backend; -Dmcopt.metal=false for OpenGL)");
 		}

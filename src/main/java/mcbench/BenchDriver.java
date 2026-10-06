@@ -61,6 +61,7 @@ import net.minecraft.world.phys.Vec3;
  * the world is created)</li>
  * <li>{@code -Dmcbench.shotWait=S} hold before each screenshot (default 2), {@code -Dmcbench.flightSpeed=B} blocks/s (10),
  * {@code -Dmcbench.timeoutSec=S} in-game watchdog (default 900), {@code -Dmcbench.label=TEXT}</li>
+ * <li>{@code -Dmcbench.stress=reload,resize,nether} (opt-in, default none): robustness events after perf, before shots</li>
  * </ul>
  * Output: results.json, frametimes.csv, screenshots/*.png, gputimes.csv (with mcopt -Dmcopt.metal.gpuTimes=true),
  * error.txt on failure. The game then quits (Minecraft.stop).
@@ -81,6 +82,13 @@ public final class BenchDriver {
 	static final String DISPLAY = System.getProperty("mcbench.display", "builtin").trim();
 	/** Go fullscreen on the target display after moving there (default true). Start the game windowed. */
 	static final boolean FULLSCREEN = !"false".equals(System.getProperty("mcbench.fullscreen", "true"));
+	/**
+	 * Opt-in robustness events between perf and shots, comma-separated, in the order given: {@code reload} (F3+T: a full
+	 * resource reload), {@code resize} (leave fullscreen, then go back: two framebuffer resizes), {@code nether} (go to
+	 * the Nether for a few seconds and come back: two dimension changes). Empty (default): no extra steps.
+	 */
+	static final List<String> STRESS = java.util.Arrays.stream(System.getProperty("mcbench.stress", "").split(","))
+		.map(String::trim).filter(x -> !x.isEmpty()).toList();
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeSpecialFloatingPointValues().create();
 	private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
@@ -104,6 +112,7 @@ public final class BenchDriver {
 	static final Map<String, Object> results = new LinkedHashMap<>();
 	static final List<Object> settles = new ArrayList<>();
 	static final List<Object> shots = new ArrayList<>();
+	static final List<Object> stress = new ArrayList<>();
 	static final List<String> warnings = new ArrayList<>();
 	static final Map<String, long[]> phaseRanges = new LinkedHashMap<>();
 	// frame log: one entry per frame interval recorded in a perf phase
@@ -217,6 +226,7 @@ public final class BenchDriver {
 			steps.add(new Route("spin", SECONDS));
 			steps.add(new Route("flight", SECONDS));
 		}
+		for (String kind : STRESS) steps.add(new Stress(kind));
 		if (shotsOn) {
 			shotScene("noon_overview", 6000, false, () -> spot.overview, SHOT_WAIT);
 			shotScene("forest_closeup", 6000, false, () -> spot.forest, SHOT_WAIT);
@@ -737,6 +747,115 @@ public final class BenchDriver {
 	}
 
 	/** Set time + weather and the camera for a scene. */
+	/** -Dmcbench.stress: one robustness event (reload, resize or nether), recorded in results.json "stress". */
+	static final class Stress extends Step {
+		final String kind;
+		int state;
+		long t, sizeSince;
+		int lastW, lastH;
+		CompletableFuture<Void> reload;
+		final List<String> notes = new ArrayList<>();
+
+		Stress(String kind) {
+			super("stress-" + kind, 180);
+			this.kind = kind;
+			if (!List.of("reload", "resize", "nether").contains(kind)) throw new IllegalArgumentException("mcbench.stress: unknown event " + kind);
+		}
+
+		@Override
+		void start(Minecraft mc, long now) {
+			setPhase("SETTLE");
+			t = now;
+			log("stress " + kind + ": start");
+			switch (kind) {
+				case "reload" -> reload = mc.reloadResourcePacks();
+				case "resize" -> {
+					Window w = mc.getWindow();
+					lastW = w.getWidth();
+					lastH = w.getHeight();
+					notes.add("from " + lastW + "x" + lastH + (isFullscreen(w) ? " fullscreen" : " windowed"));
+					w.setFullscreen(!isFullscreen(w));
+					sizeSince = now;
+				}
+				case "nether" -> {
+					pose = null;
+					cmd(server(mc), "execute in minecraft:the_nether run tp @a 0.5 100 0.5 0 0");
+				}
+				default -> {
+				}
+			}
+		}
+
+		boolean sizeStable(Window w, long now) {
+			if (w.getWidth() != lastW || w.getHeight() != lastH) {
+				lastW = w.getWidth();
+				lastH = w.getHeight();
+				sizeSince = now;
+			}
+			return secs(now - t) >= 2 && secs(now - sizeSince) >= 1.5;
+		}
+
+		@Override
+		boolean poll(Minecraft mc, long now) {
+			switch (kind) {
+				case "reload" -> {
+					if (!reload.isDone()) return false;
+					if (reload.isCompletedExceptionally()) throw new IllegalStateException("resource reload failed: " + reload.exceptionNow());
+					if (mc.gui.overlay() != null) {
+						t = now;
+						return false;
+					}
+					if (secs(now - t) < 2) return false;
+				}
+				case "resize" -> {
+					Window w = mc.getWindow();
+					if (!sizeStable(w, now)) return false;
+					if (state == 0) {
+						notes.add("to " + lastW + "x" + lastH + (isFullscreen(w) ? " fullscreen" : " windowed"));
+						w.setFullscreen(!isFullscreen(w));
+						state = 1;
+						t = sizeSince = now;
+						return false;
+					}
+					notes.add("back to " + lastW + "x" + lastH + (isFullscreen(w) ? " fullscreen" : " windowed"));
+				}
+				case "nether" -> {
+					String dim = mc.level == null ? "" : mc.level.dimension().toString();
+					if (state == 0) {
+						if (!dim.contains("the_nether")) return false;
+						if (t != -1) {
+							notes.add("in the Nether after " + Math.round(secs(now - curStart) * 10) / 10.0 + " s");
+							t = -1;
+							sizeSince = now;
+						}
+						if (secs(now - sizeSince) < 8) return false;
+						Pose p = spot.overview;
+						cmd(server(mc), String.format(java.util.Locale.ROOT, "execute in minecraft:overworld run tp @a %.3f %.3f %.3f %.2f %.2f", p.x(), p.y(), p.z(), p.yaw(), p.pitch()));
+						state = 1;
+						sizeSince = now;
+						return false;
+					}
+					if (!dim.contains("overworld")) return false;
+					if (state == 1) {
+						notes.add("back in the overworld after " + Math.round(secs(now - curStart) * 10) / 10.0 + " s");
+						state = 2;
+						sizeSince = now;
+					}
+					if (secs(now - sizeSince) < 3) return false;
+				}
+				default -> {
+				}
+			}
+			Map<String, Object> m = new LinkedHashMap<>();
+			m.put("event", kind);
+			m.put("seconds", Math.round(secs(now - curStart) * 10) / 10.0);
+			m.put("notes", notes);
+			stress.add(m);
+			log("stress " + kind + ": done in " + m.get("seconds") + " s " + notes);
+			return true;
+		}
+	}
+
 	static final class Scene extends Step {
 		final int time;
 		final boolean rain;
@@ -969,6 +1088,7 @@ public final class BenchDriver {
 				if (gpu != null) results.put("gpu", gpu);
 			}
 			results.put("screenshots", shots);
+			if (!STRESS.isEmpty()) results.put("stress", stress);
 			results.put("warnings", warnings);
 			results.put("totalSeconds", Math.round(secs(now - T0) * 10) / 10.0);
 			writeJson(out.resolve("results.json"), results);

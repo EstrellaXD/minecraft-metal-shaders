@@ -223,6 +223,7 @@ public final class BenchDriver {
 			shotScene("sunset_water", 12400, false, () -> spot.sunset, SHOT_WAIT);
 			shotScene("night_torches", 18000, false, () -> spot.night, SHOT_WAIT);
 			shotScene("rain", 6000, true, () -> spot.overview, Math.max(SHOT_WAIT, 4));
+			extraShots();
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)
@@ -240,6 +241,23 @@ public final class BenchDriver {
 			}
 		});
 		steps.add(new Finish());
+	}
+
+	/**
+	 * Opt-in extra screenshots: -Dmcbench.extraShots="name@time@x,y,z,yaw,pitch[@rain];..." (absolute world pose, game time
+	 * of day). Empty by default, so the standard plan is unchanged.
+	 */
+	static void extraShots() {
+		String spec = System.getProperty("mcbench.extraShots", "").trim();
+		if (spec.isEmpty()) return;
+		for (String one : spec.split(";")) {
+			String[] f = one.trim().split("@");
+			if (f.length < 3) throw new IllegalArgumentException("mcbench.extraShots: bad entry " + one);
+			String[] c = f[2].split(",");
+			Pose pose = new Pose(Double.parseDouble(c[0]), Double.parseDouble(c[1]), Double.parseDouble(c[2]), Float.parseFloat(c[3]), Float.parseFloat(c[4]));
+			boolean rain = f.length > 3 && f[3].equals("rain");
+			shotScene(f[0], Integer.parseInt(f[1]), rain, () -> pose, rain ? Math.max(SHOT_WAIT, 4) : SHOT_WAIT);
+		}
 	}
 
 	static void shotScene(String name, int time, boolean rain, java.util.function.Supplier<Pose> p, double hold) {

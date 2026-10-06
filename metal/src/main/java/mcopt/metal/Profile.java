@@ -42,21 +42,40 @@ public final class Profile {
 	}
 
 	/**
-	 * Distant Horizons casts the game's textures to OpenGL's (ClassCastException MetalTexture -> GlTexture in its Lightmap
-	 * mixin), so with DH loaded mcopt.metal defaults to false: OpenGL, exactly as -Dmcopt.metal=false. An explicit
-	 * mcopt.metal (command line or config/mcopt.properties, already applied above) wins.
+	 * Distant Horizons. DH 3.3.x on 26.3 draws its LODs through the game's renderpearl API, which mcopt runs on Metal, so
+	 * with a tested DH version ({@link DhCompat#range()}) the Metal backend stays on and the compat mixin makes DH treat it
+	 * like Vulkan (mcopt PR #4 by CazzaCoder). It falls back to OpenGL (exactly as -Dmcopt.metal=false) when:
+	 * <ul>
+	 * <li>Iris is loaded too: DH then forces its raw-OpenGL engine, which can't run on Metal;</li>
+	 * <li>DH's own config asks for that engine ({@code renderingEngine = "OPEN_GL"} in config/DistantHorizons.toml);</li>
+	 * <li>DH's version is outside the tested range: the compat mixin isn't applied, and DH would cast the game's textures
+	 * to OpenGL's (ClassCastException MetalTexture -> GlTexture in its Lightmap mixin).</li>
+	 * </ul>
+	 * An explicit mcopt.metal (command line or config/mcopt.properties, already applied above) wins. mcopt's own far
+	 * terrain (mcopt.lod) is always turned off with DH: both would draw far terrain and both hook the fog.
 	 */
 	private static void distantHorizons() {
-		if (System.getProperty("mcopt.metal") != null) return;
-		boolean dh;
-		try {
-			dh = net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("distanthorizons");
-		} catch (Throwable t) {
+		if (!DhCompat.loaded()) return;
+		String version = DhCompat.version();
+		if (Boolean.getBoolean("mcopt.lod") || System.getProperty("mcopt.lod.radius") != null) {
+			System.out.println("[mcopt] Distant Horizons " + version + " detected: mcopt.lod (far terrain) turned off, DH draws the far terrain");
+		}
+		System.setProperty("mcopt.lod", "false");
+		System.clearProperty("mcopt.lod.radius");
+		if (System.getProperty("mcopt.metal") != null) {
+			System.out.println("[mcopt] Distant Horizons " + version + " detected: mcopt.metal=" + System.getProperty("mcopt.metal") + " (set explicitly)");
 			return;
 		}
-		if (!dh) return;
-		System.setProperty("mcopt.metal", "false");
-		System.out.println("[mcopt] mcopt: Distant Horizons detected, using OpenGL; mcopt's other optimizations stay on (-Dmcopt.metal=true overrides)");
+		String gl = null;
+		if (DhCompat.irisLoaded()) gl = "Iris is loaded (DH then uses its OpenGL engine)";
+		else if ("OPEN_GL".equals(DhCompat.renderingEngine(gameDir()))) gl = "its renderingEngine is OPEN_GL in config/DistantHorizons.toml";
+		else if (!DhCompat.versionSupported()) gl = "only DH " + DhCompat.range() + " is tested on Metal (-Dmcopt.dh.anyVersion=true tries it anyway)";
+		if (gl != null) {
+			System.setProperty("mcopt.metal", "false");
+			System.out.println("[mcopt] Distant Horizons " + version + " detected, using OpenGL: " + gl + "; mcopt's other optimizations stay on (-Dmcopt.metal=true overrides)");
+		} else {
+			System.out.println("[mcopt] Distant Horizons " + version + " detected: staying on Metal (DH's Blaze3D renderer runs on mcopt's backend; -Dmcopt.metal=false for OpenGL)");
+		}
 	}
 
 	private static void applyFlags() {

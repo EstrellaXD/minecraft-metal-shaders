@@ -137,6 +137,7 @@ static inline float3 shadeOutput(float3 radiance, constant ShadeFrame &f) {
 #define SHADE_H_M 1.2f
 #define SHADE_MIE_G 0.78f
 #define SHADE_SAMPLES 8
+#define SHADE_SKY_SATURATION 1.3f
 constant float3 SHADE_BETA_R = float3(5.802e-3, 13.558e-3, 33.1e-3);
 constant float SHADE_BETA_M = 3.996e-3;
 constant float SHADE_BETA_M_EXT = 4.440e-3;
@@ -204,6 +205,7 @@ static float3 shadeSkyRadiance(float3 dir, constant ShadeFrame &f, thread float3
 	sky += float3(0.0006, 0.0009, 0.0018) * (1.0 - 0.5 * f.weather.x);  // airglow: the night sky is never black
 	float rain = f.weather.x;
 	float l = shadeLuma(sky);
+	sky = max(l + (sky - l) * SHADE_SKY_SATURATION, 0.0); // ShadeSky.SKY_SATURATION
 	sky = mix(sky, float3(l) * float3(0.92, 0.96, 1.0) * (1.0 - 0.45 * f.weather.y), rain * 0.75) * f.atmosphere.w;
 	transmittance = tr;
 	return sky;

@@ -38,6 +38,8 @@ public final class ShadeSky {
 	public static final float MOON_INTENSITY = SUN_INTENSITY * 0.012f;
 	/** Sky and fog brightness relative to the physical single-scattering result (games show a brighter sky than physics). */
 	public static final float SKY_BRIGHTNESS = 3.4f;
+	/** Saturation of the sky's colour (1 = the physical single-scattering result, which reads greyish-lavender on the horizon). */
+	public static final float SKY_SATURATION = 1.3f;
 	/** Sky light on terrain relative to the physical sky irradiance: softer shadows, the stylized look. */
 	public static final float AMBIENT_BOOST = 8.0f;
 	/** How far the sky's fill light is pulled toward grey: physically it's deep blue, which reads cold on pixel art. */
@@ -153,6 +155,7 @@ public final class ShadeSky {
 		if (moon > 0f) scatter(dx, dy, dz, s.moonX, s.moonY, s.moonZ, moon, s.mie(), MOON_TINT, out);
 		for (int k = 0; k < 3; k++) out[k] += AIRGLOW[k] * (1f - 0.5f * s.rain);
 		float l = luma(out[0], out[1], out[2]);
+		for (int k = 0; k < 3; k++) out[k] = Math.max(l + (out[k] - l) * SKY_SATURATION, 0f);
 		float grey = 1f - 0.45f * s.thunder, w = s.rain * 0.75f;
 		out[0] = mix(out[0], l * 0.92f * grey, w) * SKY_BRIGHTNESS;
 		out[1] = mix(out[1], l * 0.96f * grey, w) * SKY_BRIGHTNESS;

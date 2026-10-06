@@ -100,7 +100,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half3 albedo = shadeToLinear(half3(texel.rgb) * in.v_Color.rgb);
     int debug = sf.flags.w;
     if (debug == 3) albedo = half3(0.45h);
-    half shadow = shadeShadow(shadowMap, shadowCompare, sf, p, n, fragCoord.xy, 4);
+    half shadow = shadeShadow(shadowMap, shadowCompare, sf, p, n, thin);
     float3 radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, sf);
     radiance = shadeFogAir(radiance, p, fogValue, skyLut, skyLutSmplr, sf);
     float3 rgb = shadeFinish(radiance, fogValue, sf);

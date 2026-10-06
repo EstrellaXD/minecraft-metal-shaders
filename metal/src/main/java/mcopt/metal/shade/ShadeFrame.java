@@ -57,7 +57,7 @@ public final class ShadeFrame {
 	public float fogEnvStart, fogEnvEnd = 1e6f, fogRenderStart, fogRenderEnd = 1e6f, fogSkyEnd = 1e6f, fogCloudEnd = 1e6f, hazeDensity = 0.0008f, hazeStrength = 0.45f;
 	public final float[] skyColor = {0.5f, 0.7f, 1f};
 	public float rain, thunder, nightVision, starBrightness;
-	public float cascadeSplit0 = 32, cascadeSplit1 = 128;
+	public float cascadeSplit0 = 32, cascadeSplit1 = 128, cascadeTexel0 = 1f / 32f, cascadeTexel1 = 1f / 8f;
 	public int shadowResolution = 2048;
 	public float shadowDepthBias = 0.00015f, shadowNormalOffset = 1.5f;
 	public boolean shadowsEnabled;
@@ -128,7 +128,7 @@ public final class ShadeFrame {
 		put4(b, SKY_COLOR, this.skyColor[0], this.skyColor[1], this.skyColor[2], 1 - this.rain);
 		put3(b, ZENITH_COLOR, this.sky.zenith, 0);
 		for (int i = 0; i < 8; i++) put3(b, HORIZON + 16 * i, this.sky.horizon[i], 0);
-		put4(b, CASCADE_SPLITS, this.cascadeSplit0, this.cascadeSplit1, 0, 0);
+		put4(b, CASCADE_SPLITS, this.cascadeSplit0, this.cascadeSplit1, this.cascadeTexel0, this.cascadeTexel1);
 		put4(b, SHADOW_PARAMS, 1f / this.shadowResolution, this.shadowResolution, this.shadowDepthBias, this.shadowNormalOffset);
 		put4(b, SCREEN, this.width, this.height, 1f / this.width, 1f / this.height);
 		put4(b, TIME, this.dayTime, this.gameTimeSeconds, this.exposure, this.partialTick);
@@ -147,7 +147,7 @@ public final class ShadeFrame {
 		ByteBuffer b = out.duplicate().order(ByteOrder.LITTLE_ENDIAN);
 		this.shadowViewProj[0].get(SHADOW_VIEW_PROJ, b);
 		this.shadowViewProj[1].get(SHADOW_VIEW_PROJ + 64, b);
-		put4(b, CASCADE_SPLITS, this.cascadeSplit0, this.cascadeSplit1, 0, 0);
+		put4(b, CASCADE_SPLITS, this.cascadeSplit0, this.cascadeSplit1, this.cascadeTexel0, this.cascadeTexel1);
 		put4(b, SHADOW_PARAMS, 1f / this.shadowResolution, this.shadowResolution, this.shadowDepthBias, this.shadowNormalOffset);
 		b.putInt(FLAGS + 8, this.shadowsEnabled ? 1 : 0);
 		b.putInt(FLAGS2 + 8, this.cascades);
@@ -169,6 +169,12 @@ public final class ShadeFrame {
 		this.shadowResolution = resolution;
 		this.shadowDepthBias = depthBias;
 		this.shadowNormalOffset = normalOffsetTexels;
+	}
+
+	/** World blocks per shadow texel of each cascade (cascadeSplits.zw: the receiver's offsets scale with it). */
+	public void setShadowTexels(float texel0, float texel1) {
+		this.cascadeTexel0 = texel0;
+		this.cascadeTexel1 = texel1;
 	}
 
 	private static void put4(ByteBuffer b, int at, float x, float y, float z, float w) {

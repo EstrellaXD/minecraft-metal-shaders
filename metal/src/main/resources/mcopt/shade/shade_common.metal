@@ -28,7 +28,12 @@
 //   z in [0, 1] REVERSED (1 = nearest to the light, cleared to 0, depth test GreaterEqual). The shadow pass's own vertex
 //   shader writes that clip position as is (it does NOT negate y), so texel (u, v) = (x * 0.5 + 0.5, 0.5 - y * 0.5) in
 //   Metal texture coordinates (v down) — see shadeShadowUV. A receiver is lit when its (biased) depth >= the stored one.
-//   Cascade c covers view distances [c == 0 ? 0 : cascadeSplits[c - 1], cascadeSplits[c]].
+//   Cascades are chosen by their box (shadeShadow), not by distance: slice 0 = near cascade (redrawn every frame, pushed
+//   ahead of the view), slice 1 = far cascade (centered on the camera, redrawn every few frames, world-anchored). The map
+//   is cleared to 0 (no caster); casters are biased at raster time (constant + slope), receivers add shadeShadow's offset.
+//   The compare sampler compares ref OP texel (GreaterEqual: lit when ref >= stored). Only light-facing faces cast.
+//   lightDirWorld is the shadow pass's own (quantized, at least 2 degrees up) light direction, so N.L and shadows agree.
+//   Full rationale: SHADOW.md (the shadow contract) and shade_shadow.metal.
 #ifndef MCOPT_SHADE_COMMON
 #define MCOPT_SHADE_COMMON
 #include <metal_stdlib>
@@ -63,7 +68,7 @@ struct ShadeFrame {
 	float4 zenithColor;         // 672  rgb atmosphere radiance straight up (linear, pre-exposure), w 0
 	float4 horizon[8];          // 688  rgb atmosphere radiance on the horizon (linear, pre-exposure) for directions with x = -1 .. 1
 	                            //      (index i <-> x = i / 3.5 - 1; the sun moves in the x-y plane, so x alone sets the angle to it)
-	float4 cascadeSplits;       // 816  x, y far distance (blocks) of cascades 0 and 1; zw 0
+	float4 cascadeSplits;       // 816  x, y distance (blocks) within which cascade 0 / 1 covers every direction; z, w blocks per texel of cascade 0 / 1
 	float4 shadowParams;        // 832  x 1 / map size, y map size (texels), z depth bias (clip z), w normal offset (texels)
 	float4 screen;              // 848  xy render target size (pixels), zw 1 / size
 	float4 time;                // 864  x day time: 0 noon, 0.25 sunset, 0.5 midnight, 0.75 sunrise; y game time in seconds (wraps every hour);
@@ -322,44 +327,46 @@ static float3 shadeSkyColor(float3 dir, texture2d<half> lut, sampler s, constant
 }
 
 // ---- shadows ------------------------------------------------------------------------------------------------------------
+// Receiver side of the shadow pass (mcopt.metal.shade.shadow.ShadowPass, mcshadow.m). The same maths as shade_shadow.metal
+// (which the headless shadow test uses), on ShadeFrame fields: box-based cascade choice (the near cascade is pushed ahead
+// of the view, so a distance test would waste it), a blend band between the cascades, a depth-range fallback to the far
+// cascade, a receiver offset along the normal plus toward the light growing with tan(theta), and a 3x3 tent of hardware
+// 2x2 PCF taps per cascade (deterministic: no noise to shimmer while M1 has no TAA).
 static inline float2 shadeShadowUV(float3 clip) { return float2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5); }
 
-constant float2 SHADE_POISSON[8] = {
-	float2(-0.7071, 0.7071), float2(-0.0000, -0.8750), float2(0.5303, 0.5303), float2(-0.6250, -0.0000),
-	float2(0.3062, -0.3062), float2(-0.0000, 0.3750), float2(-0.1768, -0.1768), float2(0.1250, 0.0000)
-};
+// One cascade: visibility, and m = how far out in its square the point is (>= 1: outside it or its depth range).
+static inline float shadeShadowCascade(depth2d_array<float> map, sampler cmp, uint layer, float4x4 vp, float3 p, float3 offset,
+                                       float texelUv, float spread, thread float &m) {
+	float4 c = vp * float4(p + offset, 1.0);
+	m = max(abs(c.x), abs(c.y));
+	if (c.z <= 0.0 || c.z >= 1.0) m = 2.0;
+	if (m >= 1.0) return 1.0;
+	float2 uv = shadeShadowUV(c.xyz);
+	float h = spread * texelUv;
+	float s = map.sample_compare(cmp, uv + float2(-h, -h), layer, c.z);
+	s += map.sample_compare(cmp, uv + float2(h, -h), layer, c.z);
+	s += map.sample_compare(cmp, uv + float2(-h, h), layer, c.z);
+	s += map.sample_compare(cmp, uv + float2(h, h), layer, c.z);
+	return s * 0.25;
+}
 
-// Visibility (0 shadowed .. 1 lit) of camera-relative world point p with face normal n from the light, from the cascade
-// that covers it: normal offset scaled by the cascade's texel size, a hardware 2x2 PCF center tap plus rotated Poisson taps
-// (taps = 4 or 8), fading out at the far end of the last cascade. 1 when shadows are off (no shadow pass yet).
-static half shadeShadow(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, float3 p, half3 n, float2 pixel, int taps) {
+// Visibility (0 shadowed .. 1 lit) of camera-relative world point p with unit face normal n (facing the camera) from the
+// light (f.lightDirWorld). thin: two-sided foliage, offset toward the light only. 1 when shadows are off, past the far
+// cascade (fading out over its outer 15%), and for faces turned away from the light (N.L is 0 there anyway).
+static half shadeShadow(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, float3 p, half3 n, bool thin) {
 	if (f.flags.z == 0) return half(1.0);
-	float dist = length(p);
-	int cascades = clamp(f.flags2.z, 1, 2);
-	int c = dist < f.cascadeSplits.x ? 0 : 1;
-	if (c >= cascades || dist >= f.cascadeSplits[cascades - 1]) return half(1.0);
-	float4x4 m = f.shadowViewProj[c];
-	float extentX = length(float3(m[0][0], m[1][0], m[2][0]));      // 2 / (world width of the cascade)
-	float texelWorld = 2.0 / (extentX * f.shadowParams.y);
-	float3 offset = float3(n) * (texelWorld * f.shadowParams.w);
-	float4 sc = m * float4(p + offset, 1.0);
-	float3 clip = sc.xyz / sc.w;
-	float2 uv = shadeShadowUV(clip);
-	if (any(uv <= 0.0) || any(uv >= 1.0)) return half(1.0);
-	float ref = clip.z + f.shadowParams.z;
-	float a = shadeNoise(pixel, f.flags2.x) * 6.2831853;
-	float2 cs = float2(cos(a), sin(a));
-	float2 radius = f.shadowParams.xx * (c == 0 ? 1.6 : 1.1);
-	float sum = map.sample_compare(cmp, uv, uint(c), ref);
-	int count = taps >= 8 ? 8 : 4;
-	for (int k = 0; k < count; k++) {
-		float2 o = SHADE_POISSON[taps >= 8 ? k : k * 2];
-		o = float2(o.x * cs.x - o.y * cs.y, o.x * cs.y + o.y * cs.x);
-		sum += map.sample_compare(cmp, uv + o * radius, uint(c), ref);
-	}
-	float v = sum / float(count + 1);
-	float fade = saturate((f.cascadeSplits[cascades - 1] - dist) / (0.1 * f.cascadeSplits[cascades - 1]));
-	return half(mix(1.0, v, fade));
+	float3 L = f.lightDirWorld.xyz;
+	float nl = thin ? 1.0 : dot(float3(n), L);
+	if (nl <= 0.0) return half(1.0);
+	float tanT = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.02), 0.0, 12.0);
+	float3 dir = thin ? L * 1.5 : float3(n) * 0.75 + L * (0.5 + 0.75 * tanT); // offset per texel of world size
+	float texelUv = f.shadowParams.x;
+	float m0, m1;
+	float near = shadeShadowCascade(map, cmp, 0u, f.shadowViewProj[0], p, dir * f.cascadeSplits.z, texelUv, 0.75, m0);
+	if (m0 < 0.85) return half(near);
+	float far = shadeShadowCascade(map, cmp, 1u, f.shadowViewProj[1], p, dir * f.cascadeSplits.w, texelUv, 0.5, m1);
+	far = mix(far, 1.0, smoothstep(0.85, 1.0, m1));
+	return half(m0 >= 1.0 ? far : mix(near, far, smoothstep(0.85, 1.0, m0)));
 }
 
 #endif

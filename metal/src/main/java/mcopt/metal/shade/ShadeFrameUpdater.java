@@ -168,6 +168,7 @@ public final class ShadeFrameUpdater {
 		boolean snap = lastDimension != f.dimension || dt > 1f;
 		lastDimension = f.dimension;
 		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
+		ShadeShadows.beforePack(camera, f);
 
 		f.pack(ShadeBindings.nextSlot());
 		ShadeBindings.publish();

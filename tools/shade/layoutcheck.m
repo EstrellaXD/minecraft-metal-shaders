@@ -23,7 +23,7 @@ int main(int argc, const char **argv) {
 		const float *o = ob.contents; const float *fl = frame.bytes; const int *in = frame.bytes;
 		int fields = 63, bad = 0;
 		for (int k = 0; k < fields; k++) for (int c = 0; c < 4; c++) {
-			float want = k >= 60 ? (float) in[k * 4 + c] : fl[k * 4 + c];
+			float want = (k == 60 || k == 61) ? (float) in[k * 4 + c] : fl[k * 4 + c]; // flags, flags2 are int4; sunPath (62) is float4
 			if (o[k * 4 + c] != want) { bad++; if (bad < 10) printf("mismatch float4 #%d.%d: shader %g, bytes %g\n", k, c, o[k * 4 + c], want); }
 		}
 		printf("sizeof(ShadeFrame) in MSL = %g bytes (Java SIZE %lu); %s\n", o[fields * 4], (unsigned long) frame.length, bad ? "LAYOUT MISMATCH" : "layout OK: every field at the Java packer's offset");

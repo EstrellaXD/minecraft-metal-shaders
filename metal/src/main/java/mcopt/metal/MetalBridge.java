@@ -216,4 +216,22 @@ public final class MetalBridge {
 	public static void release(long handle) {
 		Native.release(handle);
 	}
+
+	// ---- native shading (mcopt.metal.shade, -Dmcopt.shade=true) ----
+
+	/**
+	 * buffer's MTLBuffer, marked as used by the submit being recorded: the backend then won't write it from the CPU (or
+	 * rename it) while that submit may still read it on the GPU. Every buffer native shading reads must go through here.
+	 */
+	public static long useBuffer(Object encoder, GpuBuffer buffer) {
+		return ((MetalEncoder) encoder).use(buffer).handle;
+	}
+
+	/**
+	 * Records now, in order, the Sodium geometry copies MetalTerrain holds back for its split (see MetalTerrain.hold), so
+	 * commands encoded next read the arenas as Sodium's section data describes them. Outside a render pass only.
+	 */
+	public static void flushHeldTerrainCopies(Object encoder) {
+		((MetalEncoder) encoder).terrain.releaseHeld(false);
+	}
 }

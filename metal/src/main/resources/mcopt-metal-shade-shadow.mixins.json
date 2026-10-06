@@ -1,0 +1,8 @@
+{
+	"required": true,
+	"package": "mcopt.metal.shade.shadow.mixin",
+	"plugin": "mcopt.metal.shade.shadow.mixin.ShadowMixinPlugin",
+	"compatibilityLevel": "JAVA_25",
+	"client": ["ShadowLevelRendererMixin"],
+	"injectors": { "defaultRequire": 1 }
+}

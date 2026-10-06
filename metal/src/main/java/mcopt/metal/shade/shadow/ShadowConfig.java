@@ -36,8 +36,8 @@ public final class ShadowConfig {
 	private ShadowConfig() {
 	}
 
-	public static final boolean SHADE = Boolean.getBoolean("mcopt.shade");
-	public static final boolean SHADOWS = SHADE && !"false".equals(System.getProperty("mcopt.shade.shadows"));
+	public static final boolean SHADE = mcopt.metal.shade.Shade.ENABLED;
+	public static final boolean SHADOWS = mcopt.metal.shade.Shade.SHADOWS; // one parser for every gate
 	public static final int RES = clamp(Integer.getInteger("mcopt.shade.shadowRes", 2048), 512, 8192);
 	public static final int DEPTH_BITS = Integer.getInteger("mcopt.shade.shadowDepth", 32) == 16 ? 16 : 32;
 	public static final float DIST = clamp(floatProp("mcopt.shade.shadowDist", 128f), 16f, 1024f);

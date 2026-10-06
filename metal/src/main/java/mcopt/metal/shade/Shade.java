@@ -41,10 +41,9 @@ package mcopt.metal.shade;
  */
 public final class Shade {
 	/** Native shading on: mcopt.shade=true and the Metal backend not turned off. */
-	public static final boolean ENABLED = Boolean.getBoolean("mcopt.shade") && !"false".equals(System.getProperty("mcopt.metal"));
-	public static final boolean SHADOWS = Boolean.parseBoolean(System.getProperty("mcopt.shade.shadows", "true"));
-	public static final int SHADOW_RES = Integer.getInteger("mcopt.shade.shadowRes", 2048);
-	public static final int SHADOW_DIST = Integer.getInteger("mcopt.shade.shadowDist", 128);
+	public static final boolean ENABLED = Boolean.getBoolean("mcopt.shade") && Boolean.parseBoolean(System.getProperty("mcopt.metal", "true"));
+	/** Sun shadows (mcopt.shade.shadows, default true); the shadow pass's own settings are in shadow.ShadowConfig. */
+	public static final boolean SHADOWS = ENABLED && Boolean.parseBoolean(System.getProperty("mcopt.shade.shadows", "true"));
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 	/** Sun path tilt in degrees (mcopt.shade.sunTilt); see ShadeSky.SUN_TILT. */
 	public static final float SUN_TILT = ShadeSky.SUN_TILT;
@@ -54,7 +53,7 @@ public final class Shade {
 		ShadeSky.celestial(angle, out);
 	}
 
-	/** Vertex colours without vanilla's directional face shade (the shaders light faces themselves); see CardinalLightingShadeMixin. */
+	/** Vertex colours without vanilla's directional face shade (the shaders light faces themselves); see mixin.shade.Sodium*FaceShadeMixin and ShadeFrameUpdater.faceShadeOff. */
 	private static volatile boolean faceShadeOff = ENABLED;
 	private static boolean initialized;
 
@@ -66,7 +65,8 @@ public final class Shade {
 		if (initialized || !ENABLED) return;
 		initialized = true;
 		ShadeMsl.register();
-		System.out.println("[mcopt] shade: native shading on (shadows " + SHADOWS + ", " + SHADOW_RES + " px, " + SHADOW_DIST + " blocks"
+		System.out.println("[mcopt] shade: native shading on (shadows " + SHADOWS + ", " + mcopt.metal.shade.shadow.ShadowConfig.RES + " px, "
+			+ mcopt.metal.shade.shadow.ShadowConfig.DIST + " blocks"
 			+ (DEBUG != 0 ? ", debug view " + DEBUG : "") + ")");
 	}
 

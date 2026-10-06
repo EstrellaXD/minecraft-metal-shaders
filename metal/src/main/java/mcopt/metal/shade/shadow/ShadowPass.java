@@ -195,7 +195,7 @@ public final class ShadowPass {
 	 * infrastructure before it packs ShadeFrame (any order relative to the shadow pass's own HEAD hook).
 	 */
 	public static void beginFrame(CameraRenderState cam) {
-		if (!ShadowConfig.SHADOWS || failed) return;
+		if (!ShadowConfig.SHADOWS || failed || mcopt.metal.shade.ShadeBindings.fallback()) return;
 		ShadowPass p = instance;
 		if (p == null) p = instance = new ShadowPass();
 		if (p.preparedToken == p.frameToken) return;

@@ -61,6 +61,24 @@ public final class ShadeFrameUpdater {
 		if (mc != null && mc.level != null) mc.execute(() -> mc.levelExtractor.allChanged());
 	}
 
+	/** 1 the game runs on mcopt's Metal backend, -1 another backend (OpenGL fallback), 0 not known yet. */
+	private static volatile int metal;
+
+	/**
+	 * Whether Sodium meshes without vanilla's face shade (Sodium*FaceShadeMixin): Shade.faceShadeOff() and the Metal backend
+	 * actually running (the device's backend name, read once it exists), so falling back to OpenGL keeps vanilla's look.
+	 */
+	public static boolean faceShadeOff() {
+		if (!Shade.faceShadeOff()) return false;
+		int m = metal;
+		if (m == 0) {
+			var device = RenderSystem.tryGetDevice();
+			if (device == null) return false;
+			metal = m = "Metal".equals(device.getDeviceInfo().backendName()) ? 1 : -1;
+		}
+		return m > 0;
+	}
+
 	/** Called with the matrix RenderSystem.setProjectionMatrix receives in GameRenderer.renderLevel. */
 	public static void projection(Matrix4fc projection) {
 		PROJECTION.set(projection);
@@ -130,6 +148,7 @@ public final class ShadeFrameUpdater {
 			f.moonDir.set(0f, -1f, 0f);
 			f.starBrightness = 0f;
 		}
+		if (ShadeBindings.fallback()) f.dimension = ShadeFrame.DIM_VANILLA;
 		f.rain = level != null ? level.getRainLevel(partial) : 0f;
 		f.thunder = level != null ? level.getThunderLevel(partial) : 0f;
 		f.gameTimeSeconds = ((state.gameTime % 72000L) + partial) / 20f;

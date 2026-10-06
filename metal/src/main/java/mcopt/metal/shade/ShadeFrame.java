@@ -41,7 +41,8 @@ public final class ShadeFrame {
 	/** mcopt.shade.dev: feature-off bits for pricing them in game (SHADE_DEV_* in shade_common.metal); 0 normally. */
 	static final int DEV_BITS = Integer.getInteger("mcopt.shade.dev", 0);
 
-	public static final int DIM_OVERWORLD = 0, DIM_NETHER = 1, DIM_END = 2;
+	/** DIM_VANILLA: the overworld drawn the vanilla way (shading setup failed half way; see ShadeBindings.fallback). */
+	public static final int DIM_OVERWORLD = 0, DIM_NETHER = 1, DIM_END = 2, DIM_VANILLA = 3;
 	public static final int FOG_AIR = 0, FOG_WATER = 1, FOG_LAVA = 2, FOG_POWDER_SNOW = 3;
 
 	// ---- values (camera-relative world space unless noted) ----

@@ -1,3 +1,4 @@
+// Copyright 2026 mcopt-shade contributors. Licensed under the Apache License, Version 2.0 (LICENSE).
 // Echoes every ShadeFrame field (float4 by float4, in declaration order) for layoutcheck.m. Appended to shade_common.metal.
 kernel void echo(constant ShadeFrame &f [[buffer(16)]], device float4 *o [[buffer(0)]], uint i [[thread_position_in_grid]]) {
 	if (i != 0) return;

@@ -95,6 +95,14 @@ void mc_shade_free(ShadeState *s) {
 // else -1 with the compiler's message in err.
 int mc_shade_lut_init(ShadeState *s, Ctx *ctx, const char *source, int width, int height, char *err, int errCap) {
 	@autoreleasepool {
+		// The texture first: if the pass fails to build, the shaders still get a valid (unused) texture at texture(17).
+		if (!s->lut) {
+			MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:width height:height mipmapped:NO];
+			td.storageMode = MTLStorageModePrivate;
+			td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+			s->lut = [ctx->device newTextureWithDescriptor:td];
+			s->lut.label = @"mcopt shade: sky LUT";
+		}
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
 		o.mathMode = MTLMathModeFast;
@@ -116,12 +124,6 @@ int mc_shade_lut_init(ShadeState *s, Ctx *ctx, const char *source, int width, in
 		}
 		[s->lutPipeline release];
 		s->lutPipeline = pso;
-		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:width height:height mipmapped:NO];
-		td.storageMode = MTLStorageModePrivate;
-		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-		[s->lut release];
-		s->lut = [ctx->device newTextureWithDescriptor:td];
-		s->lut.label = @"mcopt shade: sky LUT";
 		return 0;
 	}
 }

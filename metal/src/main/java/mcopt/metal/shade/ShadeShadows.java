@@ -36,7 +36,7 @@ public final class ShadeShadows {
 
 	/** At LevelRenderer.render HEAD, after the atmosphere was updated and before the frame is packed. */
 	static void beforePack(CameraRenderState camera, ShadeFrame f) {
-		if (!ShadowConfig.SHADOWS) return;
+		if (!ShadowConfig.SHADOWS || ShadeBindings.fallback()) return;
 		ShadowPass.beginFrame(camera);
 		boolean on = ShadowPass.enabled() && ShadowPass.texture() != 0;
 		ShadowPass.matrices(C0, C1);
@@ -58,7 +58,7 @@ public final class ShadeShadows {
 			ShadeBindings.setShadowMap(map);
 		}
 		ShadeFrame f = ShadeFrameUpdater.FRAME;
-		boolean on = map != 0 && ShadowPass.enabled();
+		boolean on = map != 0 && ShadowPass.enabled() && !ShadeBindings.fallback();
 		if (on != f.shadowsEnabled) {
 			f.shadowsEnabled = on;
 			ShadeBindings.updateShadow();

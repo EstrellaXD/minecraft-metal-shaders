@@ -389,6 +389,7 @@ final class MetalTerrain {
 			}
 		}
 		Native.renderResume(enc, compute);
+		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, enc); // shaded twins read them in the draws below
 		for (Waiting w : this.waiting) {
 			w.restore.run();
 			this.drawPulled(enc, w.p, w.arenas, w.tables, w.work, w.second.quads, w.second.args, w.regions, w.regionsOffset);

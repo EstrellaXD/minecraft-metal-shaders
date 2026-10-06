@@ -35,7 +35,11 @@ final class TracePhase {
 		if (!SPEC.isEmpty() && !Character.isDigit(SPEC.charAt(0)) && SPEC.charAt(0) != '-') {
 			int plus = SPEC.indexOf('+');
 			phase = (plus < 0 ? SPEC : SPEC.substring(0, plus)).toUpperCase(java.util.Locale.ROOT);
-			offset = plus < 0 ? 0 : Integer.parseInt(SPEC.substring(plus + 1));
+			try {
+				offset = plus < 0 ? 0 : Integer.parseInt(SPEC.substring(plus + 1).trim());
+			} catch (NumberFormatException e) {
+				System.out.println("[mcopt] bad mcopt.metal.trace offset in " + SPEC + ", using 0");
+			}
 		}
 		PHASE = phase;
 		OFFSET = offset;

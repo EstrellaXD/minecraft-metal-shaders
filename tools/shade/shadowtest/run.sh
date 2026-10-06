@@ -1,4 +1,5 @@
 #!/bin/sh
+# Copyright 2026 mcopt-shade contributors. Licensed under the Apache License, Version 2.0 (LICENSE).
 # Headless checks of the sun shadow pass (no game): builds against the jar build's libmcmetal.dylib and the sources.
 #   tools/shade/shadowtest/run.sh            correctness: synthetic Sodium arena vs ray-cast ground truth, several sun angles
 #   tools/shade/shadowtest/run.sh perf       GPU time of one cascade pass over a 256x256 heightmap (~83k sun-facing quads)

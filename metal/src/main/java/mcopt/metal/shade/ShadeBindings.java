@@ -38,7 +38,7 @@ public final class ShadeBindings {
 	private static final long[] buffers = new long[RING];
 	private static final ByteBuffer[] views = new ByteBuffer[RING];
 	private static int slot;
-	private static boolean failed;
+	private static boolean failed, fallback;
 
 	private ShadeBindings() {
 	}
@@ -66,6 +66,16 @@ public final class ShadeBindings {
 				views[i] = MemoryUtil.memByteBuffer(MetalBridge.bufferContents(buffers[i]), SLOT_SIZE);
 				ShadeFrameUpdater.FRAME.pack(views[i]); // defaults until the first level frame: never an unwritten buffer
 			}
+		} catch (Throwable e) {
+			// Nothing to bind: the shaded pipelines can't be helped, but at least vanilla's face shade comes back.
+			failed = true;
+			state = 0;
+			System.out.println("[mcopt] shade: setup failed, shading stays off: " + e);
+			e.printStackTrace();
+			Shade.setFaceShadeOff(false);
+			return false;
+		}
+		try {
 			ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.lut()); // too big for the thread's MemoryStack
 			try (MemoryStack stack = MemoryStack.stackPush()) {
 				long err = stack.nmalloc(1, 4096);
@@ -75,15 +85,24 @@ public final class ShadeBindings {
 			} finally {
 				MemoryUtil.memFree(source);
 			}
-			publish();
-			return true;
-		} catch (RuntimeException e) {
-			failed = true;
-			state = 0;
-			System.out.println("[mcopt] shade: setup failed, shading stays off: " + e);
+		} catch (Throwable e) {
+			// Valid resources are bound (ring, dummy map, an unused LUT texture) and every frame is packed as "vanilla"
+			// (ShadeFrame.DIM_VANILLA): the shaded pipelines take their vanilla paths, with vanilla's face shade put back.
+			fallback = true;
+			System.out.println("[mcopt] shade: setup failed, vanilla look from now on: " + e);
 			e.printStackTrace();
-			return false;
+			for (int i = 0; i < RING; i++) {
+				ShadeFrameUpdater.FRAME.dimension = ShadeFrame.DIM_VANILLA;
+				ShadeFrameUpdater.FRAME.pack(views[i]);
+			}
 		}
+		publish();
+		return true;
+	}
+
+	/** Setup only half worked (the sky LUT pass): frames are packed as ShadeFrame.DIM_VANILLA, without shadows. */
+	public static boolean fallback() {
+		return fallback;
 	}
 
 	/** The next ring slot, for this frame's ShadeFrame (bound by publish()). */

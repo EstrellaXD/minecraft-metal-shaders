@@ -91,6 +91,18 @@ final class MetalPipeline implements BackendRenderPipeline {
 	}
 
 	static @Nullable MetalPipeline compile(MetalEncoder encoder, CreateInfo info) {
+		if (MetalShaderRegistry.get(info.name()) == null) return compile(encoder, info, false);
+		try {
+			return compile(encoder, info, true);
+		} catch (RuntimeException e) {
+			// A registry (native shading) variant that doesn't build, e.g. against a resource pack's own core shader: the
+			// game's shaders instead of a crash.
+			System.out.println("mcopt-metal: registry MSL for " + info.name() + " failed to build, using the game's shaders: " + String.valueOf(e.getMessage()).lines().findFirst().orElse(""));
+			return compile(encoder, info, false);
+		}
+	}
+
+	private static @Nullable MetalPipeline compile(MetalEncoder encoder, CreateInfo info, boolean useRegistry) {
 		long ctx = encoder.ctx;
 		long t0 = System.nanoTime(), t1 = t0, t2 = t0;
 		CreateInfo.Shader vertex = shader(info, ShaderType.VERTEX), fragment = shader(info, ShaderType.FRAGMENT);
@@ -105,7 +117,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 				v = new Translated(resource("sodium_terrain.vs.metal"), v.entry);
 				f = new Translated(defines + resource("sodium_terrain.fs.metal"), f.entry);
 			}
-			MetalShaderRegistry.Variant registered = registered(info);
+			MetalShaderRegistry.Variant registered = useRegistry ? registered(info) : null;
 			if (registered != null) {
 				v = apply(registered.vertex(), registered.vertexEntry(), v, info);
 				f = apply(registered.fragment(), registered.fragmentEntry(), f, info);

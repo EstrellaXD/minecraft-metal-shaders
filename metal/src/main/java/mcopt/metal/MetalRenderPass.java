@@ -147,7 +147,6 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	/** After MetalTerrain split the pass: the reopened encoder has none of the frontend's state, so bind it all again. */
 	private void rebind() {
-		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc);
 		Arrays.fill(this.bound, null);
 		this.dirtyUpTo = Objects.requireNonNull(this.pipeline).uniforms.size();
 		this.bindUniforms(0);

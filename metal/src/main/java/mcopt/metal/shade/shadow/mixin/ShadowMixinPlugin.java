@@ -17,8 +17,8 @@ public final class ShadowMixinPlugin implements IMixinConfigPlugin {
 		mcopt.metal.Profile.apply(); // before any flag is read
 	}
 
-	private static final boolean ENABLED = Boolean.getBoolean("mcopt.shade") && !"false".equals(System.getProperty("mcopt.shade.shadows"))
-		&& !"false".equals(System.getProperty("mcopt.metal"));
+	private static final boolean ENABLED = Boolean.getBoolean("mcopt.shade") // the same tests as Shade.SHADOWS
+		&& Boolean.parseBoolean(System.getProperty("mcopt.shade.shadows", "true")) && Boolean.parseBoolean(System.getProperty("mcopt.metal", "true"));
 
 	@Override
 	public void onLoad(String mixinPackage) {

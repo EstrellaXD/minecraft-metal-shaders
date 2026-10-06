@@ -496,7 +496,13 @@ public final class BenchDriver {
 		}
 	}
 
-	/** First run in a world only: go to the night spot, let it load, put a 7x7 torch grid on solid ground, persist the flag. */
+	/**
+	 * First run in a world only (spot.torchVersion < TORCH_VERSION): load the area around the overview, pick the flattest
+	 * dry patch (from the real, generated terrain) near the spot centre, put a 7x7 torch grid (5 apart) on it, aim the
+	 * night camera at it, persist. Placing torches before the first perf run keeps every perf run on the same world.
+	 */
+	static final int TORCH_VERSION = 2;
+
 	static final class Torches extends Step {
 		Torches() {
 			super("torches", 0);
@@ -504,46 +510,82 @@ public final class BenchDriver {
 
 		@Override
 		boolean poll(Minecraft mc, long now) {
-			if (spot.torchesPlaced) return true;
+			if (spot.torchesPlaced && spot.torchVersion >= TORCH_VERSION) return true;
 			MinecraftServer s = server(mc);
 			List<Step> extra = new ArrayList<>();
-			extra.add(new Scene("torch-setup", 6000, false, () -> spot.night));
+			extra.add(new Scene("torch-setup", 6000, false, () -> spot.overview));
 			extra.add(new Settle("torch-setup", false, 3, 180));
-			extra.add(new Step("place-torches", 30) {
-				CompletableFuture<Integer> f;
+			extra.add(new Step("place-torches", 60) {
+				CompletableFuture<int[]> f;
 
 				@Override
 				void start(Minecraft mc2, long now2) {
-					f = CompletableFuture.supplyAsync(() -> {
-						ServerLevel lvl = s.overworld();
-						int n = 0;
-						for (int[] c : spot.torchColumns()) {
-							int y = lvl.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, c[0], c[1]);
-							BlockPos pos = new BlockPos(c[0], y, c[1]);
-							if (!lvl.getBlockState(pos).isAir()) continue;
-							if (!lvl.getFluidState(pos.below()).isEmpty()) continue;
-							if (!lvl.getBlockState(pos.below()).isFaceSturdy(lvl, pos.below(), Direction.UP)) continue;
-							lvl.setBlock(pos, Blocks.TORCH.defaultBlockState(), 3);
-							n++;
-						}
-						return n;
-					}, s);
+					f = CompletableFuture.supplyAsync(() -> placeTorches(s.overworld()), s);
 				}
 
 				@Override
 				boolean poll(Minecraft mc2, long now2) throws Exception {
 					if (!f.isDone()) return false;
-					int n = f.get();
-					log("placed " + n + " torches");
-					results.put("torchesPlacedThisRun", n);
+					int[] r = f.get();
+					log("torch site " + r[1] + "," + r[2] + " y" + r[3] + ": placed " + r[0] + " torches");
+					results.put("torchesPlacedThisRun", r[0]);
 					spot.torchesPlaced = true;
+					spot.torchVersion = TORCH_VERSION;
 					writeJson(spotFile(mc2), spot.json());
+					results.put("spot", spot.json());
 					return true;
 				}
 			});
 			for (int i = extra.size() - 1; i >= 0; i--) steps.addFirst(extra.get(i));
 			return true;
 		}
+	}
+
+	/** Surface y (first non-solid above ground) if the column is loaded dry land, else MIN_VALUE. */
+	static int landY(ServerLevel lvl, int x, int z) {
+		if (!lvl.hasChunk(x >> 4, z >> 4)) return Integer.MIN_VALUE;
+		int y = lvl.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+		BlockPos pos = new BlockPos(x, y, z), below = pos.below();
+		if (!lvl.getFluidState(below).isEmpty() || !lvl.getFluidState(pos).isEmpty()) return Integer.MIN_VALUE;
+		if (!lvl.getBlockState(pos).canBeReplaced()) return Integer.MIN_VALUE;
+		if (!lvl.getBlockState(below).isFaceSturdy(lvl, below, Direction.UP)) return Integer.MIN_VALUE;
+		return y;
+	}
+
+	/** Server thread. Returns {placed, x, z, y}. Also sets spot.torchX/Z and spot.night. */
+	static int[] placeTorches(ServerLevel lvl) {
+		int bestScore = -1, bx = spot.cx, bz = spot.cz, by = 64;
+		for (int x = spot.cx - 112; x <= spot.cx + 112; x += 4)
+			for (int z = spot.cz - 112; z <= spot.cz + 112; z += 4) {
+				int yc = landY(lvl, x, z);
+				if (yc == Integer.MIN_VALUE) continue;
+				int score = 0;
+				for (int i = -3; i <= 3; i++)
+					for (int j = -3; j <= 3; j++) {
+						int y = landY(lvl, x + i * 5, z + j * 5);
+						if (y != Integer.MIN_VALUE && Math.abs(y - yc) <= 2) score += 2;
+					}
+				score -= (Math.abs(x - spot.cx) + Math.abs(z - spot.cz)) / 32; // prefer near the centre
+				if (score > bestScore) {
+					bestScore = score;
+					bx = x;
+					bz = z;
+					by = yc;
+				}
+			}
+		int n = 0;
+		for (int i = -3; i <= 3; i++)
+			for (int j = -3; j <= 3; j++) {
+				int x = bx + i * 5, z = bz + j * 5, y = landY(lvl, x, z);
+				if (y == Integer.MIN_VALUE || Math.abs(y - by) > 3) continue;
+				lvl.setBlock(new BlockPos(x, y, z), Blocks.TORCH.defaultBlockState(), 3);
+				n++;
+			}
+		spot.torchX = bx;
+		spot.torchZ = bz;
+		int camGround = Math.max(by, lvl.getHeight(Heightmap.Types.MOTION_BLOCKING, bx - 22, bz - 22));
+		spot.night = Pose.lookAt(bx - 22 + 0.5, camGround + 8 + Spot.EYE, bz - 22 + 0.5, bx + 0.5, by, bz + 0.5);
+		return new int[] {n, bx, bz, by};
 	}
 
 	/** Set time + weather and the camera for a scene. */
@@ -971,11 +1013,27 @@ public final class BenchDriver {
 				int pi = REC_PHASES.indexOf(e.getKey());
 				for (int i = 0; i < frames; i++)
 					if (framePhase[i] == pi) cpuFrames++;
+				// command buffers overlap on the GPU timeline (frames in flight): busy time = union of [start,end]
+				long[][] iv = new long[n][];
+				int k = 0;
+				for (int i = 0; i < st.length; i++)
+					if (st[i] != 0 && en[i] != 0) iv[k++] = new long[] {st[i], en[i]};
+				Arrays.sort(iv, (a, b) -> Long.compare(a[0], b[0]));
+				long union = 0, cs = Long.MIN_VALUE, ce = Long.MIN_VALUE;
+				for (long[] v : iv) {
+					if (v[0] > ce) {
+						if (ce > cs) union += ce - cs;
+						cs = v[0];
+						ce = v[1];
+					} else ce = Math.max(ce, v[1]);
+				}
+				if (ce > cs) union += ce - cs;
 				Map<String, Object> s = new LinkedHashMap<>();
 				s.put("submits", n);
 				s.put("cpuFrames", cpuFrames);
-				s.put("gpuMsPerFrame", cpuFrames == 0 ? null : r3(busy / 1e6 / cpuFrames));
-				s.put("gpuBusyFraction", r3((double) busy / (range[1] - range[0])));
+				s.put("gpuMsPerFrame", cpuFrames == 0 ? null : r3(union / 1e6 / cpuFrames));
+				s.put("gpuBusyFraction", r3((double) union / (range[1] - range[0])));
+				s.put("submitSpanSumMsPerFrame", cpuFrames == 0 ? null : r3(busy / 1e6 / cpuFrames));
 				long[] sorted = Arrays.copyOf(each, n);
 				Arrays.sort(sorted);
 				if (n > 0) {
@@ -983,8 +1041,8 @@ public final class BenchDriver {
 					s.put("submitP95Ms", r3(pct(sorted, 0.95) / 1e6));
 					s.put("submitP99Ms", r3(pct(sorted, 0.99) / 1e6));
 				}
-				for (String k : new String[] {"gpuAvgFps", "gpuLow1Fps", "gpuPresentingFrames"})
-					if (p.containsKey(k)) s.put(k, p.get(k) instanceof Double d ? r1(d) : p.get(k));
+				for (String key : new String[] {"gpuAvgFps", "gpuLow1Fps", "gpuPresentingFrames"})
+					if (p.containsKey(key)) s.put(key, p.get(key) instanceof Double d ? r1(d) : p.get(key));
 				outMap.put(e.getKey(), s);
 			}
 			Files.writeString(out.resolve("gputimes.csv"), csv.toString(), StandardCharsets.UTF_8);

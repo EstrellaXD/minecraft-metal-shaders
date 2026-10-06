@@ -69,6 +69,7 @@ public final class Spot {
 	public int candidatesTried;
 	/** Set once the night scene's torch grid has been placed in this world (persisted). */
 	public boolean torchesPlaced;
+	public int torchVersion;
 
 	static final int STEP = 24, HALF = 4; // 9x9 samples, 24 blocks apart: a 192x192 area
 
@@ -201,7 +202,7 @@ public final class Spot {
 		double camX = fx + out[0] * 20, camZ = fz + out[1] * 20;
 		int gF = h[fe[0]][fe[1]];
 		int gC = hAt(h, camX, camZ);
-		s.forest = Pose.lookAt(camX + cx, Math.max(gF, gC) + 12 + EYE, camZ + cz, fx - out[0] * 8 + cx, gF + 5, fz - out[1] * 8 + cz);
+		s.forest = Pose.lookAt(camX + cx, Math.max(gF, gC) + 9 + EYE, camZ + cz, fx - out[0] * 8 + cx, gF + 5, fz - out[1] * 8 + cz);
 
 		// sunset: a water sample whose samples to the west are water too; camera a bit east of it facing west (sun sets at -X)
 		int[] ws = null;
@@ -290,6 +291,7 @@ public final class Spot {
 		m.put("ideal", ideal);
 		m.put("candidatesTried", candidatesTried);
 		m.put("torchesPlaced", torchesPlaced);
+		m.put("torchVersion", torchVersion);
 		m.put("torchX", torchX);
 		m.put("torchZ", torchZ);
 		m.put("flightYaw", flightYaw);
@@ -312,6 +314,7 @@ public final class Spot {
 		s.ideal = Boolean.TRUE.equals(m.get("ideal"));
 		s.candidatesTried = ((Number) m.get("candidatesTried")).intValue();
 		s.torchesPlaced = Boolean.TRUE.equals(m.get("torchesPlaced"));
+		s.torchVersion = m.get("torchVersion") instanceof Number v ? v.intValue() : 0;
 		s.torchX = ((Number) m.get("torchX")).intValue();
 		s.torchZ = ((Number) m.get("torchZ")).intValue();
 		s.flightYaw = ((Number) m.get("flightYaw")).doubleValue();

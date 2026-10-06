@@ -54,7 +54,11 @@ the light into a 2-slice depth array texture. The game's world passes ("Sky", "M
   - Solid terrain has no fragment function at all, and solid lists are drawn before cutout ones.
   - Translucent terrain (water, stained glass) does not cast.
 
-## 2. Casters: `mcopt.shade.shadowCull=camera|light`
+## 2. Casters: `mcopt.shade.shadowCull=light|camera`
+
+> M1 integration (branch `m1`): `light` is now the default. It was verified in game (debug tiles stay full when looking
+> at the sky; ~250–390k far-cascade quads every 4 frames, about +0.15 ms GPU per frame on the bench route).
+
 
 Both modes read Sodium's section render data directly:
 

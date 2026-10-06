@@ -28,6 +28,9 @@ package mcopt.metal.shade;
  * <li>{@code mcopt.shade.shadowRes} (2048): shadow map size per cascade.</li>
  * <li>{@code mcopt.shade.shadowDist} (128): shadow distance in blocks.</li>
  * <li>{@code mcopt.shade.debug} (0): 1 shadow visibility and cascades, 2 normals, 3 lighting only (grey albedo).</li>
+ * <li>{@code mcopt.shade.sunTilt} (30): sun path tilt in degrees (ShadeSky.SUN_TILT); 0 = vanilla's overhead path.</li>
+ * <li>{@code mcopt.shade.dev} (0): feature-off bits for pricing in game (SHADE_DEV_* in shade_common.metal).</li>
+ * <li>Shadow pass details (cascades, casters, bias): mcopt.metal.shade.shadow.ShadowConfig.</li>
  * </ul>
  *
  * <p>This class stays free of game types: the mixin plugin loads it while mixins bootstrap.

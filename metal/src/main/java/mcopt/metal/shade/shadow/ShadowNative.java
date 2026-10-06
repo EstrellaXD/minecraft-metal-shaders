@@ -15,7 +15,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 final class ShadowNative {
 	private static final Linker LINKER = Linker.nativeLinker();
 
-	private static final MethodHandle NEW = fn("mc_shadow_new", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle NEW = fn("mc_shadow_new", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle FREE = fn("mc_shadow_free", null, JAVA_LONG);
 	private static final MethodHandle TEXTURE = fn("mc_shadow_texture", JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle COMPARE_SAMPLER = fn("mc_shadow_compare_sampler", JAVA_LONG, JAVA_LONG);
@@ -32,9 +32,9 @@ final class ShadowNative {
 		return LINKER.downcallHandle(symbol, ret == null ? FunctionDescriptor.ofVoid(args) : FunctionDescriptor.of(ret, args));
 	}
 
-	static long create(long ctx, long source, int resolution, int layers, long err, int errCap) {
+	static long create(long ctx, long source, int resolution, int layers, int depthBits, long err, int errCap) {
 		try {
-			return (long) NEW.invokeExact(ctx, source, resolution, layers, err, errCap);
+			return (long) NEW.invokeExact(ctx, source, resolution, layers, depthBits, err, errCap);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

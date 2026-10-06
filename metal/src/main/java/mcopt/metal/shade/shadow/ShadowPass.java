@@ -22,7 +22,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 /**
- * The sun (or moon) shadow map: two orthographic cascades in one Depth32Float 2D array texture, rendered natively before
+ * The sun (or moon) shadow map: two orthographic cascades in one Depth32Float (or Depth16Unorm) 2D array texture, rendered natively before
  * the frame's first world pass (-Dmcopt.shade=true, mcopt.shade.shadows on by default; see ShadowConfig).
  * <p>
  * Frame lifecycle (ShadowLevelRendererMixin): {@link #beginFrame} at LevelRenderer.render HEAD fits the cascades and fixes
@@ -83,7 +83,7 @@ public final class ShadowPass {
 		return p != null && p.prepared && p.renderOk && !failed;
 	}
 
-	/** The map: an id<MTLTexture> (depth2d_array, Depth32Float, CASCADES slices), 0 before the first frame or when off. */
+	/** The map: an id<MTLTexture> (depth2d_array, Depth32Float or Depth16Unorm, CASCADES slices), 0 before the first frame or when off. */
 	public static long texture() {
 		ShadowPass p = instance;
 		return p == null ? 0 : p.texture;
@@ -380,14 +380,15 @@ public final class ShadowPass {
 		}
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, 2048, 1);
-			long s = ShadowNative.create(ctx, MemoryUtil.memAddress(stack.UTF8(source)), ShadowConfig.RES, CASCADES, err, 2048);
+			long s = ShadowNative.create(ctx, MemoryUtil.memAddress(stack.UTF8(source)), ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS, err, 2048);
 			if (s == 0) throw new IllegalStateException("shadow pass setup: " + MemoryUtil.memUTF8(err));
 			this.shadow = s;
 		}
 		this.texture = ShadowNative.texture(this.shadow);
 		this.compareSampler = ShadowNative.compareSampler(this.shadow);
-		System.out.printf("[mcopt] shade: shadow map %dx%d x %d cascades (Depth32Float, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s%n",
-			ShadowConfig.RES, ShadowConfig.RES, CASCADES, CASCADES * 4.0 * ShadowConfig.RES * ShadowConfig.RES / (1 << 20), ShadowConfig.NEAR, ShadowConfig.DIST,
+		System.out.printf("[mcopt] shade: shadow map %dx%d x %d cascades (%s, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s%n",
+			ShadowConfig.RES, ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS == 16 ? "Depth16Unorm" : "Depth32Float",
+			CASCADES * (ShadowConfig.DEPTH_BITS / 8.0) * ShadowConfig.RES * ShadowConfig.RES / (1 << 20), ShadowConfig.NEAR, ShadowConfig.DIST,
 			ShadowConfig.CULL_LIGHT ? "light" : "camera", ShadowConfig.ALL_FACES ? "all" : "sun-facing");
 	}
 

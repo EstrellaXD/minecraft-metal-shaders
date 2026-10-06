@@ -20,7 +20,8 @@ typedef struct {
 	id<MTLDepthStencilState> depthWrite;
 	id<MTLSamplerState> compare;       // receivers: sampler(12)
 	id<MTLSamplerState> atlasSampler;  // cutout test: nearest, level 0
-	id<MTLTexture> map;                // Depth32Float 2D array, one slice per cascade
+	id<MTLTexture> map;                // Depth16Unorm or Depth32Float 2D array, one slice per cascade
+	MTLPixelFormat format;
 	id<MTLBuffer> quadIndices;
 	int resolution, layers;
 } Shadow;
@@ -34,20 +35,22 @@ static id<MTLRenderPipelineState> depthOnly(Shadow *s, NSString *vs, NSString *f
 	pd.label = vs;
 	pd.vertexFunction = [[s->library newFunctionWithName:vs] autorelease];
 	if (fs) pd.fragmentFunction = [[s->library newFunctionWithName:fs] autorelease];
-	pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+	pd.depthAttachmentPixelFormat = s->format;
 	pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
 	return [s->device newRenderPipelineStateWithDescriptor:pd error:e];
 }
 
 void mc_shadow_free(Shadow *s);
 
-// source: shadow.metal. resolution: per cascade (square). Returns NULL with err filled on failure.
-Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, char *err, int errCap) {
+// source: shadow.metal. resolution: per cascade (square). depthBits: 16 (Depth16Unorm) or 32 (Depth32Float). Returns NULL
+// with err filled on failure.
+Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, int depthBits, char *err, int errCap) {
 	@autoreleasepool {
 		Shadow *s = calloc(1, sizeof(Shadow));
 		s->device = ctx->device;
 		s->resolution = resolution;
 		s->layers = layers;
+		s->format = depthBits == 16 ? MTLPixelFormatDepth16Unorm : MTLPixelFormatDepth32Float;
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
 		o.mathMode = MTLMathModeFast;
@@ -87,7 +90,7 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 
 		MTLTextureDescriptor *td = [[MTLTextureDescriptor new] autorelease];
 		td.textureType = MTLTextureType2DArray;
-		td.pixelFormat = MTLPixelFormatDepth32Float;
+		td.pixelFormat = s->format;
 		td.width = resolution;
 		td.height = resolution;
 		td.arrayLength = layers;

@@ -39,36 +39,46 @@ static inline float shade_shadow_pcf(depth2d_array<float> map, sampler cmp, uint
     return s * 0.25;
 }
 
+// Receiver offset for cascade texel size texelWorld (blocks): along the normal by about a texel, and toward the light by
+// more as the surface turns away from it (where one texel spans the most depth). nl = dot(nrm, light) > 0.
+static inline float3 shade_shadow_offset(float3 nrm, float3 light, float nl, float texelWorld)
+{
+    float tanT = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.02), 0.0, 12.0);
+    return nrm * (texelWorld * 0.75) + light * (texelWorld * (0.5 + 0.75 * tanT));
+}
+
+// Visibility (1 lit, 0 shadow) of a camera-relative position in cascade `layer`, with clip-space footprint m = max |x|, |y|
+// returned (>= 1: outside this cascade, result 1).
+static inline float shade_shadow_cascade(depth2d_array<float> map, sampler cmp, uint layer, float4x4 vp, float3 posCam, float3 nrm,
+                                         float3 light, float nl, float texelWorld, float invRes, thread float &m)
+{
+    float4 c = vp * float4(posCam + shade_shadow_offset(nrm, light, nl, texelWorld), 1.0);
+    m = max(abs(c.x), abs(c.y));
+    if (m >= 1.0 || c.z <= 0.0) return 1.0;
+    return shade_shadow_pcf(map, cmp, layer, shade_shadow_uv(c), min(c.z, 1.0), invRes);
+}
+
 // Sun visibility at a camera-relative world position.
 //  posCam:  camera-relative world position of the receiver
 //  nrm:     its unit world-space normal (geometric normal is best)
-//  light:   unit world direction TO the light (ShadowPass.lightDir / ShadeFrame.sunDirWorld when the sun is up)
+//  light:   unit world direction TO the light (ShadowPass.lightDir; = ShadeFrame.sunDirWorld when the sun is up)
 //  vp0/vp1: ShadeFrame.shadowViewProj[0] / [1]
 //  texelWorld: (ShadowPass.texelSize(0), ShadowPass.texelSize(1)) in blocks per texel
 //  invRes:  1 / shadow map resolution (ShadeFrame.shadowTexelSize)
-// Returns 1 outside both cascades (no shadow information: lit).
+// Returns 0 for surfaces facing away from the light (pass a light-facing normal for two-sided foliage), and fades to 1
+// (lit) at the far cascade's edge, where there is no shadow information.
 static inline float shade_shadow(depth2d_array<float> map, sampler cmp, float3 posCam, float3 nrm, float3 light,
                                  float4x4 vp0, float4x4 vp1, float2 texelWorld, float invRes)
 {
     float nl = dot(nrm, light);
-    if (nl <= 0.0) return 0.0; // facing away from the light: self-shadowed (pass a light-facing normal for two-sided foliage)
-    // Normal offset grows as the surface turns away from the light (where depth slopes are steep).
-    float slope = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.05), 0.0, 8.0);
-    float k = 0.6 + 0.4 * slope;
-    float4 c0 = vp0 * float4(posCam + nrm * (texelWorld.x * k), 1.0);
-    float2 a0 = abs(c0.xy);
-    float m0 = max(a0.x, a0.y);
-    float near = 1.0;
-    if (m0 < 1.0 && c0.z > 0.0 && c0.z < 1.0) near = shade_shadow_pcf(map, cmp, 0u, shade_shadow_uv(c0), c0.z, invRes);
+    if (nl <= 0.0) return 0.0;
+    float m0, m1;
+    float near = shade_shadow_cascade(map, cmp, 0u, vp0, posCam, nrm, light, nl, texelWorld.x, invRes, m0);
     if (m0 < 0.85) return near;
-    float4 c1 = vp1 * float4(posCam + nrm * (texelWorld.y * k), 1.0);
-    float2 a1 = abs(c1.xy);
-    float m1 = max(a1.x, a1.y);
-    float far = 1.0;
-    if (m1 < 1.0 && c1.z > 0.0 && c1.z < 1.0) far = shade_shadow_pcf(map, cmp, 1u, shade_shadow_uv(c1), c1.z, invRes);
+    float far = shade_shadow_cascade(map, cmp, 1u, vp1, posCam, nrm, light, nl, texelWorld.y, invRes, m1);
     far = mix(far, 1.0, smoothstep(0.85, 1.0, m1)); // fade out at the far cascade's edge
     if (m0 >= 1.0) return far;
-    return mix(near, far, smoothstep(0.85, 1.0, m0)); // blend band between cascades
+    return mix(near, far, smoothstep(0.85, 1.0, m0)); // blend band between the cascades
 }
 
 #endif

@@ -8,6 +8,8 @@ package mcopt.metal.shade.shadow;
  * <li>{@code mcopt.shade} (false): the native shading pipeline as a whole.</li>
  * <li>{@code mcopt.shade.shadows} (true): the sun shadow map.</li>
  * <li>{@code mcopt.shade.shadowRes} (2048): texels per side of each cascade (512-8192).</li>
+ * <li>{@code mcopt.shade.shadowDepth} (32): 32 = Depth32Float, 16 = Depth16Unorm (same speed on the M4 in the synthetic
+ * bench, half the memory; precision is ample for both cascades' depth ranges).</li>
  * <li>{@code mcopt.shade.shadowDist} (128): half-width in blocks of the far cascade, centered on the camera.</li>
  * <li>{@code mcopt.shade.shadowNear} (shadowDist / 4): half-width in blocks of the near cascade, which is redrawn every frame
  * and pushed 40% of its half-width ahead of the camera.</li>
@@ -32,6 +34,7 @@ public final class ShadowConfig {
 	public static final boolean SHADE = Boolean.getBoolean("mcopt.shade");
 	public static final boolean SHADOWS = SHADE && !"false".equals(System.getProperty("mcopt.shade.shadows"));
 	public static final int RES = clamp(Integer.getInteger("mcopt.shade.shadowRes", 2048), 512, 8192);
+	public static final int DEPTH_BITS = Integer.getInteger("mcopt.shade.shadowDepth", 32) == 16 ? 16 : 32;
 	public static final float DIST = clamp(floatProp("mcopt.shade.shadowDist", 128f), 16f, 1024f);
 	public static final float NEAR = clamp(floatProp("mcopt.shade.shadowNear", DIST / 4f), 4f, DIST);
 	public static final int FAR_EVERY = clamp(Integer.getInteger("mcopt.shade.shadowFarEvery", 4), 1, 64);

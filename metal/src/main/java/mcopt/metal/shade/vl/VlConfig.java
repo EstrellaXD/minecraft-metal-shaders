@@ -64,6 +64,11 @@ public final class VlConfig {
 	private VlConfig() {
 	}
 
+	/** The MSL the passes compile from: shade_common.metal + vl.metal (mcvl.m; also tools/shade/validate.sh). */
+	public static String source() {
+		return mcopt.metal.shade.ShadeMsl.resource("shade_common.metal") + "\n" + mcopt.metal.shade.ShadeMsl.resource("vl.metal");
+	}
+
 	static float floatProperty(String key, float def) {
 		String v = System.getProperty(key);
 		if (v == null) return def;

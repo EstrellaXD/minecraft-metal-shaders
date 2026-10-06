@@ -23,7 +23,6 @@ import java.nio.ByteOrder;
 import mcopt.metal.MetalBridge;
 import mcopt.metal.shade.Shade;
 import mcopt.metal.shade.ShadeFrame;
-import mcopt.metal.shade.ShadeMsl;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -142,7 +141,7 @@ public final class ShadeVl {
 
 	private static boolean init(long ctx) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			ByteBuffer source = MemoryUtil.memUTF8(source());
+			ByteBuffer source = MemoryUtil.memUTF8(VlConfig.source());
 			try {
 				long err = stack.ncalloc(1, ERR, 1);
 				long s = VlNative.create(ctx, MemoryUtil.memAddress(source), VlConfig.LOSSY, err, ERR);
@@ -157,11 +156,6 @@ public final class ShadeVl {
 			System.out.println("[mcopt] shade: volumetric light off: " + t);
 			return false;
 		}
-	}
-
-	/** The MSL the passes compile from (also used by tools/shade validation). */
-	public static String source() {
-		return ShadeMsl.resource("shade_common.metal") + "\n" + ShadeMsl.resource("vl.metal");
 	}
 
 	// ---- parameters ----------------------------------------------------------------------------------------------------

@@ -49,6 +49,7 @@ public final class ShadeFrameUpdater {
 	private static boolean hasPrevious;
 	private static long lastNanos;
 	private static int lastDimension = -1;
+	private static boolean warnedOit;
 	private static final double[] DIR = new double[3];
 	private static final float[] MOON_BRIGHTNESS = {1f, 0.75f, 0.5f, 0.25f, 0f, 0.25f, 0.5f, 0.75f};
 
@@ -202,6 +203,10 @@ public final class ShadeFrameUpdater {
 		f.nightVision = lightmap.nightVisionEffectIntensity;
 		f.minAmbient = 0.0025f + 0.02f * lightmap.brightness + 0.25f * f.nightVision;
 
+		if (!warnedOit && mc.gameRenderer.useImprovedTransparency()) {
+			warnedOit = true; // Sodium's OIT pipelines aren't shaded (M2): water and glass then keep vanilla's light
+			System.out.println("[mcopt] shade: Improved Transparency is on; translucent blocks are not shaded with it (turn it off for shaders)");
+		}
 		f.debug = Shade.DEBUG;
 		f.frameIndex++;
 		long now = System.nanoTime();

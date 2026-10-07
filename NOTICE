@@ -26,3 +26,9 @@ Sodium (https://github.com/CaffeineMC/sodium)
     metal/src/main/java/mcopt/metal/cpu/CullReuse.java
     metal/src/main/native/mcprobe.m
     metal/src/main/native/mcterrain.m
+
+Native shading TAAU (metal/src/main/resources/mcopt/shade/taa.metal): the 5-tap Catmull-Rom history fetch
+(taaCatmullRom) is adapted from Matt Pettineo (MJP), "Bicubic texture filtering with the Catmull-Rom spline in 9 / 5
+taps" (https://gist.github.com/TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1), MIT License, with the corner taps dropped
+as in Jimenez, "Filmic SMAA" (SIGGRAPH 2016). The rest of the resolve is original, after public techniques (Karis 2014,
+Salvi 2016, Yang et al. 2020).

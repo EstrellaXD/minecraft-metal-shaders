@@ -254,6 +254,10 @@ public final class ShadeFrameUpdater {
 		LOOK.pack(ShadeBindings.currentLook(), f);
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
+		// M3 clouds: shadow map, march, resolve and reflection dome before the sky pass composites them (needs the LUT)
+		if (mcopt.metal.shade.clouds.ShadeClouds.ON && ShadeConfig.HDR && !ShadeBindings.fallback()) {
+			mcopt.metal.shade.clouds.ShadeClouds.update(ShadeBindings.ctx(), enc, f, ShadeBindings.currentLook());
+		}
 		if (mcopt.metal.shade.water.ShadeWater.ON) mcopt.metal.shade.water.ShadeWater.bake(ShadeBindings.ctx(), enc);
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());
 		if (LOG_EVERY > 0 && now - lastLog > LOG_EVERY * 1_000_000_000L) {

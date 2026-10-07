@@ -26,7 +26,7 @@ struct ShadeLook {
 	float4x4 viewProjNoJitter;     //   0  this frame's view-projection without TAA jitter (camera-relative world -> clip)
 	float4x4 prevViewProjNoJitter; //  64  last frame's, re-based on this frame's camera (camera-relative world now -> last clip)
 	float4x4 celestial;            // 128  rows: world dir -> star space (sun-fixed frame of the tilted sky; stars, Milky Way)
-	float4x4 cloudShadowVP;        // 192  reserved (M3 cloud shadows); identity
+	float4x4 cloudShadowVP;        // 192  M3 clouds: camera-relative world -> cloud shadow map uv (xy), along the light onto the layer (shade_clouds.metal)
 	float4 sunGeom;    // 256  x sun path tilt (rad), y sun disc angular radius (rad), z moon disc radius (rad), w sun elevation (rad)
 	float4 sunArt;     // 272  rgb art-graded direct light (= ShadeFrame.sunColor after the art layer), w sun/moon crossfade 0..1
 	float4 ambientArt; // 288  rgb ambient tint applied to the sky light, w ground-bounce strength
@@ -44,8 +44,8 @@ struct ShadeLook {
 	float4 vl;         // 480  reserved for the volumetric light module: x strength, y max distance, z HG g, w steps
 	float4 wet;        // 496  reserved: wetness, puddles, snow cover, rain (smoothed)
 	float4 wind;       // 512  reserved
-	float4 clouds0;    // 528  reserved
-	float4 clouds1;    // 544  reserved
+	float4 clouds0;    // 528  M3 clouds: x cumulus base y, y top y (relative to the camera), z cloud shadow strength (0 off), w 1 = volumetric clouds on (vanilla's off)
+	float4 clouds1;    // 544  M3 clouds: x 1 = the reflection dome holds clouds, y cirrus altitude (relative), zw reserved
 	float4 clouds2;    // 560  reserved
 	float4 water;      // 576  reserved for the water module
 	float4 waterAbs;   // 592  reserved for the water module
@@ -77,6 +77,7 @@ struct ShadeLook {
 #define SHADE_FEATURE_STARS 16     // procedural stars, Milky Way and moon (vanilla's stars and moon are dropped)
 #define SHADE_FEATURE_HAZE 32      // height haze and mist, border fog
 #define SHADE_FEATURE_LIGHT_V2 64  // lighting model v2
+#define SHADE_FEATURE_CLOUDS 4096  // M3 volumetric clouds (mcopt.shade.clouds): ShadeLook.clouds0.w says whether they draw this frame
 
 struct ShadeGpu {
 	float4 sh[9];          //   0  reserved (M2b: irradiance SH)
@@ -99,6 +100,14 @@ struct ShadeResources {
 	texture2d<half> reserved5;
 	texture2d<half> reserved6;
 	texture2d<half> reserved7;
+	texture2d<half> reserved8;
+	texture2d<half> reserved9;
+	texture2d<half> reserved10;
+	texture2d<half> reserved11;
+	texture2d<half> cloudShadow; // 12 M3 clouds: R16F cumulus transmittance toward the light (ShadeLook.cloudShadowVP), 256^2
+	texture2d<half> cloudDome;   // 13 M3 clouds: RGBA16F (scattered light before exposure, transmittance) by direction, upper hemisphere
+	texture2d<half> cloudScreen; // 14 M3 clouds: RGBA16F the same for this frame's view (no TAA jitter), reconstructed history
+	texture2d<half> reserved15;
 };
 
 // ---- display transform ("Shade Filmic") ---------------------------------------------------------------------------------

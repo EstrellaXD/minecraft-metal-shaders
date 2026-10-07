@@ -73,7 +73,8 @@ public final class ShadeMsl {
 	 */
 	public static String prelude() {
 		if (prelude == null) {
-			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n";
+			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
+				+ resource("shade_clouds.metal") + "\n";
 		}
 		return prelude;
 	}

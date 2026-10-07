@@ -315,6 +315,8 @@ final class MetalRenderPass implements RenderPassBackend {
 		this.indices += (long) indexCount * instanceCount;
 		String name = Objects.requireNonNull(this.pipeline).name;
 		boolean clouds = name.equals("minecraft:pipeline/clouds") || name.equals("minecraft:pipeline/flat_clouds");
+		// native shading's volumetric clouds (M3) replace vanilla's: their draw is skipped (static final false without shading)
+		if (clouds && mcopt.metal.shade.clouds.ShadeClouds.ON && mcopt.metal.shade.clouds.ShadeClouds.replacesVanilla()) return;
 		if (this.encoder.terrain.split && clouds && instanceCount == 1 && firstIndex == 0 && vertexOffset == 0 && this.drawClouds(indexCount / 6)) return;
 		if (indexCount <= 0 || instanceCount <= 0) return; // an empty draw (Metal's validation rejects zero counts)
 		Native.drawIndexed(this.enc, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);

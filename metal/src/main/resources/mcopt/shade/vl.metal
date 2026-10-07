@@ -217,7 +217,8 @@ struct VlMarchOut {
 
 fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
                         constant VlState &st [[buffer(1)]], depth2d<float> depth [[texture(0)]], texture2d<half> prevSky [[texture(1)]],
-                        depth2d_array<float> map [[texture(16)]], sampler cmp [[sampler(12)]]) {
+                        depth2d_array<float> map [[texture(16)]], sampler cmp [[sampler(12)]],
+                        constant ShadeLook &sl [[buffer(17)]], constant ShadeResources &sr [[buffer(19)]]) {
 	float2 scale = p.size.zw / p.size.xy;
 	// the full-res pixel this VL pixel stands for (the same one the upsample assumes)
 	uint2 fpx = uint2(min(floor(in.position.xy * scale), p.size.zw - 1.0));
@@ -260,6 +261,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float sLocal = localMain * vlMistDensity(t, y, p);
 			float sigma = sOpen + sLocal;
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
+			// M3: the volumetric clouds' shadows carve the air into shafts too (crepuscular rays from cloud gaps)
+			if (VL_HDR) v *= shadeCloudShadow(dir * t, sl, sr.cloudShadow);
 			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far, split by layer
 			float seg = trans * (1.0 - exp(-sigma * dt)) / max(sigma, 1e-9);
 			sumOpen += sOpen * seg;
@@ -355,7 +358,9 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	}
 	VlMarchOut o;
 	o.light = half4(half3(clamp(scatter, -30000.0, 30000.0)), half(dist));
-	o.sky = d <= 0.0 ? 1.0h : 0.0h;
+	// the sky mask: how open the sky is here; M3: the volumetric clouds' transmittance there, so next frame's crepuscular
+	// taps toward the sun see the clouds (dark rays across the aureole from the clouds around the sun)
+	o.sky = d <= 0.0 ? (VL_HDR ? half(shadeCloudsScreen(dir, sl, sr.cloudScreen).a) : 1.0h) : 0.0h;
 	return o;
 }
 

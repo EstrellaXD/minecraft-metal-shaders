@@ -445,9 +445,16 @@ static float3 shadeWaterHitColor(float2 uv, float exposure, float prevExposure, 
 // Milky Way, clouds, rain and Distant Horizons' LODs (which the depth copy doesn't hold), so open water mirrors the
 // clouds at sunset and the far mountains. Faded into the LUT toward the screen edges. rs: the direction for the rendered
 // sky (callers pass the calmer SSR direction: mirrored clouds stay readable instead of shredding into blotches).
-static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, texture2d<half> lut,
-                                sampler lutS, depth2d<float> depth, texture2d<half> prev) {
+static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, constant ShadeResources *R,
+                                texture2d<half> lut, sampler lutS, depth2d<float> depth, texture2d<half> prev) {
 	float3 sky = shadeSkyLookup(r, lut, lutS, f);
+	// M3: the volumetric clouds in that direction from their reflection dome (off-screen directions; on screen the rendered
+	// sky below holds them, already with their aerial perspective)
+	bool volumetricClouds = L != nullptr && R != nullptr && L->clouds0.w > 0.5;
+	if (volumetricClouds) {
+		float4 cd = shadeCloudsDome(r, *L, R->cloudDome);
+		sky = sky * cd.a + cd.rgb;
+	}
 	if (prevExposure > 0.0) {
 		float4 c = f.viewProj * float4(rs, 0.0); // a direction: the point at infinity
 		if (c.w > 1e-4) {
@@ -471,7 +478,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 				if (z > 0.0) {
 					float4 h = f.invViewProj * float4(uv * 2.0 - 1.0, z, 1.0);
 					pw = h.xyz / h.w;
-					bool cloud = pw.y + f.cameraBlock.y + f.cameraFract.y > 150.0; // the cloud layer (nothing else stands that high)
+					bool cloud = !volumetricClouds && pw.y + f.cameraBlock.y + f.cameraFract.y > 150.0; // vanilla's cloud layer (nothing else stands that high)
 					if (!cloud) wgt *= smoothstep(160.0, 320.0, shadeLinearW(z, f));
 				}
 				if (wgt > 0.0) {
@@ -480,7 +487,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 					float3 s = float3(prev.sample(shadeWaterLinear, saturate(uvp)).rgb) / prevExposure;
 					if (z > 0.0) {
 						s = shadeWaterHazed(s, pw, f, L);
-					} else if (rs.y > 0.02) {
+					} else if (rs.y > 0.02 && !volumetricClouds) {
 						// nothing in the opaque depth copy, but clouds (drawn after it) may be in last frame's image: where it
 						// differs from the plain sky in that direction, haze it as far as the cloud layer (on screen the final
 						// pass hazes clouds from the main depth; unhazed they mirror as dark slabs)
@@ -619,6 +626,7 @@ struct ShadeWaterIn {
 	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
 	float prevExposure; // M2 HDR: the exposure `prev` was drawn with (ShadeGpu.exposure.z); 0 = no prev (M1, first frame)
 	constant ShadeLook *look; // M2 HDR: the art layer (haze for what is read from `prev`); nullptr otherwise
+	constant ShadeResources *res; // M3 HDR: ShadeResources (the clouds' reflection dome); nullptr otherwise
 	float3 fog;      // the game's fog colour as radiance before exposure (the water seen from below, the TIR fallback)
 	float4 detail;   // (SHADE_WATER_DETAIL, top faces) shadeWaterDetailIn: xy fine-ripple slope (world, before the strength),
 	                 // z their height, w the pixel pattern; 0 where not computed
@@ -805,7 +813,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// the LUT sky follows a calmer direction too: the rippled one smeared the low sun's aureole over the near water as a
 	// milky veil (the glint below is what carries the sun's sparkle)
 	float3 rl = normalize(mix(rs, rr, 0.6));
-	float3 refl = shadeWaterSkyRefl(rl, rr, w.prevExposure, f, w.look, lut, lutS, depth, prev) * open;
+	float3 refl = shadeWaterSkyRefl(rl, rr, w.prevExposure, f, w.look, w.res, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
 	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
@@ -916,8 +924,8 @@ static float3 shadeWaterSurface(ShadeWaterIn w, constant ShadeFrame &f, constant
 // (out alpha = alpha + (1 - alpha) F, colour = what makes src alpha blending give lit alpha (1 - F) + reflection F + glint),
 // so clear panes turn mirror-like at grazing angles like real windows. radiance/alpha: the face's lit colour and alpha.
 static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, float2 pixel, half sky, half shadow, float exposure,
-                          float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
-                          texture2d<half> scene, depth2d<float> depth, texture2d<half> prev, texture2d<float> hz) {
+                          float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, constant ShadeResources *R, constant ShadeWaterParams &wp,
+                          texture2d<half> lut, sampler lutS, texture2d<half> scene, depth2d<float> depth, texture2d<half> prev, texture2d<float> hz) {
 	float dist = length(p);
 	float3 v = p / max(dist, 1e-4);
 	float cosV = saturate(dot(-v, n));
@@ -926,7 +934,7 @@ static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, floa
 	float fres = (0.04 + 0.96 * m2 * m2 * m) * wp.tune.z;
 	float open = float(shadeSkyCurve(sky));
 	float3 r = reflect(v, n);
-	float3 refl = shadeWaterSkyRefl(float3(r.x, abs(r.y), r.z), float3(r.x, abs(r.y), r.z), prevExposure, f, L, lut, lutS, depth, prev) * open;
+	float3 refl = shadeWaterSkyRefl(float3(r.x, abs(r.y), r.z), float3(r.x, abs(r.y), r.z), prevExposure, f, L, R, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
 	if (wp.state.x > 0.5 && shadeQuadMax(fres) > 0.03) { // quad-uniform (SSR's lanes work together)

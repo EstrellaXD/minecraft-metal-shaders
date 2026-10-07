@@ -144,7 +144,7 @@ CloudState *mc_clouds_new(Ctx *ctx, const char *source, char *err, int errCap) {
 		s->bakeNoise = cloudKernel(dev, s->lib, @"cloud_bake_noise", err, errCap);
 		s->bakeWeather = cloudKernel(dev, s->lib, @"cloud_bake_weather", err, errCap);
 		s->march = cloudPso(dev, s->lib, @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float, err, errCap);
-		s->resolve = cloudPso(dev, s->lib, @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatRG16Float, err, errCap);
+		s->resolve = cloudPso(dev, s->lib, @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatR8Unorm, err, errCap);
 		s->dome = cloudPso(dev, s->lib, @"cloud_dome", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, err, errCap);
 		s->shadow = cloudPso(dev, s->lib, @"cloud_shadow", MTLPixelFormatR16Float, MTLPixelFormatInvalid, err, errCap);
 		if (!s->bakeNoise || !s->bakeWeather || !s->march || !s->resolve || !s->dome || !s->shadow) {
@@ -209,7 +209,7 @@ void mc_clouds_free(CloudState *s) {
 	free(s);
 }
 
-// (Re)allocates the screen targets: history hw x hh, march mw x mh (= half of it with the 2x2 checkerboard), dome dw x dh.
+// (Re)allocates the screen targets: history hw x hh, march mw x mh (1/N of it with the N x N checkerboard), dome dw x dh.
 // Returns 1 when anything was (re)made (the caller drops the history for a frame).
 int mc_clouds_size(CloudState *s, Ctx *ctx, int hw, int hh, int mw, int mh, int dw, int dh) {
 	int changed = 0;
@@ -228,7 +228,7 @@ int mc_clouds_size(CloudState *s, Ctx *ctx, int hw, int hh, int mw, int mh, int 
 			s->marchDist = cloudTarget(dev, MTLPixelFormatR32Float, mw, mh, @"mcopt shade: cloud march distance");
 			for (int i = 0; i < 2; i++) {
 				s->hist[i] = cloudTarget(dev, MTLPixelFormatRGBA16Float, hw, hh, i ? @"mcopt shade: cloud history B" : @"mcopt shade: cloud history A");
-				s->data[i] = cloudTarget(dev, MTLPixelFormatRG16Float, hw, hh, i ? @"mcopt shade: cloud data B" : @"mcopt shade: cloud data A");
+				s->data[i] = cloudTarget(dev, MTLPixelFormatR8Unorm, hw, hh, i ? @"mcopt shade: cloud age B" : @"mcopt shade: cloud age A");
 			}
 			s->hw = hw;
 			s->hh = hh;

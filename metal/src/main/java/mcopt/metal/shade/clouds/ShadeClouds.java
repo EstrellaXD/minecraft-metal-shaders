@@ -103,12 +103,10 @@ public final class ShadeClouds {
 			var window = mc.getWindow();
 			int ow = Math.max(1, window.getWidth()), oh = Math.max(1, window.getHeight());
 			int hw = Math.max(16, Math.round(ow * CloudConfig.SCALE)), hh = Math.max(16, Math.round(oh * CloudConfig.SCALE));
-			boolean checker = CloudConfig.CHECKER;
-			if (checker) {
-				hw += hw & 1;
-				hh += hh & 1;
-			}
-			int mw = checker ? hw / 2 : hw, mh = checker ? hh / 2 : hh;
+			int checker = CloudConfig.CHECKER;
+			hw = (hw + checker - 1) / checker * checker;
+			hh = (hh + checker - 1) / checker * checker;
+			int mw = hw / checker, mh = hh / checker;
 			boolean resized = CloudNative.size(state, ctx, hw, hh, mw, mh, CloudConfig.DOME_W, CloudConfig.DOME_H) != 0;
 
 			// weather and wind

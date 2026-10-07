@@ -24,9 +24,9 @@ import mcopt.metal.shade.Shade;
  * <ul>
  * <li>{@code mcopt.shade.clouds} (true): volumetric cumulus + cirrus replace vanilla's clouds (false: vanilla's, lit by
  * M2's clouds.fs.metal, exactly as before).</li>
- * <li>{@code mcopt.shade.clouds.scale}: history resolution relative to the output (P 0.33, B 0.4, Q 0.5, U 0.5).</li>
- * <li>{@code mcopt.shade.clouds.checker} (true; ultra false): march one pixel of each 2x2 per frame (a quarter of the
- * history's pixels), the rest from the reprojected history.</li>
+ * <li>{@code mcopt.shade.clouds.scale}: history resolution relative to the output (P 0.4, B 0.5, Q 0.5, U 0.67).</li>
+ * <li>{@code mcopt.shade.clouds.checker} (P 3, B 3, Q 2, U 2): march one pixel of each N x N block per frame, the rest
+ * from the reprojected history (1 = every pixel every frame).</li>
  * <li>{@code mcopt.shade.clouds.steps} / {@code .lightSteps}: primary and light samples (P 24/4, B 32/4, Q 48/5, U 64/6).</li>
  * <li>{@code mcopt.shade.clouds.shadows} (true) / {@code .shadowStrength} (0.8): cloud shadows on terrain, water and
  * god rays.</li>
@@ -47,8 +47,9 @@ public final class CloudConfig {
 	private static final int TIER = Shade.TIER;
 	public static final boolean ENABLED = Shade.ENABLED && flag("mcopt.shade.clouds", true) && flag("mcopt.shade.hdr", true)
 		&& !Boolean.parseBoolean(System.getProperty("mcopt.lod", "false"));
-	public static final float SCALE = clamp(floatProperty("mcopt.shade.clouds.scale", new float[] {0.33f, 0.4f, 0.5f, 0.5f}[TIER]), 0.2f, 1f);
-	public static final boolean CHECKER = flag("mcopt.shade.clouds.checker", TIER < 3);
+	public static final float SCALE = clamp(floatProperty("mcopt.shade.clouds.scale", new float[] {0.4f, 0.5f, 0.5f, 0.67f}[TIER]), 0.2f, 1f);
+	/** Checkerboard N: one pixel of each N x N block is marched per frame (P 3, B 3, Q 2, U 2; 1 = every pixel). */
+	public static final int CHECKER = clampInt(Integer.getInteger("mcopt.shade.clouds.checker", new int[] {3, 3, 2, 2}[TIER]), 1, 3);
 	public static final int STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.steps", new int[] {24, 32, 48, 64}[TIER]), 6, 128);
 	public static final int LIGHT_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.lightSteps", new int[] {4, 4, 5, 6}[TIER]), 1, 8);
 	public static final boolean SHADOWS = flag("mcopt.shade.clouds.shadows", true);
@@ -69,8 +70,9 @@ public final class CloudConfig {
 	public static final float DENSITY = clamp(floatProperty("mcopt.shade.clouds.density", 1f), 0.1f, 10f);
 	public static final float DETAIL = clamp(floatProperty("mcopt.shade.clouds.detail", 1f), 0f, 3f);
 	/** Blocks of world per 1 km of the sky model's air for the light the layer gets (sunset light lingers on the clouds). */
-	public static final float ALTITUDE_SCALE = clamp(floatProperty("mcopt.shade.clouds.altitudeScale", 10f), 0f, 50f);
-	public static final int MAX_AGE = clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", 8), 1, 64);
+	public static final float ALTITUDE_SCALE = clamp(floatProperty("mcopt.shade.clouds.altitudeScale", 4f), 0f, 50f);
+	/** Most visits a history pixel averages (its march samples are jittered): fewer with a larger checkerboard (slower visits). */
+	public static final int MAX_AGE = clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", CHECKER >= 3 ? 6 : 8), 1, 63);
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.clouds.debug", 0);
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");
@@ -84,7 +86,7 @@ public final class CloudConfig {
 	}
 
 	static String describe() {
-		return "preset " + Shade.PRESET + ", scale " + SCALE + (CHECKER ? " (2x2 checkerboard)" : "") + ", " + STEPS + "/" + LIGHT_STEPS + " steps"
+		return "preset " + Shade.PRESET + ", scale " + SCALE + " (" + CHECKER + "x" + CHECKER + " checkerboard)" + ", " + STEPS + "/" + LIGHT_STEPS + " steps"
 			+ (SHADOWS ? ", shadows " + SHADOW_STRENGTH : ", no shadows") + (DOME ? ", dome " + DOME_STEPS + " steps" : "") + (CIRRUS ? ", cirrus" : "");
 	}
 

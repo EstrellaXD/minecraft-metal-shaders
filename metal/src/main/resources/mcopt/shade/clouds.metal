@@ -33,12 +33,12 @@
 #ifndef MCOPT_SHADE_CLOUDS_PASSES
 #define MCOPT_SHADE_CLOUDS_PASSES
 
-// Per-frame parameters (mcopt.metal.shade.clouds.CloudParams packs exactly this layout: 2 matrices + 18 float4 = 416 bytes).
+// Per-frame parameters (mcopt.metal.shade.clouds.CloudParams packs exactly this layout: 2 matrices + 19 float4 = 432 bytes).
 struct CloudParams {
 	float4x4 invViewProj;  //   0 this frame's clip -> camera-relative world, without the TAA jitter
 	float4x4 prevViewProj; //  64 last frame's camera-relative world (re-based on this camera) -> clip, without jitter
 	float4 size;           // 128 xy history size (px), zw march size (px)
-	float4 frame;          // 144 xy this frame's checkerboard slot (0/1 each), z 1 = drop the history, w most frames blended (age cap)
+	float4 frame;          // 144 xy this frame's checkerboard slot (0..N-1 each), z 1 = drop the history, w most frames blended (age cap)
 	float4 layer;          // 160 x cumulus base y, y cumulus top y (absolute), z camera y (absolute), w curvature 1/(2 R) (1/blocks)
 	float4 shape;          // 176 x coverage 0..1, y type (0 flat .. 1 towering), z extinction per block at density 1, w erosion
 	float4 origin;         // 192 xy the camera's xz in the weather map's space (blocks, wrapped, wind included), zw the same for
@@ -54,10 +54,12 @@ struct CloudParams {
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
 	float4 dome;           // 352 xy dome size (px), z blend of the new march, w primary steps of the dome march
 	float4 misc;           // 368 x frame counter, y debug view, z ground height (absolute y: rays stop there), w detail strength
-	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), zw 0
+	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3), w 0
 	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
+	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
+	                       //     extinction factor, w 0
 };
-static_assert(sizeof(CloudParams) == 416, "CloudParams layout (CloudParams.java)");
+static_assert(sizeof(CloudParams) == 432, "CloudParams layout (CloudParams.java)");
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
 constexpr sampler cloudClamp(filter::linear, address::clamp_to_edge);
@@ -202,8 +204,8 @@ kernel void cloud_bake_weather(texture2d<half, access::write> out [[texture(0)]]
 
 // ---- the layer -----------------------------------------------------------------------------------------------------------
 #define CLOUD_WEATHER_TILE 4096.0
-#define CLOUD_NOISE_SCALE (1.0 / 176.0)
-#define CLOUD_DETAIL_SCALE (1.0 / 44.0)
+#define CLOUD_NOISE_SCALE (1.0 / 120.0)
+#define CLOUD_DETAIL_SCALE (1.0 / 30.0)
 
 struct CloudRay {
 	float a, b, y0; // altitude above the curved ground along the ray: y0 + b t + a t^2
@@ -276,19 +278,22 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	if (q == 0) return saturate(d * 0.85);
 	float3 n3 = float3(xz.x + c.origin.z - c.origin.x, y, xz.y + c.origin.w - c.origin.y);
 	half4 n = noise.sample(cloudRep, n3 * CLOUD_NOISE_SCALE, level(0.0));
-	// billows: Perlin-Worley shaped by the Worley fBm; tops stay round, bottoms get ragged
-	float billow = float(n.r) * 0.7 + float(n.g) * 0.3;
-	float erode = c.shape.w * mix(0.85, 1.0, h);
-	d = cloudRemap(d, (1.0 - billow) * erode, 1.0, 0.0, 1.0);
-	if (q >= 2 && d > 0.0 && d < 0.6) {
+	// billows (after Photon's detail erosion): Worley distance squared eats into the shape between the cells, more where
+	// the cloud is thin (dampen(1 - d)), so the edges and the tops break into round lobes; the Perlin-Worley adds variety
+	float wd = 1.0 - (float(n.g) * 0.75 + float(n.r) * 0.25);
+	float thin = saturate(1.0 - d);
+	thin = thin * (2.0 - thin);
+	d -= c.shape.w * 0.42 * wd * wd * thin;
+	if (q >= 2 && d > 0.0) {
 		half4 m = noise.sample(cloudRep, n3 * CLOUD_DETAIL_SCALE, level(0.0));
-		float hf = float(m.b) * 0.6 + float(m.a) * 0.4;
-		// wispy below (the detail as is), billowy above (inverted)
-		float e = mix(hf, 1.0 - hf, saturate(h * 4.0));
-		d = cloudRemap(d, e * 0.32 * c.misc.w, 1.0, 0.0, 1.0);
+		float wd2 = 1.0 - (float(m.b) * 0.7 + float(m.a) * 0.3);
+		// fine detail: strongest on the sides and lower half, little on the domes' crowns
+		float fade = 0.6 + 0.2 * smoothstep(0.85, 1.0, 1.0 - h) - 0.35 * smoothstep(0.05, 0.5, h);
+		d -= 0.45 * c.misc.w * wd2 * wd2 * thin * fade;
 	}
-	// harder edges up top (cauliflower), softer, thinner bases
-	d = 1.0 - pow(1.0 - saturate(d), mix(1.6, 4.0, h));
+	d = saturate(d);
+	// edges sharpen with height: crisp cauliflower tops, softer ragged bases
+	d = 1.0 - pow(1.0 - d, mix(2.5, 7.0, h));
 	return d * (0.25 + 0.75 * smoothstep(0.0, 0.25, h));
 }
 
@@ -380,15 +385,15 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		float above = c.layer.y - y;
 		float dUp = cloudDensity(p + float3(0.0, above * 0.4, 0.0), y + above * 0.4, 0, c, weather, noise);
 		// (diffuse light: much less extinct than the direct beam)
-		float tauUp = (dUp * 0.7 + d * 0.3) * sigma * above * 0.2;
-		float tauDown = d * sigma * (y - c.layer.x) * 0.15;
+		float tauUp = (dUp * 0.7 + d * 0.3) * sigma * above * c.art.z;
+		float tauDown = d * sigma * (y - c.layer.x) * c.art.z * 0.75;
 		// multiple scattering: 4 octaves (Wrenninge): each dimmer, far less extinct and more isotropic (the light that
 		// diffuses through a thick cloud: lit sides near white, bases grey, not black)
 		float ms = 0.0, a = 1.0, b = 1.0, k = 1.0;
 		for (int o2 = 0; o2 < 4; o2++) {
 			ms += a * exp(-b * tauL) * cloudPhase(mu, k, c);
-			a *= 0.75;
-			b *= 0.4;
+			a *= c.art.x;
+			b *= c.art.y;
 			k *= 0.5;
 		}
 		// powder: the thin skin of a cloud scatters less light toward the eye than its depths (dark creases on the sunlit
@@ -495,8 +500,9 @@ struct CloudMarchOut {
 fragment CloudMarchOut cloud_march(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant CloudParams &c [[buffer(0)]],
                                    texture2d<half> weather [[texture(0)]], texture3d<half> noise [[texture(1)]],
                                    texture2d<half> lut [[texture(17)]], sampler lutS [[sampler(13)]]) {
-	// the history pixel this march pixel stands for this frame (2x2 checkerboard)
-	float2 hp = floor(in.position.xy) * (c.size.x > c.size.z ? 2.0 : 1.0) + (c.size.x > c.size.z ? c.frame.xy : float2(0.0));
+	// the history pixel this march pixel stands for this frame (N x N checkerboard, N = windDir.z)
+	float n = c.windDir.z;
+	float2 hp = min(floor(in.position.xy) * n + c.frame.xy, c.size.xy - 1.0);
 	float2 uv = (hp + 0.5) / c.size.xy;
 	float3 dir = cloudDirection(uv, c);
 	float jitter = fract(shadeNoise(hp, 0) + c.misc.x * 0.6180339887);
@@ -516,18 +522,20 @@ fragment CloudMarchOut cloud_march(CloudVsOut in [[stage_in]], constant ShadeFra
 
 struct CloudResolveOut {
 	half4 color [[color(0)]]; // rgb scattered light (before exposure), a transmittance
-	half2 data [[color(1)]];  // x apparent distance (blocks), y age (frames this pixel was marched and blended)
+	half age [[color(1)]];    // R8Unorm: frames this pixel was marched and blended / 64
 };
 
+// The history pixel's new value: this frame's march where it is this frame's checkerboard slot (blended into the
+// reprojected history: 1 / age, capped), else the reprojected history (Photon's checkerboard upscaling, our weights), or the
+// march upsampled where nothing reprojects (a turn uncovering the screen edge, first frames).
 fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant CloudParams &c [[buffer(0)]],
                                        texture2d<half> cur [[texture(0)]], texture2d<float> curDist [[texture(1)]],
-                                       texture2d<half> hist [[texture(2)]], texture2d<half> histData [[texture(3)]]) {
-	bool checker = c.size.x > c.size.z;
+                                       texture2d<half> hist [[texture(2)]], texture2d<half> histAge [[texture(3)]]) {
+	uint n = uint(c.windDir.z);
 	uint2 px = uint2(in.position.xy);
 	uint2 slot = uint2(c.frame.xy);
-	uint2 mp = checker ? px / 2u : px;
-	mp = min(mp, uint2(c.size.zw) - 1u);
-	bool mine = !checker || all((px & 1u) == slot);
+	uint2 mp = min(px / n, uint2(c.size.zw) - 1u);
+	bool mine = all(px % n == slot);
 	float2 uv = (float2(px) + 0.5) / c.size.xy;
 	float3 dir = cloudDirection(uv, c);
 	half4 now = cur.read(mp);
@@ -541,21 +549,20 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 	float age = 0.0;
 	if (valid) {
 		h = hist.sample(cloudClamp, puv);
-		age = float(histData.sample(cloudClamp, puv).y);
+		age = float(histAge.sample(cloudClamp, puv).r) * 64.0;
 	}
 	CloudResolveOut o;
 	if (mine) {
 		float w = valid ? 1.0 / min(age + 1.0, c.frame.w) : 1.0;
 		o.color = valid ? mix(h, now, half(w)) : now;
-		o.data = half2(half(dNow), half(min(age + 1.0, c.frame.w)));
+		o.age = half(min(age + 1.0, c.frame.w) / 64.0);
 	} else if (valid && age > 0.5) {
 		o.color = h;
-		o.data = half2(half(dNow), half(age));
+		o.age = half(age / 64.0);
 	} else {
-		// nothing to reproject (screen edge after a turn, first frames): this frame's march, upsampled
-		float2 mpos = checker ? (float2(px) + 0.5 - float2(slot) - 0.5) * 0.5 + 0.5 : float2(px) + 0.5;
+		float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;
 		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
-		o.data = half2(half(dNow), 0.0h);
+		o.age = 0.0h;
 	}
 	return o;
 }

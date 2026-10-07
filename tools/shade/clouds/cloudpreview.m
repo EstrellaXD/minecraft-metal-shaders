@@ -75,7 +75,7 @@ int main(int argc, const char **argv) {
 		NSData *frame = [NSData dataWithContentsOfFile:[dir stringByAppendingFormat:@"/%@.frame", name]];
 		NSData *look = [NSData dataWithContentsOfFile:[dir stringByAppendingFormat:@"/%@.look", name]];
 		NSData *params = [NSData dataWithContentsOfFile:[dir stringByAppendingFormat:@"/%@.params", name]];
-		const int PB = 416;
+		const int PB = 432;
 		int frames = (int) (params.length / PB);
 		frameBuf = [dev newBufferWithLength:2048 options:MTLResourceStorageModeShared];
 		memcpy(frameBuf.contents, frame.bytes, frame.length);
@@ -144,13 +144,13 @@ int main(int argc, const char **argv) {
 		int hw = (int) p0[32], hh = (int) p0[33], mw = (int) p0[34], mh = (int) p0[35];
 		int dw = (int) p0[88], dh = (int) p0[89];
 		id<MTLRenderPipelineState> march = pso(cl, @"cloud_vs", @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float);
-		id<MTLRenderPipelineState> resolve = pso(cl, @"cloud_vs", @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatRG16Float);
+		id<MTLRenderPipelineState> resolve = pso(cl, @"cloud_vs", @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatR8Unorm);
 		id<MTLRenderPipelineState> domeP = pso(cl, @"cloud_vs", @"cloud_dome", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid);
 		id<MTLRenderPipelineState> shadowP = pso(cl, @"cloud_vs", @"cloud_shadow", MTLPixelFormatR16Float, MTLPixelFormatInvalid);
 		id<MTLRenderPipelineState> comp = pso(cl, @"cloudpreview_vs", @"cloudpreview_fs", MTLPixelFormatRGBA8Unorm, MTLPixelFormatInvalid);
 		id<MTLTexture> mc = tex(MTLPixelFormatRGBA16Float, mw, mh, NO), md = tex(MTLPixelFormatR32Float, mw, mh, NO);
 		id<MTLTexture> hist[2] = {tex(MTLPixelFormatRGBA16Float, hw, hh, NO), tex(MTLPixelFormatRGBA16Float, hw, hh, NO)};
-		id<MTLTexture> data[2] = {tex(MTLPixelFormatRG16Float, hw, hh, NO), tex(MTLPixelFormatRG16Float, hw, hh, NO)};
+		id<MTLTexture> data[2] = {tex(MTLPixelFormatR8Unorm, hw, hh, NO), tex(MTLPixelFormatR8Unorm, hw, hh, NO)};
 		id<MTLTexture> domeT[2] = {tex(MTLPixelFormatRGBA16Float, dw, dh, NO), tex(MTLPixelFormatRGBA16Float, dw, dh, NO)};
 		id<MTLTexture> shadow = tex(MTLPixelFormatR16Float, 256, 256, NO);
 		int cur = 0, dc = 0;

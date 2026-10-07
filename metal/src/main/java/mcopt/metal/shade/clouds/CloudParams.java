@@ -28,9 +28,15 @@ import org.joml.Matrix4f;
  * ShadeFrame and CloudWeather, no game types: the offline preview packs it too.
  */
 public final class CloudParams {
-	public static final int SIZE = 416;
-	/** World periods the noise textures tile with (blocks): the weather map's 4096 tile, the 3D noise's 176 and 44 tiles. */
-	static final double WEATHER_PERIOD = 16384.0, NOISE_PERIOD = 176.0 * 64.0;
+	public static final int SIZE = 432;
+	/** Art knobs: multiple-scattering octave weight and extinction factors, sky-light extinction (diffuse) factor. */
+	static final float OCTAVE_WEIGHT = CloudConfig.floatProperty("mcopt.shade.clouds.octaveWeight", 0.75f),
+		OCTAVE_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.octaveExtinction", 0.4f),
+		SKY_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.skyExtinction", 0.2f),
+		SUNSET_FILL = CloudConfig.floatProperty("mcopt.shade.clouds.sunsetFill", 0.4f),
+		AP_SUNSET = CloudConfig.floatProperty("mcopt.shade.clouds.apSunset", 1.5f);
+	/** World periods the noise textures tile with (blocks): the weather map's 4096 tile, the 3D noise's 120 and 30 tiles. */
+	static final double WEATHER_PERIOD = 16384.0, NOISE_PERIOD = 120.0 * 64.0;
 	static final float CURVATURE_RADIUS = 40000f;
 	static final float SEA = 63f;
 	/** The cirrus streaks' fixed axis (radians from +x). */
@@ -38,7 +44,9 @@ public final class CloudParams {
 
 	// ---- inputs (set by the caller each frame) ----
 	public int histW = 1, histH = 1, marchW = 1, marchH = 1, frame;
-	public boolean checker = true, reset = true, domeValid;
+	/** Checkerboard N (1-3): one history pixel of each N x N block is marched per frame. */
+	public int checker = 3;
+	public boolean reset = true, domeValid;
 	public float base = 200f, top = 350f;
 	/** Accumulated wind displacement (blocks) of the cumulus (2D field), of the 3D noise, and of the cirrus. */
 	public double windX, windZ, wind3X, wind3Z, cirrusX, cirrusZ;
@@ -63,10 +71,12 @@ public final class CloudParams {
 		inv.get(0, b);
 		m.translation(-f.prevJitterX, -f.prevJitterY, 0f).mul(f.prevViewProj).get(64, b);
 		put4(b, 128, this.histW, this.histH, this.marchW, this.marchH);
-		int slot = this.frame & 3;
-		// slots in the order (0,0) (1,1) (1,0) (0,1): consecutive frames are diagonal neighbours
-		float sx = slot == 1 || slot == 2 ? 1f : 0f, sy = slot == 1 || slot == 3 ? 1f : 0f;
-		put4(b, 144, this.checker ? sx : 0f, this.checker ? sy : 0f, this.reset ? 1f : 0f, CloudConfig.MAX_AGE);
+		int n = Math.max(1, Math.min(3, this.checker));
+		int slot = Math.floorMod(this.frame, n * n);
+		// slot orders that spread consecutive frames apart: 2x2 (0,0) (1,1) (1,0) (0,1); 3x3 by a Bayer-like order
+		int[] order = n == 3 ? ORDER3 : n == 2 ? ORDER2 : ORDER1;
+		int cell = order[slot];
+		put4(b, 144, cell % n, cell / n, this.reset ? 1f : 0f, CloudConfig.MAX_AGE);
 		float camY = (float) f.cameraY;
 		put4(b, 160, this.base, this.top, camY, 1f / (2f * CURVATURE_RADIUS));
 		float storm = w.storm;
@@ -101,9 +111,13 @@ public final class CloudParams {
 		put4(b, 240, this.lightDir[0], this.lightDir[1], this.lightDir[2], 0f);
 		float[] as = f.sky.ambientSky, ag = f.sky.ambientGround;
 		float albedo = 0.96f - 0.3f * storm;
-		put4(b, 256, as[0], as[1], as[2], albedo);
+		// a low sun: less of the sky's grey-blue fill, so the sunlit sides stay saturated gold against darker bases
+		float fill = this.sunLit ? SUNSET_FILL + (1f - SUNSET_FILL) * smoothstep(0.04f, 0.35f, sunY) : 1f;
+		put4(b, 256, as[0] * fill, as[1] * fill, as[2] * fill, albedo);
 		put4(b, 272, ag[0], ag[1], ag[2], 0.9f);
-		float ap = 9000f * (1f - 0.65f * f.rain);
+		// aerial perspective toward the sky behind: lighter while the sun is low (the clouds keep their sunset colour)
+		float lowSun = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
+		float ap = 9000f * (1f - 0.65f * f.rain) * (1f + AP_SUNSET * lowSun);
 		put4(b, 288, CloudConfig.STEPS, CloudConfig.LIGHT_STEPS, 12000f, ap);
 		// cirrus: wraps in its own rotated frame (streak axis fixed in the world), so the period stays exact
 		double ca = Math.cos(CIRRUS_AXIS), sa = Math.sin(CIRRUS_AXIS);
@@ -121,8 +135,11 @@ public final class CloudParams {
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
 		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.3f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, CloudConfig.DEBUG, SEA - 6f, CloudConfig.DETAIL);
-		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), 0f, 0f);
+		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, 0f);
 		put4(b, 400, sl[0], ly, sl[2], 0f);
+		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
+		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
+		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, 0f);
 		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, sl[1]) * this.opacity : 0f;
 
 		// ---- ShadeLook ----
@@ -160,6 +177,8 @@ public final class CloudParams {
 		put4(b, ShadeLook.CLOUDS0, this.base - this.cameraY, this.top - this.cameraY, this.shadowStrength, 1f);
 		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + CloudConfig.CIRRUS_ABOVE - this.cameraY, 0f, 0f);
 	}
+
+	private static final int[] ORDER1 = {0}, ORDER2 = {0, 3, 1, 2}, ORDER3 = {0, 7, 5, 2, 6, 4, 8, 3, 1};
 
 	/** SHADE_FEATURE_CLOUDS (shade_look.metal). */
 	public static final int FEATURE_CLOUDS = 4096;

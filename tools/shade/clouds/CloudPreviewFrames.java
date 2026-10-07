@@ -71,8 +71,9 @@ public class CloudPreviewFrames {
 			if ((Float) s[7] >= 0f) w.coverage = (Float) s[7];
 			CloudParams p = new CloudParams();
 			int hw = Math.round(W * scale), hh = Math.round(H * scale);
-			hw += hw & 1; hh += hh & 1;
-			p.histW = hw; p.histH = hh; p.marchW = hw / 2; p.marchH = hh / 2; p.checker = true;
+			int nc = CloudConfig.CHECKER;
+			hw = (hw + nc - 1) / nc * nc; hh = (hh + nc - 1) / nc * nc;
+			p.histW = hw; p.histH = hh; p.marchW = hw / nc; p.marchH = hh / nc; p.checker = nc;
 			p.base = 200f; p.top = 350f;
 			ByteBuffer pb = ByteBuffer.allocateDirect(CloudParams.SIZE * frames).order(ByteOrder.LITTLE_ENDIAN);
 			for (int i = 0; i < frames; i++) {
@@ -92,7 +93,9 @@ public class CloudPreviewFrames {
 			write(out.resolve(name + ".frame"), fb);
 			write(out.resolve(name + ".look"), lb);
 			write(out.resolve(name + ".params"), pb);
-			System.out.printf("%-16s %dx%d clouds %dx%d  %s  light %.2f %.2f %.2f exposure %.3f%n", name, W, H, hw, hh, w.describe(), p.light[0], p.light[1], p.light[2], f.exposure);
+			System.out.printf("%-16s %dx%d clouds %dx%d  %s  light %.2f %.2f %.2f amb %.2f %.2f %.2f zenith %.2f %.2f %.2f hor %.2f %.2f %.2f exposure %.3f%n", name, W, H, hw, hh, w.describe(),
+				p.light[0], p.light[1], p.light[2], f.sky.ambientSky[0], f.sky.ambientSky[1], f.sky.ambientSky[2], f.sky.zenith[0], f.sky.zenith[1], f.sky.zenith[2],
+				f.sky.horizon[0][0], f.sky.horizon[0][1], f.sky.horizon[0][2], f.exposure);
 		}
 	}
 

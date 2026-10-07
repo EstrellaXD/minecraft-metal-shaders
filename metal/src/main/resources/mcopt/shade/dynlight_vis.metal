@@ -46,7 +46,7 @@ kernel void shade_dl_vis(uint3 t [[thread_position_in_grid]], constant DlVisPara
 	float3 dv = float3(target) + 0.5 - src;
 	float dist = length(dv);
 	half visible = 0.0h;
-	if (dist <= V.light.w + 1.0) {
+	if (dist <= V.light.w - 1.0) { // the shading stops 2 blocks short of the reach (SHADE_DL_CUT); one voxel of margin
 		visible = 1.0h;
 		int3 cell = int3(floor(src));
 		if (any(cell != target)) {

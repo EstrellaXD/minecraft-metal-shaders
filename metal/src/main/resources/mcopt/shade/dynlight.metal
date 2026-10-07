@@ -34,6 +34,7 @@ using namespace metal;
 
 #define SHADE_DL_MAX 64        // lights per frame (64-bit cell masks)
 #define SHADE_DL_VOL 32        // voxels per side of a visibility volume
+#define SHADE_DL_CUT 2.0       // blocks short of the reach where a light stops (level < 2: F < 0.2 % of the core)
 #define SHADE_DL_GRID_X 16     // light grid cells (8 blocks each): 128 x 96 x 128 blocks around the camera
 #define SHADE_DL_GRID_Y 12
 #define SHADE_DL_GRID_Z 16
@@ -84,8 +85,8 @@ static inline float shadeDlVisibility(constant ShadeDynLights &D, constant Shade
 static inline float3 shadeDlOne(constant ShadeDynLights &D, constant ShadeDynLight &L, float3 p, float3 n, bool thin, texture3d<half> vis,
                                 thread float3 &l, thread float &d) {
 	float3 v = L.pos.xyz - p;
-	float d2 = dot(v, v), reach = L.pos.w;
-	if (d2 >= reach * reach) return float3(0.0);
+	float d2 = dot(v, v), reach = L.pos.w, cut = reach - SHADE_DL_CUT;
+	if (d2 >= cut * cut) return float3(0.0);
 	d = sqrt(d2);
 	l = v / max(d, 1e-3);
 	float nl = dot(n, l);
@@ -95,7 +96,7 @@ static inline float3 shadeDlOne(constant ShadeDynLights &D, constant ShadeDynLig
 	if (w <= 0.0) return float3(0.0);
 	// as block light level reach - d; within the first block the hot core is capped (no singular spot under the hand)
 	float b = saturate((reach - max(d, 0.75)) * (1.0 / 15.0));
-	float e = shadeDlCurve(b) * w;
+	float e = shadeDlCurve(b) * w * saturate(cut - d); // faded out over the last block before the cut
 	if (e <= 1e-4) return float3(0.0);
 	return L.color.rgb * (e * shadeDlVisibility(D, L, p + n * 0.5, vis));
 }
@@ -168,8 +169,8 @@ static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2
 			bits &= bits - 1u;
 			constant ShadeDynLight &L = D.lights[i];
 			float3 v = L.pos.xyz - p;
-			float d2 = dot(v, v), reach = L.pos.w;
-			if (d2 >= reach * reach) continue;
+			float d2 = dot(v, v), reach = L.pos.w, cut = reach - SHADE_DL_CUT;
+			if (d2 >= cut * cut) continue;
 			float d = sqrt(d2);
 			float w = hasN ? 0.45 + 0.55 * saturate(dot(nn, v / max(d, 1e-3))) : 1.0;
 			float lv = max(reach - max(d, 0.75), 0.0); // block light level 0..15

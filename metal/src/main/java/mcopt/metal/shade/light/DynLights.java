@@ -68,6 +68,8 @@ public final class DynLights {
 	/** The local player's packed light follows what it holds (DynLightEntityRendererMixin). */
 	public static final boolean HAND_LIGHT = ON && DynLightConfig.HAND;
 	static final int MAX = 64, GRID_X = 16, GRID_Y = 12, GRID_Z = 16, CELL = 8;
+	/** Blocks short of its reach where a light stops (dynlight.metal SHADE_DL_CUT). */
+	static final double CUT = 2.0;
 	/** ShadeDynLights (dynlight.metal): header 64 + lights 64 x 48 + cells 3072 x 8. */
 	static final int LIGHTS_OFFSET = 64, CELLS_OFFSET = LIGHTS_OFFSET + MAX * 48, BYTES = CELLS_OFFSET + GRID_X * GRID_Y * GRID_Z * 8;
 	private static final int RING = 4, VIS_PARAMS = 16 + 64 * 32;
@@ -189,6 +191,8 @@ public final class DynLights {
 			ACTIVE.add(s);
 		}
 		ACTIVE.sort((p, q) -> Float.compare(q.score, p.score));
+		// -Dmcopt.shade.dynLights.pause (read every frame; the bench sets it at run time for an A/B in one session): no lights
+		if (Boolean.getBoolean("mcopt.shade.dynLights.pause")) ACTIVE.clear();
 		int count = Math.min(ACTIVE.size(), DynLightConfig.MAX);
 
 		// visibility volumes: the strongest lights near enough for the occupancy window keep a slab of the 3D texture while
@@ -268,15 +272,21 @@ public final class DynLights {
 			} else {
 				b.putFloat(at + 32, 0f).putFloat(at + 36, 0f).putFloat(at + 40, 0f).putFloat(at + 44, -1f);
 			}
-			// cells the light's sphere reaches (its bounding box, clamped to the grid)
-			int x0 = clamp((int) Math.floor((s.x - s.reach - gx0) / CELL), GRID_X), x1 = clamp((int) Math.floor((s.x + s.reach - gx0) / CELL), GRID_X);
-			int y0 = clamp((int) Math.floor((s.y - s.reach - gy0) / CELL), GRID_Y), y1 = clamp((int) Math.floor((s.y + s.reach - gy0) / CELL), GRID_Y);
-			int z0 = clamp((int) Math.floor((s.z - s.reach - gz0) / CELL), GRID_Z), z1 = clamp((int) Math.floor((s.z + s.reach - gz0) / CELL), GRID_Z);
+			// cells the light's sphere reaches (radius: the reach less the shader's cut, SHADE_DL_CUT), corners of its box dropped
+			double rr = Math.max(s.reach - CUT, 0.5), rr2 = rr * rr;
+			int x0 = clamp((int) Math.floor((s.x - rr - gx0) / CELL), GRID_X), x1 = clamp((int) Math.floor((s.x + rr - gx0) / CELL), GRID_X);
+			int y0 = clamp((int) Math.floor((s.y - rr - gy0) / CELL), GRID_Y), y1 = clamp((int) Math.floor((s.y + rr - gy0) / CELL), GRID_Y);
+			int z0 = clamp((int) Math.floor((s.z - rr - gz0) / CELL), GRID_Z), z1 = clamp((int) Math.floor((s.z + rr - gz0) / CELL), GRID_Z);
 			if (x0 < 0 || y0 < 0 || z0 < 0) continue;
 			long bit = 1L << i;
 			for (int y = y0; y <= y1; y++) {
+				double cy = Math.max(gy0 + y * CELL, Math.min(s.y, gy0 + (y + 1) * CELL)) - s.y;
 				for (int z = z0; z <= z1; z++) {
-					for (int x = x0; x <= x1; x++) cells[(y * GRID_Z + z) * GRID_X + x] |= bit;
+					double cz = Math.max(gz0 + z * CELL, Math.min(s.z, gz0 + (z + 1) * CELL)) - s.z;
+					for (int x = x0; x <= x1; x++) {
+						double cx = Math.max(gx0 + x * CELL, Math.min(s.x, gx0 + (x + 1) * CELL)) - s.x;
+						if (cx * cx + cy * cy + cz * cz <= rr2) cells[(y * GRID_Z + z) * GRID_X + x] |= bit;
+					}
 				}
 			}
 		}
@@ -496,7 +506,7 @@ public final class DynLights {
 			Src s = ACTIVE.get(i);
 			double dx = s.x - x, dy = s.y - y, dz = s.z - z;
 			double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-			if (d >= s.reach) continue;
+			if (d >= s.reach - CUT) continue;
 			float lv = (float) (s.reach - Math.max(d, 0.75)) * Math.min(s.cur, 1f) * DynLightConfig.STRENGTH;
 			if (lv <= best) continue;
 			if (!s.hand && occupancy != null && occupancy.blocked(s.x, s.y, s.z, x, y, z)) continue;

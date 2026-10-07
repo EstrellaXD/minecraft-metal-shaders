@@ -134,7 +134,7 @@ public final class ShadeMsl {
 		if (!generated.contains(WEATHER_SIGNATURE) || at < 0) return generated;
 		int end = generated.indexOf(';', at) + 1;
 		boolean m3 = ShadeWeather.MODULE && !generated.contains("[[position]]");
-		String call = m3 ? "shadeWeather3(out.fragColor, mcoptFragCoord.xy, mcoptShadeFrame, mcoptShadeLook, mcoptShadeGpu, mcoptSkyLut, mcoptSkyLutSmplr)"
+		String call = m3 ? "shadeWeather3(out.fragColor, mcoptFragCoord, mcoptShadeFrame, mcoptShadeLook, mcoptShadeGpu, mcoptSkyLut, mcoptSkyLutSmplr)"
 			: "shadeWeather(out.fragColor, mcoptShadeFrame, mcoptShadeLook, mcoptShadeGpu)";
 		String patched = generated.substring(0, end) + "\n    out.fragColor = " + call + ";" + generated.substring(end);
 		patched = patched.replace(WEATHER_SIGNATURE, WEATHER_SIGNATURE
@@ -170,7 +170,7 @@ public final class ShadeMsl {
 		if (!ShadeWeather.MODULE || !ShadeWeather.LIGHTNING || !generated.contains(FRAGMENT_ENTRY) || at < 0) return generated;
 		int end = generated.indexOf(';', at) + 1;
 		String patched = generated.substring(0, end)
-			+ "\n#ifdef MCOPT_HDR\n    out.fragColor.rgb = min(out.fragColor.rgb * float3(9.0, 10.0, 12.0), float3(6.0e4));\n#endif" + generated.substring(end);
+			+ "\n#ifdef MCOPT_HDR\n    out.fragColor.rgb = min(out.fragColor.rgb * float3(30.0, 33.0, 40.0), float3(6.0e4));\n#endif" + generated.substring(end);
 		return patched;
 	}
 

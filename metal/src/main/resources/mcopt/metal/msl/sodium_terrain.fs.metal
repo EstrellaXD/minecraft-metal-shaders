@@ -251,11 +251,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef MCOPT_HDR
             wl.prevExposure = sl.ssr.x > 0.5 ? sg.exposure.z : 0.0;
             wl.histOk = sl.ssr.x > 0.5 && sl.ssr.y > 0.5;
-            radiance = shadeWetShade(radiance, wet, wl, sf, sl, skyLut, skyLutSmplr, sr.prevScene, sr.prevDepth);
+            radiance = shadeWetShade(radiance, wetAlbedo, wet, wl, sf, sl, skyLut, skyLutSmplr, sr.prevScene, sr.prevDepth);
 #else
             wl.prevExposure = 0.0;
             wl.histOk = false;
-            radiance = shadeWetShade(radiance, wet, wl, sf, sl, skyLut, skyLutSmplr, skyLut, skyLut);
+            radiance = shadeWetShade(radiance, wetAlbedo, wet, wl, sf, sl, skyLut, skyLutSmplr, skyLut, skyLut);
 #endif
         }
         if (debug == 8) radiance = float3(float(wet.omega), float(wet.puddle), float(wet.snow)) * 0.25 / max(ex, 1e-3);

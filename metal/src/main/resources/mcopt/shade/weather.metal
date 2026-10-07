@@ -27,25 +27,27 @@ static float4 shadeWeather(float4 c, constant ShadeFrame &f, constant ShadeLook 
 #ifdef SHADE_WEATHER
 // pixel: the fragment position ([[position]]); lut: the sky-view LUT. c: vanilla's result (texture x vertex colour x lightmap x
 // fog), whose luminance carries the lightmap (torches near the streak) and the texture's streak shape.
-static float4 shadeWeather3(float4 c, float2 pixel, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, texture2d<half> lut,
+static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, texture2d<half> lut,
                             sampler lutS) {
 	if (f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a > 0.5) return float4(shadeVanillaOut(c.rgb, L), c.a);
-	// the view direction (GL row order: the pixel row counts from the bottom of the view)
+	// the view direction (GL row order: the pixel row counts from the bottom of the view) and the distance (reversed Z)
 	float2 ndc = float2(pixel.x * f.screen.z * 2.0 - 1.0, pixel.y * f.screen.w * 2.0 - 1.0);
 	float4 wp = f.invViewProj * float4(ndc, 0.5, 1.0);
 	float3 v = normalize(wp.xyz / wp.w);
+	float dist = f.proj[3][2] / max(pixel.z + f.proj[2][2], 1e-7);
 	float l = shadeLuma(c.rgb);
 	float3 sky = shadeSkyLookup(float3(v.x, max(v.y, 0.02), v.z), lut, lutS, f);
-	float3 skyMean = f.ambientSky.rgb * 1.1;
+	float3 skyMean = f.ambientSky.rgb;
 	// forward scattering of the sun through the drops (a soft glow toward the sun), and the flash
 	float mu = dot(v, f.lightDirWorld.xyz);
-	float3 sun = f.sunColor.rgb * (0.12 + 0.6 * shadeHG(mu, 0.55));
-	float3 light = max(sky, skyMean) * 1.08 + sun + float3(0.78, 0.86, 1.0) * (L.flash.w * 0.6);
+	float3 sun = f.sunColor.rgb * (0.03 + 0.45 * shadeHG(mu, 0.6));
+	float3 light = max(sky, skyMean) * 1.02 + sun + float3(0.78, 0.86, 1.0) * (L.flash.w * 0.6);
 	// torch light: vanilla's lightmap brightens the streak beyond what the sky alone gives (warm, like the block light)
 	float torch = max(l - 0.75, 0.0) * 2.0;
 	light += f.ambientBlock.rgb * torch * 0.6;
-	float3 lit = shadeOut(light * (0.85 + 0.25 * l) * float3(0.97, 0.99, 1.0), f, shadeExposure(f, g));
-	float a = c.a * (0.42 + 0.2 * saturate(L.wet.w));
+	float3 lit = shadeOut(light * (0.9 + 0.2 * l) * float3(0.97, 0.99, 1.0), f, shadeExposure(f, g));
+	// thin and glassy: mostly transparent, and the columns right in front of the eye (a block wide on screen) fade out
+	float a = c.a * (0.28 + 0.14 * saturate(L.wet.w)) * smoothstep(1.2, 4.5, dist);
 	return float4(lit, a);
 }
 #endif

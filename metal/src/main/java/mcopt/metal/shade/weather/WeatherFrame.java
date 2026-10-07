@@ -105,5 +105,5 @@ public final class WeatherFrame {
 	}
 
 	/** Flash light at full strength: radiance on a white surface facing it, before exposure (a storm's sky light is ~0.1-0.3). */
-	private static final float FLASH_LIGHT = Float.parseFloat(System.getProperty("mcopt.shade.flashLight", "2.5"));
+	private static final float FLASH_LIGHT = Float.parseFloat(System.getProperty("mcopt.shade.flashLight", "5"));
 }

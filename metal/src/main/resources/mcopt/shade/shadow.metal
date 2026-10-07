@@ -147,10 +147,13 @@ fragment float4 shadow_tint_fs(ShadowTintOut in [[stage_in]], texture2d<float> a
         float a = t.a * float(in.color.a);
         if (a < 0.03) discard_fragment(); // the clear parts of glass
         float3 c = t.rgb * vc;
-        c = c * c; // linear-ish, and a little deeper: light through coloured glass is purer than the glass looks
-        float l = dot(c, float3(0.2126, 0.7152, 0.0722));
-        c = c / max(l, 1e-3) * min(l * 1.6 + 0.12, 1.0); // keep the hue, brighten dark stained glass a little
-        T = mix(float3(1.0), saturate(c), saturate(a * 1.35));
+        c = c * c * c; // linear, and deeper: light through coloured glass is purer than the glass looks
+        // the hue at full strength in its brightest channel (red glass lets red through, not a dim brown): bright, saturated
+        // pools of colour like light through a church window; tinted (dark) glass stays dark through its luminance
+        float m = max(max(c.r, c.g), max(c.b, 1e-4));
+        float l = dot(t.rgb * vc, float3(0.2126, 0.7152, 0.0722));
+        c = c / m * smoothstep(0.02, 0.25, l);
+        T = mix(float3(1.0), saturate(c), saturate(a * 1.5));
     }
     return float4(T, in.pos.z);
 }

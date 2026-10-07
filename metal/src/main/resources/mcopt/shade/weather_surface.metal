@@ -51,10 +51,12 @@ static inline float shadeWxValue(float2 x, int mask, uint salt) {
 	return mix(mix(a, b, u.x), mix(d, e, u.x), u.y);
 }
 
-// The puddle field: broad shapes (16-block cells), lobes (8) and ragged rims (4). About 0.5 on average.
+// The puddle field: puddles 2-6 blocks across (8-block cells), lobes (4) and ragged rims (2), on a 32-block swell that makes
+// some stretches of ground wetter than others. About 0.5 on average (std 0.14): threshold 0.6 covers ~30 % of open ground.
 static inline float shadeWxPuddleField(float2 xa) {
-	return 0.58 * shadeWxValue(xa * (1.0 / 16.0), 255, 0x51ed270bu) + 0.28 * shadeWxValue(xa * (1.0 / 8.0), 511, 0x2c1b3c6du)
-		+ 0.14 * shadeWxValue(xa * 0.25, 1023, 0x297a2d39u);
+	float big = shadeWxValue(xa * (1.0 / 32.0), 127, 0x01234567u);
+	return 0.5 * shadeWxValue(xa * 0.125, 511, 0x51ed270bu) + 0.3 * shadeWxValue(xa * 0.25, 1023, 0x2c1b3c6du)
+		+ 0.2 * shadeWxValue(xa * 0.5, 2047, 0x297a2d39u) + 0.25 * (big - 0.5);
 }
 
 // ---- raindrop ripples -----------------------------------------------------------------------------------------------------
@@ -71,7 +73,7 @@ static float2 shadeWxRipples(float2 xa, float t, float rate) {
 		float2 ci = floor(q);
 		float2 lp = (q - ci) * C;
 		uint h = shadeHash3(int3(int2(ci) & 8191, layer), 0x6a09e667u);
-		float period = 0.55 + 0.5 * shadeHash01(h);
+		float period = 0.45 + 0.4 * shadeHash01(h);
 		float ph = t / period + shadeHash01(h ^ 0xbb67ae85u);
 		float n = floor(ph);
 		float age = (ph - n) * period;
@@ -123,10 +125,10 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 #ifdef SHADE_PUDDLES
 	if (L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h) {
 		float field = shadeWxPuddleField(xa);
-		float t = mix(0.80, 0.53, float(L.wet.y));
-		half P = half(smoothstep(t, t + 0.045, field)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
+		float t = mix(0.80, 0.60, float(L.wet.y));
+		half P = half(smoothstep(t, t + 0.035, field)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter
-		w.omega = max(w.omega, half(smoothstep(t - 0.09, t, field)) * half(L.wet.y) * open);
+		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
 		float fade = 1.0 - smoothstep(0.012, 0.035, footprint);
@@ -268,7 +270,7 @@ struct ShadeWetLight {
 
 // The water film's specular on top of the diffuse radiance: sky (or SSR on puddles) reflection and the sun's highlight, with
 // the diffuse part dimmed by what the film reflects. Radiance before exposure.
-static float3 shadeWetShade(float3 radiance, ShadeWet w, ShadeWetLight in, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> lut,
+static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetLight in, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> lut,
                             sampler lutS, texture2d<half> hist, texture2d<half> histDepth) {
 	half wet = max(w.omega, w.puddle);
 	if (wet <= 0.004h) return radiance;
@@ -278,8 +280,10 @@ static float3 shadeWetShade(float3 radiance, ShadeWet w, ShadeWetLight in, const
 	float3 n = nf;
 	float P = float(w.puddle);
 	if (P > 0.0) n = normalize(float3(-w.slope.x * P, 1.0, -w.slope.y * P));
-	// roughness: damp ground 0.45, soaked 0.2, standing water 0.03 (the ripples add their own detail)
-	float rough = mix(mix(0.55, 0.2, float(w.omega)), 0.03, P);
+	// roughness: damp ground 0.8, soaked 0.38, standing water 0.03 (the ripples add their own detail); vegetation (grass tops,
+	// leaves: green albedo) holds less of a film than stone, wood or paths
+	float veg = saturate((float(albedo.g) - max(float(albedo.r), float(albedo.b))) * 8.0);
+	float rough = mix(min(mix(0.8, 0.38, float(w.omega)) + 0.25 * veg, 0.95), 0.03, P);
 	float cosV = max(dot(-v, n), 0.02);
 	float F = shadeWxFresnel(cosV, rough);
 	float3 r = reflect(v, n);
@@ -298,7 +302,7 @@ static float3 shadeWetShade(float3 radiance, ShadeWet w, ShadeWetLight in, const
 	float a = max(rough * rough, 0.0025);
 	float3 sun = float3(f.sunColor.rgb) * min(shadeWxGgx(n, v, f.lightDirWorld.xyz, a), 60.0) * float(in.shadow)
 		* float(smoothstep(0.3h, 0.8h, in.sky));
-	float k = float(wet) * (P > 0.0 ? 1.0 : 0.85);
+	float k = mix(float(w.omega) * 0.65 * (1.0 - 0.5 * veg), 1.0, P);
 	return radiance * (1.0 - F * k) + (refl * F + sun * F) * k;
 }
 

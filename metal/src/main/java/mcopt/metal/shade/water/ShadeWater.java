@@ -42,7 +42,8 @@ import org.lwjgl.system.MemoryUtil;
  * <li>{@code mcopt.shade.water} (true): the module. False = M1's still-water stand-in, byte-identical shaders.</li>
  * <li>{@code mcopt.shade.ssr} (true): screen-space reflections (false: sky and sun reflections only).</li>
  * <li>{@code mcopt.shade.ssrSteps} (16): SSR march steps (4-64), plus 4 binary refinement steps.</li>
- * <li>{@code mcopt.shade.ssrDist} (96): SSR maximum ray length in blocks.</li>
+ * <li>{@code mcopt.shade.ssrDist} (512): SSR maximum ray length in blocks (the march is in screen space, so a long ray costs
+ * no more steps; it lets distant hills and shores mirror in open water at sunset).</li>
  * <li>{@code mcopt.shade.waterWaves} (1.0): wave strength (0 = flat mirror).</li>
  * <li>{@code mcopt.shade.caustics} (true): caustics on the bottom seen through the surface.</li>
  * <li>{@code mcopt.shade.waterFoam} (true): shoreline foam.</li>
@@ -58,7 +59,7 @@ public final class ShadeWater {
 	public static final boolean ON = Shade.ENABLED && MODULE;
 	public static final boolean SSR = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssr", "true"));
 	public static final int SSR_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.ssrSteps", 16), 4, 64);
-	public static final float SSR_DIST = Math.clamp(floatProperty("mcopt.shade.ssrDist", 96f), 8f, 512f);
+	public static final float SSR_DIST = Math.clamp(floatProperty("mcopt.shade.ssrDist", 512f), 8f, 1024f);
 	public static final float WAVES = Math.clamp(floatProperty("mcopt.shade.waterWaves", 1f), 0f, 4f);
 	public static final boolean CAUSTICS = Boolean.parseBoolean(System.getProperty("mcopt.shade.caustics", "true"));
 	public static final boolean FOAM = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterFoam", "true"));

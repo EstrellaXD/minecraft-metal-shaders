@@ -399,7 +399,7 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		above *= float(shadeSkyCurve(w.sky)) * 0.6 + 0.4;
 	}
 	// the water below, mirrored
-	float3 below = shadeWaterSceneRadiance(half3(f.fogColor.rgb), f) * 0.8;
+	float3 below = shadeWaterSceneRadiance(half3(f.fogColor.rgb), f) * (0.65 + 0.5 * saturate(height * 7.0 + 0.3)); // the mirror ripples
 #ifdef SHADE_SSR
 	if (fres > 0.05) {
 		float4 hit = shadeSsr(w.p + n * 0.02, reflect(v, n), shadeNoise(w.pixel, 0), min(wp.tune.y, 48.0), f, scene, depth);

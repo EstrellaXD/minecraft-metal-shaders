@@ -17,7 +17,7 @@ rm -rf "$OUT" && mkdir -p "$OUT/classes"
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/pipecheck.m" -o "$OUT/pipecheck"
 CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$(find ~/.gradle/caches -name 'jspecify-*.jar' | grep -v sources | head -1)"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/ShadeMslDump.java"
-"${JAVA_BIN}java" -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"
+"${JAVA_BIN}java" -Dmcopt.shade.glossy=true -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"  # opt-in features on: the widest variant
 cp "$HERE"/gen_*.fs.metal "$OUT/"
 cd "$OUT"
 fail=0

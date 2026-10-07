@@ -20,9 +20,11 @@ import net.minecraft.world.level.material.Fluids;
 
 /**
  * Opt-in weather screenshots ({@code -Dmcbench.weather=true} for all of them, or a comma list of
- * {@code rain,sunset,night,water,storm,glass}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
+ * {@code perf,rain,sunset,night,water,storm,glass}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
  * weather work (branch m3-weather). Poses are found in the loaded world around the bench spot (server thread):
  * <ul>
+ * <li>{@code perf}: two recorded perf phases at the ground pose (results.json perf.wxdry / perf.wxrain, gpu.*): 10 s panning
+ * +-25 degrees, clear noon, then in rain (the weather's cost; -Dmcbench.wxSeconds).</li>
  * <li>{@code wx_rain_ground} (noon, rain): 2.6 blocks above the flat torch-grid site, looking across it toward the village
  * side: wet ground, puddles with reflections and raindrop ripples, slanted lit rain.</li>
  * <li>{@code wx_wet_sunset} (it rains for a while, then clears; shot at 12000): the same pose, the ground still wet after
@@ -63,7 +65,7 @@ final class WeatherShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass"))) return;
+		if (!(on("perf") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass"))) return;
 		BenchDriver.results.put("weatherShots", JSON);
 		// the torch grid's area must be loaded on the server to read the ground (and place the glass)
 		steps.add(new BenchDriver.Scene("wx-site", 6000, false, () -> BenchDriver.spot.night));
@@ -84,6 +86,11 @@ final class WeatherShots {
 				BenchDriver.log("weather poses " + poses);
 				List<BenchDriver.Step> extra = new ArrayList<>();
 				Poses p = poses;
+				if (on("perf") && p.ground != null) {
+					// the cost of the weather: the same 10 s pan over the ground pose, dry, then soaked in rain
+					perf(extra, "wxdry", false, p.ground);
+					perf(extra, "wxrain", true, p.ground);
+				}
 				// glass first: the ground is still dry
 				if (on("glass") && p.glassSite != null) {
 					extra.add(new BenchDriver.Step("wx-glass-build", 0) {
@@ -137,6 +144,34 @@ final class WeatherShots {
 		m.put("time", time);
 		m.put("rain", rain);
 		JSON.put(name, m);
+	}
+
+	/** A recorded perf phase (results.json perf.name / gpu.name): -Dmcbench.wxSeconds (10) s panning +-25 degrees. */
+	private static void perf(List<BenchDriver.Step> extra, String name, boolean rain, Pose o) {
+		double sec = Double.parseDouble(System.getProperty("mcbench.wxSeconds", "10"));
+		extra.add(new BenchDriver.Scene(name, 6000, rain, () -> o));
+		extra.add(new BenchDriver.Settle(name, rain, 3, 120));
+		extra.add(new BenchDriver.Hold(name, rain ? 4 : 1));
+		extra.add(new BenchDriver.Warmup(1));
+		extra.add(new BenchDriver.Step(name, 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				BenchDriver.setPhase(name.toUpperCase(Locale.ROOT));
+				long t0 = now;
+				BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 25.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
+				BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(name);
+				BenchDriver.phaseRanges.put(name, new long[] {now, 0});
+				BenchDriver.log("perf " + name + " " + sec + " s");
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+				BenchDriver.recPhase = -1;
+				BenchDriver.phaseRanges.get(name)[1] = now;
+				return true;
+			}
+		});
 	}
 
 	/** Rain over the water, a bolt on the water ahead; the shot 0.12 s after it is summoned (the bolt lives ~0.4 s). */

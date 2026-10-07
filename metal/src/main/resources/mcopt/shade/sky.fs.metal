@@ -21,6 +21,8 @@ static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSm
                             constant ShadeResources &sr) {
 	float pixelAngle = 2.0 * atan(1.0 / max(abs(sf.proj[1][1]), 1e-3)) * sf.screen.w;
 	float3 sky = shadeSkyRadiance2(dir, skyLut, skyLutSmplr, sf, sl, sr.milkyWay, pixelAngle);
+	// M3 weather: a lightning flash lights the clouds (the whole overcast sky glows, most toward the bolt)
+	if (sl.flash.w > 0.0) sky += float3(0.78, 0.86, 1.0) * (sl.flash.w * 0.35 * (0.35 + 0.65 * pow(saturate(dot(dir, sl.flash.xyz) * 0.5 + 0.5), 3.0)));
 	float vanillaSky = dir.y <= 0.0 ? 1.0 : saturate(min(16.0 / max(dir.y, 1e-3), 512.0) / max(sf.fogSky.x, 1.0));
 	return shadeFinish2(sky, vanillaSky, sf, sl, ex);
 }

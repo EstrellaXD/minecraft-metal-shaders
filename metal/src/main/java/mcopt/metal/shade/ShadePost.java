@@ -248,6 +248,10 @@ public final class ShadePost {
 		ShadeBindings.setPrevSceneValid(prevValid);
 		ShadeRender.resource(1, prevScene);
 		ShadeRender.resource(2, hdr[frame & 1]);
+		// ShadeResources.prevDepth (5): the TAA history's linear view depth, for passes that march last frame's image
+		long prevDepth = taa != null && prevValid ? taa.historyDepth() : 0;
+		ShadeRender.resource(5, prevDepth);
+		ShadeBindings.setPrevDepthValid(prevDepth != 0);
 	}
 
 	private static void resize(int w, int h) {

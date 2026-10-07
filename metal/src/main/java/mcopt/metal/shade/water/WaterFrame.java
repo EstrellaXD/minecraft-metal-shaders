@@ -40,6 +40,12 @@ public final class WaterFrame {
 		ShadeWater.frame(ctx, sprites ? STILL : NONE, sprites ? FLOW : NONE, surface, wetness);
 	}
 
+	/** The water sprites' atlas rectangles as last found (still u0 v0 u1 v1, flowing u0 v0 u1 v1; zeros when unknown): M3 coloured shadows. */
+	public static void rects(float[] out) {
+		System.arraycopy(STILL, 0, out, 0, 4);
+		System.arraycopy(FLOW, 0, out, 4, 4);
+	}
+
 	private static boolean sprites() {
 		try {
 			FluidModel model = Minecraft.getInstance().getModelManager().getFluidStateModelSet().get(Fluids.WATER.defaultFluidState());

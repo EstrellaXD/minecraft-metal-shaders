@@ -144,6 +144,14 @@ public final class ShadeBindings {
 		if (state != 0) currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN).putFloat(ShadeLook.SSR, valid ? 1f : 0f);
 	}
 
+	/**
+	 * ShadeLook.ssr.y of this frame (after ShadeLook.pack): 1 when ShadeResources.prevDepth holds the linear view depth of
+	 * prevScene (the TAA history's), so passes can march last frame's image (M3 weather: puddle reflections).
+	 */
+	static void setPrevDepthValid(boolean valid) {
+		if (state != 0) currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN).putFloat(ShadeLook.SSR + 4, valid ? 1f : 0f);
+	}
+
 	/** This frame's ShadeLook bytes (in the current slot). */
 	static ByteBuffer currentLook() {
 		return views[slot].slice(LOOK_OFFSET, ShadeLook.SIZE);

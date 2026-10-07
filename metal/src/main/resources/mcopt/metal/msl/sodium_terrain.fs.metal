@@ -69,9 +69,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
                          , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
                          , texture2d<half> waterWaves [[texture(20)]], texture2d<float> waterCoarse [[texture(21)]]
                          , texture2d<half> waterDetail [[texture(22)]]
-#ifdef MCOPT_HDR
-                         , constant ShadeResources& sr [[buffer(19)]]
 #endif
+#if defined(MCOPT_HDR) && (defined(SHADE_WATER) || defined(SHADE_WEATHER))
+                         , constant ShadeResources& sr [[buffer(19)]]
 #endif
 #endif
                          )
@@ -221,11 +221,45 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         alpha = w.a;
 #endif
     } else {
+#ifdef SHADE_WEATHER
+        // M3 weather (weather_surface.metal): rain-soaked, darker albedo, puddles on open top faces, snow cover
+        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl);
+        half3 wetAlbedo = debug == 3 ? albedo : shadeWetAlbedo(albedo, wet);
+        radiance = shadeLit2(wetAlbedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
+#else
         radiance = shadeLit2(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
+#endif
         // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
         half tl = shadeLumaH(half3(texel.rgb));
         if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12) radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * 2.2;
+#ifdef SHADE_WEATHER
+#if defined(SHADE_COLOR_SHADOW) && defined(MCOPT_HDR)
+        // light that came through stained glass, ice or water takes their colour (the shadow pass's tint map, near cascade)
+        if (shadow > 0.0h && in.v_Light.y > 0.3h) radiance += shadeShadowTintDelta(wetAlbedo, n, in.v_Light.y, shadow, shadeShadowTint(p, n, sf, sr.shadowTint), thin, foliage, sf);
+#endif
+#ifdef SHADE_LIGHTNING
+        radiance += shadeWxFlash(wetAlbedo, n, in.v_Light.y, sl);
+#endif
+        {
+            ShadeWetLight wl;
+            wl.p = p;
+            wl.n = n;
+            wl.sky = in.v_Light.y;
+            wl.shadow = shadow;
+            wl.pixel = fragCoord.xy;
+#ifdef MCOPT_HDR
+            wl.prevExposure = sl.ssr.x > 0.5 ? sg.exposure.z : 0.0;
+            wl.histOk = sl.ssr.x > 0.5 && sl.ssr.y > 0.5;
+            radiance = shadeWetShade(radiance, wet, wl, sf, sl, skyLut, skyLutSmplr, sr.prevScene, sr.prevDepth);
+#else
+            wl.prevExposure = 0.0;
+            wl.histOk = false;
+            radiance = shadeWetShade(radiance, wet, wl, sf, sl, skyLut, skyLutSmplr, skyLut, skyLut);
+#endif
+        }
+        if (debug == 8) radiance = float3(float(wet.omega), float(wet.puddle), float(wet.snow)) * 0.25 / max(ex, 1e-3);
+#endif
 #if defined(SHADE_WATER) && defined(SHADE_GLOSSY)
         // the water module's glossy translucents (stained glass, ice, slime, honey): mirror reflection over the lit colour
         if (!thin && !shadeDev(sf, SHADE_DEV_NO_WATER)) {

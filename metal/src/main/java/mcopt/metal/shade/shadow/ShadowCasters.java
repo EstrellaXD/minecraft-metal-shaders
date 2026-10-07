@@ -32,7 +32,8 @@ import org.lwjgl.system.MemoryUtil;
  * aligned: plants), unless mcopt.shade.shadowFaces=all.
  */
 final class ShadowCasters {
-	static final int KIND_SOLID = 0, KIND_CUTOUT = 1;
+	/** KIND_TRANSLUCENT (M3 coloured shadows): water, stained glass, ice..., near cascade only, drawn into the tint map. */
+	static final int KIND_SOLID = 0, KIND_CUTOUT = 1, KIND_TRANSLUCENT = 2;
 	private static final int CHUNK_QUADS = 32; // mcshadow.m QUAD_INDICES: 32-quad chunks halve the padding launches of 64
 	private static final int REGION_BYTES = 16, CHUNK_BYTES = 8;
 	private static final int UNASSIGNED = 6;
@@ -88,7 +89,8 @@ final class ShadowCasters {
 	 * Builds this frame's lists for the cascades with draw[c] set. Camera at world (camX, camY, camZ), as this frame's
 	 * terrain uses it. faceMask[c]: Sodium ModelQuadFacing bits to draw. Returns false when Sodium has nothing to give.
 	 */
-	boolean build(ShadowCascade[] cascades, boolean[] draw, int faceMask, double camX, double camY, double camZ, boolean lightMode) {
+	boolean build(ShadowCascade[] cascades, boolean[] draw, int faceMask, double camX, double camY, double camZ, boolean lightMode, boolean tint) {
+		this.tint = tint && draw[0];
 		for (int c = 0; c < 2; c++) {
 			this.lists[c].clear();
 			this.sections[c] = 0;
@@ -128,6 +130,8 @@ final class ShadowCasters {
 	}
 
 	private final boolean[] sectionIn = new boolean[2];
+	/** This build also lists the near cascade's translucent casters (KIND_TRANSLUCENT). */
+	private boolean tint;
 
 	/** One region: its sections that cast into a cascade being drawn, from list (camera mode) or all of them (light mode). */
 	private void region(RenderRegion region, @Nullable ChunkRenderList list, ShadowCascade[] cascades, boolean[] draw, int faceMask, CameraTransform camera) {
@@ -142,8 +146,9 @@ final class ShadowCasters {
 		}
 		if (!any) return;
 		int regionIndex = -1;
-		for (int kind = 0; kind < 2; kind++) {
-			TerrainRenderPass pass = kind == KIND_SOLID ? DefaultTerrainRenderPasses.SOLID : DefaultTerrainRenderPasses.CUTOUT;
+		for (int kind = 0; kind < (this.tint ? 3 : 2); kind++) {
+			TerrainRenderPass pass = kind == KIND_SOLID ? DefaultTerrainRenderPasses.SOLID : kind == KIND_CUTOUT ? DefaultTerrainRenderPasses.CUTOUT
+				: DefaultTerrainRenderPasses.TRANSLUCENT;
 			SectionRenderDataStorage storage = region.getStorage(pass);
 			if (storage == null) continue;
 			// Far cascade, cutout: at 1/8 block per texel a leaf's 1/16-block holes are below the map's resolution, so axis-aligned
@@ -169,7 +174,7 @@ final class ShadowCasters {
 				if (!this.sectionCasts(region, section, cascades, draw)) continue;
 				if (regionIndex < 0) regionIndex = this.addRegion(region, camera);
 				for (int c = 0; c < 2; c++) {
-					if (!this.sectionIn[c]) continue;
+					if (!this.sectionIn[c] || (kind == KIND_TRANSLUCENT && c != 0)) continue;
 					if (lists[c] == null) lists[c] = this.listFor(c, arena, kinds[c]);
 					this.emit(ptr, masks[c], regionIndex, lists[c], c);
 				}

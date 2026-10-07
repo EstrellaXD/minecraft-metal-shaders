@@ -26,6 +26,10 @@ typedef struct {
 	MTLPixelFormat format;
 	id<MTLBuffer> quadIndices;
 	int resolution, layers;
+	// M3 coloured shadows (mc_shadow_tint_*): the near cascade's translucent casters into a tint map
+	id<MTLRenderPipelineState> tint;
+	id<MTLTexture> tintMap;
+	bool tintDirty;  // the map holds casters (it is cleared once when they're gone)
 } Shadow;
 
 static void copyErr(NSError *e, const char *fallback, char *err, int errCap) {
@@ -128,6 +132,8 @@ void mc_shadow_free(Shadow *s) {
 	[s->atlasSampler release];
 	[s->map release];
 	[s->quadIndices release];
+	[s->tint release];
+	[s->tintMap release];
 	free(s);
 }
 
@@ -270,4 +276,105 @@ int mc_shadow_debug(Enc *enc, Shadow *s, id<MTLTexture> target, int x, int y, in
 		[b endEncoding];
 	}
 	return 0;
+}
+
+// ---- coloured shadows (M3 weather) ----
+
+// The tint map (RGBA16Float, resolution^2) and its pipeline (shadow.metal shadow_tint_vs / shadow_tint_fs; rgb blended by MIN,
+// alpha by MAX). Returns 0, or 1 on failure (err filled).
+int mc_shadow_tint_init(Shadow *s, int resolution, char *err, int errCap) {
+	if (s->tint && s->tintMap && (int) s->tintMap.width == resolution) return 0;
+	@autoreleasepool {
+		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
+		pd.label = @"mcopt shadow tint";
+		pd.vertexFunction = [[s->library newFunctionWithName:@"shadow_tint_vs"] autorelease];
+		pd.fragmentFunction = [[s->library newFunctionWithName:@"shadow_tint_fs"] autorelease];
+		pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+		MTLRenderPipelineColorAttachmentDescriptor *ca = pd.colorAttachments[0];
+		ca.pixelFormat = MTLPixelFormatRGBA16Float;
+		ca.blendingEnabled = YES;
+		ca.rgbBlendOperation = MTLBlendOperationMin;
+		ca.alphaBlendOperation = MTLBlendOperationMax;
+		ca.sourceRGBBlendFactor = MTLBlendFactorOne;
+		ca.destinationRGBBlendFactor = MTLBlendFactorOne;
+		ca.sourceAlphaBlendFactor = MTLBlendFactorOne;
+		ca.destinationAlphaBlendFactor = MTLBlendFactorOne;
+		NSError *e = nil;
+		id<MTLRenderPipelineState> pso = [s->device newRenderPipelineStateWithDescriptor:pd error:&e];
+		if (!pso) {
+			copyErr(e, "shadow tint pipeline failed", err, errCap);
+			return 1;
+		}
+		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:resolution height:resolution mipmapped:NO];
+		td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+		td.storageMode = MTLStorageModePrivate;
+		id<MTLTexture> map = [s->device newTextureWithDescriptor:td];
+		if (!map) {
+			[pso release];
+			strlcpy(err, "shadow tint map failed", errCap);
+			return 1;
+		}
+		map.label = @"mcopt shadow tint";
+		[s->tint release];
+		[s->tintMap release];
+		s->tint = pso;
+		s->tintMap = map;
+		s->tintDirty = true;  // undefined until the first pass clears it
+	}
+	return 0;
+}
+
+id<MTLTexture> mc_shadow_tint_texture(Shadow *s) { return s->tintMap; }
+
+/*
+ * The tint pass for the near cascade: clears the map to (1, 1, 1, 0) (no tint, no caster) and draws the translucent lists
+ * (records as mc_shadow_render's; every record is drawn with the tint pipeline). params: the MSL ShadowTintParams (32 bytes:
+ * the water sprites). With no draws the map is cleared only if it held casters. Returns 1 when it ran a pass.
+ */
+int mc_shadow_tint_render(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
+	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes) {
+	if (!s->tint || !s->tintMap) return 0;
+	if (drawCount == 0 && !s->tintDirty) return 0;
+	id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
+	@autoreleasepool {
+		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+		rp.colorAttachments[0].texture = s->tintMap;
+		rp.colorAttachments[0].loadAction = MTLLoadActionClear;
+		rp.colorAttachments[0].clearColor = MTLClearColorMake(1.0, 1.0, 1.0, 0.0);
+		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+		id<MTLRenderCommandEncoder> r = [cmd renderCommandEncoderWithDescriptor:rp];
+		r.label = @"mcopt shadow tint";
+		int res = (int) s->tintMap.width;
+		[r setViewport:(MTLViewport) {0, 0, res, res, 0, 1}];
+		if (drawCount > 0 && atlas) {
+			[r setRenderPipelineState:s->tint];
+			[r setCullMode:MTLCullModeNone];
+			[r setDepthClipMode:MTLDepthClipModeClamp];
+			[r setVertexBytes:cascade length:cascadeBytes atIndex:3];
+			[r setVertexBuffer:chunks offset:chunksOffset atIndex:1];
+			[r setVertexBuffer:regions offset:regionsOffset atIndex:2];
+			[r setFragmentTexture:atlas atIndex:0];
+			[r setFragmentSamplerState:s->atlasSampler atIndex:0];
+			[r setFragmentBytes:params length:paramBytes atIndex:0];
+			id<MTLBuffer> arena = nil;
+			for (int i = 0; i < drawCount; i++) {
+				const uint8_t *d = draws + i * DRAW_BYTES;
+				id<MTLBuffer> vb;
+				uint32_t first, count;
+				memcpy(&vb, d, 8);
+				memcpy(&first, d + 8, 4);
+				memcpy(&count, d + 12, 4);
+				if (count == 0) continue;
+				if (vb != arena) {
+					[r setVertexBuffer:vb offset:0 atIndex:0];
+					arena = vb;
+				}
+				[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:QUAD_INDICES indexType:MTLIndexTypeUInt16 indexBuffer:s->quadIndices
+					indexBufferOffset:0 instanceCount:count baseVertex:0 baseInstance:first];
+			}
+		}
+		[r endEncoding];
+	}
+	s->tintDirty = drawCount > 0;
+	return 1;
 }

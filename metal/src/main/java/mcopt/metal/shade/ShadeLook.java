@@ -256,6 +256,7 @@ public final class ShadeLook {
 		float lambda = ShadeConfig.AUTO_EXPOSURE ? PRESET_LAMBDA[ShadeConfig.LOOK] : 0f;
 		put4(b, EXPOSURE_REF, this.exposureRef, lambda, METER_KEY, this.snapExposure ? 1f : 0f);
 		this.snapExposure = false;
+		mcopt.metal.shade.weather.ShadeWeather.pack(b); // M3 weather: wet, wind, flash
 	}
 
 	// ---- values for modules (volumetric light: its open-air medium follows E06's haze and mist) ---------------------------

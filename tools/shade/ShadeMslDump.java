@@ -72,6 +72,17 @@ public class ShadeMslDump {
 				Files.writeString(out.resolve("weather.fs.metal"), ShadeMsl.weather(Files.readString(w)));
 				Files.writeString(out.resolve("hdrweather.fs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.weather(Files.readString(w)));
 			}
+			// M3 weather: the slanted weather vertex stage and the HDR lightning bolt
+			java.nio.file.Path wv = java.nio.file.Path.of(gen, "minecraft_pipeline_weather.vs.metal");
+			if (Files.exists(wv)) {
+				Files.writeString(out.resolve("weather.vs.metal"), ShadeMsl.weatherVertex(Files.readString(wv)));
+				Files.writeString(out.resolve("hdrweather.vs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.weatherVertex(Files.readString(wv)));
+			}
+			java.nio.file.Path lf = java.nio.file.Path.of(gen, "minecraft_pipeline_lightning.fs.metal");
+			if (Files.exists(lf)) {
+				Files.writeString(out.resolve("lightning.fs.metal"), ShadeMsl.lightning(Files.readString(lf)));
+				Files.writeString(out.resolve("hdrlightning.fs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.lightning(Files.readString(lf)));
+			}
 			// every generated game fragment, converted for the HDR world target (ShadeMsl.hdrFragment)
 			Path hdrGen = out.resolve("hdrgen");
 			Files.createDirectories(hdrGen);

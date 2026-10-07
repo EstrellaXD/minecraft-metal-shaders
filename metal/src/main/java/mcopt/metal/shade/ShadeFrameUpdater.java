@@ -246,6 +246,10 @@ public final class ShadeFrameUpdater {
 		if (snap) LOOK.snapExposure();
 		ShadeShadows.beforePack(camera, f);
 		LOOK.update(f, moonPhaseIndex, dt); // grades f.sky.light: before f.pack
+		if (mcopt.metal.shade.weather.ShadeWeather.ON) { // M3 weather: wetness, snow, wind, lightning (ShadeLook.wet/wind/flash)
+			mcopt.metal.shade.weather.WeatherFrame.update(level, x, y, z, f.rain, f.thunder, f.dimension == ShadeFrame.DIM_OVERWORLD, Math.min(dt, 0.25f),
+				(float) (state.gameTime / 24000L), (float) ((now / 1_000_000L) % 3_600_000L) / 1000f, snap);
+		}
 
 		if (mcopt.metal.shade.water.ShadeWater.ON) {
 			mcopt.metal.shade.water.WaterFrame.update(ShadeBindings.ctx(), level, x, y, z, f.underwater, f.rain);
@@ -258,9 +262,10 @@ public final class ShadeFrameUpdater {
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());
 		if (LOG_EVERY > 0 && now - lastLog > LOG_EVERY * 1_000_000_000L) {
 			lastLog = now;
-			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: e %.1f deg, exposure ref %.3f gpu %.3f, metered log2 %.2f, sat %.2f, contrast %.2f, bloom %.3f, mist %.2f, wb %.0f",
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: e %.1f deg, exposure ref %.3f gpu %.3f, metered log2 %.2f, sat %.2f, contrast %.2f, bloom %.3f, mist %.2f, wb %.0f%s",
 				LOOK.elevation, LOOK.exposureRef, ShadeBindings.gpuExposure(), ShadeBindings.gpuMeteredLog2(), LOOK.saturation, LOOK.contrast,
-				LOOK.bloomMix, LOOK.mistSigma, LOOK.whiteBalance));
+				LOOK.bloomMix, LOOK.mistSigma, LOOK.whiteBalance,
+				mcopt.metal.shade.weather.ShadeWeather.ON ? ", " + mcopt.metal.shade.weather.ShadeWeather.describeState() : ""));
 		}
 	}
 

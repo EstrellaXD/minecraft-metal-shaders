@@ -47,6 +47,10 @@ if [ -n "$MCOPT_GEN_DIR" ]; then
 	./pipecheck none "$MCOPT_GEN_DIR/minecraft_pipeline_clouds.vs.metal" variants/hdrclouds.fs.metal || fail=1
 	./pipecheck pos variants/stars.vs.metal "$MCOPT_GEN_DIR/minecraft_pipeline_stars.fs.metal" || fail=1
 	[ -f variants/weather.fs.metal ] && { ./pipecheck compile variants/weather.fs.metal >/dev/null && echo "OK   variants/weather.fs.metal (compile)" || { ./pipecheck compile variants/weather.fs.metal; fail=1; }; }
+	# M3 weather: HDR weather fragment, slanted weather vertex stages, the HDR lightning bolt
+	for f in hdrweather.fs weather.vs hdrweather.vs lightning.fs hdrlightning.fs; do
+		[ -f variants/$f.metal ] && { ./pipecheck compile variants/$f.metal >/dev/null && echo "OK   variants/$f.metal (compile)" || { ./pipecheck compile variants/$f.metal; fail=1; }; }
+	done
 	n=0; for f in variants/hdrgen/*.fs.metal; do
 		./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f" | head -5; fail=1; }; n=$((n+1))
 	done

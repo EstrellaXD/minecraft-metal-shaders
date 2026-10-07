@@ -210,9 +210,9 @@ final class WeatherShots {
 		}
 		if (bolt == null) storm = null;
 		// 4. glass: a 6x6 patch beside the torch grid (outside its +-15 blocks and the entity zoo's line) that is land, flat
-		// within one block, with 8 blocks of air above it
+		// within two blocks, open from 2 blocks above it
 		int[] site = null;
-		int[][] cands = {{-24, -3}, {18, -3}, {-3, -24}, {-3, 18}, {-24, 12}, {18, 12}};
+		int[][] cands = {{-24, -3}, {18, -3}, {-3, -24}, {-3, 18}, {-24, 12}, {18, 12}, {-24, -20}, {18, -20}, {-30, -3}, {24, -3}, {-3, -30}, {-3, 24}};
 		for (int[] c : cands) {
 			int x0 = tx + c[0], z0 = tz + c[1];
 			int lo = Integer.MAX_VALUE, hi = Integer.MIN_VALUE;
@@ -228,9 +228,10 @@ final class WeatherShots {
 					hi = Math.max(hi, y);
 				}
 			}
-			if (!ok || hi - lo > 1) continue;
+			if (!ok || hi - lo > 2) continue;
 			int gy = hi + 5;
-			for (int i = 0; i < 6 && ok; i++) for (int j = 0; j < 6 && ok; j++) for (int y = hi + 1; y <= gy + 2; y++) ok &= air(l, x0 + i, y, z0 + j);
+			// open sky over the patch from 2 blocks up (grass and flowers below that are fine: the glass never touches them)
+			for (int i = 0; i < 6 && ok; i++) for (int j = 0; j < 6 && ok; j++) for (int y = hi + 3; y <= gy + 2; y++) ok &= air(l, x0 + i, y, z0 + j);
 			if (!ok) continue;
 			site = new int[] {x0, z0, gy, hi};
 			break;

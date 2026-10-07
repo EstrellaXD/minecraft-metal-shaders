@@ -48,6 +48,8 @@ import org.lwjgl.system.MemoryUtil;
  * <li>{@code mcopt.shade.caustics} (true): caustics on the bottom seen through the surface.</li>
  * <li>{@code mcopt.shade.waterFoam} (true): shoreline foam.</li>
  * <li>{@code mcopt.shade.waterReflect} (1.0): reflection strength (artistic scale on the Fresnel term).</li>
+ * <li>{@code mcopt.shade.glossy} (false, opt-in until checked in game: the bench world has no ice or stained glass): stained
+ * glass, ice, slime and honey get mirror reflections (sky, SSR, sun) too.</li>
  * </ul>
  *
  * <p>Free of game types (ShadeMsl, which the shade mixin plugin loads early, reads {@link #prelude}).
@@ -64,6 +66,7 @@ public final class ShadeWater {
 	public static final boolean CAUSTICS = Boolean.parseBoolean(System.getProperty("mcopt.shade.caustics", "true"));
 	public static final boolean FOAM = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterFoam", "true"));
 	public static final float REFLECT = Math.clamp(floatProperty("mcopt.shade.waterReflect", 1f), 0f, 2f);
+	public static final boolean GLOSSY = Boolean.parseBoolean(System.getProperty("mcopt.shade.glossy", "false"));
 	/** The pipeline whose first use in a main pass triggers the scene copy. */
 	public static final String TRANSLUCENT = "sodium:pipeline/translucent_terrain";
 
@@ -90,6 +93,7 @@ public final class ShadeWater {
 		b.append("#define SHADE_SSR_STEPS ").append(SSR_STEPS).append('\n');
 		if (CAUSTICS) b.append("#define SHADE_CAUSTICS 1\n");
 		if (FOAM) b.append("#define SHADE_FOAM 1\n");
+		if (GLOSSY) b.append("#define SHADE_GLOSSY 1\n");
 		return b.append(ShadeMsl.resource("water.metal")).append('\n').toString();
 	}
 
@@ -100,7 +104,7 @@ public final class ShadeWater {
 		try {
 			state = WaterNative.create(ctx);
 			System.out.println("[mcopt] shade: water on (ssr " + SSR + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
-				+ ", caustics " + CAUSTICS + ", foam " + FOAM + ")");
+				+ ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ")");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: water setup failed, M1 water from now on: " + e);

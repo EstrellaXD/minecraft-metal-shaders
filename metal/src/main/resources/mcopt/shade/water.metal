@@ -439,6 +439,40 @@ static float3 shadeWaterSurface(ShadeWaterIn w, constant ShadeFrame &f, constant
 	return shadeWaterAbove(w, f, wp, lut, lutS, scene, depth);
 }
 
+// ---- glossy translucents (bible E15 basics) ------------------------------------------------------------------------------
+// Stained glass, ice, slime, honey: smooth dielectric faces (n = 1.5, f0 = 0.04) get a mirror reflection on top of their
+// own lit, alpha-blended colour: the sky (as open as the sky light says), SSR where the ray finds something on screen, and
+// the sun's highlight. The surface's transmittance (1 - alpha) is kept and the reflected light is added in front of it
+// (out alpha = alpha + (1 - alpha) F, colour = what makes src alpha blending give lit alpha (1 - F) + reflection F + glint),
+// so clear panes turn mirror-like at grazing angles like real windows. radiance/alpha: the face's lit colour and alpha.
+static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, float2 pixel, half sky, half shadow, float exposure,
+                          constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
+                          texture2d<half> scene, depth2d<float> depth) {
+	float dist = length(p);
+	float3 v = p / max(dist, 1e-4);
+	float cosV = saturate(dot(-v, n));
+	float m = 1.0 - cosV;
+	float m2 = m * m;
+	float fres = (0.04 + 0.96 * m2 * m2 * m) * wp.tune.z;
+	float open = float(shadeSkyCurve(sky));
+	float3 r = reflect(v, n);
+	float3 refl = shadeSkyLookup(float3(r.x, abs(r.y), r.z), lut, lutS, f) * open;
+	float hitWeight = 0.0;
+#ifdef SHADE_SSR
+	if (wp.state.x > 0.5 && fres > 0.03) {
+		float4 hit = shadeSsr(p + n * 0.02, r, shadeNoise(pixel, 0), min(wp.tune.y, 128.0), exposure, f, scene, depth);
+		hitWeight = hit.a;
+		refl = mix(refl, hit.rgb, hit.a);
+	}
+#endif
+	float3 glint = f.sunColor.rgb * min(shadeGgxSpec(n, v, f.lightDirWorld.xyz, 0.03), 40.0) * smoothstep(0.15, 0.85, float(shadow)) * open
+		* (1.0 - hitWeight) * (f.lightDirWorld.w > 0.5 ? 1.0 : 0.3);
+	// shadeGgxSpec carries water's Fresnel (f0 0.02): glass reflects about twice as much at normal incidence
+	float3 front = radiance * alpha * (1.0 - fres) + refl * fres + glint * 2.0 * wp.tune.z;
+	float outA = alpha + (1.0 - alpha) * fres;
+	return float4(front / max(outA, 1e-3), outA);
+}
+
 // World xz direction in which the atlas v coordinate grows across this face (the flowing water sprite is laid along the
 // current), from the screen derivatives of position and uv; 0 where it isn't defined.
 static inline float2 shadeWaterFlowDir(float3 dpx, float3 dpy, float2 duvx, float2 duvy) {

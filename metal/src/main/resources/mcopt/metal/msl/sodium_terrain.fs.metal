@@ -182,6 +182,15 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
         half tl = shadeLumaH(half3(texel.rgb));
         if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12) radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * 2.2;
+#if defined(SHADE_WATER) && defined(SHADE_GLOSSY)
+        // the water module's glossy translucents (stained glass, ice, slime, honey): mirror reflection over the lit colour
+        if (!thin && !shadeDev(sf, SHADE_DEV_NO_WATER)) {
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, sf.time.z, sf, wp, skyLut, skyLutSmplr,
+                                    sceneCopy, depthCopy);
+            radiance = gl.rgb;
+            alpha = gl.a;
+        }
+#endif
     }
     radiance = shadeFogAir(radiance, p, fogValue, skyLut, skyLutSmplr, sf);
     float3 rgb = shadeFinish(radiance, fogValue, sf);

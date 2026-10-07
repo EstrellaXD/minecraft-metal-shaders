@@ -591,6 +591,9 @@ static inline float3 shadeWaterViewPoint(depth2d<float> depth, uint2 q, float2 s
 static inline float2 shadeWaterRot(float2 v) { return float2(0.6 * v.x - 0.8 * v.y, 0.8 * v.x + 0.6 * v.y); }
 static inline float2 shadeWaterRotT(float2 v) { return float2(0.6 * v.x + 0.8 * v.y, -0.8 * v.x + 0.6 * v.y); }
 // (no drift of its own: its layer, texture(22), is baked SHADE_WATER_DETAIL_SPEED times faster)
+#ifndef SHADE_WATER_PATTERN_FAR
+#define SHADE_WATER_PATTERN_FAR 0.075 // the pixel pattern ends at this footprint (blocks/pixel), faded from 0.6x of it
+#endif
 #ifndef SHADE_WATER_DETAIL_FAR
 #define SHADE_WATER_DETAIL_FAR 96.0  // no detail sample beyond this (faded out from 0.6x of it; the wave strength is ~0.35 there, the mips
                                      // have averaged most ripples away, and the bay view costs ~0.06 ms less than at 140)
@@ -630,8 +633,10 @@ struct ShadeWaterIn {
 // Near the camera the sample point is pulled toward the centre of its 1/16-block cell (the block texture's pixel grid), so
 // the ripples read like the pixel-art water texture, but each cell's value changes smoothly with time (no 10 fps texture
 // animation steps); the snap ends before a cell gets smaller than a pixel (it would alias). Pattern: the crest-ness out to
-// a footprint of ~0.12 blocks/pixel (0 farther; mip-filtered, so it averages out instead of shimmering): minus the field's
-// Laplacian, which the shortest waves dominate (cell-sized features, not the swell), in standard deviations (sd 0.19).
+// a footprint of SHADE_WATER_PATTERN_FAR blocks/pixel (0 farther): minus the field's Laplacian, which the shortest waves
+// dominate (cell-sized features, not the swell), in standard deviations (sd 0.19). It must end with the cell snap: past
+// it the unsnapped Laplacian of the two shortest (regular, plane) waves reads as a diamond lattice on mid-distance water
+// (seen from a hill; out to 0.12 it did).
 // Called by the terrain fragment before shadeWaterSurface: written inside shadeWaterNormal (inlined into the surface from
 // above and from below, SSR, caustics), any version of it made the Metal compiler service crash building the HDR translucent
 // pipeline (XPC_ERROR_CONNECTION_INTERRUPTED, macOS 26.6, M4), and as a noinline call it cost ~0.2 ms more in the bay
@@ -648,7 +653,7 @@ static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, 
 	float2 cell = (floor(xa * 16.0) + 0.5) * (1.0 / 16.0) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED);
 	float near = 1.0 - smoothstep(0.03, 0.065, w.footprint);
 	float q = near * SHADE_WATER_PIXEL;
-	float nearP = 1.0 - smoothstep(0.05, 0.12, w.footprint);
+	float nearP = 1.0 - smoothstep(0.6 * SHADE_WATER_PATTERN_FAR, SHADE_WATER_PATTERN_FAR, w.footprint);
 	float g = (1.0 - q) * (s / SHADE_WAVE_TILE); // a snapped coordinate changes slower across the pixel
 	half4 d = waves.sample(shadeWaveDetailSampler, shadeWaterDetailXZ(mix(x, cell, q)) * (1.0 / SHADE_WAVE_TILE),
 	                       gradient2d(shadeWaterRot(w.dxz.xy) * g, shadeWaterRot(w.dxz.zw) * g));

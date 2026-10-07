@@ -97,6 +97,8 @@ public final class ShadeWater {
 	public static final int DETAIL_SIZE = Integer.getInteger("mcopt.shade.waterDetailSize", 256) >= 512 ? 512 : 256;
 	private static final boolean DETAIL_EXTRAS = Boolean.getBoolean("mcopt.shade.waterDetailExtras");
 	/** Distance (blocks) beyond which the fine ripples are not sampled (faded from 0.6x of it). */
+	/** Footprint (blocks/pixel) where the pixel pattern ends (dev knob). */
+	private static final String PATTERN_FAR = System.getProperty("mcopt.shade.waterPatternFar", "0.075");
 	private static final int DETAIL_FAR = Math.clamp(Integer.getInteger("mcopt.shade.waterDetailFar", 96), 32, 512);
 	/**
 	 * M2.1: SSR reaches the left and right screen edges: rays that leave through a side keep marching on the edge column,
@@ -136,7 +138,7 @@ public final class ShadeWater {
 		if (SSR_PREV) b.append("#define SHADE_SSR_PREV 1\n");
 		if (DETAIL) {
 			b.append("#define SHADE_WATER_DETAIL 1\n#define SHADE_WATER_DETAIL_SIZE ").append(DETAIL_SIZE).append("\n#define SHADE_WATER_DETAIL_FAR ")
-				.append(DETAIL_FAR).append(".0\n");
+				.append(DETAIL_FAR).append(".0\n#define SHADE_WATER_PATTERN_FAR ").append(Float.parseFloat(PATTERN_FAR)).append('\n');
 			if (DETAIL_EXTRAS) b.append("#define SHADE_WATER_DETAIL_EXTRAS 1\n");
 		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");

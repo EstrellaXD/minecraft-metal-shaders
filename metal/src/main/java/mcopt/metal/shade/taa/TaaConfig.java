@@ -31,7 +31,7 @@ import java.util.Locale;
  * <li>{@code mcopt.shade.taaMode} (preset's): responsive | stable (history weight and clip box).</li>
  * <li>{@code mcopt.shade.sharpen}: sharpening strength 0..1 (default by scale: 0.25 native .. 0.4 at 0.67x).</li>
  * <li>{@code mcopt.shade.mipBias} (true): sharper texture mips at reduced scale (log2 scale), like native.</li>
- * <li>{@code mcopt.shade.taaDebug} (0): 1 history age, 2 rejection (red clip, green disocclusion, blue off-screen), 3 no history.</li>
+ * <li>{@code mcopt.shade.taaDebug} (0): 1 history age, 2 rejection (red clip, green disocclusion, blue off-screen), 3 no history, 4 reprojection check (unclipped history 50/50 over the current frame).</li>
  * <li>{@code mcopt.shade.drsLog} (false): one log line per resolution change.</li>
  * <li>{@code mcopt.shade.taaLossy} (false): lossy-compressed colour history (Apple8+).</li>
  * </ul>
@@ -123,9 +123,9 @@ public final class TaaConfig {
 		return STABLE ? 0.08f : 0.12f;
 	}
 
-	/** Floor of the current frame's weight on pixels moving > 1.5 px/frame (Responsive 0.2, Stable 0.15): keeps texture detail while moving. */
+	/** Floor of the current frame's weight on moving pixels (full from 0.5 px/frame; Responsive 0.25, Stable 0.18): keeps texture detail in motion. */
 	public static float motionAlpha() {
-		return STABLE ? 0.15f : 0.2f;
+		return STABLE ? 0.18f : 0.25f;
 	}
 
 	/** Variance clip box size in standard deviations (Responsive 1.0, Stable 1.25), +0.5 while the camera is still. */

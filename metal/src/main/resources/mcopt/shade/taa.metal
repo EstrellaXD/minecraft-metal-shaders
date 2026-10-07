@@ -40,7 +40,7 @@ struct TaaParams {
 	float4 jitter;    // 176  xy this frame's jitter (input px), zw input px per output px (input.xy / output.xy)
 	float4 blend;     // 192  x minimum blend weight of the current frame, y clip box size (sigmas), z history age cap, w 1 = no history
 	float4 misc;      // 208  x history rescale (exposure now / then), y unused (HDR input: function constant TAA_HDR), z reactive strength, w debug view (taau_debug_fs)
-	float4 sharpen;   // 224  x strength (0 off), y current-frame weight floor in motion (> 1.5 px/frame), zw unused
+	float4 sharpen;   // 224  x strength (0 off), y current-frame weight floor in motion (full at 0.5 px/frame), zw unused
 };
 
 struct TaaVOut { float4 position [[position]]; };
@@ -103,21 +103,22 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, texture2d<half
 {
 	constexpr sampler linear(filter::linear, address::clamp_to_edge);
 	float2 pin = q * p.jitter.zw + p.jitter.xy;        // that scene point in the jittered input raster (pixel units)
-	int2 base = int2(floor(pin));
 	int2 last = int2(p.input.xy) - 1;
+	int2 base = clamp(int2(floor(pin)), int2(1), last - 1); // the 3x3 stays inside the live sub-rect (the rest is stale)
 
 	// The 3x3 input neighbourhood: a reconstruction of this frame's colour at q (Gaussian fit of Blackman-Harris, radius
 	// ~1 input pixel, separable so 6 exponentials instead of 9), and its moments for rectifying the history (in RGB: YCoCg
 	// tested no better on tools/shade/taatest and costs ALU, which this pass is bound by; a 5-tap cross instead of 3x3 was
 	// 0.06 ms cheaper but flickered 20-25% more in motion).
-	half2 off = half2(float2(base) + 0.5 - pin);        // offset of the base texel's centre from pin, in (-1, 0]
+	half2 off = half2(float2(base) + 0.5 - pin);        // offset of the base texel's centre from pin, in (-1, 0] (wider at the edges)
 	half3 ox = half3(off.x - 1.0h, off.x, off.x + 1.0h), oy = half3(off.y - 1.0h, off.y, off.y + 1.0h);
 	half3 wx = exp(-2.29h * ox * ox), wy = exp(-2.29h * oy * oy);
 	half3 sum = 0.0h, m1 = 0.0h, m2 = 0.0h;
+	constexpr sampler texel(coord::pixel, filter::nearest, address::clamp_to_edge);
+	float2 centre = float2(base) + 0.5;
 	for (int dy = 0; dy < 3; dy++) {
-		int y = clamp(base.y + dy - 1, 0, last.y);
-		for (int dx = 0; dx < 3; dx++) {
-			half3 c = taaCompress(cur.read(uint2(clamp(base.x + dx - 1, 0, last.x), y)).rgb);
+		for (int dx = 0; dx < 3; dx++) { // immediate texel offsets: no address maths per tap
+			half3 c = taaCompress(cur.sample(texel, centre, int2(dx - 1, dy - 1)).rgb);
 			sum += c * (wx[dx] * wy[dy]);
 			m1 += c;
 			m2 += c * c;
@@ -172,11 +173,13 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, texture2d<half
 	// and where the reactive mask says the input is not reprojectable (particles, animated translucents).
 	half alpha = age < 0.5h ? 1.0h : max(1.0h / (age + 1.0h), half(p.blend.x)) * mix(0.35h, 1.0h, wnear);
 	alpha = max(alpha, saturate((outside - 1.0h) * 0.25h) * 0.5h);
-	// Motion: every frame in motion resamples the history at a new sub-pixel offset, which slowly low-passes fine texture
-	// (pixel-art detail smeared while strafing). A floor on the current frame's weight once the pixel moves more than ~1.5
-	// px per frame trades a little stability for detail (taatest moving 0.67x: error vs truth 4.55 -> ~4.2).
+	// Motion: every frame in motion resamples the history at a new sub-pixel offset. Catmull-Rom at a half-pixel offset
+	// passes a 2.5 px period at 0.45, and fed back with a weight of 0.07 that leaves 0.12 of it: pixel-art detail melts
+	// while strafing even though the reprojection is exact (taaDebug 4). A floor on the current frame's weight as soon as
+	// the pixel moves (full at 0.5 px/frame) keeps it (0.2: 0.31 of a 2.5 px period, 0.9 of a 3 px one), trading a little
+	// stability in motion, where shimmer is far less visible than smear.
 	float motionPx = length(uvPrev * p.output.xy - q);
-	alpha = max(alpha, half(p.sharpen.y) * half(saturate(motionPx * (1.0 / 1.5))));
+	alpha = max(alpha, half(p.sharpen.y) * half(saturate(motionPx * 2.0)));
 	if (p.misc.z > 0.0) alpha = max(alpha, reactive.read(uint2(clamp(base, int2(0), int2(reactive.get_width(), reactive.get_height()) - 1))).r * half(p.misc.z));
 	half3 resolved = mix(clipped, current, saturate(alpha));
 	float3 rgb = taaExpand(float3(resolved));
@@ -187,6 +190,7 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, texture2d<half
 	if (view == 1) debug = half3(mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z)));   // history age
 	else if (view == 2) debug = half3(saturate(float(outside) - 1.0), float(disocclusion), valid ? 0.0 : 1.0);           // rejection
 	else if (view == 3) debug = half3(taaExpand(float3(current)));                                                       // no history
+	else if (view == 4) debug = half3(taaExpand(float3(mix(history, current, 0.5h))));                                   // reprojection check: unclipped history over current (doubled edges = misaligned)
 	else debug = o.color.rgb;
 	return o;
 }

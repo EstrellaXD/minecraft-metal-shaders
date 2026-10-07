@@ -68,6 +68,7 @@ import net.minecraft.world.phys.Vec3;
  * <li>{@code -Dmcbench.motionShots=forest;overview;sunset} (opt-in): screenshots taken while the camera moves (MotionShots)</li>
  * <li>{@code -Dmcbench.dims=true|nether,end,aurora,lava,snow} (opt-in): Nether, End, aurora and camera-media screenshots (DimShots)</li>
  * <li>{@code -Dmcbench.entities=true} or {@code noon,evening,night,hand,motion} (opt-in): mobs, block entities, items, the hand (EntityShots)</li>
+ * <li>{@code -Dmcbench.dynLights=true} or {@code field,mobs,perf,cave,walk,nether} (opt-in): held and entity dynamic lights, perf phase "lights" (LightShots)</li>
  * </ul>
  * Output: results.json, frametimes.csv, screenshots/*.png, gputimes.csv (with mcopt -Dmcopt.metal.gpuTimes=true),
  * error.txt on failure. The game then quits (Minecraft.stop).
@@ -128,7 +129,7 @@ public final class BenchDriver {
 	static final long[] frameNs = new long[CAP], frameAt = new long[CAP];
 	static final byte[] framePhase = new byte[CAP];
 	static int frames;
-	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo"); // zoo: EntityShots' perf segment at the entity site (opt-in)
+	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo", "lights"); // zoo: EntityShots' perf segment at the entity site; lights: LightShots' (opt-in)
 	static int recPhase = -1, prevRecPhase = -1;
 	static long lastFrame;
 
@@ -249,6 +250,7 @@ public final class BenchDriver {
 			MotionShots.plan(steps); // opt-in -Dmcbench.motionShots=forest;overview;...
 			EntityShots.plan(steps); // opt-in -Dmcbench.entities=true|noon,evening,night,hand,motion (M3 entities)
 			WeatherShots.plan(steps); // opt-in -Dmcbench.weather=true|rain,sunset,night,water,storm,glass
+			LightShots.plan(steps); // opt-in -Dmcbench.dynLights=true|field,mobs,perf,cave,walk,nether (M3 dynamic lights)
 			DimShots.plan(steps); // opt-in -Dmcbench.dims=true|nether,end,aurora,lava,snow (M3 sky/dimensions)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog

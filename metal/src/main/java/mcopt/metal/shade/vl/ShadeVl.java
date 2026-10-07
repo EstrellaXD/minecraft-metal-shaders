@@ -53,6 +53,7 @@ public final class ShadeVl {
 	private static boolean failed, logged;
 	private static final ByteBuffer PARAMS = MemoryUtil.memAlloc(PARAM_BYTES).order(ByteOrder.nativeOrder());
 	private static final long CANOPY_OUT = MemoryUtil.nmemCalloc(2, 4);
+	private static final long TIMES_OUT = MemoryUtil.nmemCalloc(4, 4);
 	private static double prevX, prevY, prevZ;
 	private static boolean hasPrevious;
 	private static long lastNanos, lastLog;
@@ -113,11 +114,14 @@ public final class ShadeVl {
 
 		int width = main.width, height = main.height;
 		int vw = Math.max(1, Math.round(width * VlConfig.SCALE)), vh = Math.max(1, Math.round(height * VlConfig.SCALE));
-		pack(f, level, width, height, vw, vh, dx, dy, dz, dt, reset);
+		if (!pack(f, level, width, height, vw, vh, dx, dy, dz, dt, reset)) {
+			hasPrevious = false; // nothing to draw (deep in a cave, no light): no passes at all
+			return;
+		}
 
 		MetalBridge.flushClear(encoder, color);
 		MetalBridge.flushClear(encoder, depth);
-		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0);
+		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (VlConfig.GPU_TIMER ? 8 : 0);
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, ERR, 1);
 			int r = VlNative.render(MetalBridge.enc(encoder), state, MetalBridge.textureHandle(color), MetalBridge.textureHandle(depth),
@@ -136,6 +140,12 @@ public final class ShadeVl {
 			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: vl canopy %.2f (shadowed %.2f) haze %.5f mist %.5f canopy mist %.5f strength %.2f g %.2f humidity %.2f underwater %b sunY %.3f",
 				MemoryUtil.memGetFloat(CANOPY_OUT), MemoryUtil.memGetFloat(CANOPY_OUT + 4), PARAMS.getFloat(32), PARAMS.getFloat(36), PARAMS.getFloat(76),
 				PARAMS.getFloat(16), PARAMS.getFloat(28), humidity, f.underwater, f.sunDir.y));
+			if (VlConfig.GPU_TIMER) {
+				VlNative.times(state, TIMES_OUT);
+				float m = MemoryUtil.memGetFloat(TIMES_OUT), t = MemoryUtil.memGetFloat(TIMES_OUT + 4), c = MemoryUtil.memGetFloat(TIMES_OUT + 8);
+				System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: vl gpu march %.3f temporal %.3f composite %.3f = %.3f ms (%dx%d of %dx%d, %.0f frames)",
+					m, t, c, m + t + c, vw, vh, width, height, MemoryUtil.memGetFloat(TIMES_OUT + 12)));
+			}
 		}
 	}
 
@@ -193,7 +203,8 @@ public final class ShadeVl {
 		return Float.NaN;
 	}
 
-	private static void pack(ShadeFrame f, ClientLevel level, int width, int height, int vw, int vh, double dx, double dy, double dz, float dt,
+	/** Packs VlParams; false when the frame would add nothing (no light and no canopy mist): then no pass runs. */
+	private static boolean pack(ShadeFrame f, ClientLevel level, int width, int height, int vw, int vh, double dx, double dy, double dz, float dt,
 		boolean reset) {
 		ByteBuffer b = PARAMS;
 		float sunY = f.sunDir.y;
@@ -215,7 +226,8 @@ public final class ShadeVl {
 		haze *= 1f + 2f * rain;
 		// canopy mist (vl.metal: around the camera's height, scaled by the canopy factor): what makes the shafts under
 		// trees and overhangs; densest in the golden hours, humid biomes and rain
-		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST;
+		// (none deep in caves: the canopy factor is 1 there, but the mist would only dim the cave toward black)
+		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST * eyeLight(f);
 		// its sky-lit colour in the shade (the canopy hides most of the sky): what it dims the scene behind it toward
 		float[] amb = f.sky.ambientSky;
 		float ambK = 0.2f * (f.underwater ? 0f : eyeLight(f));
@@ -271,6 +283,7 @@ public final class ShadeVl {
 		float sunK = 0.05f * ambK / 0.2f; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, 0.5f); // mistAmb, open glow left out
 		put(b, 0f, 0f, 0f, 0f);
+		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 
 	/** How much sky the camera sees, 0 (cave) .. 1 (outdoors), from the sky light at the eye. */

@@ -112,16 +112,26 @@ static inline float vlShadow(depth2d_array<float> map, sampler cmp, float3 c0, f
 // bright web with sharp ridges (r^4: mean about 0.21, 17% of the plane above 0.5). Two scales multiplied: broad cells
 // (about 13 blocks) shape the shafts seen from afar, a finer web (about 5 blocks) breaks them into curtains; mean about 1,
 // dark gaps about 0.1. q in blocks, t in seconds.
-static inline float vlCausticWeb(float2 p, float t) {
-	p += 0.55 * float2(sin(p.y * 1.31 + t * 0.83), sin(p.x * 1.17 - t * 0.71));
-	float a = sin(p.x * 1.9 + t * 0.9) + sin(p.y * 2.1 - t * 1.05) + sin((p.x - p.y) * 1.45 + t * 0.6);
-	float r = saturate(1.0 - abs(a) * 0.55);
+// Half precision (the per-step cost under water): time enters as phases wrapped to [0, 2 pi) in float (tp: x..w = the five
+// time terms, see vlCausticPhases), positions stay below a few hundred, so half's resolution is plenty for the sines.
+static inline half vlCausticWeb(half2 p, half4 tp, half tp4) {
+	p += 0.55h * half2(sin(p.y * 1.31h + tp.x), sin(p.x * 1.17h - tp.y));
+	half a = sin(p.x * 1.9h + tp.z) + sin(p.y * 2.1h - tp.w) + sin((p.x - p.y) * 1.45h + tp4);
+	half r = saturate(1.0h - abs(a) * 0.55h);
 	r *= r;
 	return r * r;
 }
-static inline float vlCaustic(float2 q, float t) {
-	float broad = 0.25 + 3.6 * vlCausticWeb(q * 0.22, t);
-	float fine = 0.5 + 2.4 * vlCausticWeb(q * 0.55 + 37.0, t * 1.3);
+static inline void vlCausticPhases(float t, thread half4 &a, thread half &a4, thread half4 &b, thread half &b4) {
+	const float TAU = 6.2831853;
+	float4 k = float4(0.83, 0.71, 0.9, 1.05);
+	a = half4(fmod(t * k, TAU));
+	a4 = half(fmod(t * 0.6, TAU));
+	b = half4(fmod(t * 1.3 * k, TAU));
+	b4 = half(fmod(t * 0.78, TAU));
+}
+static inline half vlCaustic(float2 q, half4 ta, half ta4, half4 tb, half tb4) {
+	half broad = 0.25h + 3.6h * vlCausticWeb(half2(q * 0.22), ta, ta4);
+	half fine = 0.5h + 2.4h * vlCausticWeb(half2(q * 0.55 + 37.0), tb, tb4);
 	return broad * fine;
 }
 
@@ -205,7 +215,10 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float d = depth.read(fpx);
 	float3 dir = vlDirection(ndc, f);
 	float dist = vlDistance(ndc, d, f);
-	float xi = vlNoise(in.position.xy, p.temporal.z);
+	// Step jitter: a per-frame offset (R1 sequence, integrated by the temporal pass) plus a quarter-step IGN spread across
+	// pixels. Neighbouring rays then sample nearly the same depths, so their shadow-map fetches stay in cache: full
+	// per-pixel jitter made the march 2-3x slower on a real (blocky, 16 MB) shadow map (tools/shade/vlbench.sh).
+	float xi = fract(p.temporal.z * 0.6180339887 + 0.25 * vlNoise(in.position.xy, 0.0));
 	float3 L = f.lightDirWorld.xyz;
 	float mu = dot(dir, L);
 	float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
@@ -251,8 +264,11 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float D = min(dist, p.water2.z);
 		float3 ext = p.water.rgb;
 		float3 sum = float3(0.0);
-		int nw = n + 4;
+		int nw = n + 2;
 		float prevB = 0.0, invN = 1.0 / float(nw);
+		half4 ta, tb;
+		half ta4, tb4;
+		vlCausticPhases(p.temporal.w, ta, ta4, tb, tb4);
 		float ly = max(L.y, 0.12);
 		for (int i = 0; i < nw; i++) {
 			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
@@ -263,9 +279,10 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float path = below / ly;
 			float2 q = pt.xz + L.xz * path + f.cameraFract.xz + fmod(f.cameraBlock.xz, 256.0);
 			// the waves focus the light over a few blocks (no pattern right under the surface), then it spreads out again
-			float c = mix(1.0, vlCaustic(q, p.temporal.w), p.water2.w * (1.0 - exp(-below * 0.4)) * exp(-below * 0.05));
+			half hb = half(min(below, 60.0));
+			half c = mix(1.0h, vlCaustic(q, ta, ta4, tb, tb4), half(p.water2.w) * (1.0h - exp2(-0.5771h * hb)) * exp2(-0.0721h * hb));
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
-			sum += exp(-ext * (path + t)) * (v * c * dt);
+			sum += float3(exp2(half3(-1.442695 * ext * min(path + t, 200.0)))) * (v * float(c) * dt);
 		}
 		float phase = 0.75 * vlHG(mu, 0.65) + 0.25 * 0.0795775;
 		scatter = p.light.rgb * sum * (p.water.w * 3.14159265 * phase * p.shape.x) * float(L.y > 0.0);
@@ -288,8 +305,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float ang = saturate(mu);
 		float fall = pow(ang, p.crep.w);
 		// in front of near geometry too (a trunk against the low sun gets streaks across it), fading in over the first blocks
-		// open sky itself gets half (the sky model has its own glow around the sun; the streaks are the point)
-		float reach = d <= 0.0 ? 0.5 : saturate((dist + 6.0) / 48.0);
+		// open sky itself gets less (the sky model has its own glow around the sun; the streaks are the point)
+		float reach = d <= 0.0 ? 0.8 : saturate((dist + 6.0) / 48.0);
 		scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * reach);
 	}
 	VlMarchOut o;
@@ -425,7 +442,8 @@ fragment half4 vl_composite(VlOut in [[stage_in]], half4 dst [[color(0)]], const
 	if (p.gate.w == 2.0) return half4(half3(saturate(dist / p.shape.y)), 1.0h); // debug: marched distance
 	if (p.gate.w == 3.0) return half4(half3(T), 1.0h);                 // debug: canopy mist transmittance
 	if (VL_HDR) return half4(light, T);                    // M2: scene * T + light (blend One, SourceAlpha)
-	if (max(light.r, max(light.g, light.b)) < half(1.0 / 2048.0) && T > 0.999h) return dst;
+	// below ~half an 8-bit step anywhere on the curve: leave the pixel alone (open plains at noon: most of the screen)
+	if (max(light.r, max(light.g, light.b)) < half(1.0 / 1024.0) && T > 0.999h) return dst;
 	half3 e = vlInverse(dst.rgb);
 	half3 o = dst.rgb + (vlForward(e * T + light) - vlForward(e));
 	// dither (triangular, +-1 LSB) so smooth shafts don't band in 8 bits

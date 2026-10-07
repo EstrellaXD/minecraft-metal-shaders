@@ -27,7 +27,16 @@ typedef struct {
 	id<MTLTexture> raw, hist[2], sky[2]; // sky: R8 sky masks (march output, read by the next frame's crepuscular taps)
 	int width, height, cur, lossy;
 	id<MTLBuffer> state;  // VlState: the canopy factor (GPU-written, read by the march)
+	// GPU timer (flag 8, -Dmcopt.shade.vl.gpuTimer): per-pass fragment start/end timestamps, a ring of 4 frames x 3 passes
+	id<MTLCounterSampleBuffer> times;
+	int timesTried, timeFrame;
+	MTLTimestamp cpu0, gpu0;
+	double timeSum[3];
+	int timeCount;
+	uint64_t timeLast[4];
 } VlState;
+
+#define VL_TIME_RING 4
 
 static id<MTLRenderPipelineState> pso(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fragment, MTLPixelFormat format, int hdr,
 	char *err, int errCap) {
@@ -106,7 +115,58 @@ void mc_vl_free(VlState *s) {
 	[s->sky[0] release];
 	[s->sky[1] release];
 	[s->state release];
+	[s->times release];
 	free(s);
+}
+
+static void timesInit(VlState *s, id<MTLDevice> device) {
+	s->timesTried = 1;
+	if (![device supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) return;
+	@autoreleasepool {
+		for (id<MTLCounterSet> set in device.counterSets) {
+			if (![set.name isEqualToString:MTLCommonCounterSetTimestamp]) continue;
+			MTLCounterSampleBufferDescriptor *d = [[MTLCounterSampleBufferDescriptor new] autorelease];
+			d.counterSet = set;
+			d.storageMode = MTLStorageModeShared;
+			d.sampleCount = VL_TIME_RING * 6;
+			s->times = [device newCounterSampleBufferWithDescriptor:d error:nil];
+			[device sampleTimestamps:&s->cpu0 gpuTimestamp:&s->gpu0];
+			break;
+		}
+	}
+}
+
+// Adds ring slot r's three pass times (ms) to the sums once that frame completed (its samples are new and ordered).
+static void timesCollect(VlState *s, id<MTLDevice> device, int r) {
+	MTLTimestamp cpu1, gpu1;
+	[device sampleTimestamps:&cpu1 gpuTimestamp:&gpu1];
+	if (gpu1 <= s->gpu0 || cpu1 <= s->cpu0) return;
+	double nsPerTick = (double) (cpu1 - s->cpu0) / (double) (gpu1 - s->gpu0);
+	@autoreleasepool {
+		NSData *data = [s->times resolveCounterRange:NSMakeRange((NSUInteger) (6 * r), 6)];
+		if (data.length < 6 * sizeof(MTLCounterResultTimestamp)) return;
+		const MTLCounterResultTimestamp *ts = data.bytes;
+		if (ts[0].timestamp == MTLCounterErrorValue || ts[0].timestamp == 0 || ts[0].timestamp == s->timeLast[r]) return;
+		for (int i = 0; i < 6; i++) if (ts[i].timestamp == MTLCounterErrorValue || ts[i].timestamp == 0) return;
+		s->timeLast[r] = ts[0].timestamp;
+		for (int p = 0; p < 3; p++) {
+			uint64_t a = ts[2 * p].timestamp, b = ts[2 * p + 1].timestamp;
+			if (b > a) s->timeSum[p] += (double) (b - a) * nsPerTick / 1e6;
+		}
+		s->timeCount++;
+	}
+}
+
+// Average GPU ms of march, temporal and composite (fragment stage start to end) since the last call, and how many frames
+// that covers (out[3]); zeros without -Dmcopt.shade.vl.gpuTimer or timestamp support.
+void mc_vl_times(VlState *s, float *out) {
+	int n = s->timeCount;
+	for (int p = 0; p < 3; p++) {
+		out[p] = n > 0 ? (float) (s->timeSum[p] / n) : 0.0f;
+		s->timeSum[p] = 0;
+	}
+	out[3] = (float) n;
+	s->timeCount = 0;
 }
 
 static id<MTLTexture> target(id<MTLDevice> dev, MTLPixelFormat format, int w, int h, int lossy, NSString *label) {
@@ -122,8 +182,16 @@ static id<MTLTexture> target(id<MTLDevice> dev, MTLPixelFormat format, int w, in
 }
 
 static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out1, MTLLoadAction load, id<MTLRenderPipelineState> p,
-	NSString *label, const void *params, int paramBytes, id<MTLBuffer> state, id<MTLTexture> t0, id<MTLTexture> t1) {
+	NSString *label, const void *params, int paramBytes, id<MTLBuffer> state, id<MTLTexture> t0, id<MTLTexture> t1,
+	id<MTLCounterSampleBuffer> times, int sample) {
 	MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+	if (times) {
+		rp.sampleBufferAttachments[0].sampleBuffer = times;
+		rp.sampleBufferAttachments[0].startOfVertexSampleIndex = MTLCounterDontSample;
+		rp.sampleBufferAttachments[0].endOfVertexSampleIndex = MTLCounterDontSample;
+		rp.sampleBufferAttachments[0].startOfFragmentSampleIndex = (NSUInteger) sample;
+		rp.sampleBufferAttachments[0].endOfFragmentSampleIndex = (NSUInteger) sample + 1;
+	}
 	rp.colorAttachments[0].texture = out;
 	rp.colorAttachments[0].loadAction = load;
 	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
@@ -146,7 +214,7 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out
 
 // One frame of volumetric light onto color (the game's main colour, read and written in place) from depth (its depth).
 // params: VlParams (vl.metal), paramBytes of it; vlWidth x vlHeight the march resolution. flags: 1 canopy pass,
-// 2 drop the history, 4 HDR composite (scene * T + light; M2). Returns 0, or -1 when the composite pipeline can't be built (err).
+// 2 drop the history, 4 HDR composite (scene * T + light; M2), 8 GPU timer (mc_vl_times). Returns 0, or -1 when the composite pipeline can't be built (err).
 int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> depth, const void *params, int paramBytes, int vlWidth,
 	int vlHeight, int flags, char *err, int errCap) {
 	@autoreleasepool {
@@ -192,10 +260,25 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[c endEncoding];
 		}
 		int next = 1 - s->cur;
+		id<MTLCounterSampleBuffer> times = nil;
+		int base = 0;
+		if (flags & 8) {
+			if (!s->timesTried) timesInit(s, dev);
+			if (s->times) {
+				int r = s->timeFrame % VL_TIME_RING;
+				if (s->timeFrame >= VL_TIME_RING) timesCollect(s, dev, r); // this slot's frame was VL_TIME_RING frames ago: done
+				s->timeFrame++;
+				times = s->times;
+				base = 6 * r;
+			}
+		}
 		// the march writes this frame's sky mask and reads last frame's (the crepuscular streaks' occluders)
-		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur]);
-		pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw, s->hist[s->cur]);
-		pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth);
+		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur],
+			times, base);
+		pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw, s->hist[s->cur],
+			times, base + 2);
+		pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth,
+			times, base + 4);
 		s->cur = next;
 		return 0;
 	}

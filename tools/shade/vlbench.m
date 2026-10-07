@@ -54,7 +54,10 @@ static const char *DEPTH_SRC =
 	"vertex O dvs(uint v [[vertex_id]], constant float &z [[buffer(0)]], constant float &top [[buffer(1)]]) {\n"
 	"  float2 q[6] = {float2(-1,-1), float2(1,-1), float2(-1,top), float2(1,-1), float2(1,top), float2(-1,top)};\n"
 	"  O o; o.p = float4(q[v], z, 1); return o; }\n"
-	"fragment void dfs() {}\n";
+	"fragment void dfs() {}\n"
+	"struct D { float d [[depth(any)]]; };\n"
+	"fragment D dnoise(O in [[stage_in]]) { uint2 b = uint2(in.p.xy) / 6u; uint h = b.x * 73856093u ^ b.y * 19349663u; h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;\n"
+	"  D o; o.d = (h & 1u) != 0u ? 0.55 + float(h & 255u) / 2550.0 : 0.0; return o; }\n";
 
 int main(int argc, const char **argv) {
 	@autoreleasepool {
@@ -112,6 +115,8 @@ int main(int argc, const char **argv) {
 		dpd.fragmentFunction = [dlib newFunctionWithName:@"dfs"];
 		dpd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 		id<MTLRenderPipelineState> dpso = [dev newRenderPipelineStateWithDescriptor:dpd error:&e];
+		dpd.fragmentFunction = [dlib newFunctionWithName:@"dnoise"];
+		id<MTLRenderPipelineState> npso = [dev newRenderPipelineStateWithDescriptor:dpd error:&e]; // shadow map: blocky casters (6-texel cells, half covered)
 		MTLDepthStencilDescriptor *dsd = [MTLDepthStencilDescriptor new];
 		dsd.depthCompareFunction = MTLCompareFunctionAlways;
 		dsd.depthWriteEnabled = YES;
@@ -168,9 +173,9 @@ int main(int argc, const char **argv) {
 				sp.depthAttachment.clearDepth = 0.0;
 				sp.depthAttachment.storeAction = MTLStoreActionStore;
 				id<MTLRenderCommandEncoder> r2 = [cb renderCommandEncoderWithDescriptor:sp];
-				[r2 setRenderPipelineState:dpso];
+				[r2 setRenderPipelineState:npso];
 				[r2 setDepthStencilState:dss];
-				float z2 = 0.6f, top2 = 0.0f;
+				float z2 = 0.6f, top2 = 1.0f;
 				[r2 setVertexBytes:&z2 length:4 atIndex:0];
 				[r2 setVertexBytes:&top2 length:4 atIndex:1];
 				[r2 drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];

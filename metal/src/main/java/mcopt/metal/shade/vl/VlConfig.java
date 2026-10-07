@@ -39,6 +39,8 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.lossy} (false): lossy-compressed VL targets.</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
+ * <li>{@code mcopt.shade.vl.gpuTimer} (false): GPU timestamps around each pass; the log line (forced on) gets their
+ * average ms.</li>
  * </ul>
  */
 public final class VlConfig {
@@ -63,7 +65,8 @@ public final class VlConfig {
 	public static final float CANOPY = floatProperty("mcopt.shade.vl.canopy", -1f);
 	public static final boolean LOSSY = Boolean.getBoolean("mcopt.shade.vl.lossy");
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.vl.debug", 0);
-	public static final boolean LOG = Boolean.getBoolean("mcopt.shade.vl.log");
+	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
+	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
 	private VlConfig() {
 	}

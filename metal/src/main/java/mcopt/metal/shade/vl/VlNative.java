@@ -32,6 +32,7 @@ final class VlNative {
 		JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle CANOPY = fn("mc_vl_canopy", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle FREE = fn("mc_vl_free", null, JAVA_LONG);
+	private static final MethodHandle TIMES = fn("mc_vl_times", null, JAVA_LONG, JAVA_LONG);
 
 	private VlNative() {
 	}
@@ -66,6 +67,15 @@ final class VlNative {
 	static void canopy(long state, long out) {
 		try {
 			CANOPY.invokeExact(state, out);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** out: 4 floats, average GPU ms of march, temporal, composite since the last call, and the frame count. */
+	static void times(long state, long out) {
+		try {
+			TIMES.invokeExact(state, out);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

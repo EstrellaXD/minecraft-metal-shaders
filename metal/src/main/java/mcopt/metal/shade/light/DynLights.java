@@ -88,7 +88,7 @@ public final class DynLights {
 	private static float time;
 	private static double camX, camY, camZ;
 	/** The local player's hand light this frame (absolute world position, reach, rgb tint x intensity) for the CPU query. */
-	private static int volumesLastFrame;
+	private static int volumesLastFrame, volumesComputed;
 	private static long cpuNanos;
 
 	/** One light source, keyed by entity id and kind (hands, fire, body, item). */
@@ -98,7 +98,10 @@ public final class DynLights {
 		float reach, r, g, b, spec;
 		boolean fire, seen, hand;
 		float cur, target, seed, score;
-		int slab = -1;
+		int slab = -1, volGen;
+		boolean wantVolume;
+		double volX, volY, volZ;
+		float volReach;
 
 		Src(long key) {
 			this.key = key;
@@ -176,40 +179,65 @@ public final class DynLights {
 			s.target = s.seen ? 1f : 0f;
 			s.cur += (s.target - s.cur) * (s.target > s.cur ? kin : kout);
 			if (!s.seen && s.cur < 0.01f) {
+				freeSlab(s);
 				it.remove();
 				continue;
 			}
 			double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
 			s.score = s.cur * s.reach / (1f + (float) (dx * dx + dy * dy + dz * dz) / 256f) + (s.hand ? 1000f : 0f);
-			s.slab = -1;
+			s.wantVolume = false;
 			ACTIVE.add(s);
 		}
 		ACTIVE.sort((p, q) -> Float.compare(q.score, p.score));
 		int count = Math.min(ACTIVE.size(), DynLightConfig.MAX);
 
-		// visibility volumes: the strongest lights near enough for the occupancy window
-		int volumes = 0;
+		// visibility volumes: the strongest lights near enough for the occupancy window keep a slab of the 3D texture while
+		// they stay selected; a slab is recomputed only when its light moved, changed reach or the occupancy changed
+		int volumes = 0, dirty = 0;
 		if (DynLightConfig.OCCLUSION && occupancy != null) {
-			for (int i = 0; i < count && volumes < DynLightConfig.VOLUMES; i++) {
+			int gen = occupancy.generation;
+			for (int i = 0; i < ACTIVE.size(); i++) {
 				Src s = ACTIVE.get(i);
-				double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
-				if (Math.abs(dx) > DynLightConfig.VOLUME_RANGE || Math.abs(dy) > DynLightConfig.VOLUME_RANGE || Math.abs(dz) > DynLightConfig.VOLUME_RANGE) continue;
-				if (s.reach > 16f) continue; // lightning and other wide flashes: open sky anyway
+				boolean want = false;
+				if (i < count && volumes < DynLightConfig.VOLUMES && s.reach <= 16f) { // lightning and other wide flashes: open sky anyway
+					double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
+					want = Math.abs(dx) <= DynLightConfig.VOLUME_RANGE && Math.abs(dy) <= DynLightConfig.VOLUME_RANGE && Math.abs(dz) <= DynLightConfig.VOLUME_RANGE;
+				}
+				if (want) volumes++;
+				else freeSlab(s);
+				s.wantVolume = want;
+			}
+			for (int i = 0; i < count; i++) {
+				Src s = ACTIVE.get(i);
+				if (!s.wantVolume) continue;
+				boolean fresh = false;
+				if (s.slab < 0) {
+					s.slab = allocSlab();
+					fresh = true;
+				}
+				if (s.slab < 0) continue;
+				if (!fresh && s.volGen == gen && s.volReach == s.reach && Math.abs(s.volX - s.x) < 0.04 && Math.abs(s.volY - s.y) < 0.04 && Math.abs(s.volZ - s.z) < 0.04) continue;
 				int ox = (int) Math.floor(s.x) - 16, oy = (int) Math.floor(s.y) - 16, oz = (int) Math.floor(s.z) - 16;
-				long p = visParams + 16 + volumes * 32L;
+				long p = visParams + 16 + dirty * 32L;
 				MemoryUtil.memPutInt(p, ox);
 				MemoryUtil.memPutInt(p + 4, oy);
 				MemoryUtil.memPutInt(p + 8, oz);
-				MemoryUtil.memPutInt(p + 12, volumes);
+				MemoryUtil.memPutInt(p + 12, s.slab);
 				MemoryUtil.memPutFloat(p + 16, (float) (s.x - ox));
 				MemoryUtil.memPutFloat(p + 20, (float) (s.y - oy));
 				MemoryUtil.memPutFloat(p + 24, (float) (s.z - oz));
 				MemoryUtil.memPutFloat(p + 28, s.reach);
-				s.slab = volumes++;
+				s.volX = s.x;
+				s.volY = s.y;
+				s.volZ = s.z;
+				s.volReach = s.reach;
+				s.volGen = gen;
+				dirty++;
 			}
 		}
-		MemoryUtil.memPutInt(visParams, volumes);
+		MemoryUtil.memPutInt(visParams, dirty);
 		volumesLastFrame = volumes;
+		volumesComputed = dirty;
 
 		// header
 		int gx0 = Math.floorDiv((int) Math.floor(camX) + 4, CELL) * CELL - GRID_X * CELL / 2;
@@ -256,14 +284,31 @@ public final class DynLights {
 		b.asLongBuffer().put(cells);
 		b.position(0);
 		// lights that fall off the list keep the cells' bits clear; unused light slots are never named by a cell
-		if (volumes > 0) DynLightNative.vis(enc, state, visParams, VIS_PARAMS, volumes);
+		if (dirty > 0) DynLightNative.vis(enc, state, visParams, VIS_PARAMS, dirty);
 		cpuNanos = System.nanoTime() - t0;
 		if (DynLightConfig.LOG && t0 - lastLog > 2_000_000_000L) {
 			lastLog = t0;
-			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: dynamic lights %d (of %d sources), %d volumes, cpu %.3f ms (occupancy %.3f ms, %d sections filled, %d waiting)",
-				count, SOURCES.size(), volumes, cpuNanos / 1e6, occupancy == null ? 0 : occupancy.nanosLastFrame / 1e6, occupancy == null ? 0 : occupancy.filledLastFrame,
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: dynamic lights %d (of %d sources), %d volumes (%d computed), cpu %.3f ms (occupancy %.3f ms, %d sections filled, %d waiting)",
+				count, SOURCES.size(), volumes, volumesComputed, cpuNanos / 1e6, occupancy == null ? 0 : occupancy.nanosLastFrame / 1e6, occupancy == null ? 0 : occupancy.filledLastFrame,
 				occupancy == null ? 0 : occupancy.pending));
 		}
+	}
+
+	private static final boolean[] SLAB_USED = new boolean[Math.max(1, DynLightConfig.VOLUMES)];
+
+	private static int allocSlab() {
+		for (int i = 0; i < DynLightConfig.VOLUMES; i++) {
+			if (!SLAB_USED[i]) {
+				SLAB_USED[i] = true;
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private static void freeSlab(Src s) {
+		if (s.slab >= 0) SLAB_USED[s.slab] = false;
+		s.slab = -1;
 	}
 
 	/** -1 below the grid (the light is skipped), else the cell index clamped to n - 1. */

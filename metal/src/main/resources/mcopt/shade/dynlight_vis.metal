@@ -20,13 +20,13 @@
 using namespace metal;
 
 struct DlVolume {
-	int4 origin;  // xyz absolute block coordinates of voxel (0, 0, 0), w slab
+	int4 origin;  // xyz absolute block coordinates of voxel (0, 0, 0), w the slab of the 3D texture it goes to
 	float4 light; // xyz light position relative to origin (blocks), w reach (blocks)
 };
 
 #define DL_VOLUMES_MAX 64
 struct DlVisParams {
-	uint4 info;   // x volumes, yzw 0
+	uint4 info;   // x volumes to compute this frame (the others keep last frame's slabs), yzw 0
 	DlVolume vols[DL_VOLUMES_MAX];
 };
 
@@ -38,9 +38,9 @@ static inline bool dlSolid(device const uint *occ, int3 b) {
 
 kernel void shade_dl_vis(uint3 t [[thread_position_in_grid]], constant DlVisParams &P [[buffer(0)]], device const uint *occ [[buffer(1)]],
                          texture3d<half, access::write> out [[texture(0)]]) {
-	uint slab = t.z >> 5;
-	if (slab >= P.info.x) return;
-	DlVolume V = P.vols[slab];
+	uint k = t.z >> 5;
+	if (k >= P.info.x) return;
+	DlVolume V = P.vols[k];
 	int3 target = int3(int(t.x), int(t.y), int(t.z & 31u));
 	float3 src = V.light.xyz;
 	float3 dv = float3(target) + 0.5 - src;
@@ -75,5 +75,5 @@ kernel void shade_dl_vis(uint3 t [[thread_position_in_grid]], constant DlVisPara
 			}
 		}
 	}
-	out.write(half4(visible), t);
+	out.write(half4(visible), uint3(t.x, t.y, uint(V.origin.w) * 32u + (t.z & 31u)));
 }

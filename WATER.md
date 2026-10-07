@@ -197,3 +197,18 @@ and no glossy translucent pixels.
 - Short-crested waves reduce, but don't fully remove, a diagonal regularity in the distant glitter road.
 - SSR is dithered per 2x2 quad without TAA: hit/miss edges of thin things (leaves) look speckled at 100 % zoom; temporal
   jitter under TAAU will resolve it (see TAAU step 3).
+
+## M2 review changes (2026-10-07)
+
+- `prevScene` is used only when `ShadeLook.ssr.x == 1` (it holds a finished frame); the first frame and the frame after
+  an HDR or TAA reallocation use the scene copy and the LUT.
+- Reflections read from `prevScene` get the final pass's height haze (`shadeWaterHazed`): SSR hits and the rendered sky at
+  non-sky pixels by their reconstructed position; cloud pixels (absent from the opaque depth copy) by the distance to the
+  cloud layer, weighted by how much the sample differs from the plain sky. Clouds now mirror as light clouds, not dark
+  slabs; pixels above y 150 count as sky in the rendered-sky weight.
+- The LUT sky in the reflection follows a calmer direction (60 % toward the SSR direction): no milky aureole veil on
+  evening ripples; the glint carries the sun's sparkle.
+- Foam: sparse patches (two-octave scrolling value noise, wave crests), only over up-facing floors (from the depth copy),
+  within ~28 blocks, mix 0.3 of lit x 0.5: no white contour along every shore, no lilac band on submerged walls.
+- Snell's window: a tight sun glare (exp((ct - 1) 400) x 0.35).
+- Wave bake 512^2 for performance/balanced (`mcopt.shade.waterBakeSize`), skipped after a frame without translucent terrain.

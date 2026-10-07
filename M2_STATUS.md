@@ -235,7 +235,7 @@ more than the live area needs.
 
 ## Known issues / next
 
-- Sunset horizon reads a bit lemon-yellow (M1 was more orange): tune golden-hour WB/saturation and the sky's golden grade.
+- (fixed in the review round) Sunset horizon read lemon-yellow; evenings looked like noon.
 - (fixed by the water module) Noon water read lighter/cyan in HDR with M1's water shader.
 - Stars show through the semi-transparent vanilla clouds at night (clouds alpha); fixed by the M3 cloud system or by
   dimming stars by cloud coverage.
@@ -246,3 +246,34 @@ more than the live area needs.
 - Translucent surfaces that don't write depth get the haze of what is behind them (final-pass haze).
 - The HDR world target defaults to RG11B10Float for the performance/balanced presets (no visible banding at 2.5x contrast in the sunset sky and night gradients, `m2b9-rg11` vs `m2b9-onb`); RGBA16Float for quality/ultra. Modules must not rely on destination alpha in it.
 - Not done from the bible in this milestone: LUT sky (M2b), material atlases (M2c), GTAO, XDR output.
+
+## Review round and final benches (2026-10-07, release `work/release/mcopt-shade-M2.jar`)
+
+Three reviews (correctness, performance, beauty) of `90c6f5c`; every major finding fixed (commits `185df6f`, `8a1d16c`,
+`fe02c1d`), release notes in `work/release/M2_NOTES.md`.
+
+- **Correctness**: ShadeResources ring (retained, one slot longer than ShadeFrame's; GPU address faults under Metal API
+  validation on resizes and the TAA-history use-after-free are gone), `ShadeLook.ssr.x` = prevScene valid, exposure kernel
+  after the final pass, VL LDR path live size under TAAU. `fin-val` (reload, resize x2, Nether, `MTL_DEBUG_LAYER=1`,
+  stderr captured): no Metal error.
+- **Performance**: VL on the live sub-rect, 512^2 wave bake for P/B (skipped without translucent terrain), one HDR target
+  under TAA, balanced DRS floor 0.60 (+ a drsLog line when pinned at the floor).
+- **Look**: golden hour (chroma gamma 1.30 at 0 deg, inset 0.20, warm WB/ambient from 25 deg, golden sky gain in the sky
+  LUT), VL near march for the canopy mist + carve 0.6 + dark crepuscular rays on the sky, haze-matched reflections, calmer
+  LUT direction on ripples, sparse foam, tight Snell glare, brighter cloud undersides, rain streaks.
+
+| Config (3024x1964, bay spin / flight, one interleaved session) | fps | GPU ms |
+|---|---|---|
+| shade off | 338-457 / 316-324 | 1.88-2.29 / 2.46-2.53 |
+| M1 jar | 238 / 212-213 | 4.20 / 4.70 |
+| performance | 138.8 / 141.7-142.9 | 7.20 / 7.00-7.06 |
+| **balanced** | 134.1-136.1 / 137.3-139.0 | 7.34-7.45 / 7.20-7.28 |
+| quality | 92.4 / 95.4-95.8 | 10.82 / 10.45-10.49 |
+| ultra | 65.5-65.8 / 71.7-72.3 | 15.20-15.28 / 13.85-13.97 |
+| DEV-DH balanced (fixed 0.80) | 60.9 / 59.7 | 16.43 / 16.76 |
+
+Runs `bench-results/20261007-0156..0222-fin-*`; screenshots `work/release/M2-screenshots/`.
+
+Still open: DH LOD ocean unshaded (navy seam) and flat orange clouds with DH (FT2); DRS off with DH; reactive mask;
+TAAU resolve ~1 ms; Improved Transparency (vanilla OIT) unverified with TAAU's sub-rect (targets at the allocation size,
+full viewport: likely the same issue DH had; keep it off); VL shafts in open-field side views stay subtle.

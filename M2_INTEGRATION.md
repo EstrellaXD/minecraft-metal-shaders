@@ -34,11 +34,11 @@ color texture (mip 0) draws into `ShadePost.sceneTexture()` instead, keeping the
 | ShadeFrame (M1, 1008 B) | `buffer(16)`, `constant ShadeFrame&` | frozen layout (shade_common.metal) |
 | ShadeLook (M2 art layer, 1024 B) | `buffer(17)`, `constant ShadeLook&` | shade_look.metal / ShadeLook.java (offsets as constants) |
 | ShadeGpu | `buffer(18)` | `exposure` = (applied this frame, target, previous frame's, log2); `scene.x` metered log2 L |
-| ShadeResources (argument buffer) | `buffer(19)`, `constant ShadeResources&` | 0 milkyWay, 1 **prevScene**, 2 scene, 3 bloom, 4-7 free (dummy 1x1) |
+| ShadeResources (argument buffer) | `buffer(19)`, `constant ShadeResources&` | 0 milkyWay, 1 **prevScene**, 2 scene, 3 bloom, 4-7 free (dummy 1x1). A ring like ShadeFrame (one slot longer): `ShadeRender.resource` writes this frame's slot, frames in flight keep theirs, and the ring retains each texture while a slot names it (so the caller may release its own reference at once) |
 | shadow map | `texture(16)` + `sampler(12)` | M1 |
 | sky-view LUT | `texture(17)` + `sampler(13)` | M1 |
 | HDR scene (this frame) | `ShadePost.sceneTexture()`, `Context.scene` | read it only outside the world passes (it is their attachment); format `ShadeConfig.HDR_FORMAT` (RG11B10F by default in performance/balanced: no alpha, no negatives) |
-| HDR scene (last frame) | `ShadeResources.prevScene`, `Context.prevScene` | pre-exposed with `ShadeGpu.exposure.z`: rescale by `exposure.x / exposure.z`. After VL and every before-tonemap hook, before bloom. **SSR colour source.** |
+| HDR scene (last frame) | `ShadeResources.prevScene`, `Context.prevScene` | pre-exposed with `ShadeGpu.exposure.z`: rescale by `exposure.x / exposure.z`. After VL and every before-tonemap hook, before bloom and the final pass's haze (readers add the haze themselves: water.metal `shadeWaterHazed`). **SSR colour source.** Valid only when `ShadeLook.ssr.x == 1` (0 on the first frame and after an HDR or TAA reallocation: undefined memory). Under TAA it is the TAA history and `Context.prevScene` is 0 (one HDR world target) |
 | depth | `Context.depth` | the main Depth32Float, reversed Z (near 1, far 0, sky 0), GL row order; world only (the hand clears it later) |
 | matrices | `ShadeFrame.viewProj/invViewProj/prevViewProj`, `ShadeLook.viewProjNoJitter/prevViewProjNoJitter` | camera-relative world; prev re-based on this frame's camera. `*NoJitter` = ShadeFrame's until TAAU fills them (TAAU module: write unjittered there) |
 
@@ -48,7 +48,8 @@ Row order: targets hold GL row order (row 0 = bottom of the view). A full-screen
 ShadeLook fields reserved for modules (written by the base, consumed by you; extend `ShadeLook.pack` for new values):
 `vl` (x strength from the keyframes x look preset, y max distance 160, z HG g 0.7, w steps 12), `water`, `waterAbs`, `ssr`,
 `taa`, `renderScale` (x scale, y mip bias, zw active size: base writes 1, 0, full size), `wet`, `wind`, `clouds0-2`,
-`biomeA/B`, `heldLight`, `dimTint`, `flash`. Feature bits in `tier.y` (`SHADE_FEATURE_*`): HDR 1, BLOOM 2, AUTO_EXPOSURE 4,
+`heldLight`, `dimTint`, `flash`. Taken since: `ssr.x` (prevScene valid), `skyGoldH/Z` (offsets 640/656, were `biomeA/B`:
+the golden-hour sky gain the sky LUT pass applies). Feature bits in `tier.y` (`SHADE_FEATURE_*`): HDR 1, BLOOM 2, AUTO_EXPOSURE 4,
 PCSS 8, STARS 16, HAZE 32, LIGHT_V2 64; add yours from 128 up.
 
 Useful MSL in the prelude (`ShadeMsl.prelude()` = shade_look + shade_common + shade_m2):
@@ -236,11 +237,11 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 | `mcopt.shade.water` | true | water module (false: M1's stand-in water, byte-identical shaders) |
 | `mcopt.shade.ssr` / `.ssrQuad` / `.ssrSteps` / `.ssrDist` | true / preset / preset / 512 | screen-space reflections (quad-shared march except ultra; steps 16/24/24/32) |
 | `mcopt.shade.ssrPrev` | true | reflections read last frame's HDR world (clouds, sky, LODs in reflections) |
-| `mcopt.shade.waterBake` | true | waves baked once per frame into a mipmapped texture (false: analytic per pixel) |
+| `mcopt.shade.waterBake` / `.waterBakeSize` | true / preset | waves baked once per frame into a mipmapped texture (false: analytic per pixel); 512^2 for performance/balanced, 1024^2 for quality/ultra; skipped on frames after one without translucent terrain |
 | `mcopt.shade.waterWaves` / `.caustics` / `.waterFoam` / `.waterReflect` / `.glossy` | 1 / true / true / 1 / false | see WATER.md |
 | `mcopt.shade.vl` | true | volumetric light (god rays, canopy mist, crepuscular streaks, underwater shafts) |
 | `mcopt.shade.vl.fold` | true | blend VL in the final pass (false: composite pass before bloom) |
-| `mcopt.shade.vl.scale` / `.steps` / `.ssTaps` / `.dist` | preset | P 0.25/10/6/160, B 0.33/12/8/160, Q 0.5/16/10/224, U 0.5/24/12/224 |
+| `mcopt.shade.vl.scale` / `.steps` / `.nearSteps` / `.ssTaps` / `.dist` | preset | P 0.25/10/6/6/160, B 0.33/12/8/8/160, Q 0.5/16/10/10/224, U 0.5/24/12/12/224 (scale of the live render; nearSteps = the canopy mist's own linear march) |
 | `mcopt.shade.vl.strength` / `.mist` / `.moon` / `.extinction` / `.underwater` | 1 / 1 / 1 / true / true | see VL.md |
 | `mcopt.shade.vl.debug` / `.log` / `.gpuTimer` | 0 / false / false | 1 light, 2 distance, 3 mist T; log line every 2 s; per-pass GPU ms |
 | `mcopt.shade.taa` | true | TAA / TAAU + dynamic resolution (false: native, unjittered, as before the merge) |
@@ -251,14 +252,20 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 
 Presets (`mcopt.shade.preset`; any flag above still overrides its part):
 
-| Preset | Render scale (DRS range, holds) | HDR target | Bloom | VL (scale of the world target, steps, screen taps) | SSR | Shadows |
+| Preset | Render scale (DRS range, holds) | HDR target | Bloom | VL (scale of the live render, steps, screen taps) | SSR | Shadows |
 |---|---|---|---|---|---|---|
 | performance | 0.67 (0.60-0.75, 120 fps) | RG11B10F | 6 levels | 0.25, 10, 6 | quad, 16 steps | 2048 |
-| **balanced** (default) | 0.80 (0.67-0.90, 120 fps) | RG11B10F | 6 levels | 0.33, 12, 8 | quad, 24 steps | 2048 |
+| **balanced** (default) | 0.80 (0.60-0.90, 120 fps) | RG11B10F | 6 levels | 0.33, 12, 8 | quad, 24 steps | 2048 |
 | quality | 1.00 (0.85-1.00, 80 fps) | RGBA16F | 7 levels | 0.5, 16, 10 (224 blocks) | quad, 24 steps | 2048 |
 | ultra | 1.00 (0.90-1.00, 60 fps) | RGBA16F | 7 levels | 0.5, 24, 12 (224 blocks) | per pixel, 32 steps | 3072 |
 
 ## 9. Merge notes
+
+- Review fixes (after the TAAU merge): the ShadeResources ring (GPU address faults under Metal API validation on resizes,
+  and a use-after-free of the TAA history, are gone: `fin-val` ran reload/resize/Nether with `MTL_DEBUG_LAYER=1` clean);
+  the exposure kernel runs after the final pass; VL marches only the live part of its targets; one HDR world target under
+  TAA. Run the stress with `--env MTL_DEBUG_LAYER=1 --env MTL_DEBUG_LAYER_ERROR_MODE=nslog --env MCBENCH_STDERR=<file>`
+  before calling a change stable.
 
 - `ShadeMsl.prelude()` grew (shade_look + shade_common + shade_m2): module MSL that prepended `shade_common.metal` alone
   should use `ShadeRender.prelude()`.

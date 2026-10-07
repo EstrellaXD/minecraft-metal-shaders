@@ -221,3 +221,17 @@ looking out into the low sun), `vl_shelter` (inside a village house looking out 
   is skipped in the default world.
 - The m1 composite costs ~0.85 ms at native (see 4); on m2 it becomes a ~0.27-0.6 ms HDR blend.
 - Under water the caustic pattern pops once when the camera crosses a 256-block line (float precision guard).
+
+## M2 review changes (2026-10-07)
+
+- **Live sub-rect**: the VL targets stay allocated from the world targets' allocation (scaleMax), but the march and
+  temporal passes run on a viewport of `VlConfig.SCALE` x the *live* render (VlParams.size.xy), so VL gets cheaper with
+  the dynamic resolution (balanced at 0.67: 669x434 instead of 898x583, 0.41 ms with the near march added). The history is
+  read with a uv scale (`carve.zw`, last frame's live part) and the final pass upsamples with `ShadeFinalParams.v.zw`.
+- **Canopy mist near march** (`mcopt.shade.vl.nearSteps`, P 6 / B 8 / Q 10 / U 12): the canopy mist has its own linear march
+  over its first 2.5 ranges (40 blocks), so leaf gaps resolve into separate beams; carve 0.6 (was 0.4), canopy gate 2.4 in
+  HDR (was 1.6), a 5-tap plus spatial pre-filter (was a 3x3) with a tighter depth weight.
+- **Crepuscular rays**: on sky pixels (HDR) they are now the *shadows* of clouds and hills toward the sun (negative light,
+  floored at 55 % of the pixel in shade_final) instead of an added glow, which had turned the sunset sky into a grey veil;
+  in front of geometry only light through gaps (openness above 0.25) is added. Strength 0.08 + 0.12 golden (HDR).
+- The M1/LDR path (`mcopt.shade.hdr=false`) under TAAU passes the live size.

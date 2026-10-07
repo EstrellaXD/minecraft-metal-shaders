@@ -30,11 +30,12 @@ import org.joml.Matrix4f;
 public final class CloudParams {
 	public static final int SIZE = 432;
 	/** Art knobs: multiple-scattering octave weight and extinction factors, sky-light extinction (diffuse) factor. */
-	static final float OCTAVE_WEIGHT = CloudConfig.floatProperty("mcopt.shade.clouds.octaveWeight", 0.75f),
-		OCTAVE_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.octaveExtinction", 0.4f),
+	static final float OCTAVE_WEIGHT = CloudConfig.floatProperty("mcopt.shade.clouds.octaveWeight", 0.68f),
+		OCTAVE_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.octaveExtinction", 0.48f),
 		SKY_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.skyExtinction", 0.2f),
 		SUNSET_FILL = CloudConfig.floatProperty("mcopt.shade.clouds.sunsetFill", 0.4f),
-		AP_SUNSET = CloudConfig.floatProperty("mcopt.shade.clouds.apSunset", 1.5f);
+		AP_SUNSET = CloudConfig.floatProperty("mcopt.shade.clouds.apSunset", 1.5f),
+		LIGHT_STEP = CloudConfig.floatProperty("mcopt.shade.clouds.lightStep", 4f);
 	/** World periods the noise textures tile with (blocks): the weather map's 4096 tile, the 3D noise's 120 and 30 tiles. */
 	static final double WEATHER_PERIOD = 16384.0, NOISE_PERIOD = 120.0 * 64.0;
 	static final float CURVATURE_RADIUS = 40000f;
@@ -80,7 +81,7 @@ public final class CloudParams {
 		float camY = (float) f.cameraY;
 		put4(b, 160, this.base, this.top, camY, 1f / (2f * CURVATURE_RADIUS));
 		float storm = w.storm;
-		float sigma = 0.1f * CloudConfig.DENSITY * (1f + 0.6f * storm);
+		float sigma = 0.15f * CloudConfig.DENSITY * (1f + 0.6f * storm);
 		put4(b, 176, w.coverage, w.type, sigma, 0.78f);
 		put4(b, 192, (float) wrap(f.cameraX + this.windX, WEATHER_PERIOD), (float) wrap(f.cameraZ + this.windZ, WEATHER_PERIOD),
 			(float) wrap(f.cameraX + this.wind3X, NOISE_PERIOD), (float) wrap(f.cameraZ + this.wind3Z, NOISE_PERIOD));
@@ -134,7 +135,7 @@ public final class CloudParams {
 		put4(b, 320, extent, yRef, relX, relZ);
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
 		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.3f, CloudConfig.DOME_STEPS);
-		put4(b, 368, this.frame & 0xffff, CloudConfig.DEBUG, SEA - 6f, CloudConfig.DETAIL);
+		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
 		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, 0f);
 		put4(b, 400, sl[0], ly, sl[2], 0f);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)

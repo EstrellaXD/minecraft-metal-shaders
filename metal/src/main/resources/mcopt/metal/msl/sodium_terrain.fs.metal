@@ -252,7 +252,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         }
 #endif
     }
+#ifdef MCOPT_HDR
+    radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl, &sr);
+#else
     radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl);
+#endif
     float3 rgb = shadeFinish2(radiance, fogValue, sf, sl, ex);
     if (debug == 2) rgb = shadeVanillaOut(float3(n) * 0.5 + 0.5, sl);
     if (debug == 1) {

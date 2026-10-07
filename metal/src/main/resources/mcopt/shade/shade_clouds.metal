@@ -6,7 +6,8 @@
 // OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// M3 volumetric clouds (E05): what the rest of shading reads of them, part of ShadeMsl.prelude() (after shade_m2.metal).
+// M3 volumetric clouds (E05): what the rest of shading reads of them, part of ShadeMsl.prelude() (after shade_common.metal,
+// before shade_m2.metal: its air fog blends distant terrain into the sky with the clouds).
 // The clouds module (clouds.metal, native/mcclouds.m, mcopt.metal.shade.clouds) renders, before the sky pass each frame:
 //   ShadeResources.cloudShadow (12)  R16F transmittance of the cumulus toward the light, ShadeLook.cloudShadowVP maps a
 //                                    camera-relative point onto it (an oblique projection along the light onto the layer)

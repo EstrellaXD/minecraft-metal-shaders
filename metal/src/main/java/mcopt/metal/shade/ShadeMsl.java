@@ -68,13 +68,13 @@ public final class ShadeMsl {
 	}
 
 	/**
-	 * "#define MCOPT_SHADE", shade_look.metal (M2 art layer, display transform), shade_common.metal (M1) and shade_m2.metal (M2
-	 * shading): what goes in front of every shaded stage.
+	 * "#define MCOPT_SHADE", shade_look.metal (M2 art layer, display transform), shade_common.metal (M1), shade_clouds.metal
+	 * (M3: what shaders read of the volumetric clouds) and shade_m2.metal (M2 shading): what goes in front of every shaded stage.
 	 */
 	public static String prelude() {
 		if (prelude == null) {
-			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
-				+ resource("shade_clouds.metal") + "\n";
+			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_clouds.metal") + "\n"
+				+ resource("shade_m2.metal") + "\n";
 		}
 		return prelude;
 	}

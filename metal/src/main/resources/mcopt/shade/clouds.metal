@@ -53,7 +53,7 @@ struct CloudParams {
 	float4 shadow;         // 320 x extent (blocks), y reference height (absolute y), zw the map's centre relative to the camera (xz)
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
 	float4 dome;           // 352 xy dome size (px), z blend of the new march, w primary steps of the dome march
-	float4 misc;           // 368 x frame counter, y debug view, z ground height (absolute y: rays stop there), w detail strength
+	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
 	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3), w 0
 	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
@@ -312,11 +312,13 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 // Optical depth toward the light from p (blocks x density x extinction): steps double from 6 blocks, jittered.
 static float cloudLightDepth(float3 p, float y, float jitter, int steps, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise) {
 	float3 L = c.lightDir.xyz;
-	float tau = 0.0, s = 0.0, step = 6.0;
+	// steps of 4, 8, 16, 32... blocks: the first two see the billows (3D noise: shadowed creases between the lobes), the
+	// rest only the cloud's large shape
+	float tau = 0.0, s = 0.0, step = c.misc.y > 0.0 ? c.misc.y : 4.0;
 	for (int i = 0; i < steps; i++) {
 		float m = s + step * (0.5 + 0.5 * (jitter - 0.5));
 		float3 q = p + L * m;
-		tau += cloudDensity(q, y + L.y * m, i < 1 ? 1 : 0, c, weather, noise) * step;
+		tau += cloudDensity(q, y + L.y * m, i < 2 ? 1 : 0, c, weather, noise) * step;
 		s += step;
 		step *= 2.0;
 	}
@@ -352,6 +354,8 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	CloudRay r = cloudRay(dir, c);
 	float t0, t1;
 	if (!cloudSegment(r, c.layer.x, c.layer.y, c.misc.z, c.march.z, t0, t1)) return o;
+	// inside the layer: the fog around the camera matters, the far stretch is hidden by it (and by aerial perspective)
+	if (t0 < 1.0) t1 = min(t1, 1500.0);
 	float len = t1 - t0;
 	// fewer, longer steps where the stretch is short (straight up) and the far horizon (thin on screen)
 	int n = clamp(int(float(steps) * saturate(len / 900.0) + 0.999), max(steps / 3, 4), steps);

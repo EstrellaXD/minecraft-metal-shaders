@@ -94,6 +94,27 @@ static float3 shadeLitDims(half3 albedo, half3 n, half block, half shadow, bool 
 	return base + float3(albedo) * light * face;
 }
 
+// Stars for the End (no atmosphere: no twinkle, no extinction): the overworld's cube-map cells (shadeStars), but only the
+// cell the direction falls in (stars sit 0.2-0.8 into their cell and are small: sigma <= 0.8 cell), and the colour from a
+// three-way mix instead of Planck's law. A quarter of shadeStars' cost.
+static float3 shadeEndStars(float3 s, float sigmaCells) {
+	float3 a = abs(s);
+	float2 uv; uint face;
+	if (a.x >= a.y && a.x >= a.z) { uv = s.yz / a.x; face = s.x > 0.0 ? 0u : 1u; }
+	else if (a.y >= a.z) { uv = s.xz / a.y; face = s.y > 0.0 ? 2u : 3u; }
+	else { uv = s.xy / a.z; face = s.z > 0.0 ? 4u : 5u; }
+	float2 cell = (uv * 0.5 + 0.5) * 420.0;
+	int2 c = int2(floor(cell));
+	uint h = shadeHash3(int3(c, int(face)), 0x3c6ef372u);
+	if (shadeHash01(h) > 0.09) return float3(0.0);
+	float2 pos = float2(c) + 0.2 + 0.6 * float2(shadeHash01(h ^ 0x68e31da4u), shadeHash01(h ^ 0xb5297a4du));
+	float2 dd = cell - pos;
+	float flux = exp2(-1.328771 * (-1.0 + 7.5 * pow(shadeHash01(h ^ 0x1b56c4e9u), 0.45)));
+	float pick = shadeHash01(h ^ 0x7f4a7c15u);
+	float3 col = pick < 0.5 ? mix(float3(1.25, 0.95, 0.75), float3(1.0), pick * 2.0) : mix(float3(1.0), float3(0.75, 0.85, 1.3), pick * 2.0 - 1.0);
+	return col * (flux * exp(-0.5 * dot(dd, dd) / (sigmaCells * sigmaCells)));
+}
+
 // ---- the End sky (E25) ---------------------------------------------------------------------------------------------------------
 // Deep indigo gradient, a slowly turning nebula (two hues, domain-warped noise in an equirectangular map: the longitude
 // multipliers are whole numbers so it wraps), sharp stars, and luminous curtains ("beams") rising from the void around the
@@ -109,14 +130,12 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float2 q = float2(lon + t * 0.0004, lat);
 	float w = shadeDimsNoise(mw, q * float2(32.0, 16.0) + float2(3.1, 0.7));
 	float nb = shadeDimsNoise(mw, q * float2(16.0, 12.0) + float2(w * 1.6, w * 0.9));
-	float nb2 = shadeDimsNoise(mw, q * float2(48.0, 30.0) + float2(w * 2.2, 0.0));
 	float band = exp(-abs(e - 0.35) / 0.55);
-	float neb = smoothstep(0.55, 1.05, nb * 0.8 + nb2 * 0.35) * band;
+	float neb = smoothstep(0.72, 1.0, nb * 0.75 + w * 0.4) * band;
 	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 0.9);
 	// stars (the overworld's field, brighter and denser looking: no atmosphere)
 	float sigma = clamp(0.7 * pixelAngle / (1.5707963 / 420.0), 0.25, 0.8);
-	sky += shadeStars(dir, 1.0, f.time.y, sigma) * (0.5 * (1.0 - 0.6 * neb));
-	sky += shadeStars(float3(dir.z, dir.x, dir.y), 1.0, f.time.y + 17.0, sigma) * 0.25;
+	sky += shadeEndStars(dir, sigma) * (0.8 * (1.0 - 0.6 * neb));
 	// beams: ridged noise around the horizon, rising from below it
 	float flash = L.flash.w;
 	float az = lon;
@@ -139,33 +158,40 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 // shell in N steps (blue-noise dithered); at each the curtain field is a domain-warped noise whose 0.5 contour is the
 // curtain line, streaked by noise that depends only on the horizontal position (vertical rays), coloured by height in the
 // shell (violet lower fringe, green body, crimson top). Pure emission. Pre-exposure radiance x ShadeLook.night.z.
+// Colour x envelope of the 6 shell layers (violet lower fringe, green body peaking at 22 percent, crimson top), precomputed
+// from g = exp(-(h - 0.22)^2 / 0.04), v = exp(-h^2 / 0.006), r = smoothstep(0.45, 0.95, h) / 2 at h = (i + 0.5) / 6.
+constant float3 SHADE_AURORA_LAYERS[6] = {
+	float3(0.2310, 0.7023, 0.5336),
+	float3(0.1956, 0.9778, 0.4400),
+	float3(0.0760, 0.3802, 0.1711),
+	float3(0.0938, 0.0554, 0.0467),
+	float3(0.2093, 0.0466, 0.0735),
+	float3(0.1119, 0.0246, 0.0392)};
+
 static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
 	float s = L.night.z;
 	if (s <= 0.002 || dir.y < 0.02) return float3(0.0);
-	int steps = L.tier.x <= 0 ? 10 : L.tier.x == 1 ? 12 : L.tier.x == 2 ? 16 : 24;
+	// 6 layers through the shell, the sample height dithered per pixel and frame (TAA integrates it)
 	const float h0 = 1.0, h1 = 1.9;
 	float dy = max(dir.y, 0.05);
-	float t0 = h0 / dy, t1 = h1 / dy;
+	float k0 = h0 / dy * 0.55, k1 = h1 / dy * 0.55;
 	float t = f.sunPath.w;
 	float jitter = shadeNoise(pixel, f.flags2.x);
 	float2 drift = float2(t * 0.0021, t * 0.0009);
+	// the domain warp and the vertical rays vary slowly through the shell: once per pixel, at its middle
+	float2 mid = dir.xz * (0.5 * (k0 + k1)) + drift;
+	float warp = shadeDimsNoise(mw, mid * 0.6 + float2(t * 0.0031, 0.0)) * 0.9;
+	float rays = 0.35 + 0.65 * shadeDimsNoise(mw, mid * 9.0 + float2(0.0, t * 0.012));
+	float2 step = dir.xz * ((k1 - k0) * 0.9 / 6.0);
+	float2 p = dir.xz * (k0 * 0.9) + drift * 0.9 + warp + step * jitter;
 	float3 sum = float3(0.0);
-	for (int i = 0; i < steps; i++) {
-		float h = (float(i) + jitter) / float(steps);
-		float2 xz = dir.xz * (mix(t0, t1, h) * 0.55) + drift;
-		float warp = shadeDimsNoise(mw, xz * 0.6 + float2(t * 0.0031, 0.0));
-		float c = shadeDimsNoise(mw, xz * 0.9 + warp * 0.9);
-		float line = exp(-((c - 0.5) * (c - 0.5)) * 380.0);
-		float rays = 0.35 + 0.65 * shadeDimsNoise(mw, xz * float2(9.0, 9.0) + float2(0.0, t * 0.012));
-		float g = exp(-((h - 0.22) * (h - 0.22)) / 0.04);
-		float v = exp(-(h * h) / 0.006);
-		float r = smoothstep(0.45, 0.95, h) * 0.5;
-		float3 col = float3(0.20, 1.0, 0.45) * g + float3(0.42, 0.30, 1.0) * (v * 0.8) + float3(1.0, 0.22, 0.35) * r;
-		float env = smoothstep(0.0, 0.05, h) * (1.0 - 0.85 * smoothstep(0.55, 1.0, h));
-		sum += col * (line * rays * env);
+	for (int i = 0; i < 6; i++) {
+		float c = shadeDimsNoise(mw, p) - 0.5;
+		sum += SHADE_AURORA_LAYERS[i] * exp(-c * c * 380.0);
+		p += step;
 	}
 	float horizon = smoothstep(0.02, 0.18, dir.y);
-	return sum * (s * horizon * 0.06 / float(steps) * 12.0);
+	return sum * (rays * s * horizon * 0.12);
 }
 
 // ---- fog in the Nether and the End (final pass, from depth) ----------------------------------------------------------------

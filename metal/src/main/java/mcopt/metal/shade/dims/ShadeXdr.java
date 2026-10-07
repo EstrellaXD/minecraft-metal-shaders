@@ -149,7 +149,10 @@ public final class ShadeXdr {
 			for (int i = 0; i < n; i++) MemoryUtil.memPutAddress(t + i * 8L, textures[i]);
 			pass2.invokeExact(enc, pipeline, t0, t1, t, n, params == null ? 0L : MemoryUtil.memAddress(params), params == null ? 0 : params.remaining(),
 				MemoryUtil.memAddress(stack.UTF8(label)));
-			frame.invokeExact(enc, t1);
+			// with a screen open (pause menu, inventory...) the world behind it is blurred / dimmed by passes that keep main's alpha:
+			// no highlights then (they would show unblurred through the menu)
+			var mc = net.minecraft.client.Minecraft.getInstance();
+			frame.invokeExact(enc, mc != null && mc.gui.screen() != null ? 0L : t1);
 		} catch (RuntimeException | Error e) {
 			throw e;
 		} catch (Throwable th) {

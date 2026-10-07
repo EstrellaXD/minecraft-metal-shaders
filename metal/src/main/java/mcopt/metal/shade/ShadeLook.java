@@ -75,7 +75,7 @@ public final class ShadeLook {
 	static final float[] HAZE_SIGMA = {0.22e-3f * 0.40f, 0.48e-3f * 0.40f, 1.0e-3f * 0.40f};
 	/** The keyframes' mist sigma column (x 1e-3 / block) is scaled by this: at full strength a low sun drowns the near field. */
 	static final float MIST_SCALE = 0.35f;
-	static final float HAZE_H = 48f, HAZE_BASE = 16f, MIST_H = 10f, MIST_BASE = 4f, MIST_ALBEDO = 0.9f, SEA = 63f;
+	public static final float HAZE_H = 48f, HAZE_BASE = 16f, MIST_H = 10f, MIST_BASE = 4f, MIST_ALBEDO = 0.9f, SEA = 63f;
 	/** Sun and moon disc angular radius (radians). */
 	static final float SUN_RADIUS = (float) Math.toRadians(1.0), MOON_RADIUS = (float) Math.toRadians(0.65);
 
@@ -230,6 +230,31 @@ public final class ShadeLook {
 		float lambda = ShadeConfig.AUTO_EXPOSURE ? PRESET_LAMBDA[ShadeConfig.LOOK] : 0f;
 		put4(b, EXPOSURE_REF, this.exposureRef, lambda, METER_KEY, this.snapExposure ? 1f : 0f);
 		this.snapExposure = false;
+	}
+
+	// ---- values for modules (volumetric light: its open-air medium follows E06's haze and mist) ---------------------------
+	/** Luminance of the haze extinction at its base (1/block), as packed in fogR this frame. */
+	public float hazeSigmaLuma(ShadeFrame f) {
+		return luma(HAZE_SIGMA[0], HAZE_SIGMA[1], HAZE_SIGMA[2]) * (1f + 1.0f * f.rain);
+	}
+
+	/** Mist extinction at its base (1/block), as packed in fogM.x this frame. */
+	public float mistSigmaBlock() {
+		return this.mistSigma * 1e-3f * MIST_SCALE;
+	}
+
+	/** Mist scale height (blocks), as packed in fogM.y. */
+	public float mistHeight(ShadeFrame f) {
+		return MIST_H * (1f + 2f * f.rain);
+	}
+
+	/**
+	 * Volumetric light strength factor from the VL keyframe column x look preset (vlStrength: ~0.2 at noon, 1 at golden hour),
+	 * softened to 0.66 .. 1.2 (shafts under a canopy stay visible at noon); 1 at night (the module grades moon shafts itself).
+	 */
+	public float vlFactor() {
+		if (this.elevation < -4f) return PRESET_VL[ShadeConfig.LOOK];
+		return 0.55f + 0.53f * Math.min(this.vlStrength, 1.25f);
 	}
 
 	// ---- maths -------------------------------------------------------------------------------------------------------------

@@ -168,10 +168,16 @@ void mc_shade_set(id<MTLBuffer> frame, uint64_t offset, id<MTLTexture> shadow, i
 	shadowSampler = sampler;
 }
 
+int mc_shade_bind_render(id<MTLRenderCommandEncoder> r);
+
 // Binds the globals into enc's open render encoder (nothing when none is open or nothing is set yet).
 void mc_shade_bind(Enc *enc) {
-	id<MTLRenderCommandEncoder> r = enc->render;
-	if (!r || !frameBuffer) return;
+	mc_shade_bind_render(enc->render);
+}
+
+// The same for a render encoder of our own (post passes such as mcvl.m's): 1 if the globals were bound, 0 if not set yet.
+int mc_shade_bind_render(id<MTLRenderCommandEncoder> r) {
+	if (!r || !frameBuffer) return 0;
 	[r setVertexBuffer:frameBuffer offset:frameOffset atIndex:16];
 	[r setFragmentBuffer:frameBuffer offset:frameOffset atIndex:16];
 	if (shadowMap) {
@@ -204,6 +210,19 @@ void mc_shade_bind(Enc *enc) {
 			if (t) [r useResource:t usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
 		}
 	}
+	return 1;
+}
+
+// For a compute encoder of our own: ShadeFrame at buffer(16), ShadeLook 17, ShadeGpu 18 (device-writable for kernels that
+// publish values, e.g. VL's canopy factor into ShadeGpu.scene.y), the shadow map at texture(16), the LUT at texture(17).
+int mc_shade_bind_compute(id<MTLComputeCommandEncoder> c) {
+	if (!c || !frameBuffer) return 0;
+	[c setBuffer:frameBuffer offset:frameOffset atIndex:16];
+	if (lookBuffer) [c setBuffer:lookBuffer offset:lookOffset atIndex:17];
+	if (gpuBuffer) [c setBuffer:gpuBuffer offset:0 atIndex:18];
+	if (shadowMap) [c setTexture:shadowMap atIndex:16];
+	if (state && state->lut) [c setTexture:state->lut atIndex:17];
+	return 1;
 }
 
 // ---- M2 ------------------------------------------------------------------------------------------------------------------

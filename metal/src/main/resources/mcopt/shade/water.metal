@@ -59,6 +59,17 @@ static inline float shadeLinearW(float z, constant ShadeFrame &f) {
 	return f.proj[3][2] / max(z + f.proj[2][2], 1e-7);
 }
 
+// The scene's linear view depth (clip w: blocks along the view axis) at pixel px of the rendered rect behind the
+// translucents, SHADE_WATER_SKY_W where nothing was drawn (sky). The ONE place the module reads the depth copy: with far
+// terrain (Distant Horizons, whose depth has its own projection) this becomes a read of the merged scene-distance image
+// (far-terrain-plan section 3.2-2; convert if that image holds radial distance), and SSR, refraction, absorption and foam
+// all see the LODs.
+#define SHADE_WATER_SKY_W 1e6
+static inline float shadeWaterSceneW(depth2d<float> depth, uint2 px, constant ShadeFrame &f) {
+	float z = depth.read(px);
+	return z > 0.0 ? shadeLinearW(z, f) : SHADE_WATER_SKY_W;
+}
+
 // A display-referred colour (M1's tone-mapped sRGB) back to linear radiance before exposure: undo the sRGB curve, then
 // the hue-preserving tone curve on the brightest channel (shadeOutput keeps the channel ratios below its white blend),
 // then the exposure. Clipped highlights come back as ~5.6 / exposure.
@@ -193,22 +204,23 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		float u = (float(chunk * n + i) - jitter) * inv;
 		float t = u * (0.35 + 0.65 * u);
 		float3 s = s0 + ds * t;
-		float zs = depth.read(uint2(clamp((s.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)));
-		if (s.z <= zs) { // the ray went behind what the depth buffer holds there
+		// NDC depth is affine in 1/w along the screen segment, so the ray's view depth at any step is B / (z + A)
+		float ws = shadeWaterSceneW(depth, uint2(clamp((s.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+		if (B / max(s.z + A, 1e-7) >= ws) { // the ray went behind what the depth copy holds there
 			float lo = tPrev, hi = t;
 			for (int j = 0; j < 4; j++) {
 				float m = 0.5 * (lo + hi);
 				float3 sm = s0 + ds * m;
-				float zm = depth.read(uint2(clamp((sm.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)));
-				if (sm.z <= zm) hi = m; else lo = m;
+				float wm = shadeWaterSceneW(depth, uint2(clamp((sm.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+				if (B / max(sm.z + A, 1e-7) >= wm) hi = m; else lo = m;
 			}
 			float3 sh = s0 + ds * hi;
 			float2 uv = sh.xy * 0.5 + 0.5;
-			float zh = depth.read(uint2(clamp(uv * size, float2(0.0), size - 1.0)));
-			float wr = B / max(sh.z + A, 1e-7), ws = B / max(zh + A, 1e-7);
+			float wh = shadeWaterSceneW(depth, uint2(clamp(uv * size, float2(0.0), size - 1.0)), f);
+			float wr = B / max(sh.z + A, 1e-7);
 			float wp = B / max(s0.z + ds.z * tPrev + A, 1e-7);
-			float thick = 0.3 + 0.02 * ws + abs(wr - wp);
-			if (zh > 0.0 && wr - ws < thick) {
+			float thick = 0.3 + 0.02 * wh + abs(wr - wp);
+			if (wh < SHADE_WATER_SKY_W && wr - wh < thick) {
 				float2 edge = smoothstep(0.0, 0.07, min(uv, 1.0 - uv));
 				float fade = edge.x * edge.y;
 				if (!screenEnd) fade *= 1.0 - smoothstep(0.75, 1.0, hi);
@@ -373,19 +385,20 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float2 size = shadeWaterRenderSize(f, tex);
 	float2 uv = w.pixel / size; // over the rendered rect
 	float wSurf = shadeLinearW(w.depth, f);
-	float z0 = depth.read(uint2(min(w.pixel, size - 1.0)));
-	float dw0 = z0 > 0.0 ? shadeLinearW(z0, f) - wSurf : 64.0;
+	float w0 = shadeWaterSceneW(depth, uint2(min(w.pixel, size - 1.0)), f);
+	float dw0 = w0 < SHADE_WATER_SKY_W ? w0 - wSurf : 64.0;
 	// only the waves' tilt shifts the bottom (a flat surface doesn't), more for deeper water, in view space
 	float3 tilt = (f.view * float4(n - w.nFace, 0.0)).xyz;
 	float2 shift = tilt.xy * (0.4 * min(max(dw0, 0.0), 6.0));
 	float2 uvR = uv + float2(f.proj[0][0] * shift.x, f.proj[1][1] * shift.y) * (0.5 / max(wSurf, 0.5));
 	uvR = clamp(uvR, 0.5 / size, 1.0 - 0.5 / size);
-	float zR = depth.read(uint2(uvR * size));
-	if (zR > w.depth) { // the shifted sample is in front of the water: no refraction there
+	float wR = shadeWaterSceneW(depth, uint2(uvR * size), f);
+	if (wR < wSurf) { // the shifted sample is in front of the water: no refraction there
 		uvR = uv;
-		zR = z0;
+		wR = w0;
 	}
-	float lView = zR > 0.0 ? max(shadeLinearW(zR, f) - wSurf, 0.0) * dist / max(wSurf, 1e-3) : 1e4;
+	bool hasFloor = wR < SHADE_WATER_SKY_W; // something behind the water (else the sky: deep water to the horizon)
+	float lView = hasFloor ? max(wR - wSurf, 0.0) * dist / max(wSurf, 1e-3) : 1e4;
 	float dy = top ? lView * saturate(-v.y) : lView * 0.5;
 	float3 sigmaA = shadeWaterSigmaA(w.tint);
 	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
@@ -434,10 +447,10 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 
 	float3 color = mix(body, refl, fres) + glint * wp.tune.z;
 	if (f.flags.w == 5) return float3(hitWeight, fres, 0.0) / max(w.exposure, 1e-3);                               // debug: SSR hits, Fresnel
-	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), zR > 0.0 ? 0.0 : 1.0) / max(w.exposure, 1e-3); // debug: path, depth
+	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), hasFloor ? 0.0 : 1.0) / max(w.exposure, 1e-3); // debug: path, depth
 
 #ifdef SHADE_FOAM
-	if (top && zR > 0.0) {
+	if (top && hasFloor) {
 		// where the bottom comes up to the surface; broken up by the wave height so it doesn't draw contour lines
 		float shore = min(dy, lView * 0.7);
 		float edge = 0.12 + 0.22 * saturate(height * 9.0);
@@ -472,13 +485,13 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		float3 tilt = (f.view * float4(up - float3(0.0, 1.0, 0.0), 0.0)).xyz;
 		float wSurf = shadeLinearW(w.depth, f);
 		float2 uvR = clamp(uv + float2(f.proj[0][0] * tilt.x, f.proj[1][1] * tilt.y) * (1.2 / max(wSurf, 0.5)), 0.5 / size, 1.0 - 0.5 / size);
-		float zR = depth.read(uint2(uvR * size));
+		float wR = shadeWaterSceneW(depth, uint2(uvR * size), f);
 		float3 sky = shadeSkyLookup(t, lut, lutS, f);
 		// the sun seen through the rippled window: a small hot core and a soft glare around the refracted direction, so
 		// the ripples break it into dancing sparkles
 		float ct = dot(t, f.lightDirWorld.xyz);
 		if (f.lightDirWorld.w > 0.5) sky += f.sunColor.rgb * (exp((ct - 1.0) * 6000.0) * 30.0 + exp((ct - 1.0) * 90.0) * 0.6) * float(w.shadow);
-		above = zR > 0.0 ? shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure) : sky;
+		above = wR < SHADE_WATER_SKY_W ? shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure) : sky;
 		above *= float(shadeSkyCurve(w.sky)) * 0.6 + 0.4;
 	}
 	// the water below, mirrored

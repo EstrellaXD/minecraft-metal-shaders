@@ -84,17 +84,7 @@ final class WeatherShots {
 				BenchDriver.log("weather poses " + poses);
 				List<BenchDriver.Step> extra = new ArrayList<>();
 				Poses p = poses;
-				if (on("rain") && p.ground != null) shot(extra, "wx_rain_ground", 6000, true, p.ground);
-				if (on("sunset") && p.ground != null) {
-					// rain first (the ground soaks), then the sky clears for the sunset
-					extra.add(new BenchDriver.Scene("wx-soak", 11000, true, () -> p.ground));
-					extra.add(new BenchDriver.Settle("wx-soak", true, 3, 120));
-					extra.add(new BenchDriver.Hold("wx-soak", 4));
-					shot(extra, "wx_wet_sunset", 12000, false, p.ground);
-				}
-				if (on("night") && p.ground != null) shot(extra, "wx_night_rain", 18000, true, p.ground);
-				if (on("water") && p.water != null) shot(extra, "wx_rain_water", 6000, true, p.water);
-				if (on("storm") && p.storm != null) storm(extra, p);
+				// glass first: the ground is still dry
 				if (on("glass") && p.glassSite != null) {
 					extra.add(new BenchDriver.Step("wx-glass-build", 0) {
 						@Override
@@ -110,6 +100,17 @@ final class WeatherShots {
 					shot(extra, "wx_glass_noon", 6000, false, p.glassNoon);
 					shot(extra, "wx_glass_evening", 11000, false, p.glassEvening);
 				}
+				if (on("rain") && p.ground != null) shot(extra, "wx_rain_ground", 6000, true, p.ground);
+				if (on("sunset") && p.ground != null) {
+					// rain first (the ground soaks), then the sky clears for the sunset
+					extra.add(new BenchDriver.Scene("wx-soak", 11000, true, () -> p.ground));
+					extra.add(new BenchDriver.Settle("wx-soak", true, 3, 120));
+					extra.add(new BenchDriver.Hold("wx-soak", 4));
+					shot(extra, "wx_wet_sunset", 12000, false, p.ground);
+				}
+				if (on("night") && p.ground != null) shot(extra, "wx_night_rain", 18000, true, p.ground);
+				if (on("water") && p.water != null) shot(extra, "wx_rain_water", 6000, true, p.water);
+				if (on("storm") && p.storm != null) storm(extra, p);
 				extra.add(new BenchDriver.Step("wx-cleanup", 0) {
 					@Override
 					void start(Minecraft mc2, long now2) {

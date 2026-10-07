@@ -18,12 +18,14 @@ import net.minecraft.server.level.ServerLevel;
 
 /**
  * Opt-in entity screenshots ({@code -Dmcbench.entities=true} for all of them, or a comma list of
- * {@code noon,evening,night,hand,motion}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
+ * {@code perf,noon,evening,night,hand,motion}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
  * base/entities work (branch m3). A small "zoo" is summoned for the shots on the flat torch-grid site (the night_torches
  * scene's patch, found from the real terrain), then removed again: every entity carries the tag {@code mcbench_ent}
  * (killed before and after, with any item they drop), and the two blocks it sets (a chest and a sign) are set back to
  * air, so the saved world the other runs use is left as it was. Mobs have NoAI and face the camera.
  * <ul>
+ * <li>{@code perf}: a recorded perf phase "zoo" (results.json perf.zoo / gpu.zoo): noon, panning +-20 degrees over the zoo
+ * for -Dmcbench.zooSeconds (10) s, to price entity lighting and shadows.</li>
  * <li>{@code ent_noon} (6000): villager, iron golem, cow, sheep, pig, horse, chicken, an armour stand in iron armour, a
  * chest, a sign, an item frame with a compass and floating dropped items, from 9 blocks: lighting and shadows on mobs.</li>
  * <li>{@code ent_evening} (11500): the same with a low sun from the west: long entity shadows across the ground.</li>
@@ -62,7 +64,7 @@ final class EntityShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("noon") || on("evening") || on("night") || on("hand") || on("motion"))) return;
+		if (!(on("noon") || on("evening") || on("night") || on("hand") || on("motion") || on("perf"))) return;
 		BenchDriver.results.put("entityShots", JSON);
 		// load the site (the torch grid) first: its chunks must exist on the server to read the ground and summon
 		steps.add(new BenchDriver.Scene("ent-site", 6000, false, () -> BenchDriver.spot.night));
@@ -85,6 +87,7 @@ final class EntityShots {
 				return true;
 			}
 		});
+		if (on("perf")) zoo(steps);
 		if (on("noon")) shot(steps, "ent_noon", 6000, () -> site.camera(9.5, 2.4, 9f));
 		if (on("evening")) shot(steps, "ent_evening", 11500, () -> site.camera(9.5, 2.4, 9f));
 		if (on("night")) shot(steps, "ent_night", 18000, () -> site.camera(9.5, 2.4, 9f));
@@ -108,12 +111,13 @@ final class EntityShots {
 		steps.add(new BenchDriver.Settle(name, false, 3, 120));
 		steps.add(new BenchDriver.Hold(name, Math.max(BenchDriver.SHOT_WAIT, 2.5)));
 		steps.add(new BenchDriver.Shot(name));
+		String key = name;
 		steps.add(new BenchDriver.Step("ent-record-" + name, 0) {
 			@Override
 			boolean poll(Minecraft mc, long now) {
 				Map<String, Object> m = p.get().json();
 				m.put("time", time);
-				JSON.put(name, m);
+				JSON.put(key, m);
 				return true;
 			}
 		});
@@ -195,9 +199,40 @@ final class EntityShots {
 		s.getCommands().performPrefixedCommand(s.createCommandSourceStack().withSuppressedOutput(), c);
 	}
 
+	/**
+	 * The zoo perf segment (recorded as perf/gpu phase "zoo", like spin and flight): noon, the camera 9.5 blocks from the
+	 * line panning +-20 degrees for -Dmcbench.zooSeconds (10) s, entity-heavy frames for pricing entity shading and shadows.
+	 */
+	private static void zoo(java.util.Deque<BenchDriver.Step> steps) {
+		double sec = Double.parseDouble(System.getProperty("mcbench.zooSeconds", "10"));
+		steps.add(new BenchDriver.Scene("zoo", 6000, false, () -> site.camera(9.5, 2.4, 9f)));
+		steps.add(new BenchDriver.Settle("zoo", false, 3, 120));
+		steps.add(new BenchDriver.Warmup(2));
+		steps.add(new BenchDriver.Step("zoo", 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				BenchDriver.setPhase("ZOO");
+				Pose o = site.camera(9.5, 2.4, 9f);
+				long t0 = now;
+				BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (20.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
+				BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf("zoo");
+				BenchDriver.phaseRanges.put("zoo", new long[] {now, 0});
+				BenchDriver.log("perf zoo " + sec + " s");
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+				BenchDriver.recPhase = -1;
+				BenchDriver.phaseRanges.get("zoo")[1] = now;
+				return true;
+			}
+		});
+	}
+
 	/** Creative mode with a torch and a lantern in the hands, HUD shown (the hand renders only then), at night. */
 	private static void hand(java.util.Deque<BenchDriver.Step> steps) {
-		String name = "ent_hand";
+		final String name = "ent_hand";
 		java.util.function.Supplier<Pose> p = () -> site.camera(5.0, 1.6, 14f);
 		steps.add(new BenchDriver.Scene(name, 18000, false, p));
 		steps.add(new BenchDriver.Step("ent-hand-on", 0) {
@@ -236,7 +271,7 @@ final class EntityShots {
 				Map<String, Object> m = p.get().json();
 				m.put("time", 18000);
 				m.put("hands", "torch, lantern");
-				JSON.put(name, m);
+				JSON.put("ent_hand", m);
 			}
 
 			@Override
@@ -259,7 +294,7 @@ final class EntityShots {
 				String[] mobs = {"villager", "horse", "pig"};
 				for (int i = 0; i < mobs.length; i++) {
 					cmd(s, String.format(Locale.ROOT, "summon minecraft:%s %.2f %d %.2f {NoAI:1b,Silent:1b,Invulnerable:1b,Tags:[\"%s\",\"mcbench_mover%d\"],Rotation:[270f,0f]}",
-						mobs[i], site.x - 7.5, site.y, site.z - 2.5 - i * 1.6, TAG, i));
+						mobs[i], site.x - 7.5, lineAt(site.x), site.z - 1.0 - i * 1.4, TAG, i));
 				}
 			}
 
@@ -280,7 +315,7 @@ final class EntityShots {
 					double[] speed = {4.0, 6.0, 5.0};
 					for (int i = 0; i < 3; i++) {
 						double x = site.x - 7.5 + speed[i] * t;
-						cmd(s, String.format(Locale.ROOT, "execute as @e[tag=mcbench_mover%d] run tp @s %.3f %d %.3f 270 0", i, x, lineAt(site.x), site.z - 2.5 - i * 1.6));
+						cmd(s, String.format(Locale.ROOT, "execute as @e[tag=mcbench_mover%d] run tp @s %.3f %d %.3f 270 0", i, x, lineAt(site.x), site.z - 1.0 - i * 1.4));
 					}
 				}
 				return t >= 1.6;
@@ -296,7 +331,7 @@ final class EntityShots {
 				Map<String, Object> m = p.get().json();
 				m.put("time", 6000);
 				m.put("movers", "villager 4, horse 6, pig 5 blocks/s along +x");
-				JSON.put(name, m);
+				JSON.put("ent_motion", m);
 			}
 
 			@Override

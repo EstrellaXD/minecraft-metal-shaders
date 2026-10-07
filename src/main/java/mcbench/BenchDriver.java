@@ -127,7 +127,7 @@ public final class BenchDriver {
 	static final long[] frameNs = new long[CAP], frameAt = new long[CAP];
 	static final byte[] framePhase = new byte[CAP];
 	static int frames;
-	static final List<String> REC_PHASES = List.of("spin", "flight");
+	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo"); // zoo: EntityShots' perf segment at the entity site (opt-in)
 	static int recPhase = -1, prevRecPhase = -1;
 	static long lastFrame;
 

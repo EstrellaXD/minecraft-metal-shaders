@@ -184,6 +184,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.sky = in.v_Light.y;
         wi.shadow = shadow;
         wi.dxz = float4(dpx.xz, dpy.xz);
+        wi.detail = float4(0.0);
+#ifdef SHADE_WATER_DETAIL
+        if (n.y > 0.5h && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterWaves); // M2.1 fine ripples (top faces, baked waves)
+#endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
         wi.exposure = ex;
 #ifdef MCOPT_HDR

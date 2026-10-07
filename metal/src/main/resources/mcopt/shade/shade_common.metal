@@ -83,7 +83,8 @@ struct ShadeFrame {
 	                            //      z shadows enabled (0/1), w debug mode (0 off, 1 shadow map, 2 normals, 3 lighting only)
 	int4 flags2;                // 976  x frame index (wraps), y underwater (0/1), z cascade count, w sky light at the camera (0..15)
 	float4 sunPath;             // 992  x sin, y cos of the sun path tilt (mcopt.shade.sunTilt: the sun and moon orbit rotated about
-	                            //      world x, toward +z at noon), z dev bits (mcopt.shade.dev, for pricing features: SHADE_DEV_*), w 0
+	                            //      world x, toward +z at noon), z dev bits (mcopt.shade.dev, for pricing features: SHADE_DEV_*),
+	                            //      w the water's animation clock in seconds (real time with mcopt.shade.waterClock)
 };
 
 // mcopt.shade.dev bits (sunPath.z): switch features off to price them in game; 0 in normal use.

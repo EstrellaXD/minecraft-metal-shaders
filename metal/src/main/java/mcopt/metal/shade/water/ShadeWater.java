@@ -51,6 +51,9 @@ import org.lwjgl.system.MemoryUtil;
  * <li>{@code mcopt.shade.caustics} (true): caustics on the bottom seen through the surface.</li>
  * <li>{@code mcopt.shade.waterFoam} (true): shoreline foam.</li>
  * <li>{@code mcopt.shade.waterReflect} (1.0): reflection strength (artistic scale on the Fresnel term).</li>
+ * <li>{@code mcopt.shade.waterDetail} (true, M2.1): fine ripples, pixel-scale ripple pattern, calmer long waves, softer refraction.</li>
+ * <li>{@code mcopt.shade.ssrEdge} (true, M2.1): reflections reach the left and right screen edges.</li>
+ * <li>{@code mcopt.shade.waterClock} (true, M2.1): the waves run on real time (smooth) instead of the game time.</li>
  * <li>{@code mcopt.shade.glossy} (false, opt-in until checked in game: the bench world has no ice or stained glass): stained
  * glass, ice, slime and honey get mirror reflections (sky, SSR, sun) too.</li>
  * </ul>
@@ -84,6 +87,18 @@ public final class ShadeWater {
 	 */
 	public static final int BAKE_SIZE = Integer.getInteger("mcopt.shade.waterBakeSize", Shade.TIER >= 2 ? 1024 : 512) >= 1024 ? 1024 : 512;
 	public static final boolean SSR_PREV = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrPrev", "true"));
+	/**
+	 * M2.1: fine ripples (a second, smaller and rotated sample of the baked waves), a pixel-scale ripple pattern near the camera
+	 * (1/16-block cells, smooth in time), calmer long waves and a smaller refraction shift (false: M2's surface).
+	 */
+	public static final boolean DETAIL = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterDetail", "true"));
+	/**
+	 * M2.1: SSR reaches the left and right screen edges: rays that leave through a side keep marching on the edge column,
+	 * no side fade on hits, and the far-end fade goes by distance instead of screen length (false: M2's SSR edges).
+	 */
+	public static final boolean SSR_EDGE = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrEdge", "true"));
+	/** M2.1: the water animates on a real-time clock instead of the (server-corrected, tick-based) game time. */
+	public static final boolean CLOCK = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterClock", "true"));
 	/** The pipeline whose first use in a main pass triggers the scene copy. */
 	public static final String TRANSLUCENT = "sodium:pipeline/translucent_terrain";
 
@@ -113,6 +128,8 @@ public final class ShadeWater {
 		if (FOAM) b.append("#define SHADE_FOAM 1\n");
 		if (GLOSSY) b.append("#define SHADE_GLOSSY 1\n");
 		if (SSR_PREV) b.append("#define SHADE_SSR_PREV 1\n");
+		if (DETAIL) b.append("#define SHADE_WATER_DETAIL 1\n");
+		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
 		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n#define SHADE_WAVE_BAKE_SIZE ").append(BAKE_SIZE).append('\n');
 		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
 		// jitter changes per frame for the temporal resolve to integrate. The sub-rect mapping is exact without TAAU too
@@ -137,7 +154,7 @@ public final class ShadeWater {
 				}
 			}
 			System.out.println("[mcopt] shade: water on (ssr " + SSR + (SSR_QUAD ? " quad" : "") + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
-				+ ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ")");
+				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ")");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: water setup failed, M1 water from now on: " + e);

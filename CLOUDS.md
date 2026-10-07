@@ -57,8 +57,8 @@ LevelRenderer.render HEAD -> ShadeFrameUpdater.update
       cloud_shadow  256^2 R16F   every other frame (even)  transmittance toward the light on the plane base + 0.35 thickness
       cloud_march   hist/N       every frame               this frame's checkerboard slot: cumulus + cirrus, aerial perspective
                                                            -> (S, T) RGBA16F + apparent distance R32F
-      cloud_resolve hist size    every frame               reprojection (camera + wind) + blend (1/age, age <= 6..8) -> RGBA16F + R8 age
-      cloud_dome    128x64       every other frame (odd)   by direction, upper hemisphere, blended 0.3
+      cloud_resolve hist size    every frame               reprojection (camera + wind, Catmull-Rom) + blend (1/age, age <= 10..12) -> RGBA16F + R8 age
+      cloud_dome    128x64       every 4th frame           by direction, upper hemisphere, blended 0.4
     -> ShadeResources 12 shadow, 13 dome, 14 screen history
 "Sky" pass (sky.fs.metal): sky * T + S                  (clouds behind DH / terrain / water / glass, in front of the sun)
 terrain (H4): direct light x shadeCloudShadow            water: same shadow (glint, caustics), dome in sky reflections
@@ -73,10 +73,10 @@ render3dHud -> ShadePost.beforeHand hooks:
 |---|---|---|
 | `mcopt.shade.clouds` | true | needs `mcopt.shade=true` and HDR; false = vanilla's clouds lit by M2's `clouds.fs.metal`, exactly as m2.1 |
 | `.style` | volumetric (`blocky` with `mcopt.shade.look=storybook`) | `blocky`: vanilla-style 12-block cells, `.blockThickness` (8) |
-| `.scale` | P 0.4, B 0.5, Q 0.5, U 0.67 | history size relative to the output (window framebuffer; independent of TAAU's render scale) |
+| `.scale` | P 0.4, B 0.45, Q 0.5, U 0.67 | history size relative to the output (window framebuffer; independent of TAAU's render scale) |
 | `.checker` | P 3, B 3, Q 2, U 2 | N: one pixel of each N x N block marched per frame |
-| `.steps` / `.lightSteps` | P 24/4, B 32/4, Q 48/5, U 64/6 | primary / light samples (empty air crossed with double steps on the 2D footprint) |
-| `.maxAge` | 6 (N=3), 8 | most march samples a history pixel averages |
+| `.steps` / `.lightSteps` | P 20/3, B 24/3, Q 40/4, U 56/5 | primary / light samples (empty air crossed with double steps on the 2D footprint) |
+| `.maxAge` | 10 (N=3), 12 | most march samples a history pixel averages |
 | `.shadows` / `.shadowStrength` / `.shadowExtent` | true / 0.8 / 1024 | cloud shadow map (256^2 over the extent, oblique projection along the light onto the layer) |
 | `.dome` / `.domeSteps` | true / P 8, B 10, Q 12, U 16 | reflection dome |
 | `.cirrus` / `.cirrusAbove` | true / 900 | cirrus layer and its height above the cumulus base |
@@ -85,5 +85,56 @@ render3dHud -> ShadePost.beforeHand hooks:
 | `.wind` / `.seed` | 1 / 0 | wind speed multiplier / daily weather seed |
 | `.density` / `.detail` | 1 / 1 | extinction / fine detail multipliers |
 | `.altitudeScale` | 4 | blocks -> metres of the sky model's air for the light the layer gets (sunset light lingers on the clouds) |
-| `.octaveWeight` / `.octaveExtinction` / `.skyExtinction` / `.sunsetFill` / `.apSunset` / `.lightStep` | 0.68 / 0.48 / 0.2 / 0.4 / 1.5 / 4 | art knobs (see CloudParams) |
+| `.octaveWeight` / `.octaveExtinction` / `.skyExtinction` / `.sunsetFill` / `.apSunset` / `.lightStep` / `.odStep` / `.odMin` | 0.68 / 0.48 / 0.2 / 0.4 / 1.5 / 4 / 2.5 / 0.5 | art and sampling knobs (see CloudParams) |
+| `.withDh` | true | with Distant Horizons (which sets the Clouds option OFF) the volumetric clouds still draw |
 | `.log` / `.gpuTimer` | false | a log line every 2 s (weather, sizes, light; with the timer: GPU ms per pass, upper bounds) |
+
+## 4. How it works (short)
+
+- **Slab on a curved world**: base..top (vanilla cloud height + 8 .. +150), altitude along a ray `y0 + t dy + t^2 (1 - dy^2) / 2R`
+  with R = 40 000 blocks, so the layer bends down to the horizon (clouds reach it) and a high camera sees over it.
+- **Density** (blocks): the 512^2 weather map (tile 4096 blocks) gives regional coverage (r) and cumulus cells (g); with the
+  day's coverage a column's "core" 0..1; the vertical profile has a flat base and a dome whose height grows with the core
+  and the day's type; the 3D noise (64^3, tile 120 blocks, mipmapped, mip by footprint) erodes billows by Worley distance
+  squared (more where the cloud is thin), a 60-block-tile octave adds detail (faded with step size); edges sharpen with
+  height; wind shear leans the tops downwind. Noise is spread to ~uniform at bake time (logistic CDF with measured
+  mean/deviation: `cloudpreview ... stats`), so coverage c covers about c of the sky.
+- **Lighting**: light march 3-6 steps from 4 blocks growing (reach ~90-110 blocks; first two with billows),
+  4 multiple-scattering octaves (weight 0.68^i, extinction 0.48^i, phase lobes narrowing), phase = forward HG + a silver
+  lining peak (HG 0.97) + a back lobe, powder on the sunlit side, sky light from above through what is left above (one
+  sample) and bounce from below, the light at the layer from the sky model at the cloud's altitude (sunset light lingers),
+  then the moon. Aerial perspective toward the LUT sky by apparent distance (lighter at low sun so sunsets stay coloured).
+- **Cirrus**: one sample on a curved plane 900 blocks above the cumulus base, streaks along a fixed world axis, broad lobes.
+- **Reconstruction**: march 1/N^2 of the history pixels per frame (N = 3 balanced), Bayer-like slot order, jittered
+  start (IGN + golden ratio per visit), empty air crossed at double steps on the 2D footprint, in-cloud steps limited to
+  2.5 optical depths; resolve reprojects the history with this frame's distances and the wind (Catmull-Rom), blends 1/age.
+- **Blocky style**: 2D DDA over 12-block cells between the slab planes (8 thick), first filled cell's face lit (wrap,
+  3-cell self shadow, sky/ground fill, forward rim), T = 0.08; same history path, shadows from the cells.
+- **Cloud shadows**: 256^2 R16F over 1024 blocks, oblique projection along the light onto base + 0.35 thickness, 6 samples
+  through the slab; consumers fade it near the map edge and above the base; strength 0.8, faded below 10 degrees of sun.
+
+## 5. Cost (balanced, 3024x1964, M4 10-core GPU)
+
+See section 7 for the in-game A/B. GPU timer (upper bounds, other GPU work overlaps): march ~0.40-0.46 ms (454x295 rays),
+resolve ~0.19 ms (1361x884), shadow map ~0.03 ms every other frame, dome ~0.1-0.15 ms every 4th frame, sky composite one
+bilinear fetch per sky pixel, terrain one fetch per lit pixel. Offline (`tools/shade/clouds/run.sh time`, quiet GPU
+needed) the passes scale with: march ~ rays x in-cloud samples; resolve ~ history pixels (bandwidth).
+
+## 6. Integration notes (for the M3 integrator)
+
+- **ShadeResources** now has 16 entries; clouds own 12-14. Other branches that extend it: keep 12-14, renumber yours.
+- **Prelude order** is now shade_look + shade_common + **shade_clouds** + shade_m2 (shade_m2's `shadeFogAir2` uses
+  `shadeCloudsScreen`; new optional last parameter `constant ShadeResources *R = nullptr`).
+- **Other lit things** (entities, hand, particles, DH's own shaders in FT1/FT2, glass) should multiply their sun/moon
+  term by `shadeCloudShadow(p, sl, sr.cloudShadow)` (needs `constant ShadeResources& sr [[buffer(19)]]`, HDR variants).
+- **Sky pass** (`sky.fs.metal`) gets the composite inside `shadeSkyPixel` (HDR only); the aurora / End sky work (m3-skydims)
+  touches the same function: keep `sky = sky * clouds.a + clouds.rgb` after everything that is behind clouds (stars,
+  Milky Way, aurora) and before what is in front (nothing today).
+- **Rain/wetness** (m3-weather): `CloudWeather` already darkens/thickens with `f.rain`/`f.thunder`; puddles could read
+  `ShadeLook.clouds0` / the shadow map. A shared "weather state" could replace the rain smoothing here later.
+- **VL** reads the cloud shadow per step and uses the clouds' T as its sky mask (HDR only); with VL off nothing changes.
+- **Distant Horizons**: our clouds draw behind DH's LODs (sky pass). DH's own LOD clouds draw on top of everything: set
+  `enableCloudRendering = false` in DistantHorizons.toml (DH settings > Graphics > Clouds) when using these clouds (DH has
+  no API switch for it in 3.3.4). DH turns the game's Clouds option OFF; we ignore that while DH is loaded (`.withDh`).
+- `mcopt.shade=false`: nothing of this runs (MetalRenderPass's skip is behind `ShadeClouds.ON`, a static final false).
+  `mcopt.shade.clouds=false`: m2.1 behaviour (vanilla clouds, `clouds.fs.metal`), the prelude helpers return "no cloud".

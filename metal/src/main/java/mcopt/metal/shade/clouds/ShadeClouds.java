@@ -86,7 +86,9 @@ public final class ShadeClouds {
 			// the game's Clouds option OFF turns them off, except with Distant Horizons, which sets that option itself (its LODs
 			// would show through vanilla's clouds; ours draw behind the LODs, in the sky pass)
 			boolean option = game.optionsRenderState.cloudStatus != CloudStatus.OFF || DH;
-			boolean want = level != null && f.dimension == ShadeFrame.DIM_OVERWORLD && option && ARGB.alpha(game.levelRenderState.cloudColor) > 0;
+			// mcopt.shade.clouds.pause (read every frame; the bench's in-session A/B sets it): as if the module were off
+			boolean want = level != null && f.dimension == ShadeFrame.DIM_OVERWORLD && option && ARGB.alpha(game.levelRenderState.cloudColor) > 0
+				&& !Boolean.getBoolean("mcopt.shade.clouds.pause");
 			if (!want) {
 				wasActive = false;
 				PARAMS.packLook(look, false);

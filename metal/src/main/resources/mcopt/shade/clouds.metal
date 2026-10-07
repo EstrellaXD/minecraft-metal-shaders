@@ -384,6 +384,8 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	float3 L = c.lightDir.xyz;
 	float mu = dot(dir, L);
 	float pw = c.look.x;
+	// the phase depends on the ray only (mu): the octaves' lobes once per ray, not per sample (12 pow per sample before)
+	float ph0 = cloudPhase(mu, 1.0, c), ph1 = cloudPhase(mu, 0.5, c), ph2 = cloudPhase(mu, 0.25, c), ph3 = cloudPhase(mu, 0.125, c);
 	float3 Sacc = 0.0;
 	float T = 1.0, dsum = 0.0, wsum = 0.0;
 	float thick = c.layer.y - c.layer.x;
@@ -429,13 +431,9 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		float tauDown = d * sigma * (y - c.layer.x) * c.art.z * 0.75;
 		// multiple scattering: 4 octaves (Wrenninge): each dimmer, far less extinct and more isotropic (the light that
 		// diffuses through a thick cloud: lit sides near white, bases grey, not black)
-		float ms = 0.0, a = 1.0, b = 1.0, k = 1.0;
-		for (int o2 = 0; o2 < 4; o2++) {
-			ms += a * exp(-b * tauL) * cloudPhase(mu, k, c);
-			a *= c.art.x;
-			b *= c.art.y;
-			k *= 0.5;
-		}
+		float a1 = c.art.x, b1 = c.art.y;
+		float ms = exp(-tauL) * ph0 + a1 * exp(-b1 * tauL) * ph1 + a1 * a1 * exp(-b1 * b1 * tauL) * ph2
+			+ a1 * a1 * a1 * exp(-b1 * b1 * b1 * tauL) * ph3;
 		// powder: the thin skin of a cloud scatters less light toward the eye than its depths (dark creases on the sunlit
 		// side), gone when looking toward the light (Schneider's "beer-powder", shaped after Photon's)
 		float powder = 1.0 - pw * exp(-st * 28.0);

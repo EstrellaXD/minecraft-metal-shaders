@@ -97,7 +97,7 @@ public final class ShadeWater {
 	public static final int DETAIL_SIZE = Integer.getInteger("mcopt.shade.waterDetailSize", 256) >= 512 ? 512 : 256;
 	private static final boolean DETAIL_EXTRAS = Boolean.getBoolean("mcopt.shade.waterDetailExtras");
 	/** Distance (blocks) beyond which the fine ripples are not sampled (faded from 0.6x of it). */
-	private static final int DETAIL_FAR = Math.clamp(Integer.getInteger("mcopt.shade.waterDetailFar", 140), 32, 512);
+	private static final int DETAIL_FAR = Math.clamp(Integer.getInteger("mcopt.shade.waterDetailFar", 96), 32, 512);
 	/**
 	 * M2.1: SSR reaches the left and right screen edges: rays that leave through a side keep marching on the edge column,
 	 * no side fade on hits, and the far-end fade goes by distance instead of screen length (false: M2's SSR edges).

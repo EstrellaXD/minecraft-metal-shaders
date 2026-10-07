@@ -592,7 +592,8 @@ static inline float2 shadeWaterRot(float2 v) { return float2(0.6 * v.x - 0.8 * v
 static inline float2 shadeWaterRotT(float2 v) { return float2(0.6 * v.x + 0.8 * v.y, -0.8 * v.x + 0.6 * v.y); }
 // (no drift of its own: its layer, texture(22), is baked SHADE_WATER_DETAIL_SPEED times faster)
 #ifndef SHADE_WATER_DETAIL_FAR
-#define SHADE_WATER_DETAIL_FAR 140.0  // no detail sample beyond this (faded out from 0.6x of it; the wave strength is ~0.2 there)
+#define SHADE_WATER_DETAIL_FAR 96.0  // no detail sample beyond this (faded out from 0.6x of it; the wave strength is ~0.35 there, the mips
+                                     // have averaged most ripples away, and the bay view costs ~0.06 ms less than at 140)
 #endif
 static inline float2 shadeWaterDetailXZ(float2 x) {
 	return shadeWaterRot(x) * SHADE_WATER_DETAIL_SCALE + float2(23.7, 41.3);

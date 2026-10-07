@@ -72,6 +72,22 @@ public class ShadeMslDump {
 				Files.writeString(out.resolve("weather.fs.metal"), ShadeMsl.weather(Files.readString(w)));
 				Files.writeString(out.resolve("hdrweather.fs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.weather(Files.readString(w)));
 			}
+			// M3 entity lighting: the HDR variants of the game's entity / item / block / particle stages, patched (ShadeEntity)
+			Path ent = out.resolve("entity");
+			Files.createDirectories(ent);
+			for (String name : mcopt.metal.shade.ShadeEntityAccess.pipelines()) {
+				String file = name.replaceAll("[^A-Za-z0-9._-]", "_");
+				Path evs = Path.of(gen, file + ".vs.metal"), efs = Path.of(gen, file + ".fs.metal");
+				if (!Files.exists(evs) || !Files.exists(efs)) continue;
+				String v = mcopt.metal.shade.ShadeEntityAccess.vertex(name, Files.readString(evs));
+				String f = mcopt.metal.shade.ShadeEntityAccess.fragment(name, Files.readString(efs));
+				if (v == null || f == null) {
+					System.out.println("entity lighting: not patched: " + name);
+					continue;
+				}
+				Files.writeString(ent.resolve(file + ".vs.metal"), v);
+				Files.writeString(ent.resolve(file + ".fs.metal"), f);
+			}
 			// every generated game fragment, converted for the HDR world target (ShadeMsl.hdrFragment)
 			Path hdrGen = out.resolve("hdrgen");
 			Files.createDirectories(hdrGen);

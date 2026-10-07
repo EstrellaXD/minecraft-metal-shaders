@@ -68,12 +68,13 @@ public final class ShadeMsl {
 	}
 
 	/**
-	 * "#define MCOPT_SHADE", shade_look.metal (M2 art layer, display transform), shade_common.metal (M1) and shade_m2.metal (M2
-	 * shading): what goes in front of every shaded stage.
+	 * "#define MCOPT_SHADE", shade_look.metal (M2 art layer, display transform), shade_common.metal (M1), shade_m2.metal (M2
+	 * shading) and shade_dynlight.metal (M3: the dynamic-lights seam, shadeDynamicLights): what goes in front of every shaded stage.
 	 */
 	public static String prelude() {
 		if (prelude == null) {
-			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n";
+			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
+				+ resource("shade_dynlight.metal") + "\n";
 		}
 		return prelude;
 	}
@@ -175,13 +176,18 @@ public final class ShadeMsl {
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
 		public String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats) {
-			return registry && hdrTarget(colorFormats) ? "#define MCOPT_HDR\n" + msl : msl;
+			if (!hdrTarget(colorFormats)) return msl;
+			if (registry) return "#define MCOPT_HDR\n" + msl;
+			String lit = ShadeEntity.vertex(pipelineName, msl); // M3: entities, items, moving blocks, particles lit by shade
+			return lit != null ? lit : msl;
 		}
 
 		@Override
 		public String fragment(String pipelineName, String msl, boolean registry, int[] colorFormats) {
 			if (!hdrTarget(colorFormats)) return msl;
-			return registry ? "#define MCOPT_HDR\n" + msl : hdrFragment(msl);
+			if (registry) return "#define MCOPT_HDR\n" + msl;
+			String lit = ShadeEntity.fragment(pipelineName, msl);
+			return lit != null ? lit : hdrFragment(msl);
 		}
 	};
 

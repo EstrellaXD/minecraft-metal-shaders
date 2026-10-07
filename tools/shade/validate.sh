@@ -51,6 +51,12 @@ if [ -n "$MCOPT_GEN_DIR" ]; then
 		./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f" | head -5; fail=1; }; n=$((n+1))
 	done
 	echo "OK   $n game fragments converted for the HDR target (ShadeMsl.hdrFragment) compile"
+	# M3 entity lighting (ShadeEntity): patched vertex + fragment pairs as real pipelines into an RGBA16F target
+	n=0; for v in variants/entity/*.vs.metal; do
+		[ -f "$v" ] || continue
+		PIPECHECK_HDR=1 ./pipecheck auto "$v" "${v%.vs.metal}.fs.metal" >/dev/null || { echo "FAIL entity $v"; PIPECHECK_HDR=1 ./pipecheck auto "$v" "${v%.vs.metal}.fs.metal" | head -8; fail=1; }; n=$((n+1))
+	done
+	echo "OK   $n entity / item / particle pipelines lit by shade (ShadeEntity) build"
 fi
 # TAAU passes (mctaa.m + taa.metal): both TAA_HDR variants, real resolve + output pipelines
 TMPDIR="$OUT" "$HERE/taatest/run.sh" compile || fail=1

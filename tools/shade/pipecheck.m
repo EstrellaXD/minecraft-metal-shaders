@@ -49,12 +49,29 @@ int main(int argc, const char **argv) {
 			vd.layouts[27].stride = 16;
 			vd.attributes[0].bufferIndex = 27; vd.attributes[0].format = MTLVertexFormatFloat3;
 			vd.attributes[1].bufferIndex = 27; vd.attributes[1].offset = 12; vd.attributes[1].format = MTLVertexFormatUChar4Normalized;
+		} else if ([layout isEqualToString:@"auto"]) {
+			// the game's own vertex formats (entities, items, particles): every stage_in attribute in buffer 27, packed
+			int off = 0;
+			for (MTLVertexAttribute *a in pd.vertexFunction.vertexAttributes) {
+				if (!a.active) continue;
+				MTLVertexFormat f; int size;
+				switch (a.attributeType) {
+					case MTLDataTypeFloat4: f = MTLVertexFormatUChar4Normalized; size = 4; break;
+					case MTLDataTypeFloat3: f = MTLVertexFormatFloat3; size = 12; break;
+					case MTLDataTypeFloat2: f = MTLVertexFormatFloat2; size = 8; break;
+					case MTLDataTypeInt2: f = MTLVertexFormatShort2; size = 4; break;
+					default: f = MTLVertexFormatFloat; size = 4; break;
+				}
+				vd.attributes[a.attributeIndex].bufferIndex = 27; vd.attributes[a.attributeIndex].offset = off; vd.attributes[a.attributeIndex].format = f;
+				off += size;
+			}
+			vd.layouts[27].stride = (off + 3) & ~3;
 		} else {
 			useVd = NO;
 		}
 		if (useVd) pd.vertexDescriptor = vd;
 		BOOL lut = [layout isEqualToString:@"lut"];
-		pd.colorAttachments[0].pixelFormat = lut ? MTLPixelFormatRGBA16Float : MTLPixelFormatRGBA8Unorm;
+		pd.colorAttachments[0].pixelFormat = lut || getenv("PIPECHECK_HDR") ? MTLPixelFormatRGBA16Float : MTLPixelFormatRGBA8Unorm;
 		if (!lut) pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 		NSError *e = nil;
 		MTLRenderPipelineReflection *refl = nil;

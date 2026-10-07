@@ -24,7 +24,7 @@
 //                          back to radiance by shadeWaterSceneRadiance); M2 HDR: pre-exposed linear radiance (MCOPT_HDR or
 //                          SHADE_HDR).
 //   texture(19) depthCopy  the depth attachment at the same moment (Depth32Float, reversed-Z).
-//   texture(20) waves      (SHADE_WAVE_BAKE) the baked wave field, RGBA16F 1024^2 mipmapped (slope xz, height, Laplacian)
+//   texture(20) waves      (SHADE_WAVE_BAKE) the baked wave field, RGBA16F SHADE_WAVE_BAKE_SIZE^2 mipmapped (slope xz, height, Laplacian)
 //   texture(21) coarse     the SSR march's half-size nearest depth (R32F reversed-Z), made after the copy
 //   buffer(23)  ShadeWaterParams (below). state.x == 1 only after this frame's copy: otherwise callers must not read the
 //                          copies (they are 1x1 dummies or last frame's).
@@ -214,9 +214,12 @@ static float2 shadeWavesTiled(float2 x, float t, thread float &lap, thread float
 	return g;
 }
 
-// The bake pass (full-screen triangle into the 1024^2 wave texture, ShadeWater.bake): ShadeFrame at buffer(16).
+// The bake pass (full-screen triangle into the SHADE_WAVE_BAKE_SIZE^2 wave texture, ShadeWater.bake): ShadeFrame at buffer(16).
+#ifndef SHADE_WAVE_BAKE_SIZE
+#define SHADE_WAVE_BAKE_SIZE 1024
+#endif
 fragment half4 shade_water_bake_fs(float4 pos [[position]], constant ShadeFrame &f [[buffer(16)]]) {
-	float2 x = pos.xy * (SHADE_WAVE_TILE / 1024.0);
+	float2 x = pos.xy * (SHADE_WAVE_TILE / float(SHADE_WAVE_BAKE_SIZE));
 	float lap, height;
 	float2 g = shadeWavesTiled(x, f.time.y, lap, height);
 	return half4(half2(g), half(height), half(lap));

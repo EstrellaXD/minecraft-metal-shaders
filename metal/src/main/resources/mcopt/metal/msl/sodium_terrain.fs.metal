@@ -188,7 +188,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.exposure = ex;
 #ifdef MCOPT_HDR
 #ifdef SHADE_SSR_PREV
-        wi.prevExposure = sg.exposure.z; // last frame's finished HDR world: SSR colour, rendered sky in the reflections
+        wi.prevExposure = sl.ssr.x > 0.5 ? sg.exposure.z : 0.0; // last frame's finished HDR world (ShadeLook.ssr.x: it was written): SSR colour, rendered sky in the reflections
 #else
         wi.prevExposure = 0.0;
 #endif
@@ -222,7 +222,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         if (!thin && !shadeDev(sf, SHADE_DEV_NO_WATER)) {
 #ifdef MCOPT_HDR
 #ifdef SHADE_SSR_PREV
-            float prevEx = sg.exposure.z;
+            float prevEx = sl.ssr.x > 0.5 ? sg.exposure.z : 0.0;
 #else
             float prevEx = 0.0;
 #endif

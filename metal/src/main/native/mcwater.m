@@ -34,7 +34,7 @@ typedef struct {
 typedef struct {
 	id<MTLTexture> color, depth;            // the copies (recreated when the attachments' size or format change)
 	id<MTLTexture> dummyColor, dummyDepth;  // bound until the first capture
-	id<MTLTexture> waves;                   // the baked wave field (RGBA16F 1024^2, mipmapped), rendered by ShadeWater.bake
+	id<MTLTexture> waves;                   // the baked wave field (RGBA16F 512^2 or 1024^2 by preset, mipmapped), rendered by ShadeWater.bake
 	id<MTLTexture> hz, dummyHz;             // the SSR march's half-size nearest depth (R32F reversed-Z), made after each copy
 	id<MTLRenderPipelineState> hzPso;       // water.metal shade_water_hz_fs (set by ShadeWater; no coarse depth without it)
 	WaterParams params;
@@ -177,12 +177,13 @@ void mc_water_set_hz(WaterState *s, id<MTLRenderPipelineState> pso) {
 	s->hzPso = pso;
 }
 
-// The baked wave field's texture (made on first use): ShadeWater.bake renders mip 0 with a ShadeRender pass, then calls
+// The baked wave field's texture (size^2, made on first use): ShadeWater.bake renders mip 0 with a ShadeRender pass, then calls
 // mc_water_waves_done. RenderTarget|ShaderRead, private, losslessly compressed.
-id<MTLTexture> mc_water_waves(Ctx *ctx, WaterState *s) {
+id<MTLTexture> mc_water_waves(Ctx *ctx, WaterState *s, int size) {
 	if (s->waves) return s->waves;
+	if (size < 64) size = 64;
 	@autoreleasepool {
-		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:1024 height:1024 mipmapped:YES];
+		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:size height:size mipmapped:YES];
 		td.storageMode = MTLStorageModePrivate;
 		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
 		s->waves = [ctx->device newTextureWithDescriptor:td];

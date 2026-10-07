@@ -324,6 +324,14 @@ public final class ShadeTaa {
 		this.reset = true;
 	}
 
+	/**
+	 * Whether {@link #history()} holds a resolved frame: false from a (re)allocation until the next resolve (the textures are
+	 * then undefined memory), and after a frame that never reached its resolve.
+	 */
+	public boolean historyValid() {
+		return !this.reset;
+	}
+
 	/** The latest resolved history (MTLTexture: RGBA16Float, output size; rgb as the input encodes it, a = age in frames), for later passes. */
 	public long history() {
 		return TaaNative.history(this.taa);

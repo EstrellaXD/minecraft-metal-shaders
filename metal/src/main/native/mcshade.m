@@ -50,8 +50,16 @@ static id<MTLBuffer> gpuBuffer;
 // ShadeGpu for passes encoded elsewhere (mctaa.m's resolve reads the exposure ratio from it); nil before mc_shade_set_m2.
 id<MTLBuffer> mc_shade_gpu_buffer(void) { return gpuBuffer; }
 #define SHADE_RESOURCES 8
-static id<MTLBuffer> resourceBuffer;
-static id<MTLTexture> resourceTextures[SHADE_RESOURCES];
+// ShadeResources is a ring like ShadeFrame (mc_shade_resources_advance moves to the next slot once per frame, in step with
+// ShadeBindings.nextSlot): a frame still in flight keeps reading the IDs it was encoded with, and the slot keeps its
+// textures retained (and so alive and resident on that frame's encoders) until the ring comes back to it, by which time
+// the backend has retired that frame (MetalEncoder keeps at most mcopt.metal.inFlight frames in flight, ring > that).
+#define SHADE_RES_RING_MAX 8
+static id<MTLBuffer> resourceBuffers[SHADE_RES_RING_MAX];
+static id<MTLTexture> resourceSlots[SHADE_RES_RING_MAX][SHADE_RESOURCES];  // retained
+static int resourceSlot;
+#define resourceBuffer resourceBuffers[resourceSlot]
+#define resourceTextures resourceSlots[resourceSlot]
 static id<MTLTexture> dummyTexture;
 
 ShadeState *mc_shade_new(Ctx *ctx) {
@@ -243,21 +251,42 @@ void mc_shade_set_m2(Ctx *ctx, id<MTLBuffer> look, uint64_t lookOff, id<MTLBuffe
 			td.usage = MTLTextureUsageShaderRead;
 			dummyTexture = [ctx->device newTextureWithDescriptor:td];
 			dummyTexture.label = @"mcopt shade: dummy";
-			resourceBuffer = [ctx->device newBufferWithLength:SHADE_RESOURCES * 8 options:MTLResourceStorageModeShared];
-			resourceBuffer.label = @"mcopt shade: ShadeResources";
-			uint64_t *ids = resourceBuffer.contents;
-			for (int i = 0; i < SHADE_RESOURCES; i++) ids[i] = dummyTexture.gpuResourceID._impl;
+			for (int k = 0; k < SHADE_RES_RING_MAX; k++) {
+				resourceBuffers[k] = [ctx->device newBufferWithLength:SHADE_RESOURCES * 8 options:MTLResourceStorageModeShared];
+				resourceBuffers[k].label = @"mcopt shade: ShadeResources";
+				uint64_t *ids = resourceBuffers[k].contents;
+				for (int i = 0; i < SHADE_RESOURCES; i++) ids[i] = dummyTexture.gpuResourceID._impl;
+			}
 		}
 	}
 }
 
-// ShadeResources entry index = texture (nil: the dummy). Not retained: the caller keeps it alive while it is set. The GPU
-// reads the buffer when the frame runs, so a change made while earlier frames are in flight must not drop a texture they use
-// (the Java side swaps entries only between textures it keeps for at least the frames in flight).
+// ShadeResources entry index = texture (nil: the dummy), in this frame's ring slot only: frames already encoded keep theirs.
+// Retained by the slot until the ring reuses it, so the caller may release its own reference right away.
 void mc_shade_resource(int index, id<MTLTexture> texture) {
 	if (!resourceBuffer || index < 0 || index >= SHADE_RESOURCES) return;
+	if (resourceTextures[index] == texture) return;
+	[texture retain];
+	[resourceTextures[index] release];
 	resourceTextures[index] = texture;
 	((uint64_t *)resourceBuffer.contents)[index] = (texture ? texture : dummyTexture).gpuResourceID._impl;
+}
+
+// The next ShadeResources slot (ring of `ring` slots, 2..SHADE_RES_RING_MAX: more than the frames in flight), starting as a
+// copy of the current one. Called once per frame before its first mc_shade_resource, in step with ShadeFrame's ring.
+void mc_shade_resources_advance(int ring) {
+	if (!resourceBuffers[0]) return;
+	if (ring < 2) ring = 2;
+	if (ring > SHADE_RES_RING_MAX) ring = SHADE_RES_RING_MAX;
+	int from = resourceSlot, to = (resourceSlot + 1) % ring;
+	for (int i = 0; i < SHADE_RESOURCES; i++) {
+		id<MTLTexture> t = resourceSlots[from][i];
+		[t retain];
+		[resourceSlots[to][i] release];
+		resourceSlots[to][i] = t;
+	}
+	memcpy(resourceBuffers[to].contents, resourceBuffers[from].contents, SHADE_RESOURCES * 8);
+	resourceSlot = to;
 }
 
 // A library from MSL source (MSL 3.0, fast math). nil with the compiler's message in err.

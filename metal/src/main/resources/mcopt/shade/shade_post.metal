@@ -93,7 +93,8 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 }
 
 // p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0;
-// v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks);
+// v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks), zw the live part of the
+// VL textures (uv scale);
 // r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
 // output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off)
 struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; };
@@ -120,9 +121,11 @@ static inline half3 shadeSharpen(texture2d<half> img, uint2 px, half3 m, half am
 // the distance each texel marched (blocks, 1e4 = sky). Depth-aware bilinear upsample to the pixel at uv with scene distance
 // dist: bilinear x distance similarity; where no low-resolution texel is at this depth (a thin leaf against the sky), the
 // closest one, its light scaled by how much air this pixel's ray crosses (no halos around foliage).
-static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, float2 uv, float dist, float maxD) {
-	float2 size = float2(vlT.get_width(), vlT.get_height());
-	float2 lp = uv * size - 0.5;
+static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, float2 uv, float dist, float maxD, float2 uvScale) {
+	// the live part of the VL targets (TAAU dynamic resolution: allocated for the largest scale; uvScale = live / allocated)
+	float2 size = float2(vlT.get_width(), vlT.get_height()) * uvScale;
+	uv = min(uv * uvScale, uvScale - 0.5 / float2(vlT.get_width(), vlT.get_height()));
+	float2 lp = uv / uvScale * size - 0.5;
 	float2 fl = floor(lp);
 	half2 fr = half2(lp - fl);
 	int2 base = int2(fl), hi = int2(size) - 1;
@@ -192,7 +195,7 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	// volumetric light (god rays, canopy mist; VL module): its medium is the air near the camera, in front of the haze
 	float tv = 1.0;
 	if (P.v.x > 0.5) {
-		half4 v = shadeVlUpsample(vlT, vlD, in.uv, d > 0.0 ? length(wp) : 1e4, P.v.y);
+		half4 v = shadeVlUpsample(vlT, vlD, in.uv, d > 0.0 ? length(wp) : 1e4, P.v.y, P.v.z > 0.0 ? P.v.zw : float2(1.0));
 		tv = float(v.a);
 		c = c * tv + min(float3(v.rgb) * ex, 30000.0);
 	}

@@ -78,6 +78,11 @@ public final class ShadeWater {
 	 */
 	/** The waves baked once per frame into a mipmapped texture (false: 7 analytic waves per pixel, as on m2-water). */
 	public static final boolean BAKE = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterBake", "true"));
+	/**
+	 * The baked wave texture's size (mcopt.shade.waterBakeSize; preset default 512 for performance and balanced, 1024 for
+	 * quality and ultra): 512 still gives the shortest wave (0.62 blocks) about 5 texels, at a quarter of the bake's cost.
+	 */
+	public static final int BAKE_SIZE = Integer.getInteger("mcopt.shade.waterBakeSize", Shade.TIER >= 2 ? 1024 : 512) >= 1024 ? 1024 : 512;
 	public static final boolean SSR_PREV = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrPrev", "true"));
 	/** The pipeline whose first use in a main pass triggers the scene copy. */
 	public static final String TRANSLUCENT = "sodium:pipeline/translucent_terrain";
@@ -108,7 +113,7 @@ public final class ShadeWater {
 		if (FOAM) b.append("#define SHADE_FOAM 1\n");
 		if (GLOSSY) b.append("#define SHADE_GLOSSY 1\n");
 		if (SSR_PREV) b.append("#define SHADE_SSR_PREV 1\n");
-		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n");
+		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n#define SHADE_WAVE_BAKE_SIZE ").append(BAKE_SIZE).append('\n');
 		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
 		// jitter changes per frame for the temporal resolve to integrate. The sub-rect mapping is exact without TAAU too
 		// (ShadeFrame.screen = the copy's size then).
@@ -141,7 +146,8 @@ public final class ShadeWater {
 	}
 
 	private static long bakePso, library;
-	private static boolean bakeFailed;
+	private static boolean bakeFailed, bakedOnce;
+	private static int capturesAtBake = -1;
 
 	/** The module's own passes (wave bake, coarse depth): prelude + post (shade_fs_vs) + this prelude. */
 	private static long library() {
@@ -150,17 +156,23 @@ public final class ShadeWater {
 	}
 
 	/**
-	 * Renders this frame's wave field (water.metal shade_water_bake_fs, 1024^2 RGBA16F over a 64-block tile) and its mips,
+	 * Renders this frame's wave field (water.metal shade_water_bake_fs, BAKE_SIZE^2 RGBA16F over a 64-block tile) and its mips,
 	 * before the world passes (ShadeFrameUpdater, after the sky LUT). Without it the shaders evaluate the waves per pixel.
 	 */
 	public static void bake(long ctx, long enc) {
 		if (!BAKE || bakeFailed || enc == 0 || !ready(ctx)) return;
+		// no translucent terrain drew last frame (no scene copy: no water on screen, the Nether, caves): skip the bake; the
+		// shaders use the analytic waves on the frame water comes back (ShadeWaterParams.state.w = 0)
+		boolean recent = captures != capturesAtBake;
+		capturesAtBake = captures;
+		if (!recent && bakedOnce) return;
+		bakedOnce = true;
 		try {
 			if (bakePso == 0) {
 				bakePso = mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_bake_fs", mcopt.metal.shade.ShadeRender.RGBA16F,
 					mcopt.metal.shade.ShadeRender.BLEND_NONE);
 			}
-			long tex = WaterNative.waves(ctx, state);
+			long tex = WaterNative.waves(ctx, state, BAKE_SIZE);
 			mcopt.metal.shade.ShadeRender.pass(enc, bakePso, tex, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: wave bake");
 			WaterNative.wavesDone(enc, state);
 		} catch (Throwable e) {

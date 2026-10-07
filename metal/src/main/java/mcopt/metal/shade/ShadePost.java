@@ -45,7 +45,8 @@ import org.lwjgl.system.MemoryUtil;
  * frame), and the final pass: bloom + fog glow, Purkinje, vignette, Shade Filmic, dither into the main RGBA8 target. The hand,
  * screen effects and the GUI then draw over it as in vanilla.</li>
  * </ol>
- * Two HDR targets alternate per frame, so last frame's stays readable (ShadeResources.prevScene, for SSR). Render thread only.
+ * Without TAA two HDR targets alternate per frame, so last frame's stays readable (ShadeResources.prevScene, for SSR); with
+ * TAA there is one, and prevScene is the TAA history. Render thread only.
  */
 public final class ShadePost {
 	/** Something that runs right before the tone map, with the world's HDR image and depth (VL, atmosphere composite...). */
@@ -101,6 +102,8 @@ public final class ShadePost {
 	/** World passes are being redirected (between LevelRenderer.render HEAD and the tone map). */
 	private static boolean world;
 	private static boolean bridgeOpen, bridgeUsed;
+	/** This HDR target pair has had a frame finished into it since its allocation (prevScene is readable next frame). */
+	private static boolean prevWritten;
 	private static @Nullable GpuTexture mainColor;
 	private static @Nullable Object encoder;
 	private static long enc;
@@ -115,7 +118,7 @@ public final class ShadePost {
 	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
 	private static long vlLight, vlDist;
-	private static float vlMaxDist;
+	private static float vlMaxDist, vlScaleU = 1f, vlScaleV = 1f;
 
 	private ShadePost() {
 	}
@@ -133,9 +136,16 @@ public final class ShadePost {
 	 * read-modify-write of the HDR target over a composite pass; bloom and the exposure meter then don't see the light.
 	 */
 	public static void setVolumetric(long light, long dist, float maxDist) {
+		setVolumetric(light, dist, maxDist, 1f, 1f);
+	}
+
+	/** The same, when only the part (0, 0, uScale, vScale) of the textures' uv range holds this frame's light. */
+	public static void setVolumetric(long light, long dist, float maxDist, float uScale, float vScale) {
 		vlLight = light;
 		vlDist = dist;
 		vlMaxDist = maxDist;
+		vlScaleU = uScale;
+		vlScaleV = vScale;
 	}
 
 	/** TAAU when it drives this frame (on, set up and standing in for the main target), else null. */
@@ -206,7 +216,8 @@ public final class ShadePost {
 		GpuTexture color = main.getColorTexture();
 		if (color == null) return;
 		int w = color.getWidth(0), h = color.getHeight(0);
-		if (w != width || h != height || hdr[0] == 0) resize(w, h);
+		boolean resized = w != width || h != height || hdr[0] == 0;
+		if (resized) resize(w, h);
 		frame++;
 		mainColor = color;
 		worldDepth = main.getDepthTexture();
@@ -217,6 +228,8 @@ public final class ShadePost {
 		liveWidth = w;
 		liveHeight = h;
 		long prevScene = hdr[(frame + 1) & 1];
+		// last frame's HDR target holds a finished frame unless both were just (re)allocated
+		boolean prevValid = !resized && prevWritten;
 		mcopt.metal.shade.taa.ShadeTaa taa = taa();
 		if (taa != null) {
 			// TAAU: the world draws into the live sub-rect; last frame's finished image is the TAA history (output size, whole
@@ -226,17 +239,26 @@ public final class ShadePost {
 			liveHeight = taa.height(h);
 			long history = taa.history();
 			if (history != 0) prevScene = history;
+			prevValid = history != 0 && taa.historyValid();
+		} else if (hdr[0] == hdr[1]) {
+			// one HDR target (TAA on) but no TAA this frame: there is no last frame's image (never this frame's own target)
+			prevScene = 0;
+			prevValid = false;
 		}
+		ShadeBindings.setPrevSceneValid(prevValid);
 		ShadeRender.resource(1, prevScene);
 		ShadeRender.resource(2, hdr[frame & 1]);
 	}
 
 	private static void resize(int w, int h) {
-		for (long t : hdr) retire(t);
+		retire(hdr[0]);
+		if (hdr[1] != hdr[0]) retire(hdr[1]);
+		prevWritten = false;
 		width = w;
 		height = h;
 		hdr[0] = ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world A");
-		hdr[1] = ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world B");
+		// under TAAU last frame's image is the TAA history (prevScene), so one HDR world target does (19-47 MB less)
+		hdr[1] = mcopt.metal.shade.taa.ShadeTaa.ON ? hdr[0] : ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world B");
 		sizeBloom(w, h);
 		ShadeFrameUpdater.LOOK.snapExposure();
 		System.out.println("[mcopt] shade: HDR targets " + w + "x" + h + ", bloom " + bloomLevels.length + " levels");
@@ -331,7 +353,8 @@ public final class ShadePost {
 		world = false;
 		if (bridgeOpen) closeBridge();
 		if (mainColor == null) return;
-		long scene = hdr[frame & 1], prev = hdr[(frame + 1) & 1];
+		prevWritten = true;
+		long scene = hdr[frame & 1], prev = hdr[0] != hdr[1] ? hdr[(frame + 1) & 1] : 0;
 		GpuTexture depthTexture = worldDepth != null ? worldDepth : main.getDepthTexture();
 		long depth = 0;
 		if (depthTexture != null) {
@@ -411,17 +434,19 @@ public final class ShadePost {
 			sum += w0;
 			bloomNorm = 1f / sum;
 		}
-		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");
 		params.clear();
 		boolean vl = vlLight != 0 && vlDist != 0;
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
-		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(0f).putFloat(0f);
+		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
 		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(0f).flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
 		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,
 			vl ? vlLight : scene, vl ? vlDist : scene}, params, "mcopt shade: final");
+		// after the final pass: the kernel advances ShadeGpu.exposure.x to next frame's value, and everything this frame
+		// (world, TAA history, haze and VL in the final pass, Purkinje) must use this frame's
+		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");
 		vlLight = vlDist = 0;
 	}
 

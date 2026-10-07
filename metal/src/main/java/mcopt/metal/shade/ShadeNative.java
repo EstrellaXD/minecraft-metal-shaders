@@ -38,6 +38,7 @@ final class ShadeNative {
 	// M2
 	private static final MethodHandle SET_M2 = fn("mc_shade_set_m2", true, null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle RESOURCE = fn("mc_shade_resource", true, null, JAVA_INT, JAVA_LONG);
+	private static final MethodHandle RESOURCES_ADVANCE = fn("mc_shade_resources_advance", true, null, JAVA_INT);
 	private static final MethodHandle LIBRARY = fn("mc_shade_library", false, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle PSO = fn("mc_shade_pso", false, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle CPSO = fn("mc_shade_cpso", false, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT);
@@ -75,6 +76,7 @@ final class ShadeNative {
 	static void lutRender(long enc, long state) { try { LUT_RENDER.invokeExact(enc, state); } catch (Throwable t) { throw rethrow(t); } }
 	static void setM2(long ctx, long look, long lookOffset, long gpu) { try { SET_M2.invokeExact(ctx, look, lookOffset, gpu); } catch (Throwable t) { throw rethrow(t); } }
 	static void resource(int index, long texture) { try { RESOURCE.invokeExact(index, texture); } catch (Throwable t) { throw rethrow(t); } }
+	static void resourcesAdvance(int ring) { try { RESOURCES_ADVANCE.invokeExact(ring); } catch (Throwable t) { throw rethrow(t); } }
 	static long library(long ctx, long source, long err, int errCap) { try { return (long) LIBRARY.invokeExact(ctx, source, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
 	static long pso(long ctx, long lib, long vs, long fs, int format, int blend, long err, int errCap) { try { return (long) PSO.invokeExact(ctx, lib, vs, fs, format, blend, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
 	static long cpso(long ctx, long lib, long name, long err, int errCap) { try { return (long) CPSO.invokeExact(ctx, lib, name, err, errCap); } catch (Throwable t) { throw rethrow(t); } }

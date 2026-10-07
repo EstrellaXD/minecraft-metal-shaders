@@ -114,9 +114,14 @@ public final class ShadeBindings {
 		return fallback;
 	}
 
-	/** The next ring slot, for this frame's ShadeFrame (bound by publish()). */
+	/**
+	 * The next ring slot, for this frame's ShadeFrame (bound by publish()). ShadeResources (buffer 19) moves to its next slot
+	 * too: its own ring is one longer, because encoders a frame opens before this point (lightmap, TAA begin) still bind the
+	 * previous frame's slot.
+	 */
 	static ByteBuffer nextSlot() {
 		slot = (slot + 1) % RING;
+		ShadeNative.resourcesAdvance(RING + 1);
 		return views[slot];
 	}
 
@@ -128,6 +133,15 @@ public final class ShadeBindings {
 	static void publish() {
 		ShadeNative.set(buffers[slot], 0, shadowMap != 0 ? shadowMap : dummyShadow, compareSampler);
 		ShadeNative.setM2(ctx, buffers[slot], LOOK_OFFSET, gpuBuffer);
+	}
+
+	/**
+	 * ShadeLook.ssr.x of this frame (after ShadeLook.pack): 1 when ShadeResources.prevScene holds a finished earlier frame,
+	 * 0 when it is a freshly allocated, never written texture (first frame, the frame after an HDR or TAA reallocation). The
+	 * water and glossy shaders then use the scene copy and the sky LUT instead of reading undefined memory.
+	 */
+	static void setPrevSceneValid(boolean valid) {
+		if (state != 0) currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN).putFloat(ShadeLook.SSR, valid ? 1f : 0f);
 	}
 
 	/** This frame's ShadeLook bytes (in the current slot). */

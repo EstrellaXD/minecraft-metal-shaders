@@ -136,7 +136,10 @@ public final class ShadeRender {
 		}
 	}
 
-	/** ShadeResources (buffer 19) entry index = texture (0: the dummy); the caller keeps it alive while it is set. */
+	/**
+	 * ShadeResources (buffer 19) entry index = texture (0: the dummy), for this frame and the following ones (a ring like
+	 * ShadeFrame: frames already encoded keep their entries; the ring retains the texture while any slot names it).
+	 */
 	public static void resource(int index, long texture) {
 		ShadeNative.resource(index, texture);
 	}

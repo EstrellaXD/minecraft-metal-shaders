@@ -74,6 +74,8 @@ public final class ShadeVl {
 	private static boolean hasPrevious;
 	private static long lastNanos, lastLog;
 	private static int frame;
+	/** The VL targets' size, and the live part of them last frame covered (where the history holds light). */
+	private static int allocW, allocH, prevLiveW, prevLiveH;
 	private static Object lastLevel;
 	private static float humidity = -1f;
 	private static boolean resetCanopy = true;
@@ -108,7 +110,15 @@ public final class ShadeVl {
 			if (color == null || depth == null || !ready(encoder, false)) return;
 			MetalBridge.flushClear(encoder, color);
 			MetalBridge.flushClear(encoder, depth);
-			render(encoder, MetalBridge.enc(encoder), MetalBridge.textureHandle(color), MetalBridge.textureHandle(depth), main.width, main.height, main.width, main.height, null);
+			// under TAAU (before its resolve) main is the world target, allocated at the preset's maximum scale: the world drew
+			// only into its live sub-rect
+			int liveW = main.width, liveH = main.height;
+			mcopt.metal.shade.taa.ShadeTaa taa = mcopt.metal.shade.taa.ShadeTaa.ON ? mcopt.metal.shade.taa.ShadeTaa.get() : null;
+			if (taa != null && taa.swapped()) {
+				liveW = Math.min(taa.width(main.width), main.width);
+				liveH = Math.min(taa.height(main.height), main.height);
+			}
+			render(encoder, MetalBridge.enc(encoder), MetalBridge.textureHandle(color), MetalBridge.textureHandle(depth), liveW, liveH, main.width, main.height, null);
 		} catch (Throwable t) {
 			fail(t);
 		}
@@ -172,8 +182,21 @@ public final class ShadeVl {
 		if (lastLevel != level) resetCanopy = true;
 		lastLevel = level;
 
+		// targets sized from the allocation (they never reallocate when the render scale moves); the march and temporal passes
+		// cover only the live part, VlConfig.SCALE of the live render (so VL gets cheaper with the dynamic resolution)
 		int vw = Math.max(1, Math.round(texWidth * VlConfig.SCALE)), vh = Math.max(1, Math.round(texHeight * VlConfig.SCALE));
-		if (!pack(f, look, level, width, height, vw, vh, dx, dy, dz, dt, reset)) {
+		int lw = Math.clamp(Math.round(width * VlConfig.SCALE), 1, vw), lh = Math.clamp(Math.round(height * VlConfig.SCALE), 1, vh);
+		if (vw != allocW || vh != allocH) {
+			allocW = vw;
+			allocH = vh;
+			prevLiveW = lw;
+			prevLiveH = lh;
+		}
+		if (reset) {
+			prevLiveW = lw;
+			prevLiveH = lh;
+		}
+		if (!pack(f, look, level, width, height, lw, lh, (float) prevLiveW / vw, (float) prevLiveH / vh, dx, dy, dz, dt, reset)) {
 			hasPrevious = false; // nothing to draw (deep in a cave, no light): no passes at all
 			return;
 		}
@@ -183,18 +206,21 @@ public final class ShadeVl {
 		if (MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'VL canopy/march/temporal/composite' (" + vw + "x" + vh + ")");
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, ERR, 1);
-			int r = VlNative.render(enc, state, color, depth, MemoryUtil.memAddress0(PARAMS), PARAM_BYTES, vw, vh, flags, err, ERR);
+			int r = VlNative.render(enc, state, color, depth, MemoryUtil.memAddress0(PARAMS), PARAM_BYTES, vw, vh, lw, lh, flags, err, ERR);
 			if (r != 0) throw new IllegalStateException("volumetric light: " + MemoryUtil.memUTF8(err));
 		}
 		if (fold && !FOLD_SKIP) {
 			VlNative.outputs(state, OUTPUTS_OUT);
-			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), VlConfig.DIST);
+			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), VlConfig.DIST, (float) lw / vw,
+				(float) lh / vh);
 		}
+		prevLiveW = lw;
+		prevLiveH = lh;
 		resetCanopy = false;
 		frame++;
 		if (!logged) {
 			logged = true;
-			System.out.println("[mcopt] shade: volumetric light " + vw + "x" + vh + " (" + VlConfig.describe() + (look != null ? ", HDR" : ", LDR") + ")");
+			System.out.println("[mcopt] shade: volumetric light " + lw + "x" + lh + " of " + vw + "x" + vh + " (" + VlConfig.describe() + (look != null ? ", HDR" : ", LDR") + ")");
 		}
 		if (VlConfig.LOG && now - lastLog > 2_000_000_000L) {
 			lastLog = now;
@@ -206,7 +232,7 @@ public final class ShadeVl {
 				VlNative.times(state, TIMES_OUT);
 				float m = MemoryUtil.memGetFloat(TIMES_OUT), t = MemoryUtil.memGetFloat(TIMES_OUT + 4), c = MemoryUtil.memGetFloat(TIMES_OUT + 8);
 				System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: vl gpu march %.3f temporal %.3f composite %.3f = %.3f ms (%dx%d of %dx%d, %.0f frames)",
-					m, t, c, m + t + c, vw, vh, width, height, MemoryUtil.memGetFloat(TIMES_OUT + 12)));
+					m, t, c, m + t + c, lw, lh, width, height, MemoryUtil.memGetFloat(TIMES_OUT + 12)));
 			}
 		}
 	}
@@ -266,8 +292,8 @@ public final class ShadeVl {
 	}
 
 	/** Packs VlParams; false when the frame would add nothing (no light and no canopy mist): then no pass runs. */
-	private static boolean pack(ShadeFrame f, ShadeLook look, ClientLevel level, int width, int height, int vw, int vh, double dx, double dy, double dz, float dt,
-		boolean reset) {
+	private static boolean pack(ShadeFrame f, ShadeLook look, ClientLevel level, int width, int height, int vw, int vh, float histU, float histV, double dx,
+		double dy, double dz, float dt, boolean reset) {
 		ByteBuffer b = PARAMS;
 		float sunY = f.sunDir.y;
 		boolean sunLight = f.sky.sunLight;
@@ -362,7 +388,7 @@ public final class ShadeVl {
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, hdr ? HDR_OPEN_CUT : 0.5f); // mistAmb, open glow left out
-		put(b, hdr ? HDR_CARVE : 0f, hdr ? HDR_CARVE_WATER : 0f, 0f, 0f);                 // carve
+		put(b, hdr ? HDR_CARVE : 0f, hdr ? HDR_CARVE_WATER : 0f, histU, histV);           // carve; zw: the history's live part (uv scale)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

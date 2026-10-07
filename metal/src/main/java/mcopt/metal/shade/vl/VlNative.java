@@ -29,7 +29,7 @@ final class VlNative {
 	private static final Linker LINKER = Linker.nativeLinker();
 	private static final MethodHandle NEW = fn("mc_vl_new", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle RENDER = fn("mc_vl_render", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT,
-		JAVA_INT, JAVA_LONG, JAVA_INT);
+		JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle CANOPY = fn("mc_vl_canopy", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle FREE = fn("mc_vl_free", null, JAVA_LONG);
 	private static final MethodHandle TIMES = fn("mc_vl_times", null, JAVA_LONG, JAVA_LONG);
@@ -58,9 +58,11 @@ final class VlNative {
 		}
 	}
 
-	static int render(long enc, long state, long color, long depth, long params, int paramBytes, int width, int height, int flags, long err, int errCap) {
+	/** width x height: the VL targets' size; liveWidth x liveHeight the part of them this frame covers (VlParams.size.xy). */
+	static int render(long enc, long state, long color, long depth, long params, int paramBytes, int width, int height, int liveWidth, int liveHeight,
+		int flags, long err, int errCap) {
 		try {
-			return (int) RENDER.invokeExact(enc, state, color, depth, params, paramBytes, width, height, flags, err, errCap);
+			return (int) RENDER.invokeExact(enc, state, color, depth, params, paramBytes, width, height, liveWidth, liveHeight, flags, err, errCap);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

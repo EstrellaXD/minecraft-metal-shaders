@@ -44,7 +44,7 @@ constant bool VL_HDR [[function_constant(0)]];
 
 // Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 16 x float4 = 256 bytes).
 struct VlParams {
-	float4 size;      //   0 xy VL target size (px), zw full-resolution target size (px)
+	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
 	float4 medium;    //  32 x haze sigma_s at its base (1/block), y mist sigma_s at its base, z mist base y (camera-relative), w mist scale height
 	float4 haze;      //  48 x haze base y (camera-relative), y haze scale height, z isotropic share, w back-lobe share
@@ -64,7 +64,9 @@ struct VlParams {
 	                  //     open-air haze's unshadowed glow left out (the sky and M1's haze have it already)
 	float4 carve;     // 240 x canopy mist carve k: keep max(lit - k unshadowed, 0) / (1 - k) of it (0 = all; M2 > 0: the
 	                  //     uniform part goes, rays crossing shadows darken -> visible beams), y the same for the caustic
-	                  //     shafts under water (relative to the light without caustics), zw 0
+	                  //     shafts under water (relative to the light without caustics), zw the part of the history texture
+	                  //     last frame covered (uv scale; the targets are allocated for the largest render scale, size.xy is
+	                  //     this frame's live part)
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -365,7 +367,10 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	if (pc.w <= 1e-4) return half4(half3(cur), half(d));
 	float2 puv = (pc.xy / pc.w) * 0.5 + 0.5;
 	if (any(puv < 0.0) || any(puv > 1.0)) return half4(half3(cur), half(d));
-	half4 h = history.sample(lin, puv);
+	// the history covers the live part of its target that last frame used (TAAU dynamic resolution: carve.zw)
+	float2 hs = p.carve.z > 0.0 ? p.carve.zw : float2(1.0);
+	float2 hTexel = 0.5 / float2(history.get_width(), history.get_height());
+	half4 h = history.sample(lin, clamp(puv * hs, hTexel, hs - hTexel));
 	float dPrev = sky ? 1e4 : length(dir * d + p.camDelta.xyz);
 	bool valid = abs(float(h.a) - dPrev) < 0.08 * dPrev + 0.6;
 	if (!valid) return half4(half3(cur), half(d));

@@ -54,7 +54,7 @@ struct ShadeLook {
 	float4 biomeA;     // 640  reserved
 	float4 biomeB;     // 656  reserved
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
-	float4 ssr;        // 688  reserved for the water module (SSR)
+	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), yzw reserved (SSR)
 	float4 taa;        // 704  reserved for TAAU
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)

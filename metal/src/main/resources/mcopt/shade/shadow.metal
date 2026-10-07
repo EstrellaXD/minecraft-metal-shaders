@@ -153,7 +153,9 @@ fragment float4 shadow_tint_fs(ShadowTintOut in [[stage_in]], texture2d<float> a
         float m = max(max(c.r, c.g), max(c.b, 1e-4));
         float l = dot(t.rgb * vc, float3(0.2126, 0.7152, 0.0722));
         c = c / m * smoothstep(0.02, 0.25, l);
-        T = mix(float3(1.0), saturate(c), saturate(a * 1.5));
+        // stained glass is evenly coloured: its lighter interior texels (alpha ~0.3) tint as fully as the frame (the colour of
+        // the light comes from the pane, not from the texture's alpha pattern)
+        T = mix(float3(1.0), saturate(c), smoothstep(0.03, 0.3, a));
     }
     return float4(T, in.pos.z);
 }

@@ -252,7 +252,9 @@ public final class ShadeFrameUpdater {
 		}
 
 		if (mcopt.metal.shade.water.ShadeWater.ON) {
-			mcopt.metal.shade.water.WaterFrame.update(ShadeBindings.ctx(), level, x, y, z, f.underwater, f.rain);
+			// M3 weather: the rain that actually falls here (none in deserts, snow is not rain), smoothed
+			float waterRain = mcopt.metal.shade.weather.ShadeWeather.ON ? mcopt.metal.shade.weather.ShadeWeather.rainIntensity() : f.rain;
+			mcopt.metal.shade.water.WaterFrame.update(ShadeBindings.ctx(), level, x, y, z, f.underwater, waterRain);
 		}
 		f.pack(ShadeBindings.nextSlot());
 		LOOK.pack(ShadeBindings.currentLook(), f);

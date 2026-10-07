@@ -145,7 +145,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
 		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
-		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0), footprint) * fade;
+		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0), footprint) * (fade * 1.6);
 #endif
 	}
 #endif

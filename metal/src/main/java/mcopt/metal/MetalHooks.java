@@ -33,7 +33,9 @@ public final class MetalHooks {
 
 		/**
 		 * The pass draws into colors (formats: their MTLPixelFormats) instead of its own color attachments, keeping its depth
-		 * attachment, with the game's pipelines rebuilt for those formats; no delegate.
+		 * attachment, with the game's pipelines rebuilt for those formats; no delegate. Bits from {@link #TAG_SHIFT} up of a
+		 * format are a variant tag: the pipeline is built for the low bits' pixel format, but tagged variants are separate
+		 * (cached apart, and the format adapter sees the tag), e.g. native shading's lit first-person hand into the RGBA8 main.
 		 */
 		public static Redirect formats(long[] colors, float @Nullable [][] clears, int width, int height, int[] formats) {
 			return new Redirect(colors, clears, width, height, 0, NO_CLEAR, null, formats);
@@ -42,6 +44,19 @@ public final class MetalHooks {
 		public boolean keepsAttachments() {
 			return this.colors == null;
 		}
+	}
+
+	/** Format-redirect variant tags live above this bit (MTLPixelFormat values are below 2^16). */
+	public static final int TAG_SHIFT = 16;
+
+	/** The MTLPixelFormats of possibly tagged redirect formats. */
+	static int[] pixelFormats(int[] formats) {
+		boolean tagged = false;
+		for (int f : formats) tagged |= f >>> TAG_SHIFT != 0;
+		if (!tagged) return formats;
+		int[] out = new int[formats.length];
+		for (int i = 0; i < formats.length; i++) out[i] = formats[i] & ((1 << TAG_SHIFT) - 1);
+		return out;
 	}
 
 	/** Decides for each render pass whether it is taken over. */

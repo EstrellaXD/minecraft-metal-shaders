@@ -486,7 +486,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 			flib = libraryNew(ctx, stack, fsrc, err);
 			if (flib == 0) throw new IllegalStateException(this.name + " variant fragment: " + MemoryUtil.memUTF8(err));
 			long vname = MemoryUtil.memAddress(stack.UTF8(this.vertexEntry)), fname = MemoryUtil.memAddress(stack.UTF8(this.fragmentEntry));
-			long pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, colorFormats), err, 4096);
+			long pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, MetalHooks.pixelFormats(colorFormats)), err, 4096);
 			if (pso == 0) throw new IllegalStateException(this.name + " variant " + key + ": " + MemoryUtil.memUTF8(err));
 			this.variants.put(key, pso);
 			return pso;

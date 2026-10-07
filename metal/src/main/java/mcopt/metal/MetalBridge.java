@@ -100,6 +100,11 @@ public final class MetalBridge {
 		return ((MetalTexture) texture).handle;
 	}
 
+	/** The texture's MTLPixelFormat. */
+	public static int textureFormat(GpuTexture texture) {
+		return MetalConst.pixelFormat(texture.getFormat());
+	}
+
 	public static long viewHandle(GpuTextureView view) {
 		return ((MetalTexture.View) view).handle;
 	}

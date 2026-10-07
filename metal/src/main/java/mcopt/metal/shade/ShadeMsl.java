@@ -167,6 +167,11 @@ public final class ShadeMsl {
 		return look() + head + body;
 	}
 
+	/** Whether colorFormats are the lit hand's tagged RGBA8 (ShadeEntity.HAND_FORMAT). */
+	static boolean handTarget(int[] colorFormats) {
+		return colorFormats.length == 1 && colorFormats[0] == ShadeEntity.HAND_FORMAT;
+	}
+
 	/** Whether colorFormats are an HDR world target's (one color attachment of the HDR format). */
 	static boolean hdrTarget(int[] colorFormats) {
 		return colorFormats.length == 1 && (colorFormats[0] == ShadeRender.RGBA16F || colorFormats[0] == ShadeRender.RG11B10F);
@@ -178,6 +183,10 @@ public final class ShadeMsl {
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
 		public String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats) {
+			if (handTarget(colorFormats)) { // M3: the lit first-person hand (ShadeEntity.HAND)
+				String lit = registry ? null : ShadeEntity.vertex(pipelineName, msl);
+				return lit != null ? lit : msl;
+			}
 			if (!hdrTarget(colorFormats)) return msl;
 			if (registry) return "#define MCOPT_HDR\n" + msl;
 			// M3: real entity shadows replace vanilla's blob under each mob (as Iris does with a shadow map): no triangles
@@ -190,9 +199,13 @@ public final class ShadeMsl {
 
 		@Override
 		public String fragment(String pipelineName, String msl, boolean registry, int[] colorFormats) {
+			if (handTarget(colorFormats)) {
+				String lit = registry ? null : ShadeEntity.fragment(pipelineName, msl, true);
+				return lit != null ? lit : msl;
+			}
 			if (!hdrTarget(colorFormats)) return msl;
 			if (registry) return "#define MCOPT_HDR\n" + msl;
-			String lit = ShadeEntity.fragment(pipelineName, msl);
+			String lit = ShadeEntity.fragment(pipelineName, msl, false);
 			return lit != null ? lit : hdrFragment(msl);
 		}
 	};

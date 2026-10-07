@@ -34,4 +34,8 @@ public final class ShadeEntityAccess {
 	public static @Nullable String fragment(String name, String msl) {
 		return ShadeEntity.fragmentPatch(name, msl);
 	}
+
+	public static @Nullable String fragmentHand(String name, String msl) {
+		return ShadeEntity.fragmentPatch(name, msl, true);
+	}
 }

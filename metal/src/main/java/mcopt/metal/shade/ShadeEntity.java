@@ -44,6 +44,15 @@ public final class ShadeEntity {
 	/** mcopt.shade.entities (default true; needs the HDR target). */
 	public static final boolean ON = ShadeConfig.HDR && ShadeConfig.flag("mcopt.shade.entities", true);
 
+	/**
+	 * mcopt.shade.handLight (default true): the first-person hand and held items lit the same way (ShadePost redirects the
+	 * "Item in hand" pass through variants tagged {@link #HAND_FORMAT}: RGBA8 like the main target, shaded in HDR and
+	 * tone-mapped in the fragment, no fog).
+	 */
+	public static final boolean HAND = ON && ShadeConfig.flag("mcopt.shade.handLight", true);
+	/** The hand's redirect format: RGBA8Unorm with variant tag 1 (MetalHooks.TAG_SHIFT). */
+	public static final int HAND_FORMAT = ShadeRender.RGBA8 | (1 << mcopt.metal.MetalHooks.TAG_SHIFT);
+
 	/** Patched pipelines: kind 0 entity (vertex normals), 1 moving block (flat normal), 2 particle. */
 	static final Map<String, Integer> PIPELINES = Map.ofEntries(
 		Map.entry("minecraft:pipeline/entity_solid", 0), Map.entry("minecraft:pipeline/entity_solid_offset_forward", 0),
@@ -123,12 +132,17 @@ public final class ShadeEntity {
 	private static final Pattern FRAG_COLOR = Pattern.compile("float4 (\\w+) \\[\\[color\\(0\\)\\]\\]");
 
 	/** The HDR variant's fragment stage, patched, or null to take the M2 path (ShadeMsl.hdrFragment). */
-	static @Nullable String fragment(String pipelineName, String msl) {
+	static @Nullable String fragment(String pipelineName, String msl, boolean hand) {
 		if (!ON || !VERTEX_PATCHED.contains(pipelineName)) return null;
-		return fragmentPatch(pipelineName, msl);
+		return fragmentPatch(pipelineName, msl, hand);
 	}
 
 	static @Nullable String fragmentPatch(String pipelineName, String msl) {
+		return fragmentPatch(pipelineName, msl, false);
+	}
+
+	/** hand: the first-person hand's variant (display-referred output into RGBA8, no fog). */
+	static @Nullable String fragmentPatch(String pipelineName, String msl, boolean hand) {
 		if (!PIPELINES.containsKey(pipelineName)) return null;
 		String in = struct(msl, "main0_in"), outS = struct(msl, "main0_out");
 		Matcher dt = DT_PARAM.matcher(msl), fog = FOG_PARAM.matcher(msl), color = FRAG_COLOR.matcher(outS == null ? "" : outS);
@@ -161,7 +175,7 @@ public final class ShadeEntity {
 			.append(", constant ShadeResources& mcoptSR [[buffer(19)]], depth2d_array<float> mcoptShadow [[texture(16)]], sampler mcoptShadowCmp [[sampler(12)]]")
 			.append(", texture2d<half> mcoptLut [[texture(17)]], sampler mcoptLutSmplr [[sampler(13)]], float4 mcoptFrag [[position]]");
 		if (front.equals("mcoptFront")) params.append(", bool mcoptFront [[front_facing]]");
-		int kind = PIPELINES.get(pipelineName);
+		int kind = hand ? 3 : PIPELINES.get(pipelineName);
 		String overlay = in.contains(" overlayColor [[user(") ? "in.overlayColor" : "float4(0.0, 0.0, 0.0, 1.0)";
 		String modulator = hasDt ? dt.group(1) + ".ColorModulator" : "float4(1.0)";
 		String fogV = hasFog ? "float4(" + fog.group(1) + ".FogEnvironmentalStart, " + fog.group(1) + ".FogEnvironmentalEnd, " + fog.group(1)
@@ -174,7 +188,7 @@ public final class ShadeEntity {
 		int inAt = patched.indexOf("struct main0_in\n{");
 		int inEnd = patched.indexOf("};", inAt);
 		patched = patched.substring(0, inEnd) + OUT_MEMBERS + patched.substring(inEnd);
-		return "#define MCOPT_HDR\n" + library() + patched;
+		return "#define MCOPT_HDR\n" + (hand ? "#define MCOPT_HAND\n" : "") + library() + patched;
 	}
 
 }

@@ -87,6 +87,11 @@ public class ShadeMslDump {
 				}
 				Files.writeString(ent.resolve(file + ".vs.metal"), v);
 				Files.writeString(ent.resolve(file + ".fs.metal"), f);
+				String h = mcopt.metal.shade.ShadeEntityAccess.fragmentHand(name, Files.readString(efs));
+				if (h != null) {
+					Files.writeString(ent.resolve("hand_" + file + ".vs.metal"), v);
+					Files.writeString(ent.resolve("hand_" + file + ".fs.metal"), h);
+				}
 			}
 			// every generated game fragment, converted for the HDR world target (ShadeMsl.hdrFragment)
 			Path hdrGen = out.resolve("hdrgen");

@@ -298,6 +298,7 @@ public final class ShadePost {
 
 	// ---- the redirect ------------------------------------------------------------------------------------------------------
 	private static MetalHooks.@Nullable Redirect redirect(RenderPassDescriptor d) {
+		if (!world && ShadeEntity.HAND) return handRedirect(d);
 		if (!world || mainColor == null) return null;
 		// Distant Horizons: every one of its passes (also those drawing into its own targets: its far fade samples the main
 		// colour) sees the display-referred image in main and composites there, as without shading
@@ -326,6 +327,23 @@ public final class ShadePost {
 			clears = new float[][] {{h[0], h[1], h[2], clear[3]}};
 		}
 		return MetalHooks.Redirect.formats(new long[] {hdr[frame & 1]}, clears, width, height, new int[] {ShadeConfig.HDR_FORMAT});
+	}
+
+	/**
+	 * M3: the first-person hand ("Item in hand", after the final pass, into the display-referred RGBA8 main target) draws
+	 * through tagged variants of its pipelines (ShadeEntity.HAND_FORMAT): lit by the shade model and tone-mapped like the
+	 * world, instead of vanilla's two cardinal lights.
+	 */
+	private static MetalHooks.@Nullable Redirect handRedirect(RenderPassDescriptor d) {
+		String label = d.label().get();
+		if (!"Item in hand".equals(label)) return null;
+		var colors = d.colorAttachments();
+		if (colors.size() != 1 || colors.get(0) == null || colors.get(0).clearValue().isPresent()) return null;
+		var texture = colors.get(0).textureView().texture();
+		if (colors.get(0).textureView().baseMipLevel() != 0 || MetalBridge.textureFormat(texture) != ShadeRender.RGBA8) return null;
+		float[] clear = MetalBridge.takePendingColorClear(encoder, texture);
+		return MetalHooks.Redirect.formats(new long[] {MetalBridge.textureHandle(texture)}, clear == null ? null : new float[][] {clear}, texture.getWidth(0),
+			texture.getHeight(0), new int[] {ShadeEntity.HAND_FORMAT});
 	}
 
 	private static void openBridge() {

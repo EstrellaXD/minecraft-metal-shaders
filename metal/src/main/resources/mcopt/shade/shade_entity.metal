@@ -23,6 +23,17 @@
 #define SHADE_ENT_ENTITY 0    // mobs, players, block entities, armour, items: real vertex normals
 #define SHADE_ENT_BLOCK 1     // moving / falling blocks (no normal attribute: flat normal from the position's derivatives)
 #define SHADE_ENT_PARTICLE 2  // particles (camera-facing quads: lit as thin two-sided surfaces)
+#define SHADE_ENT_HAND 3      // the first-person hand and held items (MCOPT_HAND: after the final pass, into RGBA8)
+
+// MCOPT_HAND: the hand draws after the final pass into the display-referred main target: shade in HDR, then the same display
+// transform as the world (Shade Filmic + grade, shadeDisplay) and the sRGB encoding; no fog (bible E17).
+static inline float4 shadeEntityOut(float3 preExposed, float alpha, constant ShadeLook &L) {
+#ifdef MCOPT_HAND
+	return float4(shadeLinearToSrgbExact(saturate(shadeDisplay(preExposed, L))), alpha);
+#else
+	return float4(preExposed, alpha);
+#endif
+}
 
 // vanilla: the game's final colour (display-referred sRGB, fogged), only its alpha is kept (and its colour outside the
 // overworld); albedoSrgb: texture x raw vertex colour x ColorModulator (display-encoded, as vanilla multiplies it); overlay:
@@ -34,10 +45,14 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
                                constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &R) {
 	// flat normal for formats without one (before any early return: the whole 2x2 quad takes part)
 	float3 dpx = dfdx(p), dpy = dfdy(p);
+#ifdef MCOPT_HAND
+	if (f.flags.x != SHADE_DIM_OVERWORLD || shadeDev(f, SHADE_DEV_FLAT_LIGHT)) return vanilla;
+#else
 	if (f.flags.x != SHADE_DIM_OVERWORLD || shadeDev(f, SHADE_DEV_FLAT_LIGHT)) return float4(shadeVanillaOut(vanilla.rgb, L), vanilla.a);
+#endif
 	float3 n;
 	bool thin = kind == SHADE_ENT_PARTICLE;
-	if (kind == SHADE_ENT_ENTITY && dot(nv, nv) > 0.01) {
+	if ((kind == SHADE_ENT_ENTITY || kind == SHADE_ENT_HAND) && dot(nv, nv) > 0.01) {
 		n = normalize(nv);
 		if (!front) n = -n; // two-sided parts (no-cull pipelines) seen from behind
 	} else {
@@ -54,18 +69,23 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 	// full-bright particles (flames, lava drips, sparks, enchanting glyphs: the game gives them lightmap 15/15) glow
 	if (kind == SHADE_ENT_PARTICLE && light.x > 0.99 && light.y > 0.99) {
 		float3 rad = float3(albedo) * float3(f.ambientBlock.xyz) * 2.6 + float3(albedo) * 0.6;
-		return float4(shadeFinish2(rad, 0.0, f, L, ex), vanilla.a);
+		return shadeEntityOut(shadeFinish2(rad, 0.0, f, L, ex), vanilla.a, L);
 	}
 	half3 hn = half3(n);
 	half shadow = sky <= 0.3h ? half(1.0) : shadeShadow(shadowMap, cmp, f, p, hn, thin);
 	float3 radiance = shadeLit2(albedo, hn, sky, block, shadow, thin, false, f, L);
-	radiance += shadeDynamicLights(shadeDynIn(p, n, float3(albedo), frag.xy, sky, block, kind == SHADE_ENT_PARTICLE ? SHADE_DYN_PARTICLE : SHADE_DYN_ENTITY), f, L, &R);
+	int dynKind = kind == SHADE_ENT_PARTICLE ? SHADE_DYN_PARTICLE : kind == SHADE_ENT_HAND ? SHADE_DYN_HAND : SHADE_DYN_ENTITY;
+	radiance += shadeDynamicLights(shadeDynIn(p, n, float3(albedo), frag.xy, sky, block, dynKind), f, L, &R);
+#ifdef MCOPT_HAND
+	float vanillaFog = 0.0; // the hand gets no fog
+#else
 	float vanillaFog = shadeVanillaFog(p, fog.xy, fog.zw);
 	radiance = shadeFogAir2(radiance, p, vanillaFog, 0.0, lut, lutS, f, L);
+#endif
 	float3 rgb = shadeFinish2(radiance, vanillaFog, f, L, ex);
 	if (debug == 2) rgb = shadeVanillaOut(n * 0.5 + 0.5, L);
 	if (debug == 1) rgb = shadeVanillaOut(float3(0.25 + 0.75 * float(shadow)), L);
-	return float4(rgb, vanilla.a);
+	return shadeEntityOut(rgb, vanilla.a, L);
 }
 
 #endif

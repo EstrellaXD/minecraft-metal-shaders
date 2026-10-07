@@ -93,8 +93,8 @@ by the resolution controller (wp1, the heavier m21c: spin 125 fps vs 130-137; th
 ## In-game verification and images
 
 - Shots: `bench-results/20261007-051210-w21-a` (first version), `*-051458-w21-b` (+ recording `scratchpad rec/m21b.mp4`),
-  `*-051659-w21-c` (two detail samples, Laplacian specks: the look of the final version). The final code (commit after
-  caac611 = jar `m21f/m21g`) ran in game in the perf matrices wp4/wp5 (shader compiled at runtime, no errors), but its
+  `*-051659-w21-c` (two detail samples, Laplacian specks: the look of the final version). The final code (commit
+  caac611 = jar `m21f/m21g`, built to `metal/build/libs/metal-0.2.0-alpha.3.jar`) ran in game in the perf matrices wp4/wp5 (shader compiled at runtime, no errors), but its
   screenshots could not be taken: from ~06:30 every Prism launch failed (Microsoft login `api.minecraftservices.com/launcher/login`
   HTTP 429, then 403, after ~25 launches in 2 h). Visual difference to w21-c: one detail sample whose point is pulled
   70 % to the cell centre (c: two samples blended 55 %), 2x instead of 8x anisotropy. **Re-shoot the water scenes with the

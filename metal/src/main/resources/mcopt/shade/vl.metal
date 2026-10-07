@@ -258,6 +258,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float localMain = nNear > 0 ? 0.0 : local;
 		float sumOpen = 0.0, sumOpenLit = 0.0, sumLocal = 0.0, sumLocalAll = 0.0, trans = 1.0, prevB = 0.0;
 		float invN = 1.0 / float(n);
+		// (the main march keeps the shared offset: per texel it cost 0.15-0.2 ms in the forest views, from the cache misses
+		// of its far steps, for no measurable gain once the canopy mist's steps are per texel; VL_FLICKER.md)
 		for (int i = 0; i < n; i++) {
 			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
 			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
@@ -443,23 +445,32 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 		// leaf and the sky behind it into one that matched neither, so every texel near a leaf edge lost its history and showed
 		// this frame's raw march; under TAAU the jitter moves the leaf edges by a sub-pixel every frame, so the texels along
 		// them alternated leaf/sky and their light jumped between the two raw values (shafts flickering at the leaf edges).
-		float2 hp = clamp(puv * hs, hTexel, hs - hTexel) * hdim - 0.5;
+		float2 huv = clamp(puv * hs, hTexel, hs - hTexel);
+		float2 hp = huv * hdim - 0.5;
 		float2 hfl = floor(hp), hfr = hp - hfl;
-		int2 hb = int2(hfl), hhi = int2(hs * hdim + 0.5) - 1;
-		float4 acc = 0.0;
-		float wacc = 0.0;
-		for (int j = 0; j <= 1; j++) {
-			for (int i = 0; i <= 1; i++) {
-				half4 s = history.read(uint2(clamp(hb + int2(i, j), int2(0), hhi)));
-				float bw = (i == 0 ? 1.0 - hfr.x : hfr.x) * (j == 0 ? 1.0 - hfr.y : hfr.y) + 1e-4;
-				if (abs(float(s.a) - dPrev) < tol) {
-					acc += float4(s) * bw;
-					wacc += bw;
+		// the footprint's four distances in one fetch (order (0,1) (1,1) (1,0) (0,0)): all at this distance (most texels) ->
+		// one hardware-filtered sample
+		float4 hd4 = float4(history.gather(lin, (hfl + 1.0) / hdim, int2(0), component::w));
+		if (all(abs(hd4 - dPrev) < tol)) {
+			h = history.sample(lin, huv);
+			valid = true;
+		} else {
+			int2 hb = int2(hfl), hhi = int2(hs * hdim + 0.5) - 1;
+			float4 acc = 0.0;
+			float wacc = 0.0;
+			for (int j = 0; j <= 1; j++) {
+				for (int i = 0; i <= 1; i++) {
+					half4 s = history.read(uint2(clamp(hb + int2(i, j), int2(0), hhi)));
+					float bw = (i == 0 ? 1.0 - hfr.x : hfr.x) * (j == 0 ? 1.0 - hfr.y : hfr.y) + 1e-4;
+					if (abs(float(s.a) - dPrev) < tol) {
+						acc += float4(s) * bw;
+						wacc += bw;
+					}
 				}
 			}
+			valid = wacc > 0.0;
+			h = half4(acc / max(wacc, 1e-6));
 		}
-		valid = wacc > 0.0;
-		h = half4(acc / max(wacc, 1e-6));
 	} else {
 		h = history.sample(lin, clamp(puv * hs, hTexel, hs - hTexel));
 		valid = abs(float(h.a) - dPrev) < tol;

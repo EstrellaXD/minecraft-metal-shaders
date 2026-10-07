@@ -96,8 +96,9 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 // v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks), zw the live part of the
 // VL textures (uv scale);
 // r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
-// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w 1 = the
-// volumetric light at depth edges blended by the 2x2 depth footprint's coverage (TAAU, M2.2; 0 = this pixel's depth only)
+// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w bits (TAAU,
+// M2.2; 0 = M2.1): 1 the volumetric light at depth edges blended by the 2x2 depth footprint's coverage (else this pixel's
+// depth only), 2 depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point
 struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; };
 
 // Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
@@ -182,11 +183,16 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	// air only (under water / in lava the game's fog owns it), not the sky (the atmosphere has its own) nor Distant Horizons'
 	// LODs (not in this depth; DH fogs them). Depth may be smaller than the image (a resolver's output over the internal world).
 	float2 dsize = P.r.x > 0.0 ? P.r.xy : float2(depth.get_width(), depth.get_height());
-	uint2 dpx = min(uint2(in.uv * dsize), uint2(dsize) - 1u);
+	int rw = int(P.r.w);
+	// M2.2 (r.w bit 2, TAAU): depth and the volumetric light are this frame's jittered raster, which shows this output pixel's
+	// scene point jitter.xy / 2 (uv) further on; reading them at in.uv moved them against the steady resolved image by up to
+	// half a render pixel every frame (god rays wobbling at their edges and at the leaves)
+	float2 uv = (rw & 2) != 0 ? clamp(in.uv + 0.5 * f.jitter.xy, 0.0, 1.0) : in.uv;
+	uint2 dpx = min(uint2(uv * dsize), uint2(dsize) - 1u);
 	float d = depth.read(dpx);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
-	float3 wp = d > 0.0 ? shadeWorldFromDepth(in.uv, d, f) : float3(0.0);
+	float3 wp = d > 0.0 ? shadeWorldFromDepth(uv, d, f) : float3(0.0);
 	if (d > 0.0 && hazeOn) {
 		if (dot(wp, wp) > 4.0) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
@@ -197,27 +203,27 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	float tv = 1.0;
 	if (P.v.x > 0.5) {
 		float2 vlScale = P.v.z > 0.0 ? P.v.zw : float2(1.0);
-		half4 v = shadeVlUpsample(vlT, vlD, in.uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale);
-		if (P.r.w > 0.5) {
+		half4 v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale);
+		if ((rw & 1) != 0) {
 			// M2.2, under TAAU: scene is the resolve of many jittered frames, depth only this frame's. Where a leaf edge
 			// crosses the pixel its depth flipped between leaf and sky from frame to frame while the resolved colour stayed a
 			// steady blend, so the light and the canopy mist's T switched on and off there (god rays flickering at the leaf
 			// edges). Instead, the light of the near and the far surface of the 2x2 depth footprint, blended by their bilinear
 			// coverage: it moves smoothly with the jitter, like the resolved colour does.
 			float2 dtex = float2(depth.get_width(), depth.get_height());
-			float2 dp = in.uv * dsize - 0.5;
+			float2 dp = uv * dsize - 0.5;
 			float2 dfr = dp - floor(dp);
 			float4 g4 = depth.gather(shadeLinearClamp, min((floor(dp) + 1.0) / dtex, (dsize - 0.5) / dtex)); // (0,1) (1,1) (1,0) (0,0)
 			float dN = max(max(g4.x, g4.y), max(g4.z, g4.w)), dF = min(min(g4.x, g4.y), min(g4.z, g4.w));
 			if (dN > 0.0 && dN - dF > 1e-6) {
-				float distN = length(shadeWorldFromDepth(in.uv, dN, f));
-				float distF = dF > 0.0 ? length(shadeWorldFromDepth(in.uv, dF, f)) : 1e4;
+				float distN = length(shadeWorldFromDepth(uv, dN, f));
+				float distF = dF > 0.0 ? length(shadeWorldFromDepth(uv, dF, f)) : 1e4;
 				if (distF - distN > 0.5 * (0.04 * distN + 0.15)) {
 					float4 bw = float4((1.0 - dfr.x) * dfr.y, dfr.x * dfr.y, dfr.x * (1.0 - dfr.y), (1.0 - dfr.x) * (1.0 - dfr.y));
 					float4 far = select(float4(0.0), float4(1.0), abs(g4 - dF) < abs(g4 - dN));
 					float wF = dot(bw, far);
-					half4 vN = shadeVlUpsample(vlT, vlD, in.uv, distN, P.v.y, vlScale);
-					half4 vF = shadeVlUpsample(vlT, vlD, in.uv, distF, P.v.y, vlScale);
+					half4 vN = shadeVlUpsample(vlT, vlD, uv, distN, P.v.y, vlScale);
+					half4 vF = shadeVlUpsample(vlT, vlD, uv, distF, P.v.y, vlScale);
 					v = mix(vN, vF, half(wF));
 				}
 			}

@@ -50,15 +50,19 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.histDepth} (true, M2.2): the history is fetched from the texels of its bilinear footprint at this
  * point's distance; false: one bilinear sample (M2/M2.1: at leaf edges it mixed leaf and sky distances, the history was
  * dropped and the raw march showed: flickering shafts).</li>
- * <li>{@code mcopt.shade.vl.crepSmooth} (true, M2.2): the screen-space (crepuscular) taps get each texel's own offset and read
- * the sky mask bilinearly; false: one offset per frame for every texel, point reads (M2/M2.1: the dark sky rays near the sun
- * flickered, the temporal clamp could not average a noise shared by the whole neighbourhood).</li>
+ * <li>{@code mcopt.shade.vl.crepSmooth} (false, M2.2 option): the screen-space (crepuscular) taps get each texel's own offset
+ * and read the sky mask bilinearly; +0.03-0.05 ms in the forest views and no measurable gain once the canopy mist's steps are
+ * per texel (the sky's flicker came from those), so off.</li>
  * <li>{@code mcopt.shade.vl.nearDither} (true, M2.2): the canopy mist's own steps get each texel's own offset; false: the march's
  * per-frame offset shared by every texel (M2/M2.1: the beams under trees and the veil over the sky between the leaves
  * flickered).</li>
  * <li>{@code mcopt.shade.vl.waterDither} (true, M2.2): the same for the march under water (the caustic curtains).</li>
- * <li>{@code mcopt.shade.vl.edge} (true, M2.2; read by ShadePost): under TAAU the final pass blends the light of a depth
- * edge's near and far surface by their coverage of the 2x2 depth footprint; false: this frame's jittered depth alone (M2/M2.1).</li>
+ * <li>{@code mcopt.shade.vl.edge} (false, M2.2 option; read by ShadePost): under TAAU the final pass blends the light of a
+ * depth edge's near and far surface by their coverage of the 2x2 depth footprint. Full resolution: +0.1 ms spinning and
+ * +0.4 ms flying over forests, and no measurable gain in flicker, so off.</li>
+ * <li>{@code mcopt.shade.vl.unjitter} (true, M2.2; read by ShadePost): under TAAU the final pass reads depth and the light where
+ * this frame's jittered raster shows the pixel's scene point; false: at the output uv (M2/M2.1: they moved by the jitter
+ * against the steady resolved image).</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
  * <li>{@code mcopt.shade.vl.gpuTimer} (false): GPU timestamps around each pass; the log line (forced on) gets their
@@ -92,8 +96,8 @@ public final class VlConfig {
 	public static final boolean BOX3 = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.box3", "true"));
 	/** M2.2: the history from its footprint's texels at this point's distance; false = one bilinear sample (M2/M2.1). */
 	public static final boolean HIST_DEPTH = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.histDepth", "true"));
-	/** M2.2: crepuscular taps offset per texel over a bilinear sky mask; false = one offset per frame, point reads (M2/M2.1). */
-	public static final boolean CREP_SMOOTH = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.crepSmooth", "true"));
+	/** M2.2 option (off): crepuscular taps offset per texel over a bilinear sky mask (+0.03-0.05 ms, no measurable gain). */
+	public static final boolean CREP_SMOOTH = Boolean.getBoolean("mcopt.shade.vl.crepSmooth");
 	/** M2.2: the canopy mist's own steps offset per texel; false = the march's per-frame offset (M2/M2.1). */
 	public static final boolean NEAR_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.nearDither", "true"));
 	/** M2.2: the march under water offset per texel; false = the march's per-frame offset (M2/M2.1). */
@@ -125,6 +129,6 @@ public final class VlConfig {
 
 	static String describe() {
 		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + NEAR_STEPS + " near + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
-			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") + (HIST_DEPTH ? "" : ", bilinear history") + (CREP_SMOOTH ? "" : ", frame-jittered taps") + (NEAR_DITHER ? "" : ", frame-jittered mist steps") + (WATER_DITHER ? "" : ", frame-jittered water steps") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
+			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") + (HIST_DEPTH ? "" : ", bilinear history") + (CREP_SMOOTH ? ", per-texel taps" : "") + (NEAR_DITHER ? "" : ", frame-jittered mist steps") + (WATER_DITHER ? "" : ", frame-jittered water steps") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
 }

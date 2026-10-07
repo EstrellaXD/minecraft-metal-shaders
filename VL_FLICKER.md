@@ -40,26 +40,36 @@ neighbourhood rises and falls together, so the clamp box moves with the noise an
    carve `max(lit − 0.6·all, 0) / 0.4` (2.5x gain on the noise). The beams under the trees *and the veil over the sky
    between the leaves* flickered (fm2's whole top-left sky). **Fix `mcopt.shade.vl.nearDither`**: each texel its own offset
    (IGN + R1) for these steps; the spatial filter and the clamp now see the noise and the history averages it. Its steps
-   stay in the near cascade around the camera (no measurable cost). fm2 1.27 → 0.92.
+   stay within ~20 blocks, but per texel they lose some cache coherence: +0.07–0.13 ms of march in the forest views (the
+   biggest cost of M2.2, and its biggest gain). fm2 1.27 → 0.92; with it off (vls11) fm2 0.74 → 1.10.
 2. **History clamp too tight** (review round's plus) and blind to the shared jitter. **`mcopt.shade.vl.box3`** (box over
    the 3x3 again) and **`mcopt.shade.vl.still`** (0.6: on a still view the box widens by 0.6 x its mean; under motion the
-   plain box, no ghosting). Without `still` under water: 1.01 → 1.28.
+   plain box, no ghosting). Without `still` under water: 1.01 → 1.28. box3 costs +0.02 ms (temporal), fm 0.62 → 0.52.
 3. **History fetched with one bilinear sample** — at a leaf edge it mixed the leaf's and the sky's distance into one that
    matched neither, so the texel lost its history and showed the raw march; under TAAU the jitter moves leaf edges by a
    sub-pixel every frame, so the texels along them alternated. **`mcopt.shade.vl.histDepth`**: the footprint's texels at
-   this point's distance only (bilinear weights among them). fm2 1.50 → 1.31.
+   this point's distance only (bilinear weights among them); one gather of the 4 distances first, and when all match (most
+   texels) a single hardware-filtered sample. fm2 1.50 → 1.31 (vls11: 0.85 → 0.74 at fixed scale); +0.015 ms.
 4. **Screen-space (crepuscular) taps** with the shared offset and point reads of the sky mask. **`mcopt.shade.vl.crepSmooth`**:
-   per-texel offset, bilinear mask (R8 at VL resolution: stays in cache). Small gain (dark sky rays smoother).
+   per-texel offset, bilinear mask. **Off by default**: +0.03–0.05 ms and no measurable gain once `nearDither` was in (the
+   sky's flicker came from the canopy mist, not from these taps).
 5. **Under water march** with the shared offset. **`mcopt.shade.vl.waterDither`**: per-texel offset. uw 0.95 → 0.82, cost
    unchanged.
 6. **Caustics on the game clock** (jumped when the server corrected the client's ticks): now on the water's real-time clock
    with a seamless 4096 s wrap (`ShadeFrame.waterTime`, M2.1's `mcopt.shade.waterClock`).
-7. **Final pass at depth edges under TAAU** (`mcopt.shade.vl.edge`): the light of the near and far surface blended by the
-   2x2 depth footprint's coverage. No measurable change in q (vls5 vs vls5noedge 1.50 / 1.51); kept, it is cheap and
-   correct in principle.
+7. **The final pass ignored the TAAU jitter** — depth and the VL textures are this frame's jittered raster, but the final
+   pass read them at the output uv, so the light (and its depth tests at the leaves) moved by up to half a render pixel
+   every frame against the steady resolved image. **`mcopt.shade.vl.unjitter`**: read them at `uv + jitter.xy / 2` (the
+   raster position of the pixel's scene point). Small gain at fixed scale (fm2 0.78 → 0.73–0.75), no cost.
+8. *(removed)* The previous session's "edge blend" in the final pass (light of a depth edge's near and far surface blended
+   by 2x2 depth coverage): no measurable change in q (vls5 vs vls5noedge 1.50 / 1.51) and +0.1 ms spinning / **+0.4 ms
+   flying over forests** at full resolution (batch J). Its code is gone (6434a16); even switched off it seemed to weigh on
+   the final pass (see Cost).
 
 Tried and dropped: folding the light before the TAAU resolve (exposure and bloom saw it: shafts 60 % weaker); `still` 2
-(no gain); `nearSteps=0` (stable, 1.07, but loses the separate beams the review round added).
+(no gain); `nearSteps=0` (stable, 1.07, but loses the separate beams the review round added); per-texel offsets for the
+main march too (`mainDither`, vls11: +0.15–0.2 ms from cache misses of the far steps, as the cloudscapes paper predicts,
+and no measurable gain: fm2 0.75 vs 0.74).
 
 ## What other packs and games do (studied 2026-10-07; techniques only, no code copied)
 
@@ -82,32 +92,48 @@ own temporal pass, and the final pass must undo the frame's jitter (`unjitter`) 
 Further ideas noted: min/max checkerboard depth for the VL texels (Black Ops 3's quarter-res volumetrics), variance
 clipping of the history (froxel TAA thesis, Godot/Frostbite), Photon's cloud-shadow-map sky rays.
 
-## Results (same session, balanced, DRS on)
+## Results (final ABBA, batch K: same session, balanced, DRS on — how Gael plays)
 
 | build | fm | fm2 | fs | ov | uw |
 |---|---|---|---|---|---|
-| M2.1 | 1.33 / 1.37 | 2.22 / 2.50 | 0.72 / 0.71 | 0.37 / 0.35 | 1.43 / 1.59 |
-| M2.2 (`vl-stable`) | **0.65** | **0.93** | **0.57** | **0.20** | **0.82** |
-| no god rays (floor) | 0.53 | 0.67 | 0.44 | 0.15 | 0.38 |
+| M2.1 (k-m21, k-m21b) | 1.24 / 1.25 | 2.34 / 2.34 | 0.61 / 0.65 | 0.31 / 0.33 | 1.32 / 1.63 |
+| M2.2 (vls13, k-v13, k-v13b) | **0.70 / 0.69** | **0.86 / 0.90** | **0.54 / 0.54** | **0.20 / 0.20** | **0.82 / 0.83** |
+| no god rays (floor, old session) | 0.53 | 0.67 | 0.44 | 0.15 | 0.38 |
+
+At fixed scale 0.80 M2.2 is steadier still (fm 0.52–0.65, fm2 0.73–0.77); at fixed 0.67 like DRS (fm2 0.86). In the forest
+holds DRS sits at ~0.64 without changing, so the extra is the lower resolution, not scale changes. vls14 (head) renders the
+same images as vls13 (only dead code removed). All runs: `work/notes/vl-stable-2026-10-07/results/RESULTS_flicker.md`.
 
 Beam brightness in fm2's shaft region: M2.1 146–147, M2.2 148 (8-bit mean); mid-scale structure (2–20 px band) 25.0 vs
 25.4: same strength and sharpness. Side-by-side clip: `work/release/M2.2-screenshots/comparacion_M2.1_vs_M2.2.mp4`.
 
 ## Cost
 
-COST_PLACEHOLDER
+Clean whole-frame ABBA x2 (batch M, balanced fixed 0.80, GPU ms/frame): M2.1 spin 9.21 / flight 8.69; vls13 9.34 /
+8.84 → **+0.12 / +0.15 ms** (~1.5–2 fps at ~110 fps). Performance preset (batch K): **+0.05 / +0.09**. Of that, the VL
+passes are only +0.04 (march +0.01, temporal +0.03 in these scenes); the rest was in the full-resolution final pass, most
+likely the edge-blend code compiled in even though switched off (register pressure). **vls14 (6434a16) removes that code;
+its clean cost is not measured yet** (batch N was interrupted when Gael needed the Mac). In the forest shot holds the VL
+passes cost +0.17 ms (nearDither +0.1, temporal +0.035). Per flag and all runs:
+`work/notes/vl-stable-2026-10-07/results/RESULTS_cost.md`.
 
-## Flags (all default true; false = M2.1 behaviour)
+## Flags (false = M2.1 behaviour)
 
-`mcopt.shade.vl.still` (0.6; 0 = off), `box3`, `histDepth`, `crepSmooth`, `nearDither`, `waterDither`, `edge`. Packed as bits
-in `VlParams.sunPx.w` (1 box3, 2 histDepth, 4 crepSmooth, 8 nearDither, 16 waterDither); `edge` is `ShadeFinalParams.r.w`.
+Default on: `mcopt.shade.vl.still` (0.6; 0 = off), `box3`, `histDepth`, `nearDither`, `waterDither`, `unjitter`. Default
+off (option): `crepSmooth`. Packed as bits in `VlParams.sunPx.w` (1 box3, 2 histDepth, 4 crepSmooth, 8 nearDither,
+16 waterDither); `unjitter` is bit 2 of `ShadeFinalParams.r.w` (bit 1 was the removed edge blend).
 
 ## Commits (merge `vl-stable` into `m3` before packaging M3)
 
-COMMITS_PLACEHOLDER
+`2240ba9` WIP (fold experiment, still, box3, water-clock caustics) · `c4ea475` drop the fold, keep still/box3/caustics ·
+`40798c3` edge blend (later removed) · `17d83f0` histDepth, crepSmooth, nearDither · `d335c8f` waterDither · `84f5901`
+unjitter, history fast path, edge and crepSmooth off · `6434a16` edge-blend code removed (head; jar = vls14). Touches only
+`vl.metal`, `shade_post.metal`, `ShadeVl.java`, `VlConfig.java`, `ShadePost.java`.
 
 ## Known issues
 
-- fm2 is still ~0.25 above the floor: the main march (long range, quadratic steps) keeps the shared offset for cache
-  reasons; residual shimmer in the shaft right of the trunk. Per-texel offsets there would cost 2–3x the march.
+- fm2 is still ~0.2 above the floor (residual shimmer in the shaft right of the trunk). The main march keeps the shared
+  offset; per-texel there cost +0.15–0.2 ms with no measurable gain. Next ideas if Gael still sees it: min/max
+  checkerboard depth for the VL texels, variance clipping, fewer/more near steps, VL resolution relative to the output
+  instead of the render scale (at DRS 0.64 the VL buffer is only ~0.21 of the output).
 - The metric counts intended motion too (the caustic curtains sway under water, clouds drift).

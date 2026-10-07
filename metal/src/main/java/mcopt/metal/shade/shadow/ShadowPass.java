@@ -62,7 +62,7 @@ public final class ShadowPass {
 	/** M3 coloured shadows: the tint map (0 = off), the water sprites for its pass. */
 	private long tintMap;
 	private final float[] waterRects = new float[8];
-	private static final int TINT_PARAM_BYTES = 32;
+	private static final int TINT_PARAM_BYTES = 48;
 	private final ShadowCascade[] cascades = {new ShadowCascade(), new ShadowCascade()};
 	private final ShadowCasters casters = new ShadowCasters();
 	/** This frame's camera-relative matrices (2 x 16, column-major) and their camera. */
@@ -386,6 +386,11 @@ public final class ShadowPass {
 					long params = stack.ncalloc(16, TINT_PARAM_BYTES, 1);
 					mcopt.metal.shade.water.WaterFrame.rects(this.waterRects);
 					for (int i = 0; i < 8; i++) MemoryUtil.memPutFloat(params + i * 4L, this.waterRects[i]);
+					// water caustics: the camera's world x, z wrapped every 1024 blocks (the noise lattices' period), the water clock
+					MemoryUtil.memPutFloat(params + 32, (float) (this.camX - Math.floor(this.camX / 1024.0) * 1024.0));
+					MemoryUtil.memPutFloat(params + 36, (float) (this.camZ - Math.floor(this.camZ / 1024.0) * 1024.0));
+					MemoryUtil.memPutFloat(params + 40, mcopt.metal.shade.Shade.frame().waterTime);
+					MemoryUtil.memPutFloat(params + 44, mcopt.metal.shade.weather.ShadeWeather.CAUSTICS);
 					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
 					ShadowNative.tintRender(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle, regions.slice().offset(),
 						tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES);

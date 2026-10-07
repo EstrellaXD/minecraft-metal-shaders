@@ -53,6 +53,8 @@ import mcopt.metal.shade.ShadeMsl;
  * option turns the flash light off).</li>
  * <li>{@code mcopt.shade.colorShadows} (true) and {@code mcopt.shade.colorShadowRes} (1024; 2048 on ultra): coloured light
  * through stained glass, ice and water (near cascade).</li>
+ * <li>{@code mcopt.shade.caustics} (true) and {@code mcopt.shade.causticStrength} (1): the light under water casters of the
+ * tint map gets a moving web of caustics (shadow.metal shadowCaustics).</li>
  * <li>{@code mcopt.shade.weatherTime} (1): time scale of wetting and drying (the bench uses 10).</li>
  * <li>{@code mcopt.shade.wetness} (-1 = from the weather): force wetness and puddles to this value (look development).</li>
  * <li>{@code mcopt.shade.snowAmount} (-1 = from the weather): force the snow cover to this value (look development).</li>
@@ -75,6 +77,8 @@ public final class ShadeWeather {
 	public static final boolean SLANT = flag("mcopt.shade.rainSlant", true);
 	public static final boolean LIGHTNING = flag("mcopt.shade.lightning", true);
 	public static final boolean COLOR_SHADOWS = ON && Shade.SHADOWS && flag("mcopt.shade.colorShadows", true);
+	/** Water caustics in the coloured-shadow map (strength 0..1; 0 = off): mcopt.shade.caustics (true) and .causticStrength (1). */
+	public static final float CAUSTICS = flag("mcopt.shade.caustics", true) ? Math.clamp(floatFlag("mcopt.shade.causticStrength", 1f), 0f, 1f) : 0f;
 	public static final int COLOR_SHADOW_RES = Integer.getInteger("mcopt.shade.colorShadowRes", Shade.TIER >= 3 ? 2048 : 1024) >= 2048 ? 2048 : 1024;
 	public static final float TIME_SCALE = Math.clamp(floatFlag("mcopt.shade.weatherTime", 1f), 0.1f, 100f);
 	public static final float FORCE_WET = floatFlag("mcopt.shade.wetness", -1f);
@@ -202,6 +206,6 @@ public final class ShadeWeather {
 
 	static String describe() {
 		return "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
-			+ ", lightning " + LIGHTNING + ", coloured shadows " + (COLOR_SHADOWS ? COLOR_SHADOW_RES + "^2" : "off");
+			+ ", lightning " + LIGHTNING + ", coloured shadows " + (COLOR_SHADOWS ? COLOR_SHADOW_RES + "^2" + (CAUSTICS > 0f ? " + caustics" : "") : "off");
 	}
 }

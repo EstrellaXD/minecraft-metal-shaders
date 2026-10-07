@@ -36,6 +36,7 @@ done
 for i in 0 1; do ./pipecheck pos variants/sky$i.vs.metal variants/sky$i.fs.metal || fail=1; ./pipecheck pos variants/hdrsky$i.vs.metal variants/hdrsky$i.fs.metal || fail=1; done
 ./pipecheck compile variants/stars.vs.metal || fail=1
 ./pipecheck compile variants/post.metal || fail=1
+./pipecheck compile "$METAL/src/main/resources/mcopt/shade/shadow.metal" || fail=1 # shadow pass + coloured-shadow tint pass (caustics)
 ./pipecheck postex variants/celestial.vs.metal gen_position_tex.fs.metal || fail=1
 ./pipecheck poscolor variants/sunrise.vs.metal gen_position_color.fs.metal || fail=1
 ./pipecheck lut variants/sky_lut.metal variants/sky_lut.metal shade_lut_vs shade_lut_fs || fail=1

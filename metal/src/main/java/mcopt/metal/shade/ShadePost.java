@@ -352,6 +352,8 @@ public final class ShadePost {
 		if (!world) return;
 		world = false;
 		if (bridgeOpen) closeBridge();
+		// M3: this frame's entity draws -> the next frame's near shadow cascade
+		if (mcopt.metal.shade.shadow.EntityCasters.ON) mcopt.metal.shade.shadow.EntityCasters.commit(enc);
 		if (mainColor == null) return;
 		prevWritten = true;
 		long scene = hdr[frame & 1], prev = hdr[0] != hdr[1] ? hdr[(frame + 1) & 1] : 0;

@@ -12,10 +12,29 @@
 #define QUAD_INDICES (CHUNK_QUADS * 6)  // {0, 1, 2, 2, 3, 0} per quad
 #define DRAW_BYTES 24     // per draw from Java: arena MTLBuffer (8), first chunk (4), chunk count (4), kind (4: 0 solid, 1 cutout), pad (4)
 
+// M3 entity casters (mc_shadow_entity_*): the frame's entity draws, recorded in the main pass, copied at the end of the
+// world (the game's vertex buffers are pooled per frame) and drawn into the next frame's near cascade.
+#define ENT_MAX 4096
+#define ENT_BYTES (12u << 20)
+typedef struct {
+	id<MTLBuffer> src;      // pending: the game's vertex buffer (retained until the copy is encoded); nil once copied
+	id<MTLTexture> tex;     // retained while listed
+	uint64_t srcOffset;     // pending: byte offset of the draw's first vertex
+	uint32_t dst;           // ready: byte offset in casters
+	uint32_t quads, stride, uvOffset;
+	float cutoff;
+} EntDraw;
+
 typedef struct {
 	id<MTLDevice> device;
 	id<MTLLibrary> library;
 	id<MTLRenderPipelineState> solid, cutout;
+	id<MTLRenderPipelineState> entity;   // M3: entity casters (shadow_entity_vs / shadow_entity_fs)
+	id<MTLBuffer> casters;               // ENT_BYTES, private: last frame's entity vertices
+	EntDraw pending[ENT_MAX], ready[ENT_MAX];
+	int pendingCount, readyCount;
+	uint32_t pendingBytes;
+	float shift[3];                      // camera-relative offset of the ready casters for this frame (set by Java)
 	id<MTLRenderPipelineState> debug;  // made for the format of the target the debug view goes into
 	MTLPixelFormat debugFormat;
 	id<MTLTexture> debugTiles;         // the debug view's tiles, drawn here and blitted into the target
@@ -60,7 +79,12 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 		s->library = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (s->library) s->solid = depthOnly(s, @"shadow_vs", nil, &e);
 		if (s->solid) s->cutout = depthOnly(s, @"shadow_cutout_vs", @"shadow_cutout_fs", &e);
-		if (!s->cutout) {
+		if (s->cutout) s->entity = depthOnly(s, @"shadow_entity_vs", @"shadow_entity_fs", &e);
+		if (s->entity) {
+			s->casters = [ctx->device newBufferWithLength:ENT_BYTES options:MTLResourceStorageModePrivate];
+			s->casters.label = @"mcopt shadow: entity casters";
+		}
+		if (!s->entity || !s->casters) {
 			copyErr(e, "shadow pipelines failed", err, errCap);
 			mc_shadow_free(s);
 			return NULL;
@@ -116,8 +140,22 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 	}
 }
 
+static void entClear(EntDraw *list, int *count) {
+	for (int i = 0; i < *count; i++) {
+		[list[i].src release];
+		[list[i].tex release];
+		list[i].src = nil;
+		list[i].tex = nil;
+	}
+	*count = 0;
+}
+
 void mc_shadow_free(Shadow *s) {
 	if (!s) return;
+	entClear(s->pending, &s->pendingCount);
+	entClear(s->ready, &s->readyCount);
+	[s->entity release];
+	[s->casters release];
 	[s->library release];
 	[s->solid release];
 	[s->cutout release];
@@ -199,10 +237,98 @@ int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int ca
 			[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:QUAD_INDICES indexType:MTLIndexTypeUInt16 indexBuffer:s->quadIndices
 				indexBufferOffset:0 instanceCount:count baseVertex:0 baseInstance:first];
 		}
+		// M3: last frame's entities into the near cascade (shifted onto this frame's camera)
+		if (layer == 0 && s->readyCount > 0 && s->entity) {
+			[r setRenderPipelineState:s->entity];
+			[r setVertexBuffer:s->casters offset:0 atIndex:0];
+			[r setFragmentSamplerState:s->atlasSampler atIndex:0];
+			id<MTLTexture> bound = nil;
+			for (int i = 0; i < s->readyCount; i++) {
+				EntDraw *d = &s->ready[i];
+				struct { float shift[3]; uint32_t stride; uint32_t uvOffset; float cutoff; float pad[2]; } p = {
+					{s->shift[0], s->shift[1], s->shift[2]}, d->stride, d->uvOffset, d->cutoff, {0, 0}};
+				[r setVertexBufferOffset:d->dst atIndex:0];
+				[r setVertexBytes:&p length:sizeof p atIndex:4];
+				[r setFragmentBytes:&p length:sizeof p atIndex:4];
+				if (d->tex != bound) {
+					[r setFragmentTexture:d->tex atIndex:0];
+					bound = d->tex;
+				}
+				[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:d->quads * 6];
+			}
+		}
 		[r endEncoding];
 	}
 	return profiled;
 }
+
+// ---- M3 entity casters ----------------------------------------------------------------------------------------------------
+// One entity draw of the main pass: quads x 4 vertices of `stride` bytes at src + srcOffset (position float3 at 0, uv float2 at
+// uvOffset), texture tex (alpha < cutoff: no shadow). Kept (retained) until mc_shadow_entity_commit copies them. 0 = recorded,
+// 1 = dropped (list or buffer full).
+int mc_shadow_entity_record(Shadow *s, id<MTLBuffer> src, uint64_t srcOffset, int quads, int stride, int uvOffset, id<MTLTexture> tex, float cutoff) {
+	if (!s || !s->casters || !src || quads <= 0 || stride <= 0 || s->pendingCount >= ENT_MAX) return 1;
+	uint32_t bytes = (uint32_t) quads * 4u * (uint32_t) stride;
+	uint32_t dst = (s->pendingBytes + 15u) & ~15u;
+	if (dst + bytes > ENT_BYTES || srcOffset + bytes > src.length) return 1;
+	EntDraw *d = &s->pending[s->pendingCount++];
+	d->src = [src retain];
+	d->tex = [tex retain];
+	d->srcOffset = srcOffset;
+	d->dst = dst;
+	d->quads = (uint32_t) quads;
+	d->stride = (uint32_t) stride;
+	d->uvOffset = (uint32_t) uvOffset;
+	d->cutoff = cutoff;
+	s->pendingBytes = dst + bytes;
+	return 0;
+}
+
+// End of the world (before the hand): the recorded draws' vertices -> casters (one blit encoder on the frame's command buffer),
+// and they become the list the next frame's near cascade draws. With nothing recorded, the list empties.
+void mc_shadow_entity_commit(Enc *enc, Shadow *s) {
+	if (!s) return;
+	entClear(s->ready, &s->readyCount);
+	if (s->pendingCount > 0) {
+		id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
+		@autoreleasepool {
+			id<MTLBlitCommandEncoder> b = [cmd blitCommandEncoder];
+			b.label = @"mcopt shadow: entity casters";
+			for (int i = 0; i < s->pendingCount; i++) {
+				EntDraw *d = &s->pending[i];
+				[b copyFromBuffer:d->src sourceOffset:d->srcOffset toBuffer:s->casters destinationOffset:d->dst size:(NSUInteger) d->quads * 4u * d->stride];
+			}
+			[b endEncoding];
+		}
+		for (int i = 0; i < s->pendingCount; i++) {
+			s->ready[i] = s->pending[i];
+			[s->ready[i].src release]; // the blit holds it now
+			s->ready[i].src = nil;
+		}
+		s->readyCount = s->pendingCount;
+		s->pendingCount = 0;
+	}
+	s->pendingBytes = 0;
+}
+
+// Drops what was recorded (a frame that never reached its commit), keeping the ready list.
+void mc_shadow_entity_reset(Shadow *s) {
+	if (!s) return;
+	entClear(s->pending, &s->pendingCount);
+	s->pendingBytes = 0;
+}
+
+// The ready casters' shift for this frame's near cascade (camera of the frame they were recorded in - this frame's camera);
+// clear: forget them (the camera jumped, another dimension).
+void mc_shadow_entity_shift(Shadow *s, float x, float y, float z, int clear) {
+	if (!s) return;
+	if (clear) entClear(s->ready, &s->readyCount);
+	s->shift[0] = x;
+	s->shift[1] = y;
+	s->shift[2] = z;
+}
+
+int mc_shadow_entity_count(Shadow *s) { return s ? s->readyCount : 0; }
 
 // Binds the map at texture(textureSlot) and the compare sampler at sampler(samplerSlot), vertex and fragment, on the open
 // render encoder (no-op when none is open). For the shade infrastructure's global binds.

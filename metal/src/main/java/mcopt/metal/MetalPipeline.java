@@ -88,7 +88,22 @@ final class MetalPipeline implements BackendRenderPipeline {
 		this.depthBiasConstant = depth != null ? depth.depthBiasConstant() : 0;
 		this.depthBiasSlope = depth != null ? depth.depthBiasScaleFactor() : 0;
 		this.primitive = MetalConst.primitive(info.primitiveTopology());
+		// MetalDrawTap (native shading's entity shadow casters): quads with a position at 0 and a uv at location 2, sampled from "Sampler0"
+		int stride = 0, uv = -1, sampler = -1;
+		if (info.primitiveTopology() == com.mojang.renderpearl.api.pipeline.PrimitiveTopology.QUADS && !info.vertexBuffers().isEmpty()) {
+			stride = info.vertexBuffers().get(0).stride();
+			for (CreateInfo.AttribBinding a : info.attribBindings()) {
+				if (a.location() == 2 && a.bufferSlot() == info.vertexBuffers().get(0).bufferSlot()) uv = a.offset();
+			}
+			for (int i = 0; i < info.uniforms().size(); i++) if (info.uniforms().get(i).name().equals("Sampler0")) sampler = i;
+		}
+		this.tapStride = stride;
+		this.tapUv = sampler >= 0 ? uv : -1;
+		this.tapSampler = sampler;
 	}
+
+	/** MetalDrawTap: vertex stride, uv offset (-1: not tappable) and the "Sampler0" uniform index of a quad pipeline. */
+	final int tapStride, tapUv, tapSampler;
 
 	/** Time spent creating pipelines so far, by step, for the bench's startup breakdown (read reflectively). */
 	private static long compiled, translateNs, libraryNs, stateNs;

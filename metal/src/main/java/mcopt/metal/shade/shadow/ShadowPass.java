@@ -210,6 +210,7 @@ public final class ShadowPass {
 	/** Encodes the depth passes; called right before the level's frame graph runs (no render pass open). */
 	public static void renderFrame() {
 		ShadowPass p = instance;
+		if (p != null && EntityCasters.ON) EntityCasters.beginFrame();
 		if (p == null || !p.prepared || failed) return;
 		try {
 			p.render();
@@ -323,6 +324,7 @@ public final class ShadowPass {
 			return;
 		}
 		if (this.shadow == 0) this.create(MetalBridge.ctx(encoder));
+		if (this.draw[0]) EntityCasters.prepareCast(this.frames, this.camX, this.camY, this.camZ); // M3: last frame's entities, onto this camera
 		int faceMask = ShadowCasters.faceMask(this.light, ShadowConfig.ALL_FACES);
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
 		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT);
@@ -428,6 +430,27 @@ public final class ShadowPass {
 		System.out.println("[mcopt] shade: no shadow map this frame: " + why);
 	}
 
+	static @Nullable ShadowPass instance() {
+		return instance;
+	}
+
+	double camX() {
+		return this.camX;
+	}
+
+	double camY() {
+		return this.camY;
+	}
+
+	double camZ() {
+		return this.camZ;
+	}
+
+	/** Frame counter (endFrame advances it). */
+	long frame() {
+		return this.frames;
+	}
+
 	private void create(long ctx) {
 		String source;
 		try (InputStream in = ShadowPass.class.getResourceAsStream("/mcopt/shade/shadow.metal")) {
@@ -442,6 +465,7 @@ public final class ShadowPass {
 			if (s == 0) throw new IllegalStateException("shadow pass setup: " + MemoryUtil.memUTF8(err));
 			this.shadow = s;
 		}
+		EntityCasters.attach(this.shadow); // M3: entity draws cast into the near cascade
 		this.texture = ShadowNative.texture(this.shadow);
 		this.compareSampler = ShadowNative.compareSampler(this.shadow);
 		System.out.println(String.format("[mcopt] shade: shadow map %dx%d x %d cascades (%s, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s, far cutout: %s",

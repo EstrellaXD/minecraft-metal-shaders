@@ -318,6 +318,21 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (this.encoder.terrain.split && clouds && instanceCount == 1 && firstIndex == 0 && vertexOffset == 0 && this.drawClouds(indexCount / 6)) return;
 		if (indexCount <= 0 || instanceCount <= 0) return; // an empty draw (Metal's validation rejects zero counts)
 		Native.drawIndexed(this.enc, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+		MetalDrawTap.Listener tap = MetalDrawTap.listener;
+		if (tap != null && this.formats != null) this.tap(tap, Objects.requireNonNull(this.pipeline), indexCount, vertexOffset);
+	}
+
+	/**
+	 * MetalDrawTap: a quad draw of a format-redirected pass (native shading's HDR world) reported with its vertices' buffer and
+	 * byte offset, quad count and "Sampler0" texture. The quads are vertexOffset.. + indexCount / 6 * 4 (the game's sequential
+	 * quad indices, or a sorted permutation of the same quads).
+	 */
+	private void tap(MetalDrawTap.Listener tap, MetalPipeline p, int indexCount, int vertexOffset) {
+		GpuBufferSlice vb = this.vertexBuffer0;
+		if (p.tapUv < 0 || vb == null || this.delegate != null) return;
+		if (!(this.bound[p.tapSampler] instanceof TextureViewAndSampler ts)) return;
+		tap.draw(p.name, this.encoder.use(vb.buffer()).handle, vb.offset() + (long) vertexOffset * p.tapStride, indexCount / 6, p.tapStride, p.tapUv,
+			((MetalTexture.View) ts.view()).handle);
 	}
 
 	/**

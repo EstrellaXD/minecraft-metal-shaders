@@ -100,6 +100,34 @@ fragment void shadow_cutout_fs(ShadowCutoutOut in [[stage_in]], texture2d<float>
     if (a < 0.5) discard_fragment();
 }
 
+// ---- M3 entity casters (mcshadow.m mc_shadow_entity_*) ----
+// Last frame's entity draws (mobs, block entities, items, armour, moving blocks), copied at the end of the world from the
+// game's own vertex buffers: quads of `stride`-byte vertices, camera-relative position (float3) at offset 0, uv (float2) at
+// uvOffset; shift moves them onto this frame's camera. Two triangles per quad from vertex_id ({0, 1, 2, 2, 3, 0}, the game's
+// quad index order); the texture's alpha below cutoff casts nothing (skin overlays, item sprites).
+struct EntityCast { packed_float3 shift; uint stride; uint uvOffset; float cutoff; float pad0; float pad1; };
+
+vertex ShadowCutoutOut shadow_entity_vs(uint vid [[vertex_id]], const device uchar *verts [[buffer(0)]], constant ShadowCascade &cascade [[buffer(3)]],
+                                        constant EntityCast &e [[buffer(4)]])
+{
+    uint c = vid % 6u;
+    uint corner = c < 3u ? c : (c == 3u ? 2u : (c == 4u ? 3u : 0u));
+    const device uchar *v = verts + ((vid / 6u) * 4u + corner) * e.stride;
+    float3 p = float3(*(const device packed_float3 *) v) + float3(e.shift);
+    ShadowCutoutOut out;
+    out.pos = cascade.viewProj * float4(p, 1.0);
+    out.pos.z -= cascade.depthBias * out.pos.w;
+    out.uv = float2(*(const device packed_float2 *) (v + e.uvOffset));
+    out.alpha = 1.0h;
+    return out;
+}
+
+fragment void shadow_entity_fs(ShadowCutoutOut in [[stage_in]], texture2d<float> tex [[texture(0)]], sampler s [[sampler(0)]],
+                               constant EntityCast &e [[buffer(4)]])
+{
+    if (tex.sample(s, in.uv, level(0.0)).w < e.cutoff) discard_fragment();
+}
+
 // ---- debug view (mcopt.shade.debug=1): one cascade per tile, drawn into the game's main color target ----
 
 // centerDepth: the camera's depth in this cascade; range: the cascade's depth range in blocks.

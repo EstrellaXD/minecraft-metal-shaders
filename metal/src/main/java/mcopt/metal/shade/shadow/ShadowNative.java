@@ -21,6 +21,12 @@ final class ShadowNative {
 	private static final MethodHandle COMPARE_SAMPLER = fn("mc_shadow_compare_sampler", JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle RENDER = fn("mc_shadow_render", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
 		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT);
+	private static final MethodHandle ENT_RECORD = fn("mc_shadow_entity_record", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG,
+		JAVA_FLOAT);
+	private static final MethodHandle ENT_COMMIT = fn("mc_shadow_entity_commit", null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle ENT_RESET = fn("mc_shadow_entity_reset", null, JAVA_LONG);
+	private static final MethodHandle ENT_SHIFT = fn("mc_shadow_entity_shift", null, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
+	private static final MethodHandle ENT_COUNT = fn("mc_shadow_entity_count", JAVA_INT, JAVA_LONG);
 	private static final MethodHandle BIND = fn("mc_shadow_bind", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 
@@ -69,6 +75,46 @@ final class ShadowNative {
 		try {
 			return (int) RENDER.invokeExact(enc, shadow, layer, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas,
 				slopeScale, clamp);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static int entityRecord(long shadow, long src, long srcOffset, int quads, int stride, int uvOffset, long texture, float cutoff) {
+		try {
+			return (int) ENT_RECORD.invokeExact(shadow, src, srcOffset, quads, stride, uvOffset, texture, cutoff);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void entityCommit(long enc, long shadow) {
+		try {
+			ENT_COMMIT.invokeExact(enc, shadow);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void entityReset(long shadow) {
+		try {
+			ENT_RESET.invokeExact(shadow);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void entityShift(long shadow, float x, float y, float z, int clear) {
+		try {
+			ENT_SHIFT.invokeExact(shadow, x, y, z, clear);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static int entityCount(long shadow) {
+		try {
+			return (int) ENT_COUNT.invokeExact(shadow);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

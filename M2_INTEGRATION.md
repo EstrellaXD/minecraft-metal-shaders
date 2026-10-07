@@ -97,10 +97,9 @@ coefficients `L.fogR`, `L.fogM` so shafts and haze agree**), `shadeLit2`, `shade
   then applies through `shadeFinish2`.
 - Debug views: `mcopt.shade.debug` 5 = SSR hits (r) / Fresnel (g), 6 = refracted path / depth, **7** = footprint / flow /
   distance (was 4 on m2-water; 4 is the base's log-luminance view).
-- For TAAU (`m2-taau` merge): define `SHADE_WATER_SUBRECT` in `ShadeWater.prelude()` (ShadeFrame.screen = live render
-  size), copy only the live sub-rect in `mc_water_capture`, pass the frame index into the SSR jitter, and mark water
-  reactive (WATER.md "Integration with TAAU"). `prevScene` is sampled by normalized uv, so a resolver whose history is a
-  different size still works if `ShadeResources.prevScene` points at it (then rescale with its exposure).
+- TAAU (merged): `SHADE_WATER_SUBRECT` is always defined, `SHADE_WATER_TAA` varies the SSR step jitter per frame,
+  `mc_water_capture` copies only the pass's viewport (the live sub-rect), and `prevScene` is the TAA history (output size,
+  sampled by normalized uv). Water is not marked reactive yet.
 - For FT2 (DH): `shadeWaterSceneW` (full-res) and `shadeWaterCoarseW` (march) are the only depth reads (the merged scene
   distance goes there, and into the coarse pass); `water.metal` is a plain include for DH's transparent override.
   Today, with DH on, far LODs already appear in water reflections through the rendered-sky path (they are sky in the
@@ -138,9 +137,7 @@ encodes canopy (compute; with VL_HDR it writes `ShadeGpu.scene.y` = canopy facto
 light+dist and R8 sky mask) → `vl_temporal_fold` (MRT history + lightT), then `mc_vl_outputs` → `ShadePost.setVolumetric`.
 `mcopt.shade.vl.fold=false` (or any `vl.debug` view) uses `vl_composite_hdr` instead (blend One/SourceAlpha into the HDR
 target). Its open-air medium reads the base's E06 numbers through `ShadeLook.hazeSigmaLuma/mistSigmaBlock/mistHeight` and
-`SEA/HAZE_BASE/HAZE_H/MIST_BASE` (now public), its strength `ShadeLook.vlFactor()`. TAAU (`m2-taau`) still to do on VL:
-NoJitter matrices in `vlDirection`/`vl_temporal`, VL size from `renderScale.zw`, and the fold samples by uv so it already
-works at output resolution.
+`SEA/HAZE_BASE/HAZE_H/MIST_BASE` (now public), its strength `ShadeLook.vlFactor()`. TAAU (merged): VL targets are sized from the allocation and cover the live sub-rect (`VlParams.size.zw` = live size); the jittered matrices are kept (positions come from this frame's jittered depth), section 6.
 
 ## 5. Distant Horizons (FT0) under the HDR frame
 
@@ -192,9 +189,11 @@ Rules for modules under TAAU:
 - **Per-frame noise**: with TAA, vary noise per frame (`ShadeFrame.flags2.x`): the resolve integrates it (water's SSR
   step jitter does this under `SHADE_WATER_TAA`).
 - The generic `ShadePost.setResolver` is still there for other upscalers (it is skipped while TAAU drives the frame).
-- **Distant Horizons**: its passes draw into the world target (main to DH) and are clipped to the sub-rect like the game's;
-  its own targets follow the constant allocation size, so a scale change never makes DH reallocate. The DH bridge
-  encode/decode passes cover the whole allocation (correct, a little wasteful). See M2_STATUS for the DEV-DH run.
+- **Distant Horizons**: with DH loaded TAAU runs at a **fixed** scale (the preset's start scale, world targets allocated
+  at exactly that size, no sub-rect). DH draws its LODs into its own main-sized targets with a full viewport and copies
+  them 1:1 into main, so a sub-rect smaller than the allocation put its frame at the wrong scale (DEV-DH run `ti3-dh`).
+  Jitter is in the projection, so LODs are anti-aliased like the rest (DH's own TAA must stay off). DRS with DH (FT2):
+  DH's passes on its own targets need the same sub-rect viewport, or DH targets sized to the live area.
 
 ## 7. Adding a new full-screen pass
 

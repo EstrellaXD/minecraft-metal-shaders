@@ -180,6 +180,9 @@ What the merge did (frame diagram and module rules: M2_INTEGRATION.md section 6)
    region copy of a depth texture is not worth the risk for ~0.1 ms).
 8. Presets: one parser (`Shade.TIER`, default **balanced**); quality holds 80 fps (was 60).
 
+9. Distant Horizons: fixed scale while DH is loaded (`ShadeTaa.FIXED_FOR_DH`; DH copies its full-viewport targets 1:1
+   into main, which breaks under a smaller sub-rect). Verified on DEV-DH (`ti4-dh`).
+
 Still open: reactive mask producers (particles/rain/water), per-object motion vectors, MetalFX as the ultra upscaler,
 FT2's merged scene distance as the resolve's depth for DH pixels.
 

@@ -2,7 +2,7 @@
 
 M2 base = M1 + FT0 (Distant Horizons on Metal) merged, the M1 polish backlog, and the HDR frame (Shade Filmic tonemap,
 natural bloom + fog glow, bounded auto-exposure + Purkinje). Everything is gated by `mcopt.shade=true`; every feature has
-its own flag (M2_INTEGRATION.md §8). Integration points for the parallel modules (water, god rays, TAAU): **M2_INTEGRATION.md**.
+its own flag (M2_INTEGRATION.md §8). Integration points for the parallel modules (water, god rays, TAAU; all merged): **M2_INTEGRATION.md**.
 
 ## What is done
 
@@ -174,8 +174,64 @@ the birch), `vl-underwater-carve-before-after.jpg` (caustic shaft curtain after 
 VL known issues: DH pixels are depth 0 (sky) for VL: at sunset LOD silhouettes toward the sun get the full 160-block
 in-scattering and the crepuscular sky mask counts them as open sky (streaks cross LOD hills) until FT2's merged distance;
 clouds cast no shafts (no cloud shadow map yet); no tinted shafts through water seen from above or stained glass (M3 tint
-map); `vl_forest_side` / `vl_forest_evening` stay subtle (sun behind dense leaves); TAAU integration must switch
-`vlDirection`/`vl_temporal` to the NoJitter matrices and size VL from `renderScale.zw`.
+map); `vl_forest_side` / `vl_forest_evening` stay subtle (sun behind dense leaves). TAAU: done (see the TAAU section).
+
+## TAA / TAAU + dynamic resolution (merged from `m2-taau`, 2026-10-07)
+
+**Merged** (`095ce42` merge + `5fc507d`; module doc `TAAU.md`, wiring in M2_INTEGRATION.md section 6). The world renders
+at a render scale into fixed-size targets (live sub-rect, Halton jitter in the projection), TAAU resolves the HDR world
+into an output-size history before bloom and the tone map, and the final pass tone-maps and sharpens it into the game's
+main target before the hand. Bloom's first level reads the internal-resolution scene; SSR reads the TAA history as last
+frame's image; the history follows auto-exposure on the GPU; VL and water are sub-rect aware; one preset switch.
+
+**Preset switch** (system property or one line in `config/mcopt.properties`, which mcopt's Profile applies):
+
+```
+mcopt.shade=true
+mcopt.shade.preset=balanced      # performance | balanced | quality | ultra
+```
+
+Default **balanced**: in the worst bench view (the bay: half the screen water, SSR, VL) it holds the 120 fps target at
+its 0.67 floor (120-125 fps); everywhere lighter the dynamic resolution spends the headroom on resolution (up to 0.90).
+`performance` (0.60-0.75) keeps a margin (137-140 fps there); `quality` is native-resolution TAA (DRS 0.85-1.0 for
+80 fps).
+
+| Config (3024x1964 fullscreen, bay "spin" view + flight, water + VL on, same-session interleaved) | spin fps | spin GPU ms | flight fps | flight GPU ms | runs |
+|---|---|---|---|---|---|
+| `mcopt.shade.taa=false` (native, = M2 before the merge) | 99-104 | 9.65-10.07 | 107-109 | 9.21-9.36 | ti2-off1, ti2-off2 |
+| **performance** (DRS settles at 0.60) | 137-138 | 7.26-7.30 | 139-140 | 7.16-7.21 | ti2-perf1/2, ti3-perf1 |
+| **balanced** (default; DRS settles at 0.67) | 120-122 | 8.18-8.33 | 123-125 | 7.98-8.10 | ti2-bal1/2, ti3-bal1/2 |
+| quality (DRS settles at 0.85) | 90-91 | 11.00-11.07 | 93-94 | 10.62-10.74 | ti2-qual1/2 |
+| balanced fixed 0.67 (profile run) | 126 | 7.94 | 127 | 7.90 | ti1-prof |
+| DEV-DH, DH default config, balanced (fixed 0.80 with DH) | 62.4 | 16.06 | 59.5 | 16.81 | ti4-dh (native without TAA: vi7-dh 19.65 / 20.13) |
+| `mcopt.shade=false` vs upstream jar (GPU contended by the Claude app's renderer, ±0.5 ms) | 365 / 264 vs 196 / 497 | 2.18 / 2.69 vs 3.44 / 1.78 | 352 / 379 vs 392 / 339 | 2.41 / 2.28 vs 2.19 / 2.36 | ti4/ti5-noshade-* (no shade line in the log; equal within noise) |
+
+The water scene copy now copies only the live sub-rect (ti3 vs ti2: about -0.13 ms on balanced). 1% lows: performance
+94-99 fps, balanced 85-97, quality 65-78.
+
+**Distant Horizons**: the first DEV-DH run with dynamic resolution (`ti3-dh`) was wrong: DH draws its LODs into its own
+main-sized targets with a full viewport and copies them 1:1 into the main target, so with a live sub-rect smaller than
+the allocation its frame landed at the wrong scale (`release/M2-taau-screenshots/taau-dh-subrect-bug-before-fix.jpg`).
+With DH loaded TAAU now uses a fixed scale (the preset's start scale; targets allocated at exactly that size, no
+sub-rect): `ti4-dh` matches the native DH frame (LODs, sunset mountains, rain), and strafing shows no ghosting on LOD
+silhouettes. DH frames got 3.5 ms cheaper (16.1 vs 19.7 ms). Dynamic resolution with DH needs DH's own passes on the sub-rect
+too (FT2).
+
+Stress (`ti4-stress`: resource reload, fullscreen -> windowed 3024x1684 -> fullscreen, Nether and back): TAA and HDR targets
+follow the resizes, no errors, shots afterwards correct. `tools/shade/validate.sh` ALL OK, `taatest` unchanged
+(still 0.67: TAAU err 3.44 vs plain 4.92).
+
+Look (screenshots `work/release/M2-taau-screenshots/`): `taau-standard-native-vs-balanced.jpg` and
+`taau-water-native-vs-balanced.jpg` (same poses, native M2 vs TAAU balanced: same grade and bloom, cleaner leaf
+edges and glints, crisper underwater caustic shafts), `taau-godrays-native-vs-balanced.jpg`, `taau-motion-shots.jpg` (forest pan, strafe,
+sunset pan mid-motion: no ghosting), `taau-forest_crop.jpg` / `taau-strafe_crop.jpg` (100 % crops), `taau-dh-*.jpg`.
+Full PNGs: `bench-results/*-ti3-look/screenshots` (18 shots: standard, water, god rays, motion), `*-ti4-dh/screenshots`.
+
+TAAU known issues: strafing still softens distant pixel-art texture a little (classic TAA; the motion floor and the final
+sharpen limit it); no reactive mask yet (particles, rain and water normals rely on the clip); no per-object motion
+vectors; DRS off with Distant Horizons (fixed scale); the TAAU resolve (~0.9-1.1 ms at output size) is above the bible's
+0.72 ms; the HDR world target, the DH bridge passes and the VL targets are sized from the allocation (scaleMax), a little
+more than the live area needs.
 
 ## Known issues / next
 
@@ -186,8 +242,7 @@ map); `vl_forest_side` / `vl_forest_evening` stay subtle (sun behind dense leave
 - DH LODs keep DH's own lighting/fog (bridge); FT2 should redirect `distantHorizons:TerrainRenderer` into HDR with a shade
   override and provide a merged scene-distance input (haze/VL currently treat DH pixels as sky: depth 0; VL's march and
   crepuscular sky mask need it too, see the VL section).
-- Bloom/TAAU order: with a resolver, bloom is built from the resolved (output-res) image; the bible's internal-res L0 is
-  cheaper — revisit when TAAU lands.
+- (fixed with the TAAU merge) Bloom L0 is built from the internal-resolution scene.
 - Translucent surfaces that don't write depth get the haze of what is behind them (final-pass haze).
 - The HDR world target defaults to RG11B10Float for the performance/balanced presets (no visible banding at 2.5x contrast in the sunset sky and night gradients, `m2b9-rg11` vs `m2b9-onb`); RGBA16Float for quality/ultra. Modules must not rely on destination alpha in it.
 - Not done from the bible in this milestone: LUT sky (M2b), material atlases (M2c), GTAO, XDR output.

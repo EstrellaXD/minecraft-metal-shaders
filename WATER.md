@@ -78,7 +78,18 @@ module). See the commit log and `bench-results/*-w5-*`, `*-w6-*` for the raw run
 | per-pixel SSR, 16 steps (`w5-on`, `w5-on2`) | 8.3-8.9 | 7.0-7.8 | before optimisation |
 | no SSR (`w5-nossr`) | 6.84 | 6.50 | SSR was ~1.8 ms |
 | no caustics (`w5-nocaus`) | 8.32 | 7.28 | caustics were ~0.3-0.6 ms |
-| PERF_W6 | | | |
+| quad SSR, 24 steps, Fresnel gate, caustic/wave early-outs (`w6-on`, `w6-on2`) | 6.85-6.94 | 6.39-6.43 | water off in the same session (`w6-off`): 4.28 / 4.84 |
+| same, per-pixel SSR 16 steps (`w6-noquad`) | 7.64 | 6.64 | quad sharing saves ~0.8 ms |
+| no waves, caustics or SSR (`w7-base`) | 5.34 | 5.59 | refraction, absorption, sky, glint, foam: ~0.1 ms over the copy |
+| + waves (`w7-waves`) | 6.17 | 5.72 | the 7 analytic waves: ~0.8 ms (largest shader item) |
+| everything (`w7-on`) | 6.96 | 6.43 | SSR + caustics: ~0.8 ms |
+| PERF_W9 | | | |
+
+Cost split at native Retina in this worst-case view (~2.6 ms over water off): scene copy ~0.85, waves ~0.8, SSR
+~0.5, caustics ~0.3, the rest ~0.1. Every item scales with the pixel count, so TAAU at 0.67x (0.45x pixels) brings it to
+~1.2 ms. The shading costs nothing when no water is on screen; the copy (~0.85 ms native) runs whenever a main pass
+uses Sodium's translucent pipeline, i.e. almost every frame. A possible saving: skip it when last frame drew no water
+and no glossy translucent pixels.
 
 ## Integration with the M2 HDR base (branch `m2`)
 
@@ -141,5 +152,14 @@ module). See the commit log and `bench-results/*-w5-*`, `*-w6-*` for the raw run
 - Distant water shows a faint cross-hatch interference of the two longest waves around the glint at sunset.
 - The TIR region from below is the fog colour rippled (SSR into the underwater scene when it hits).
 - Glossy translucents untested in game (no ice/stained glass in the bench world) -> opt-in.
-- Bible's FFT-baked wave texture and baked caustics were replaced by analytic waves (cheaper to integrate, no bake);
-  revisit if ALU becomes the limit.
+- **Next perf step: bake the waves.** The analytic waves are the biggest shader item (~0.8 ms native worst case). Bake
+  them once per frame into a tileable, mipmapped RGBA16F slope texture (e.g. 512² over a 32-block tile: long set in RG,
+  a short set with an 8-block period in BA; wave vectors on the tile lattice; render it like the sky LUT in
+  `mc_shade_lut_render`, then `generateMipmaps`), and sample it twice (scale/rotation offset octaves, anisotropic
+  filtering) in the fragment. Expected ~0.6 ms saved at native plus less shimmer at distance (mips instead of the
+  footprint LOD); the bake can afford 12+ waves. Bible E14 describes the same idea (FFT bake). Needs a texture slot:
+  textures 17-19 are taken in this pass (sky LUT, copies), so either texture(20) (free in the Sodium terrain pipelines;
+  far terrain's own pipelines use 20/21 but rebind shade afterwards) or an entry in M2's ShadeResources argument buffer.
+- Short-crested waves reduce, but don't fully remove, a diagonal regularity in the distant glitter road.
+- SSR is dithered per 2x2 quad without TAA: hit/miss edges of thin things (leaves) look speckled at 100 % zoom; temporal
+  jitter under TAAU will resolve it (see TAAU step 3).

@@ -57,6 +57,8 @@ public final class ShadeClouds {
 	/** ShadePost before-tonemap order (AO 50, clouds 80, VL 100). */
 	public static final int HOOK_ORDER = 80;
 	private static boolean hooked, over;
+	/** Distant Horizons loaded (mcopt.shade.clouds.withDh=false: then the Clouds option decides, as without DH). */
+	private static final boolean DH = mcopt.metal.DhCompat.loaded() && CloudConfig.flag("mcopt.shade.clouds.withDh", true);
 
 	private ShadeClouds() {
 	}
@@ -81,8 +83,10 @@ public final class ShadeClouds {
 			Minecraft mc = Minecraft.getInstance();
 			ClientLevel level = mc.level;
 			var game = mc.gameRenderer.gameRenderState();
-			boolean want = level != null && f.dimension == ShadeFrame.DIM_OVERWORLD && game.optionsRenderState.cloudStatus != CloudStatus.OFF
-				&& ARGB.alpha(game.levelRenderState.cloudColor) > 0;
+			// the game's Clouds option OFF turns them off, except with Distant Horizons, which sets that option itself (its LODs
+			// would show through vanilla's clouds; ours draw behind the LODs, in the sky pass)
+			boolean option = game.optionsRenderState.cloudStatus != CloudStatus.OFF || DH;
+			boolean want = level != null && f.dimension == ShadeFrame.DIM_OVERWORLD && option && ARGB.alpha(game.levelRenderState.cloudColor) > 0;
 			if (!want) {
 				wasActive = false;
 				PARAMS.packLook(look, false);

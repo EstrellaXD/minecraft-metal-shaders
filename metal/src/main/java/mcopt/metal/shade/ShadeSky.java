@@ -214,7 +214,10 @@ public final class ShadeSky {
 			r.lightDir[0] = s.sunX; r.lightDir[1] = s.sunY; r.lightDir[2] = s.sunZ;
 		} else {
 			transmittance(Math.max(s.moonY, -1f), mie, t);
-			float f = s.moonIntensity() * smoothstep(-0.04f, 0.06f, s.moonY) * (1f - 0.85f * s.rain) / (float) Math.PI;
+			// sun/moon handover (bible §3.2): the moon's light ramps up from zero only after the sun's has faded out, so the
+			// switch of the shadow-casting light never pops (lighting, shadows, specular and volumetric light follow it)
+			float handover = smoothstep(0.06f, 0.13f, -s.sunY);
+			float f = s.moonIntensity() * smoothstep(-0.04f, 0.06f, s.moonY) * handover * (1f - 0.85f * s.rain) / (float) Math.PI;
 			for (int k = 0; k < 3; k++) r.light[k] = t[k] * f * MOON_TINT[k];
 			r.lightDir[0] = s.moonX; r.lightDir[1] = s.moonY; r.lightDir[2] = s.moonZ;
 		}

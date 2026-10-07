@@ -30,8 +30,9 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * <li>{@code dl_field_mobs} (18000): the same patch from 9 blocks with a zombie holding a torch, a skeleton holding a soul
  * lantern, a villager holding a lantern, a burning zombie (visual fire), a small magma cube, a blaze, and dropped torch,
  * glowstone and sea lantern items: 9 lights + the hands.</li>
- * <li>{@code perf}: the recorded perf phase "lights" (results.json perf.lights / gpu.lights) on dl_field_mobs, panning
- * +-15 degrees for -Dmcbench.lightsSeconds (10) s: price it against a run with -Dmcopt.shade.dynLights=false.</li>
+ * <li>{@code perf}: the recorded perf phases "lights", "lights_off" (the lights paused through the system property
+ * mcopt.shade.dynLights.pause) and "lights2" (results.json perf.* / gpu.*) on dl_field_mobs, panning +-15 degrees for
+ * -Dmcbench.lightsSeconds (10) s each: the module's cost in one session.</li>
  * <li>{@code dl_cave_hand}: the biggest dark cave found under the area (no sky light, no block light), looking along its
  * longest free direction.</li>
  * <li>{@code dl_cave_walk}: walking that way at 3.5 blocks/s, shot after 1.5 s (the light moving with the player).</li>
@@ -327,33 +328,41 @@ final class LightShots {
 		}
 	}
 
-	/** Perf phase "lights": the mobs view panning +-15 degrees (hands + 9 lights in view). */
+	/**
+	 * Perf phases "lights", "lights_off", "lights2": the mobs view panning +-15 degrees (hands + 9 lights in view), with the
+	 * lights paused in the middle one (system property mcopt.shade.dynLights.pause, which mcopt-shade reads every frame): an
+	 * A/B of the dynamic lights' whole cost in one session, bracketed so drift shows.
+	 */
 	private static void perf(java.util.Deque<BenchDriver.Step> steps, Supplier<Pose> start) {
 		double sec = Double.parseDouble(System.getProperty("mcbench.lightsSeconds", "10"));
 		steps.add(new BenchDriver.Scene("lights", 18000, false, start));
 		steps.add(new BenchDriver.Settle("lights", false, 3, 120));
 		steps.add(hold("lights-warm", 2));
-		steps.add(new BenchDriver.Step("lights", 0) {
-			@Override
-			void start(Minecraft mc, long now) {
-				BenchDriver.setPhase("LIGHTS");
-				Pose o = start.get();
-				long t0 = now;
-				BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (15.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
-				BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf("lights");
-				BenchDriver.phaseRanges.put("lights", new long[] {now, 0});
-				BenchDriver.log("perf lights " + sec + " s");
-			}
+		for (String phase : new String[] {"lights", "lights_off", "lights2"}) {
+			steps.add(new BenchDriver.Step(phase, 0) {
+				@Override
+				void start(Minecraft mc, long now) {
+					BenchDriver.setPhase(phase.toUpperCase(Locale.ROOT));
+					System.setProperty("mcopt.shade.dynLights.pause", Boolean.toString(phase.equals("lights_off")));
+					Pose o = start.get();
+					long t0 = now;
+					BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (15.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
+					BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(phase);
+					BenchDriver.phaseRanges.put(phase, new long[] {now, 0});
+					BenchDriver.log("perf " + phase + " " + sec + " s");
+				}
 
-			@Override
-			boolean poll(Minecraft mc, long now) {
-				showHud(mc);
-				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
-				BenchDriver.recPhase = -1;
-				BenchDriver.phaseRanges.get("lights")[1] = now;
-				return true;
-			}
-		});
+				@Override
+				boolean poll(Minecraft mc, long now) {
+					showHud(mc);
+					if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+					BenchDriver.recPhase = -1;
+					BenchDriver.phaseRanges.get(phase)[1] = now;
+					System.setProperty("mcopt.shade.dynLights.pause", "false");
+					return true;
+				}
+			});
+		}
 	}
 
 	/** Walking along the cave at 3.5 blocks/s for 1.5 s, shot while moving. */

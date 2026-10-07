@@ -163,6 +163,8 @@ final class LightShots {
 	static void showHud(Minecraft mc) {
 		if (mc.gui.screen() != null) mc.gui.setScreen(null);
 		if (mc.gui.hud.isHidden()) mc.gui.hud.toggle();
+		// keep the torch selected (a stray scroll on the trackpad once left the main hand empty in dl_water)
+		if (mc.player != null && mc.player.getInventory().getSelectedSlot() != 0) mc.player.getInventory().setSelectedSlot(0);
 	}
 
 	private static void shot(java.util.Deque<BenchDriver.Step> steps, String name, int time, Supplier<Pose> p) {

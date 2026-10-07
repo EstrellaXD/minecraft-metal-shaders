@@ -18,7 +18,7 @@ clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/pipecheck.m" 
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/vlcheck.m" -o "$OUT/vlcheck"
 CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$(find ~/.gradle/caches -name 'jspecify-*.jar' | grep -v sources | head -1)"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/ShadeMslDump.java"
-"${JAVA_BIN}java" -Dmcopt.shade.glossy=true -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"  # opt-in features on: the widest variant
+"${JAVA_BIN}java" -Dmcopt.shade=true -Dmcopt.shade.glossy=true -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"  # opt-in features on: the widest variant
 cp "$HERE"/gen_*.fs.metal "$OUT/"
 cd "$OUT"
 fail=0
@@ -41,6 +41,8 @@ for i in 0 1; do ./pipecheck pos variants/sky$i.vs.metal variants/sky$i.fs.metal
 ./pipecheck lut variants/sky_lut.metal variants/sky_lut.metal shade_lut_vs shade_lut_fs || fail=1
 # volumetric light (mcvl.m): every pass, LDR and HDR composite, canopy kernel
 ./vlcheck variants/vl.metal || fail=1
+# dynamic lights (mcdynlight.m): the visibility kernel
+./pipecheck compile variants/dynlight_vis.metal || fail=1
 # clouds / weather against vanilla's generated stages, when a dump dir is given (MCOPT_GEN_DIR=<-Dmcopt.metal.dumpMsl dir>)
 if [ -n "$MCOPT_GEN_DIR" ]; then
 	./pipecheck none "$MCOPT_GEN_DIR/minecraft_pipeline_clouds.vs.metal" variants/clouds.fs.metal || fail=1
@@ -51,6 +53,11 @@ if [ -n "$MCOPT_GEN_DIR" ]; then
 		./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f" | head -5; fail=1; }; n=$((n+1))
 	done
 	echo "OK   $n game fragments converted for the HDR target (ShadeMsl.hdrFragment) compile"
+	n=0; for f in variants/hdrgen/*.vs.metal; do
+		[ -f "$f" ] || continue
+		./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f" | head -5; fail=1; }; n=$((n+1))
+	done
+	echo "OK   $n game vertex stages with dynamic lights (DynLightMsl.patch) compile"
 fi
 # TAAU passes (mctaa.m + taa.metal): both TAA_HDR variants, real resolve + output pipelines
 TMPDIR="$OUT" "$HERE/taatest/run.sh" compile || fail=1

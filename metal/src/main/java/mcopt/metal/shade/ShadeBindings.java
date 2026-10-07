@@ -51,6 +51,7 @@ public final class ShadeBindings {
 		if (state == 0 && !init(ctx)) return;
 		ShadeNative.bind(enc);
 		if (ShadeWater.ON) ShadeWater.bind(ctx, enc);
+		if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.bind(enc);
 	}
 
 	static boolean ready() {
@@ -75,6 +76,7 @@ public final class ShadeBindings {
 			gpuBuffer = ShadeNative.buffer(context, 512);
 			gpuView = MemoryUtil.memByteBuffer(MetalBridge.bufferContents(gpuBuffer), 512).order(java.nio.ByteOrder.LITTLE_ENDIAN);
 			gpuView.putFloat(176, 1f).putFloat(180, 1f).putFloat(184, 1f);
+			if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.init(context); // M3: its bindings exist from the first draw
 		} catch (Throwable e) {
 			// Nothing to bind: the shaded pipelines can't be helped, but at least vanilla's face shade comes back.
 			failed = true;
@@ -172,6 +174,7 @@ public final class ShadeBindings {
 		if (state == 0) return;
 		ShadeNative.bind(enc);
 		if (ShadeWater.ON) ShadeWater.bind(ctx, enc);
+		if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.bind(enc);
 	}
 
 	/**

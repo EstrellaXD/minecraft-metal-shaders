@@ -1,0 +1,481 @@
+/*
+ * Copyright 2026 mcopt-shade contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package mcopt.metal.shade.light;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import mcopt.metal.shade.Shade;
+import mcopt.metal.shade.ShadeMsl;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.animal.squid.GlowSquid;
+import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.monster.Blaze;
+import net.minecraft.world.entity.monster.cubemob.MagmaCube;
+import net.minecraft.world.entity.projectile.FireworkRocketEntity;
+import net.minecraft.world.entity.projectile.arrow.SpectralArrow;
+import net.minecraft.world.entity.projectile.hurtingprojectile.DragonFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
+import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
+
+/**
+ * Dynamic lights (M3): what moves and glows lights its surroundings in real time — the torch in the player's hand (either
+ * hand), other players and mobs holding luminous items, dropped luminous items, burning mobs, blazes, magma cubes, glow
+ * squid, fire and spectral arrows, fireballs, lit TNT, furnace minecarts, fireworks, lightning (dynlight.metal has the
+ * shading model and bindings, DYNLIGHTS.md the integration).
+ *
+ * <p>Per frame, at LevelRenderer.render HEAD (ShadeFrameUpdater, after the frame's globals are published): gather the
+ * sources within {@link DynLightConfig#RANGE} blocks, fade each in and out (keyed by entity and hand), flicker fire, keep
+ * the {@link DynLightConfig#MAX} strongest (the local player's hands first), give the nearest ones a visibility volume,
+ * write lights + the light grid into this frame's ring slot (buffer 24), refresh the block occupancy and encode the
+ * visibility kernel before the world passes. Render thread only.
+ */
+public final class DynLights {
+	/** The module is compiled into the shaders and bound (static final: off, every hook is dead code). */
+	public static final boolean ON = DynLightConfig.ENABLED;
+	/** The local player's packed light follows what it holds (DynLightEntityRendererMixin). */
+	public static final boolean HAND_LIGHT = ON && DynLightConfig.HAND;
+	static final int MAX = 64, GRID_X = 16, GRID_Y = 12, GRID_Z = 16, CELL = 8;
+	/** ShadeDynLights (dynlight.metal): header 64 + lights 64 x 48 + cells 3072 x 8. */
+	static final int LIGHTS_OFFSET = 64, CELLS_OFFSET = LIGHTS_OFFSET + MAX * 48, BYTES = CELLS_OFFSET + GRID_X * GRID_Y * GRID_Z * 8;
+	private static final int RING = 4, VIS_PARAMS = 16 + 64 * 32;
+	/** Fade time constants (s): quick to light up, a little slower to go out. */
+	private static final float TAU_IN = 0.06f, TAU_OUT = 0.18f;
+
+	private static long state;
+	private static boolean failed;
+	private static final ByteBuffer[] ring = new ByteBuffer[RING];
+	private static int slot;
+	private static Occupancy occupancy;
+	private static long visParams;
+	private static final Map<Long, Src> SOURCES = new HashMap<>();
+	private static final ArrayList<Src> ACTIVE = new ArrayList<>();
+	private static final long[] cells = new long[GRID_X * GRID_Y * GRID_Z];
+	private static long lastNanos, lastLog;
+	private static int frame;
+	private static float time;
+	private static double camX, camY, camZ;
+	/** The local player's hand light this frame (absolute world position, reach, rgb tint x intensity) for the CPU query. */
+	private static int volumesLastFrame;
+	private static long cpuNanos;
+
+	/** One light source, keyed by entity id and kind (hands, fire, body, item). */
+	static final class Src {
+		final long key;
+		double x, y, z;
+		float reach, r, g, b, spec;
+		boolean fire, seen, hand;
+		float cur, target, seed, score;
+		int slab = -1;
+
+		Src(long key) {
+			this.key = key;
+			this.seed = (float) ((key * 0x9E3779B97F4A7C15L >>> 40) & 0xFFFF) / 6553.6f;
+		}
+	}
+
+	private DynLights() {
+	}
+
+	/** Binds this frame's lights and the visibility volumes (ShadeBindings.bind / rebind). */
+	public static void bind(long enc) {
+		if (state != 0) DynLightNative.bind(enc);
+	}
+
+	/**
+	 * Creates the buffers, the occupancy and the visibility kernel (ShadeBindings.init, so the bindings exist before any shaded
+	 * pipeline draws). False when it failed (logged once).
+	 */
+	public static boolean init(long ctx) {
+		if (state != 0) return true;
+		if (failed) return false;
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			ByteBuffer src = MemoryUtil.memUTF8(ShadeMsl.resource("dynlight_vis.metal"));
+			try {
+				long err = stack.nmalloc(1, 4096);
+				MemoryUtil.memPutByte(err, (byte) 0);
+				state = DynLightNative.create(ctx, MemoryUtil.memAddress(src), BYTES, RING, Math.max(1, DynLightConfig.VOLUMES), Occupancy.BYTES, err, 4096);
+				if (state == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
+			} finally {
+				MemoryUtil.memFree(src);
+			}
+			for (int i = 0; i < RING; i++) ring[i] = MemoryUtil.memByteBuffer(DynLightNative.contents(state, i), BYTES).order(ByteOrder.LITTLE_ENDIAN);
+			occupancy = new Occupancy(MemoryUtil.memByteBuffer(DynLightNative.contents(state, -1), Occupancy.BYTES).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer());
+			visParams = MemoryUtil.nmemCalloc(1, VIS_PARAMS);
+			System.out.println("[mcopt] shade: dynamic lights on (" + DynLightConfig.describe() + ")");
+			return true;
+		} catch (Throwable e) {
+			failed = true;
+			state = 0;
+			System.out.println("[mcopt] shade: dynamic lights failed to start, off: " + e);
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	// ---- the CPU side of a frame ----------------------------------------------------------------------------------------
+
+	/**
+	 * This frame's lights: gather, fade, pick, pack into the next ring slot (bound from now on), refresh the occupancy and
+	 * encode the visibility volumes (enc's frame command buffer, before the world passes).
+	 */
+	public static void frame(long ctx, long enc, CameraRenderState camera, ClientLevel level, float partial) {
+		if (!init(ctx)) return;
+		long t0 = System.nanoTime();
+		float dt = lastNanos == 0 ? 0f : Math.min((t0 - lastNanos) / 1e9f, 0.25f);
+		lastNanos = t0;
+		time = (time + dt) % 4096f;
+		frame++;
+		camX = camera.pos.x;
+		camY = camera.pos.y;
+		camZ = camera.pos.z;
+		slot = (slot + 1) % RING;
+		DynLightNative.slot(state, slot);
+		ByteBuffer b = ring[slot];
+
+		if (occupancy != null && DynLightConfig.OCCLUSION) occupancy.update(level, camX, camY, camZ, DynLightConfig.OCC_BUDGET_US * 1000L);
+		for (Src s : SOURCES.values()) s.seen = false;
+		if (level != null) gather(level, camera, partial);
+		// fade: toward 1 while seen, toward 0 once gone; drop what has faded out
+		float kin = dt <= 0f ? 1f : 1f - (float) Math.exp(-dt / TAU_IN), kout = dt <= 0f ? 1f : 1f - (float) Math.exp(-dt / TAU_OUT);
+		ACTIVE.clear();
+		for (Iterator<Src> it = SOURCES.values().iterator(); it.hasNext();) {
+			Src s = it.next();
+			s.target = s.seen ? 1f : 0f;
+			s.cur += (s.target - s.cur) * (s.target > s.cur ? kin : kout);
+			if (!s.seen && s.cur < 0.01f) {
+				it.remove();
+				continue;
+			}
+			double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
+			s.score = s.cur * s.reach / (1f + (float) (dx * dx + dy * dy + dz * dz) / 256f) + (s.hand ? 1000f : 0f);
+			s.slab = -1;
+			ACTIVE.add(s);
+		}
+		ACTIVE.sort((p, q) -> Float.compare(q.score, p.score));
+		int count = Math.min(ACTIVE.size(), DynLightConfig.MAX);
+
+		// visibility volumes: the strongest lights near enough for the occupancy window
+		int volumes = 0;
+		if (DynLightConfig.OCCLUSION && occupancy != null) {
+			for (int i = 0; i < count && volumes < DynLightConfig.VOLUMES; i++) {
+				Src s = ACTIVE.get(i);
+				double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
+				if (Math.abs(dx) > DynLightConfig.VOLUME_RANGE || Math.abs(dy) > DynLightConfig.VOLUME_RANGE || Math.abs(dz) > DynLightConfig.VOLUME_RANGE) continue;
+				if (s.reach > 16f) continue; // lightning and other wide flashes: open sky anyway
+				int ox = (int) Math.floor(s.x) - 16, oy = (int) Math.floor(s.y) - 16, oz = (int) Math.floor(s.z) - 16;
+				long p = visParams + 16 + volumes * 32L;
+				MemoryUtil.memPutInt(p, ox);
+				MemoryUtil.memPutInt(p + 4, oy);
+				MemoryUtil.memPutInt(p + 8, oz);
+				MemoryUtil.memPutInt(p + 12, volumes);
+				MemoryUtil.memPutFloat(p + 16, (float) (s.x - ox));
+				MemoryUtil.memPutFloat(p + 20, (float) (s.y - oy));
+				MemoryUtil.memPutFloat(p + 24, (float) (s.z - oz));
+				MemoryUtil.memPutFloat(p + 28, s.reach);
+				s.slab = volumes++;
+			}
+		}
+		MemoryUtil.memPutInt(visParams, volumes);
+		volumesLastFrame = volumes;
+
+		// header
+		int gx0 = Math.floorDiv((int) Math.floor(camX) + 4, CELL) * CELL - GRID_X * CELL / 2;
+		int gy0 = Math.floorDiv((int) Math.floor(camY) + 4, CELL) * CELL - GRID_Y * CELL / 2;
+		int gz0 = Math.floorDiv((int) Math.floor(camZ) + 4, CELL) * CELL - GRID_Z * CELL / 2;
+		b.putInt(0, count).putInt(4, volumes).putInt(8, frame).putInt(12, 0);
+		b.putFloat(16, (float) (gx0 - camX)).putFloat(20, (float) (gy0 - camY)).putFloat(24, (float) (gz0 - camZ)).putFloat(28, 1f / CELL);
+		b.putFloat(32, Math.max(1, DynLightConfig.VOLUMES)).putFloat(36, DynLightConfig.STRENGTH).putFloat(40, DynLightConfig.SPEC).putFloat(44, DynLightConfig.ENTITY);
+		Src hand = count > 0 && ACTIVE.get(0).hand ? ACTIVE.get(0) : null;
+		if (hand != null) {
+			b.putFloat(48, (float) (hand.x - camX)).putFloat(52, (float) (hand.y - camY)).putFloat(56, (float) (hand.z - camZ)).putFloat(60, hand.reach);
+		} else {
+			b.putFloat(48, 0f).putFloat(52, 0f).putFloat(56, 0f).putFloat(60, 0f);
+		}
+		// lights + grid
+		java.util.Arrays.fill(cells, 0L);
+		for (int i = 0; i < count; i++) {
+			Src s = ACTIVE.get(i);
+			float flick = s.fire && DynLightConfig.FLICKER ? flicker(s.seed) : 1f;
+			float k = s.cur * flick;
+			int at = LIGHTS_OFFSET + i * 48;
+			float rx = (float) (s.x - camX), ry = (float) (s.y - camY), rz = (float) (s.z - camZ);
+			b.putFloat(at, rx).putFloat(at + 4, ry).putFloat(at + 8, rz).putFloat(at + 12, s.reach);
+			b.putFloat(at + 16, s.r * k).putFloat(at + 20, s.g * k).putFloat(at + 24, s.b * k).putFloat(at + 28, s.spec);
+			if (s.slab >= 0) {
+				int ox = (int) Math.floor(s.x) - 16, oy = (int) Math.floor(s.y) - 16, oz = (int) Math.floor(s.z) - 16;
+				b.putFloat(at + 32, (float) (ox - camX)).putFloat(at + 36, (float) (oy - camY)).putFloat(at + 40, (float) (oz - camZ)).putFloat(at + 44, s.slab);
+			} else {
+				b.putFloat(at + 32, 0f).putFloat(at + 36, 0f).putFloat(at + 40, 0f).putFloat(at + 44, -1f);
+			}
+			// cells the light's sphere reaches (its bounding box, clamped to the grid)
+			int x0 = clamp((int) Math.floor((s.x - s.reach - gx0) / CELL), GRID_X), x1 = clamp((int) Math.floor((s.x + s.reach - gx0) / CELL), GRID_X);
+			int y0 = clamp((int) Math.floor((s.y - s.reach - gy0) / CELL), GRID_Y), y1 = clamp((int) Math.floor((s.y + s.reach - gy0) / CELL), GRID_Y);
+			int z0 = clamp((int) Math.floor((s.z - s.reach - gz0) / CELL), GRID_Z), z1 = clamp((int) Math.floor((s.z + s.reach - gz0) / CELL), GRID_Z);
+			if (x0 < 0 || y0 < 0 || z0 < 0) continue;
+			long bit = 1L << i;
+			for (int y = y0; y <= y1; y++) {
+				for (int z = z0; z <= z1; z++) {
+					for (int x = x0; x <= x1; x++) cells[(y * GRID_Z + z) * GRID_X + x] |= bit;
+				}
+			}
+		}
+		b.position(CELLS_OFFSET);
+		b.asLongBuffer().put(cells);
+		b.position(0);
+		// lights that fall off the list keep the cells' bits clear; unused light slots are never named by a cell
+		if (volumes > 0) DynLightNative.vis(enc, state, visParams, VIS_PARAMS, volumes);
+		cpuNanos = System.nanoTime() - t0;
+		if (DynLightConfig.LOG && t0 - lastLog > 2_000_000_000L) {
+			lastLog = t0;
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: dynamic lights %d (of %d sources), %d volumes, cpu %.3f ms (occupancy %.3f ms, %d sections filled, %d waiting)",
+				count, SOURCES.size(), volumes, cpuNanos / 1e6, occupancy == null ? 0 : occupancy.nanosLastFrame / 1e6, occupancy == null ? 0 : occupancy.filledLastFrame,
+				occupancy == null ? 0 : occupancy.pending));
+		}
+	}
+
+	/** -1 below the grid (the light is skipped), else the cell index clamped to n - 1. */
+	private static int clamp(int c, int n) {
+		return c < -64 ? -1 : Math.max(0, Math.min(n - 1, c));
+	}
+
+	/** A gentle flame flicker around 1 (three incommensurate sines per light). */
+	private static float flicker(float seed) {
+		float t = time;
+		return 1f + 0.075f * (0.5f * (float) Math.sin(t * 9.7f + seed) + 0.3f * (float) Math.sin(t * 15.3f + seed * 2.1f)
+			+ 0.2f * (float) Math.sin(t * 23.9f + seed * 4.3f));
+	}
+
+	private static Src source(long key) {
+		Src s = SOURCES.get(key);
+		if (s == null) {
+			s = new Src(key);
+			SOURCES.put(key, s);
+		}
+		s.seen = true;
+		return s;
+	}
+
+	private static void set(Src s, double x, double y, double z, float level, float[] tint, float intensity, boolean fire) {
+		s.x = x;
+		s.y = y;
+		s.z = z;
+		s.reach = level;
+		s.r = tint[0] * intensity;
+		s.g = tint[1] * intensity;
+		s.b = tint[2] * intensity;
+		s.fire = fire;
+		s.spec = 1f;
+	}
+
+	private static void set(Src s, double x, double y, double z, DynLightTable.Def d, float scale) {
+		s.x = x;
+		s.y = y;
+		s.z = z;
+		s.reach = d.level() * scale;
+		s.r = d.r();
+		s.g = d.g();
+		s.b = d.b();
+		s.fire = d.fire();
+		s.spec = 1f;
+	}
+
+	private static final int KIND_MAIN = 0, KIND_OFF = 1, KIND_BODY = 2, KIND_FIRE = 3;
+
+	private static long key(Entity e, int kind) {
+		return (long) e.getId() << 3 | kind;
+	}
+
+	private static void gather(ClientLevel level, CameraRenderState camera, float partial) {
+		Minecraft mc = Minecraft.getInstance();
+		LocalPlayer player = mc.player;
+		boolean firstPerson = camera.isFirstPerson && player != null && mc.getCameraEntity() == player;
+		double range = DynLightConfig.RANGE, range2 = range * range;
+		if (player != null && DynLightConfig.HAND && !player.isSpectator()) {
+			hands(player, partial, firstPerson ? camera : null);
+		}
+		if (!DynLightConfig.OTHERS) return;
+		for (Entity e : level.entitiesForRendering()) {
+			if (e == player && (firstPerson || player.isSpectator())) {
+				if (e.displayFireAnimation()) fire(e, partial); // burning: the player's own fire lights the scene too
+				continue;
+			}
+			Vec3 p = e.getPosition(partial);
+			double dx = p.x - camX, dy = p.y - camY, dz = p.z - camZ;
+			if (dx * dx + dz * dz > range2 || Math.abs(dy) > 40) continue;
+			if (e instanceof ItemEntity item) {
+				DynLightTable.Def d = DynLightTable.of(item.getItem());
+				if (d.level() > 0) set(source(key(e, KIND_BODY)), p.x, p.y + 0.3, p.z, d, 1f);
+			} else if (e instanceof ItemFrame frame) {
+				DynLightTable.Def d = DynLightTable.of(frame.getItem());
+				if (d.level() > 0) set(source(key(e, KIND_BODY)), p.x, p.y, p.z, d, 0.85f);
+			} else if (e instanceof LivingEntity living) {
+				if (e == player) hands(player, partial, null);
+				else if (!living.isInvisible() || living.isOnFire()) heldBy(living, partial);
+				if (e instanceof Blaze) {
+					set(source(key(e, KIND_BODY)), p.x, p.y + e.getBbHeight() * 0.55, p.z, 12, DynLightTable.BLAZE, 1f, true);
+				} else if (e instanceof MagmaCube cube) {
+					set(source(key(e, KIND_BODY)), p.x, p.y + e.getBbHeight() * 0.5, p.z, Math.min(6 + 2 * cube.getSize(), 13), DynLightTable.MAGMA, 0.9f, false);
+				} else if (e instanceof GlowSquid squid && squid.getDarkTicksRemaining() <= 0) {
+					set(source(key(e, KIND_BODY)), p.x, p.y + e.getBbHeight() * 0.5, p.z, 7, DynLightTable.SQUID, 0.7f, false);
+				}
+			} else if (e instanceof SpectralArrow) {
+				set(source(key(e, KIND_BODY)), p.x, p.y, p.z, 8, DynLightTable.SPECTRAL, 0.8f, false);
+			} else if (e instanceof DragonFireball) {
+				set(source(key(e, KIND_BODY)), p.x, p.y, p.z, 12, DynLightTable.DRAGON, 1f, true);
+			} else if (e instanceof LargeFireball) {
+				set(source(key(e, KIND_BODY)), p.x, p.y, p.z, 14, DynLightTable.FIRE, 1.1f, true);
+			} else if (e instanceof SmallFireball) {
+				set(source(key(e, KIND_BODY)), p.x, p.y, p.z, 11, DynLightTable.FIRE, 1f, true);
+			} else if (e instanceof PrimedTnt tnt) {
+				// vanilla flashes the block white every 10 ticks, faster near the end: the light pulses with it
+				float fuse = tnt.getFuse() - partial + 1f;
+				float pulse = fuse / 5f % 2f < 1f ? 1f : 0.35f;
+				set(source(key(e, KIND_BODY)), p.x, p.y + 0.5, p.z, 11, DynLightTable.FLASH, pulse, false);
+			} else if (e instanceof FireworkRocketEntity) {
+				set(source(key(e, KIND_BODY)), p.x, p.y, p.z, 13, DynLightTable.ROCKET, 1.1f, true);
+			} else if (e instanceof LightningBolt) {
+				set(source(key(e, KIND_BODY)), p.x, p.y + 4, p.z, 15, DynLightTable.LIGHTNING, 3f, false);
+			} else if (e instanceof EndCrystal) {
+				set(source(key(e, KIND_BODY)), p.x, p.y + 1, p.z, 10, DynLightTable.CRYSTAL, 0.9f, false);
+			} else if (e instanceof AbstractMinecart cart) {
+				int emission = cart.getDisplayBlockState().getLightEmission();
+				if (emission > 0) set(source(key(e, KIND_BODY)), p.x, p.y + 0.5, p.z, emission, DynLightTable.FIRE, 1f, true);
+			}
+			// anything burning (mobs, players, arrows on fire, minecarts in lava...): fire light at its centre
+			if (e.displayFireAnimation() && !(e instanceof Blaze)) fire(e, partial);
+		}
+	}
+
+	private static void fire(Entity e, float partial) {
+		Vec3 p = e.getPosition(partial);
+		float size = Math.max(e.getBbWidth(), e.getBbHeight());
+		set(source(key(e, KIND_FIRE)), p.x, p.y + e.getBbHeight() * 0.5, p.z, size < 0.6f ? 12 : 15, DynLightTable.FIRE, 1.15f, true);
+	}
+
+	/** A mob's or another player's main / off hand items, at the hands of its model (body yaw, arm side). */
+	private static void heldBy(LivingEntity e, float partial) {
+		ItemStack main = e.getMainHandItem(), off = e.getOffhandItem();
+		DynLightTable.Def dm = DynLightTable.of(main), doff = DynLightTable.of(off);
+		if (dm.level() <= 0 && doff.level() <= 0) return;
+		Vec3 p = e.getPosition(partial);
+		double yaw = Math.toRadians(e.yBodyRotO + (e.yBodyRot - e.yBodyRotO) * partial);
+		double fx = -Math.sin(yaw), fz = Math.cos(yaw), rx = -Math.cos(yaw), rz = -Math.sin(yaw);
+		double h = e.getBbHeight(), w = Math.max(0.3, e.getBbWidth());
+		double side = w * 0.62, fwd = w * 0.45, y = p.y + h * (e.isBaby() ? 0.45 : 0.5);
+		double mainSide = e.getMainArm() == HumanoidArm.RIGHT ? 1 : -1;
+		if (dm.level() > 0) set(source(key(e, KIND_MAIN)), p.x + rx * side * mainSide + fx * fwd, y, p.z + rz * side * mainSide + fz * fwd, dm, 1f);
+		if (doff.level() > 0) set(source(key(e, KIND_OFF)), p.x - rx * side * mainSide + fx * fwd, y, p.z - rz * side * mainSide + fz * fwd, doff, 1f);
+	}
+
+	/**
+	 * The local player's hands: in first person at the visible item (in front of the eye, low, to the side of its arm), in
+	 * third person like any other player's.
+	 */
+	private static void hands(LocalPlayer player, float partial, CameraRenderState fp) {
+		if (fp == null) {
+			heldBy(player, partial);
+			markHands(player);
+			return;
+		}
+		DynLightTable.Def dm = DynLightTable.of(player.getMainHandItem()), doff = DynLightTable.of(player.getOffhandItem());
+		if (dm.level() <= 0 && doff.level() <= 0) return;
+		double yaw = Math.toRadians(fp.yRot), pitch = Math.toRadians(fp.xRot);
+		double cp = Math.cos(pitch);
+		double fx = -Math.sin(yaw) * cp, fy = -Math.sin(pitch), fz = Math.cos(yaw) * cp;
+		double rx = -Math.cos(yaw), rz = -Math.sin(yaw);
+		// up = right x forward
+		double ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;
+		double mainSide = player.getMainArm() == HumanoidArm.RIGHT ? 1 : -1;
+		double cx = fp.pos.x, cy = fp.pos.y, cz = fp.pos.z;
+		if (dm.level() > 0) {
+			double s = 0.42 * mainSide;
+			set(source(key(player, KIND_MAIN)), cx + fx * 0.45 + rx * s - ux * 0.32, cy + fy * 0.45 - uy * 0.32, cz + fz * 0.45 + rz * s - uz * 0.32, dm, 1f);
+		}
+		if (doff.level() > 0) {
+			double s = -0.42 * mainSide;
+			set(source(key(player, KIND_OFF)), cx + fx * 0.45 + rx * s - ux * 0.32, cy + fy * 0.45 - uy * 0.32, cz + fz * 0.45 + rz * s - uz * 0.32, doff, 1f);
+		}
+		markHands(player);
+	}
+
+	private static void markHands(LocalPlayer player) {
+		Src m = SOURCES.get(key(player, KIND_MAIN)), o = SOURCES.get(key(player, KIND_OFF));
+		if (m != null) m.hand = true;
+		if (o != null) o.hand = true;
+	}
+
+	// ---- the CPU query (the local player's packed light) ------------------------------------------------------------------
+
+	/**
+	 * The dynamic block light level (0..15) reaching absolute (x, y, z) from this frame's lights (after the last frame()),
+	 * occluded through the block occupancy: what the local player's first-person hand and body take (the mixin raises their
+	 * packed light to it).
+	 */
+	public static int levelAt(double x, double y, double z) {
+		if (state == 0) return 0;
+		float best = 0f;
+		for (int i = 0, n = Math.min(ACTIVE.size(), DynLightConfig.MAX); i < n; i++) {
+			Src s = ACTIVE.get(i);
+			double dx = s.x - x, dy = s.y - y, dz = s.z - z;
+			double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+			if (d >= s.reach) continue;
+			float lv = (float) (s.reach - Math.max(d, 0.75)) * Math.min(s.cur, 1f) * DynLightConfig.STRENGTH;
+			if (lv <= best) continue;
+			if (!s.hand && occupancy != null && occupancy.blocked(s.x, s.y, s.z, x, y, z)) continue;
+			best = lv;
+		}
+		return Math.min(15, Math.round(best));
+	}
+
+	/** Block changes from the client level (ShadeLightClientLevelMixin). */
+	public static void blockChanged(BlockPos pos, net.minecraft.world.level.block.state.BlockState now) {
+		if (occupancy != null) occupancy.block(pos.getX(), pos.getY(), pos.getZ(), now);
+	}
+
+	public static void sectionChanged(int sx, int sy, int sz) {
+		if (occupancy != null) occupancy.section(sx, sy, sz);
+	}
+
+	public static void sectionsChanged(int x0, int y0, int z0, int x1, int y1, int z1) {
+		if (occupancy == null) return;
+		if ((long) (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 4096) return;
+		for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) occupancy.section(x, y, z);
+	}
+
+	static boolean shadeOn() {
+		return Shade.ENABLED;
+	}
+}

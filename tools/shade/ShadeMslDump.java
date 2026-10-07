@@ -60,6 +60,7 @@ public class ShadeMslDump {
 		// the water module's own passes (wave bake, SSR coarse depth): ShadeWater.library
 		Files.writeString(out.resolve("water_passes.metal"), ShadeMsl.post() + mcopt.metal.shade.water.ShadeWater.prelude());
 		Files.writeString(out.resolve("vl.metal"), mcopt.metal.shade.vl.VlConfig.source()); // volumetric light (mcvl.m)
+		Files.writeString(out.resolve("dynlight_vis.metal"), ShadeMsl.resource("dynlight_vis.metal")); // M3 dynamic lights: visibility kernel (mcdynlight.m)
 		// clouds: own fragment (CloudInfo slot from the defines); vanilla's generated vertex stage comes from a dump if given
 		String s4 = MetalShaderRegistry.slotDefines(List.of("CloudInfo", "Projection", "DynamicTransforms", "Fog"));
 		Files.writeString(out.resolve("clouds.fs.metal"), s4 + ShadeMsl.prelude() + ShadeMsl.resource("clouds.fs.metal"));
@@ -79,6 +80,18 @@ public class ShadeMslDump {
 				for (Path f : files.filter(x -> x.getFileName().toString().endsWith(".fs.metal")).toList()) {
 					Files.writeString(hdrGen.resolve(f.getFileName()), ShadeMsl.hdrFragment(Files.readString(f)));
 				}
+			}
+			// M3: the game's vertex stages with the dynamic lights in their lightmap (DynLightMsl.patch), as their HDR variants get them
+			try (var files = Files.list(Path.of(gen))) {
+				int n = 0;
+				for (Path f : files.filter(x -> x.getFileName().toString().endsWith(".vs.metal")).toList()) {
+					String src = Files.readString(f), patched = mcopt.metal.shade.light.DynLightMsl.patch(src);
+					if (patched != src) {
+						Files.writeString(hdrGen.resolve(f.getFileName()), patched);
+						n++;
+					}
+				}
+				System.out.println("dynamic lights: " + n + " game vertex stages patched");
 			}
 		}
 	}

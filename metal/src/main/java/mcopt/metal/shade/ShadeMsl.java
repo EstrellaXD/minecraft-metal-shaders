@@ -73,7 +73,8 @@ public final class ShadeMsl {
 	 */
 	public static String prelude() {
 		if (prelude == null) {
-			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n";
+			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
+				+ mcopt.metal.shade.light.DynLightMsl.prelude(); // M3 dynamic lights (empty when off)
 		}
 		return prelude;
 	}
@@ -175,7 +176,9 @@ public final class ShadeMsl {
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
 		public String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats) {
-			return registry && hdrTarget(colorFormats) ? "#define MCOPT_HDR\n" + msl : msl;
+			if (!hdrTarget(colorFormats)) return msl;
+			// M3: the game's own world stages (entities, items, block entities, particles) take the dynamic lights in their lightmap
+			return registry ? "#define MCOPT_HDR\n" + msl : mcopt.metal.shade.light.DynLightMsl.patchVertex(pipelineName, msl);
 		}
 
 		@Override

@@ -202,14 +202,18 @@ public final class ShadeVl {
 		}
 
 		boolean fold = look != null && VlConfig.FOLD;
-		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (look != null ? 4 : 0) | (VlConfig.GPU_TIMER ? 8 : 0) | (fold ? 16 : 0);
+		// under TAAU the fold is blended into this frame's jittered world before the resolve, not by the final pass after it
+		// (that one only has the jittered depth of one frame for an image accumulated over many: leaf edges flickered)
+		boolean pre = fold && VlConfig.PRE_RESOLVE && ShadePost.taaDrives();
+		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (look != null ? 4 : 0) | (VlConfig.GPU_TIMER ? 8 : 0) | (fold ? 16 : 0)
+			| (pre ? 32 : 0);
 		if (MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'VL canopy/march/temporal/composite' (" + vw + "x" + vh + ")");
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, ERR, 1);
 			int r = VlNative.render(enc, state, color, depth, MemoryUtil.memAddress0(PARAMS), PARAM_BYTES, vw, vh, lw, lh, flags, err, ERR);
 			if (r != 0) throw new IllegalStateException("volumetric light: " + MemoryUtil.memUTF8(err));
 		}
-		if (fold && !FOLD_SKIP) {
+		if (fold && !pre && !FOLD_SKIP) {
 			VlNative.outputs(state, OUTPUTS_OUT);
 			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), VlConfig.DIST, (float) lw / vw,
 				(float) lh / vh);
@@ -379,10 +383,12 @@ public final class ShadeVl {
 		put(b, lr, lg, lb, canopyMist);                                                  // light
 		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
 		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) : 0f, VlConfig.SS_TAPS, onScreen, 6f);
-		put(b, sx, sy, 0f, 0f);                                                          // sunPx
+		put(b, sx, sy, VlConfig.TEMPORAL ? VlConfig.STILL : 0f, VlConfig.BOX3 ? 1f : 0f); // sunPx; z still view's clamp allowance, w 3x3 box
 		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
-		put(b, VlConfig.TEMPORAL ? 0.9f : 0f, reset ? 1f : 0f, frame & 1023, f.gameTimeSeconds); // temporal
+		// temporal; w: the caustics' clock = the water's (real time with mcopt.shade.waterClock: the game time jumps when the
+		// client's tick clock is corrected, and the shafts under water jerked with it)
+		put(b, VlConfig.TEMPORAL ? 0.9f : 0f, reset ? 1f : 0f, frame & 1023, f.waterTime);
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
 		put(b, 0.7f, hdr ? 2.4f : 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps

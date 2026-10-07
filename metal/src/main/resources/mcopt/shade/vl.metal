@@ -50,7 +50,9 @@ struct VlParams {
 	float4 haze;      //  48 x haze base y (camera-relative), y haze scale height, z isotropic share, w back-lobe share
 	float4 light;     //  64 rgb light colour (linear irradiance / pi, art-graded, pre-exposure), w canopy mist sigma_s at canopy 1 (1/block)
 	float4 crep;      //  80 x screen-space ray strength (0 = off), y taps, z on-screen weight of the light, w angular falloff
-	float4 sunPx;     //  96 xy the light's position in full-res target pixels (Metal rows), zw 0
+	float4 sunPx;     //  96 xy the light's position in full-res target pixels (Metal rows), z history clamp allowance of a still
+	                  //     view (share of the neighbourhood mean; 0 = the plain clamp, M2.1), w 1 = the clamp box over the
+	                  //     3x3 neighbourhood (M2.2; 0 = the filter's plus, M2.1)
 	float4 water;     // 112 rgb extinction under water (1/block), w scattering (1/block)
 	float4 water2;    // 128 x surface y (camera-relative), y underwater (0/1), z max distance under water, w caustic strength
 	float4 temporal;  // 144 x history weight, y reset (1 = drop history), z frame index, w time (s, wraps)
@@ -130,12 +132,14 @@ static inline half vlCausticWeb(half2 p, half4 tp, half tp4) {
 	return r * r;
 }
 static inline void vlCausticPhases(float t, thread half4 &a, thread half &a4, thread half4 &b, thread half &b4) {
+	// t = the water's clock (ShadeFrame.waterTime: real time, wrapped every 4096 s); every speed is a whole number of turns per
+	// 4096 s (about 0.83, 0.71, 0.9, 1.05, 0.6 rad/s and 1.3x those), so the wrap is seamless
 	const float TAU = 6.2831853;
-	float4 k = float4(0.83, 0.71, 0.9, 1.05);
-	a = half4(fmod(t * k, TAU));
-	a4 = half(fmod(t * 0.6, TAU));
-	b = half4(fmod(t * 1.3 * k, TAU));
-	b4 = half(fmod(t * 0.78, TAU));
+	float s = t * (1.0 / 4096.0);
+	a = half4(TAU * fract(s * float4(541.0, 463.0, 587.0, 684.0)));
+	a4 = half(TAU * fract(s * 391.0));
+	b = half4(TAU * fract(s * float4(703.0, 602.0, 763.0, 890.0)));
+	b4 = half(TAU * fract(s * 508.0));
 }
 static inline half vlCaustic(float2 q, half4 ta, half ta4, half4 tb, half tb4) {
 	half broad = 0.25h + 3.6h * vlCausticWeb(half2(q * 0.22), ta, ta4);
@@ -381,6 +385,18 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 			mx = max(mx, float3(s.rgb));
 		}
 	}
+	// M2.2: the clamp box over the full 3x3 again (as before M2's review), only the filter stays a plus: the plus's box
+	// was so tight that the history snapped to each frame's noise (shafts flickering at leaf edges)
+	if (p.sunPx.w > 0.0) {
+		const int2 diag[4] = {int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
+		for (int k = 0; k < 4; k++) {
+			half4 s = raw.read(uint2(clamp(px + diag[k], int2(0), hi)));
+			if (abs(float(s.a) - d) < 1.05 * (0.03 * d + 0.3)) { // the plus's depth tolerance (its w > 0.35)
+				mn = min(mn, float3(s.rgb));
+				mx = max(mx, float3(s.rgb));
+			}
+		}
+	}
 	float3 cur = sum / wsum;
 	if (p.temporal.y > 0.5) return half4(half3(cur), half(d));
 	// reproject: this pixel's point in last frame's clip space
@@ -402,6 +418,17 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	if (!valid) return half4(half3(cur), half(d));
 	// widen the box a little (the march is noisy; a tight box would flicker)
 	float3 mid = 0.5 * (mn + mx), ext = 0.5 * (mx - mn) * 1.35 + 0.002 * (abs(mid) + 0.001);
+	// Still view (M2.2): the march's jitter is coherent (one step offset for the whole frame, so neighbouring rays sample the same
+	// depths and the shadow fetches stay in cache): its error is the same for a texel and its neighbours, so the box above,
+	// built from this frame's neighbours, moves with it and clamps the history onto this frame's noise. The shafts through
+	// leaf gaps, the dark sky rays and the screen-space streaks then changed every frame (flicker, wobble). Where the history
+	// lands on this texel (the reprojection moved it less than ~1 VL pixel) the box widens by a share of its mean, so the
+	// history can average the jitter out; under motion the plain box (no ghosting).
+	if (p.sunPx.z > 0.0) {
+		float2 moved = puv * p.size.zw / scale - in.position.xy;
+		float still = 1.0 - smoothstep(0.75, 2.0, length(moved));
+		ext += still * p.sunPx.z * (abs(mid) + 0.5 * (mx - mn));
+	}
 	float3 hc = clamp(float3(h.rgb), mid - ext, mid + ext);
 	return half4(half3(mix(cur, hc, p.temporal.x)), half(d));
 }
@@ -548,6 +575,74 @@ fragment half4 vl_composite_hdr(VlOut in [[stage_in]], constant ShadeFrame &f [[
 	if (p.gate.w == 2.0) return half4(half3(saturate(dist / p.shape.y) * 0.5), 0.0h);  // debug: marched distance
 	if (p.gate.w == 3.0) return half4(half3(T * 0.5h), 0.0h);                          // debug: canopy mist transmittance
 	return half4(min(light, half3(30000.0h)), T);
+}
+
+// M2 fold under TAAU (flag 32): the fold's light + T blended into this frame's jittered internal-resolution HDR world, BEFORE
+// the TAAU resolve, with the depth that frame was drawn with. The final pass (after the resolve) only has this frame's
+// jittered depth for an image accumulated over many jitter offsets: where a leaf edge crossed a pixel, its depth flipped
+// between leaf and sky from frame to frame while the resolved colour stayed a steady blend, so the shafts, the canopy-mist
+// veil and the dark sky rays switched on and off there every frame (god rays "flickering at the leaf edges"). Here the
+// light belongs to the same samples as the scene and the TAAU resolve accumulates it like any other shading. Same maths as
+// shade_post.metal shade_final (shadeVlUpsample + the 55 % floor of the sky's dark rays); programmable blending (dst =
+// the HDR scene, any of its formats), exposure = ShadeGpu.exposure.x like the final pass.
+// Bindings: lightT texture(0) (rgb light before exposure, a T), depth texture(1), the VL history texture(2) (a = distance).
+fragment half4 vl_composite_pre(VlOut in [[stage_in]], half4 dst [[color(0)]], constant ShadeFrame &f [[buffer(16)]],
+                                constant ShadeGpu &g [[buffer(18), function_constant(VL_HDR)]], constant VlParams &p [[buffer(0)]],
+                                texture2d<half> lightT [[texture(0)]], depth2d<float> depth [[texture(1)]],
+                                texture2d<half> hist [[texture(2)]]) {
+	constexpr sampler lin(filter::linear, address::clamp_to_edge);
+	uint2 px = uint2(in.position.xy);
+	float2 ndc = in.position.xy / p.size.zw * 2.0 - 1.0;
+	float d = depth.read(px);
+	float dist = vlDistance(ndc, d, f);
+	// the live part of the VL targets (allocated for the largest render scale): size.xy of a width x height texture
+	float2 tex = float2(lightT.get_width(), lightT.get_height());
+	float2 uvScale = p.size.xy / tex;
+	float2 uv = min(in.position.xy / p.size.zw * uvScale, uvScale - 0.5 / tex);
+	float2 lp = in.position.xy * (p.size.xy / p.size.zw) - 0.5;
+	float2 fl = floor(lp);
+	half2 fr = half2(lp - fl);
+	int2 base = int2(fl), hi = int2(p.size.xy) - 1;
+	half invTol = half(1.0 / (0.04 * dist + 0.15));
+	half hd = half(min(dist, 3e4));
+	half4 v;
+	// the four distances of the bilinear footprint in one fetch (gather order: (0,1) (1,1) (1,0) (0,0)); when all of them are
+	// at this pixel's depth (most of the screen) one hardware-filtered sample does it
+	half4 dd = hist.gather(lin, uv, int2(0), component::w);
+	if (all(abs(dd - hd) * invTol < 0.5h)) {
+		v = lightT.sample(lin, uv);
+	} else {
+		half4 sum = 0.0h, bestC = half4(0.0h, 0.0h, 0.0h, 1.0h);
+		half wsum = 0.0h, best = 6e4h, bestD = 1.0h;
+		for (int j = 0; j <= 1; j++) {
+			for (int i = 0; i <= 1; i++) {
+				half4 s = lightT.read(uint2(clamp(base + int2(i, j), int2(0), hi)));
+				half sd = j == 0 ? (i == 0 ? dd.w : dd.z) : (i == 0 ? dd.x : dd.y);
+				half bw = (i == 0 ? 1.0h - fr.x : fr.x) * (j == 0 ? 1.0h - fr.y : fr.y) + 1e-3h;
+				half diff = abs(sd - hd);
+				half x = diff * invTol;
+				half w = bw / (1.0h + x * x * (1.0h + x));
+				sum += s * w;
+				wsum += w;
+				if (diff < best) {
+					best = diff;
+					bestC = s;
+					bestD = sd;
+				}
+			}
+		}
+		if (wsum > 0.02h) {
+			v = sum / wsum;
+		} else {
+			half mD = half(p.shape.y);
+			v = half4(bestC.rgb * saturate((min(hd, mD) + 0.5h) / (min(bestD, mD) + 0.5h)), bestC.a);
+		}
+	}
+	float ex = VL_HDR ? max(g.exposure.x, 1e-6) : 1.0;
+	float3 lit = float3(dst.rgb) * float(v.a);
+	// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
+	float3 c = max(lit + clamp(float3(v.rgb) * ex, -30000.0, 30000.0), lit * 0.55);
+	return half4(half3(min(c, 60000.0)), dst.a);
 }
 
 #endif

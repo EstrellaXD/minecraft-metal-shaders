@@ -155,6 +155,11 @@ public final class ShadePost {
 		return t != null && t.swapped() && t.outputTarget() != null ? t : null;
 	}
 
+	/** Whether TAAU resolves this frame (hooks before the tone map then draw into its jittered internal-resolution world). */
+	public static boolean taaDrives() {
+		return taa() != null;
+	}
+
 	/** This frame's live render size (the TAAU sub-rect of the HDR target, or its whole size). */
 	public static int liveWidth() {
 		return liveWidth;

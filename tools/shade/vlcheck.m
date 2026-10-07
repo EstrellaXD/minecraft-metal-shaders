@@ -50,6 +50,8 @@ int main(int argc, const char **argv) {
 		fail |= build(dev, lib, @"vl_composite", MTLPixelFormatRGBA8Unorm, false);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRG11B10Float, true);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRGBA16Float, true);
+		fail |= build(dev, lib, @"vl_composite_pre", MTLPixelFormatRG11B10Float, true); // M2.2: fold before the TAAU resolve
+		fail |= build(dev, lib, @"vl_composite_pre", MTLPixelFormatRGBA16Float, true);
 		for (int h = 0; h < 2; h++) {
 			bool hdr = h != 0;
 			MTLFunctionConstantValues *fc = [MTLFunctionConstantValues new];

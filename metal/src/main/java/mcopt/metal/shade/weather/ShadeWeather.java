@@ -44,7 +44,8 @@ import mcopt.metal.shade.ShadeMsl;
  * <li>{@code mcopt.shade.weather} (true): the module (false: M2.1's rain, dry surfaces; the shaders are byte-identical to
  * M2.1's except for the unused tint bindings).</li>
  * <li>{@code mcopt.shade.puddles} (true), {@code mcopt.shade.puddleSsr} (preset: false for performance, true otherwise),
- * {@code mcopt.shade.puddleSteps} (8 / 10 / 14 / 20), {@code mcopt.shade.puddleDist} (64 blocks).</li>
+ * {@code mcopt.shade.puddleQuad} (true except ultra: a 2x2 quad shares one ray), {@code mcopt.shade.puddleSteps} (quad: 12 / 16 / 20;
+ * per pixel: 8 / 10 / 14 / 20), {@code mcopt.shade.puddleDist} (64 blocks).</li>
  * <li>{@code mcopt.shade.ripples} (true): raindrop rings on puddles and on water under open sky.</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
  * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
@@ -63,7 +64,11 @@ public final class ShadeWeather {
 	public static final boolean ON = Shade.ENABLED && MODULE;
 	public static final boolean PUDDLES = flag("mcopt.shade.puddles", true);
 	public static final boolean PUDDLE_SSR = PUDDLES && flag("mcopt.shade.puddleSsr", Shade.TIER >= 1);
-	public static final int PUDDLE_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.puddleSteps", new int[] {8, 10, 14, 20}[Shade.TIER]), 4, 48);
+	/** The 2x2 quad shares one reflection ray (each lane marches a quarter of it): default except ultra. */
+	public static final boolean PUDDLE_QUAD = flag("mcopt.shade.puddleQuad", Shade.TIER < 3);
+	/** March steps per ray (quad-shared: split over 4 lanes) + 3 bisection steps. */
+	public static final int PUDDLE_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.puddleSteps", PUDDLE_QUAD ? new int[] {12, 16, 20, 24}[Shade.TIER]
+		: new int[] {8, 10, 14, 20}[Shade.TIER]), 4, 64);
 	public static final float PUDDLE_DIST = Math.clamp(floatFlag("mcopt.shade.puddleDist", 64f), 8f, 256f);
 	public static final boolean RIPPLES = flag("mcopt.shade.ripples", true);
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);
@@ -173,11 +178,21 @@ public final class ShadeWeather {
 
 	/** The MSL in front of the Sodium terrain stages (after ShadeMsl.prelude, before the water module): defines + weather_surface.metal. */
 	public static String prelude() {
+		return prelude(false);
+	}
+
+	/**
+	 * translucent: for the translucent terrain fragment (stained glass, ice: wet, no puddles or puddle reflections; the HDR
+	 * translucent pipeline with the water module is at the edge of what the Metal compiler service builds: more code there
+	 * made it crash with XPC_ERROR_CONNECTION_INTERRUPTED, see WATER_M21.md).
+	 */
+	public static String prelude(boolean translucent) {
 		if (!MODULE) return "";
 		StringBuilder s = new StringBuilder("#define SHADE_WEATHER\n");
-		if (PUDDLES) s.append("#define SHADE_PUDDLES\n");
-		if (PUDDLE_SSR) s.append("#define SHADE_PUDDLE_SSR\n#define SHADE_PUDDLE_STEPS ").append(PUDDLE_STEPS).append('\n')
-			.append("#define SHADE_PUDDLE_DIST ").append(String.format(Locale.ROOT, "%.1f", PUDDLE_DIST)).append('\n');
+		if (PUDDLES && !translucent) s.append("#define SHADE_PUDDLES\n");
+		if (PUDDLE_SSR && !translucent) s.append("#define SHADE_PUDDLE_SSR\n#define SHADE_PUDDLE_STEPS ").append(PUDDLE_STEPS).append('\n')
+			.append("#define SHADE_PUDDLE_DIST ").append(String.format(Locale.ROOT, "%.1f", PUDDLE_DIST)).append('\n')
+			.append(PUDDLE_QUAD ? "#define SHADE_PUDDLE_QUAD\n" : "");
 		if (RIPPLES) s.append("#define SHADE_RIPPLES\n");
 		if (SNOW) s.append("#define SHADE_SNOW_COVER\n");
 		if (LIGHTNING) s.append("#define SHADE_LIGHTNING\n");
@@ -186,7 +201,7 @@ public final class ShadeWeather {
 	}
 
 	static String describe() {
-		return "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps)" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
+		return "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
 			+ ", lightning " + LIGHTNING + ", coloured shadows " + (COLOR_SHADOWS ? COLOR_SHADOW_RES + "^2" : "off");
 	}
 }

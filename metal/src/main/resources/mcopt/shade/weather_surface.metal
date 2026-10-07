@@ -27,6 +27,15 @@
 #ifndef SHADE_PUDDLE_STEPS
 #define SHADE_PUDDLE_STEPS 10
 #endif
+#ifndef SHADE_PUDDLE_DIST
+#define SHADE_PUDDLE_DIST 64.0
+#endif
+// steps per lane: with the quad-shared march each lane takes a quarter of the ray
+#ifdef SHADE_PUDDLE_QUAD
+#define SHADE_PUDDLE_N (SHADE_PUDDLE_STEPS / 4 > 2 ? SHADE_PUDDLE_STEPS / 4 : 2)
+#else
+#define SHADE_PUDDLE_N SHADE_PUDDLE_STEPS
+#endif
 
 constexpr sampler shadeWxLinear(filter::linear, address::clamp_to_edge, coord::normalized);
 constexpr sampler shadeWxNearest(filter::nearest, address::clamp_to_edge, coord::normalized);
@@ -178,13 +187,15 @@ static inline float shadeWxGgx(float3 n, float3 v, float3 l, float alpha) {
 // (ShadeLook.prevViewProjNoJitter, re-based on this frame's camera); 1/w is affine along the projected segment, so the ray's
 // depth at each step is exact. Hits get the base's haze added (prevScene is taken before the final pass adds it). Returns
 // (radiance before exposure, weight); weight 0 = no hit (callers keep their sky reflection).
-static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, float prevExposure, constant ShadeFrame &f, constant ShadeLook &L,
-                             texture2d<half> hist, texture2d<half> histDepth) {
+// One chunk (of `chunks` equal parts) of the march: n steps with a nonlinear spacing (dense near the start), the first crossing
+// refined by 3 bisection steps and checked for thickness. Returns (uv, fade, 1) or w < 0; hitPoint = the camera-relative hit.
+static float4 shadeWxHistMarch(float3 p, float3 r, float maxDist, int chunk, int chunks, float jitter, constant ShadeLook &L,
+                               texture2d<half> histDepth, thread float3 &hitPoint) {
 	float4 c0 = L.prevViewProjNoJitter * float4(p, 1.0);
 	float4 dc = L.prevViewProjNoJitter * float4(r, 0.0);
 	float len = maxDist;
 	if (dc.w < 0.0) len = min(len, (c0.w - 0.2) / -dc.w * 0.9);
-	if (len <= 0.2 || c0.w <= 0.1) return float4(0.0);
+	if (len <= 0.2 || c0.w <= 0.1) return float4(0.0, 0.0, 0.0, -1.0);
 	float4 c1 = c0 + dc * len;
 	float2 s0 = c0.xy / c0.w, s1 = c1.xy / c1.w;
 	float iw0 = 1.0 / c0.w, iw1 = 1.0 / c1.w;
@@ -192,13 +203,14 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 	float tx = d.x > 1e-6 ? (1.0 - s0.x) / d.x : d.x < -1e-6 ? (-1.0 - s0.x) / d.x : 1e6;
 	float ty = d.y > 1e-6 ? (1.0 - s0.y) / d.y : d.y < -1e-6 ? (-1.0 - s0.y) / d.y : 1e6;
 	float tEnd = min(1.0, min(tx, ty));
-	if (tEnd <= 0.0) return float4(0.0);
+	if (tEnd <= 0.0) return float4(0.0, 0.0, 0.0, -1.0);
 	bool screenEnd = tEnd < 1.0;
-	const int N = SHADE_PUDDLE_STEPS;
-	float jitter = shadeNoise(pixel, f.flags2.x);
-	float tPrev = 0.0;
-	for (int i = 1; i <= N; i++) {
-		float u = (float(i) - jitter) / float(N);
+	const int n = SHADE_PUDDLE_N;
+	float inv = 1.0 / float(n * chunks);
+	float u0 = max(float(chunk * n) - jitter, 0.0) * inv;
+	float tPrev = u0 * (0.3 + 0.7 * u0) * tEnd;
+	for (int i = 1; i <= n; i++) {
+		float u = (float(chunk * n + i) - jitter) * inv;
 		float t = u * (0.3 + 0.7 * u) * tEnd;
 		float2 s = s0 + d * t;
 		float wr = 1.0 / mix(iw0, iw1, t);
@@ -228,18 +240,50 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 		float2 edge = smoothstep(0.0, 0.06, min(uv, 1.0 - uv));
 		float fade = edge.x * edge.y * (1.0 - smoothstep(0.6, 1.0, (wrh - wh) / thick));
 		if (!screenEnd) fade *= 1.0 - smoothstep(0.75, 1.0, hi / tEnd);
-		float3 c = float3(hist.sample(shadeWxLinear, uv, level(0.0)).rgb) / prevExposure;
-		// the hit's camera-relative point (screen parameter -> ray parameter: lambda = t / w1 / lerp(1 / w0, 1 / w1, t)), for
-		// the haze the final pass adds on screen
-		float3 ph = p + r * (len * hi * iw1 / mix(iw0, iw1, hi));
-		if (shadeFeature(L, SHADE_FEATURE_HAZE) && f.fogColor.a < 0.5) {
-			float3 T;
-			float3 S = shadeHazeInscatter(ph, f, L, 1.0, T);
-			c = c * T + S;
-		}
-		return float4(c, fade);
+		// screen parameter -> ray parameter: lambda = t / w1 / lerp(1 / w0, 1 / w1, t)
+		hitPoint = p + r * (len * hi * iw1 / mix(iw0, iw1, hi));
+		return float4(uv, fade, 1.0);
 	}
-	return float4(0.0);
+	return float4(0.0, 0.0, 0.0, -1.0);
+}
+
+// Quad reductions by xor shuffles (the lanes of one 2x2 pixel quad of one triangle).
+static inline float shadeWxQuadMax(float v) { v = max(v, quad_shuffle_xor(v, 1)); return max(v, quad_shuffle_xor(v, 2)); }
+static inline float shadeWxQuadMin(float v) { v = min(v, quad_shuffle_xor(v, 1)); return min(v, quad_shuffle_xor(v, 2)); }
+static inline float3 shadeWxQuadSum(float3 v) { v += quad_shuffle_xor(v, 1); return v + quad_shuffle_xor(v, 2); }
+
+// Puddle reflection from last frame's image. Per pixel, or (SHADE_PUDDLE_QUAD) the 2x2 quad traces one ray (its mean origin
+// and direction), each lane marching a quarter of it: half-resolution reflections for a quarter of the cost (the ripples'
+// wobble and TAAU hide the 2x2 blocks). Must be reached in quad-uniform control flow when SHADE_PUDDLE_QUAD is defined.
+// Returns (radiance before exposure, weight); weight 0 = no hit (callers keep their sky reflection).
+static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, float prevExposure, constant ShadeFrame &f, constant ShadeLook &L,
+                             texture2d<half> hist, texture2d<half> histDepth) {
+	float3 hp = float3(0.0);
+#ifdef SHADE_PUDDLE_QUAD
+	float3 pq = shadeWxQuadSum(p) * 0.25;
+	float3 rq = normalize(shadeWxQuadSum(r));
+	uint2 q = uint2(pixel);
+	int chunk = int(q.x & 1u) + 2 * int(q.y & 1u);
+	float4 h = shadeWxHistMarch(pq, rq, maxDist, chunk, 4, shadeNoise(floor(pixel * 0.5), f.flags2.x), L, histDepth, hp);
+	float key = h.w > 0.0 ? float(chunk) : 4.0;
+	float best = shadeWxQuadMin(key);
+	if (best > 3.5) return float4(0.0);
+	bool mine = key == best; // exactly one lane holds the nearest hit
+	float3 a = shadeWxQuadSum(mine ? float3(h.xyz) : float3(0.0));
+	hp = shadeWxQuadSum(mine ? hp : float3(0.0));
+	h = float4(a, 1.0);
+#else
+	float4 h = shadeWxHistMarch(p, r, maxDist, 0, 1, shadeNoise(pixel, f.flags2.x), L, histDepth, hp);
+	if (h.w < 0.0) return float4(0.0);
+#endif
+	float3 c = float3(hist.sample(shadeWxLinear, h.xy, level(0.0)).rgb) / prevExposure;
+	// prevScene is taken before the final pass adds the haze: add it for the hit's distance, as the eye sees it on screen
+	if (shadeFeature(L, SHADE_FEATURE_HAZE) && f.fogColor.a < 0.5) {
+		float3 T;
+		float3 S = shadeHazeInscatter(hp, f, L, 1.0, T);
+		c = c * T + S;
+	}
+	return float4(c, h.z);
 }
 
 // The sky in reflected direction r: the atmosphere LUT, or last frame's rendered sky where r lands on screen and the history
@@ -277,7 +321,13 @@ struct ShadeWetLight {
 static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetLight in, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> lut,
                             sampler lutS, texture2d<half> hist, texture2d<half> histDepth) {
 	half wet = max(w.omega, w.puddle);
+#if defined(SHADE_PUDDLE_SSR) && defined(SHADE_PUDDLE_QUAD)
+	// the quad-shared march needs all four lanes: only a quad without any puddle may leave early
+	bool quadPuddle = shadeWxQuadMax(float(w.puddle)) > 0.02;
+	if (wet <= 0.004h && !quadPuddle) return radiance;
+#else
 	if (wet <= 0.004h) return radiance;
+#endif
 	float dist = length(in.p);
 	float3 v = in.p / max(dist, 1e-4);
 	float3 nf = float3(in.n);
@@ -297,11 +347,16 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// rough films see a blurred sky: toward the sky's mean light (ambientSky ~ irradiance / pi)
 	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, saturate(rough * 1.6)) * open;
 #ifdef SHADE_PUDDLE_SSR
+#ifdef SHADE_PUDDLE_QUAD
+	if (quadPuddle && in.histOk && in.prevExposure > 0.0) { // quad-uniform (histOk, prevExposure: per frame)
+#else
 	if (P > 0.02 && in.histOk && in.prevExposure > 0.0) {
+#endif
 		float4 hit = shadeWxHistSsr(in.p, r, in.pixel, SHADE_PUDDLE_DIST, in.prevExposure, f, L, hist, histDepth);
-		refl = mix(refl, hit.rgb, hit.w);
+		if (P > 0.02) refl = mix(refl, hit.rgb, hit.w);
 	}
 #endif
+	if (wet <= 0.004h) return radiance;
 	// the sun's (or moon's) highlight: a mirror-sharp glint on puddles, a broad sheen on wet ground
 	float a = max(rough * rough, 0.0025);
 	float3 sun = float3(f.sunColor.rgb) * min(shadeWxGgx(n, v, f.lightDirWorld.xyz, a), 60.0) * float(in.shadow)

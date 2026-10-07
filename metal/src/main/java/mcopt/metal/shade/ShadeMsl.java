@@ -103,7 +103,7 @@ public final class ShadeMsl {
 	public static String terrain(String source, boolean water) {
 		// M3 weather (ShadeWeather.prelude: wet surfaces, puddles, ripples, shadow tint) goes in front of every terrain fragment,
 		// before the water module (whose surface uses its ripples)
-		String weather = source.contains("fragment main0_out main0(") ? ShadeWeather.prelude() : "";
+		String weather = source.contains("fragment main0_out main0(") ? ShadeWeather.prelude(source.startsWith(TRANSLUCENT_DEFINE)) : "";
 		if (water && source.startsWith(TRANSLUCENT_DEFINE) && source.contains("fragment main0_out main0(")) return prelude() + weather + ShadeWater.prelude() + source;
 		return prelude() + weather + source;
 	}

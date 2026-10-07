@@ -32,6 +32,8 @@ final class MetalRenderPass implements RenderPassBackend {
 	private final MetalEncoder encoder;
 	private final long enc;
 	private final int areaX, areaY, areaWidth, areaHeight;
+	/** Native shading's dynamic resolution: the full attachment's pixels when this pass draws into a sub-rect (MetalOccPick's key), else 0. */
+	long pickPixels;
 	private @Nullable MetalPipeline pipeline;
 	private final Object[] pending = new Object[MAX_UNIFORMS];
 	private final Object[] bound = new Object[MAX_UNIFORMS];
@@ -98,7 +100,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		boolean terrain = p.pulled != 0 && this.hasDepth, record = terrain && this.encoder.terrain.split;
-		if (terrain) this.encoder.terrain.terrainPixels = (long) this.areaWidth * this.areaHeight;
+		if (terrain) this.encoder.terrain.terrainPixels = this.pickPixels != 0 ? this.pickPixels : (long) this.areaWidth * this.areaHeight;
 		this.flushTerrain(record);
 		if (this.encoder.tracing()) this.encoder.trace("  pipeline", p.name, "after draws:", this.draws, "triangles:", this.indices / 3);
 		if (mcopt.metal.shade.water.ShadeWater.ON && this.hasDepth && !this.waterCaptured && p.name.equals(mcopt.metal.shade.water.ShadeWater.TRANSLUCENT)) {

@@ -69,6 +69,10 @@ public final class ShadeFrame {
 	public int width = 1, height = 1;
 	public float dayTime, gameTimeSeconds, exposure = 0f, partialTick;
 	public float jitterX, jitterY, prevJitterX, prevJitterY;
+	/** TAA render scale for texture gradients (cameraBlock.w; mip bias = log2 of it), 1 at native resolution. */
+	public float mipScale = 1f;
+	/** TAAU render scale this frame (live render size / output size), 1 without TAAU. CPU only (ShadeLook.renderScale). */
+	public float renderScale = 1f;
 	public int dimension = DIM_OVERWORLD, fogType = FOG_AIR, debug;
 	public int frameIndex;
 	public boolean underwater;
@@ -136,7 +140,7 @@ public final class ShadeFrame {
 		this.shadowViewProj[0].get(SHADOW_VIEW_PROJ, b);
 		this.shadowViewProj[1].get(SHADOW_VIEW_PROJ + 64, b);
 		double bx = Math.floor(this.cameraX), by = Math.floor(this.cameraY), bz = Math.floor(this.cameraZ);
-		put4(b, CAMERA_BLOCK, (float) bx, (float) by, (float) bz, 0);
+		put4(b, CAMERA_BLOCK, (float) bx, (float) by, (float) bz, this.mipScale);
 		put4(b, CAMERA_FRACT, (float) (this.cameraX - bx), (float) (this.cameraY - by), (float) (this.cameraZ - bz), (float) (this.cameraY - 63));
 		put4(b, SUN_DIR_WORLD, this.sunDir.x, this.sunDir.y, this.sunDir.z, this.sunDir.y);
 		Vector3f sv = this.view.transformDirection(new Vector3f(this.sunDir));

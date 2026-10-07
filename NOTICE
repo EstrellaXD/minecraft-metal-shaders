@@ -38,3 +38,9 @@ Natural Bloom & Dirty Lens, Copyright (c) 2019 sonicether, MIT License
 (https://github.com/sonicether/SE-Natural-Bloom-Dirty-Lens); the code is an original Metal implementation. The 13-tap
 downsample / tent upsample pyramid follows Jimenez 2014 (public talk); the tone curve follows Lottes 2016 (public talk);
 the integer hash is Chris Wellons' lowbias32 (public domain).
+
+Native shading TAAU (metal/src/main/resources/mcopt/shade/taa.metal): the 5-tap Catmull-Rom history fetch
+(taaCatmullRom) is adapted from Matt Pettineo (MJP), "Bicubic texture filtering with the Catmull-Rom spline in 9 / 5
+taps" (https://gist.github.com/TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1), MIT License, with the corner taps dropped
+as in Jimenez, "Filmic SMAA" (SIGGRAPH 2016). The rest of the resolve is original, after public techniques (Karis 2014,
+Salvi 2016, Yang et al. 2020).

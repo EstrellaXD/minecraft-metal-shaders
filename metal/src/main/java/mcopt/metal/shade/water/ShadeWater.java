@@ -63,8 +63,9 @@ public final class ShadeWater {
 	/** The module is live: shading on and the flag on. The backend's hooks test this static final. */
 	public static final boolean ON = Shade.ENABLED && MODULE;
 	public static final boolean SSR = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssr", "true"));
-	public static final boolean SSR_QUAD = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrQuad", "true"));
-	public static final int SSR_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.ssrSteps", 24), 4, 64);
+	/** Preset defaults (Shade.TIER): quad-shared (half-resolution) SSR except ultra; steps 16 / 24 / 24 / 32 (TAAU integrates the per-frame step jitter). */
+	public static final boolean SSR_QUAD = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrQuad", Shade.TIER >= 3 ? "false" : "true"));
+	public static final int SSR_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.ssrSteps", new int[] {16, 24, 24, 32}[Shade.TIER]), 4, 64);
 	public static final float SSR_DIST = Math.clamp(floatProperty("mcopt.shade.ssrDist", 512f), 8f, 1024f);
 	public static final float WAVES = Math.clamp(floatProperty("mcopt.shade.waterWaves", 1f), 0f, 4f);
 	public static final boolean CAUSTICS = Boolean.parseBoolean(System.getProperty("mcopt.shade.caustics", "true"));
@@ -108,6 +109,11 @@ public final class ShadeWater {
 		if (GLOSSY) b.append("#define SHADE_GLOSSY 1\n");
 		if (SSR_PREV) b.append("#define SHADE_SSR_PREV 1\n");
 		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n");
+		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
+		// jitter changes per frame for the temporal resolve to integrate. The sub-rect mapping is exact without TAAU too
+		// (ShadeFrame.screen = the copy's size then).
+		b.append("#define SHADE_WATER_SUBRECT 1\n");
+		if (mcopt.metal.shade.taa.TaaConfig.ENABLED) b.append("#define SHADE_WATER_TAA 1\n");
 		return b.append(ShadeMsl.resource("water.metal")).append('\n').toString();
 	}
 

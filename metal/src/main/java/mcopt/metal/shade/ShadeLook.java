@@ -193,8 +193,9 @@ public final class ShadeLook {
 	/** Writes the struct (SIZE bytes) at out's position 0. */
 	public void pack(ByteBuffer out, ShadeFrame f) {
 		ByteBuffer b = out.duplicate().order(ByteOrder.LITTLE_ENDIAN);
-		f.viewProj.get(VIEW_PROJ, b);
-		f.prevViewProj.get(PREV_VIEW_PROJ, b);
+		// without the TAA jitter (a translation in clip space: ShadeTaa.jitter), for passes that want a stable raster
+		new Matrix4f().translation(-f.jitterX, -f.jitterY, 0f).mul(f.viewProj).get(VIEW_PROJ, b);
+		new Matrix4f().translation(-f.prevJitterX, -f.prevJitterY, 0f).mul(f.prevViewProj).get(PREV_VIEW_PROJ, b);
 		this.celestial.get(CELESTIAL, b);
 		new Matrix4f().get(CLOUD_SHADOW_VP, b);
 		put4(b, SUN_GEOM, (float) Math.toRadians(ShadeSky.SUN_TILT), SUN_RADIUS, MOON_RADIUS, (float) Math.toRadians(this.elevation));
@@ -217,7 +218,7 @@ public final class ShadeLook {
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
-		put4(b, RENDER_SCALE, 1f, 0f, f.width, f.height);
+		put4(b, RENDER_SCALE, f.renderScale, (float) (Math.log(f.mipScale) / Math.log(2)), f.width, f.height);
 		// at night the meter may brighten less (night stays night: the reference is already lifted for it)
 		float nightUp = EV_UP - (EV_UP - EV_UP_NIGHT) * (1f - smooth(-10f, -2f, this.elevation));
 		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP, TAU_DOWN);

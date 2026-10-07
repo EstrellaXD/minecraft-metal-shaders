@@ -3,7 +3,7 @@
 #
 # Validates every MSL variant native shading compiles at runtime, assembled exactly like MetalPipeline does (slot defines +
 # "#define MCOPT_SHADE" + shade_common.metal + stage, for the plain and pulled terrain vertex stages, all three terrain
-# fragments, the sky pipelines with two uniform orders, the sky LUT pass, the volumetric light passes), plus the upstream terrain MSL:
+# fragments, the sky pipelines with two uniform orders, the sky LUT pass, the volumetric light passes, the TAAU passes), plus the upstream terrain MSL:
 #   1. compile each with the Metal runtime compiler (MSL 3.0, fast math), like mc_library_new;
 #   2. build a real MTLRenderPipelineState per vertex/fragment pair with mcopt's vertex layouts (catches stage interface
 #      mismatches that compiling alone doesn't) and print the bound slots.
@@ -52,5 +52,7 @@ if [ -n "$MCOPT_GEN_DIR" ]; then
 	done
 	echo "OK   $n game fragments converted for the HDR target (ShadeMsl.hdrFragment) compile"
 fi
+# TAAU passes (mctaa.m + taa.metal): both TAA_HDR variants, real resolve + output pipelines
+TMPDIR="$OUT" "$HERE/taatest/run.sh" compile || fail=1
 echo "validate: $([ $fail = 0 ] && echo ALL OK || echo FAILURES) ($OUT)"
 exit $fail

@@ -120,6 +120,14 @@ static inline float3 shadeWaterSceneRadiance(half3 stored, float exposure) {
 // Under dynamic resolution (TAAU) the world draws into the sub-rect (0, 0, render size) of fixed-size targets, and so
 // do the copies: NDC maps to that sub-rect, not to the whole texture. SHADE_WATER_SUBRECT (define it with the TAAU merge,
 // where ShadeFrame.screen.xy is the live render size) switches to it; otherwise the render size is the copy's size.
+// SSR step jitter: still per pixel without TAA (a fixed pattern); with TAA (SHADE_WATER_TAA) it changes every frame and the
+// temporal resolve integrates it into a smooth hit/miss edge instead of the per-quad speckle.
+#ifdef SHADE_WATER_TAA
+#define SHADE_WATER_NOISE_FRAME(f) ((f).flags2.x)
+#else
+#define SHADE_WATER_NOISE_FRAME(f) 0
+#endif
+
 static inline float2 shadeWaterRenderSize(constant ShadeFrame &f, float2 textureSize) {
 #ifdef SHADE_WATER_SUBRECT
 	return min(f.screen.xy, textureSize);
@@ -403,7 +411,7 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	if (!ok) return 0.0;
 	uint2 q = uint2(pixel);
 	int chunk = int(q.x & 1u) + 2 * int(q.y & 1u);
-	float jitter = shadeNoise(floor(pixel * 0.5), 0);
+	float jitter = shadeNoise(floor(pixel * 0.5), SHADE_WATER_NOISE_FRAME(f));
 	float4 hit = shadeSsrMarch(s0, ds, screenEnd, chunk, 4, jitter, f, depth, hz);
 	float key = hit.w >= 0.0 ? float(chunk) : 4.0;
 	float best = shadeQuadMin(key);
@@ -413,7 +421,7 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	return float4(shadeWaterHitColor(h.xy, exposure, prevExposure, f, scene, depth, prev), h.z);
 #else
 	if (!shadeSsrSegment(p0, r, maxDist, f, s0, ds, screenEnd)) return 0.0;
-	float4 hit = shadeSsrMarch(s0, ds, screenEnd, 0, 1, shadeNoise(pixel, 0), f, depth, hz);
+	float4 hit = shadeSsrMarch(s0, ds, screenEnd, 0, 1, shadeNoise(pixel, SHADE_WATER_NOISE_FRAME(f)), f, depth, hz);
 	if (hit.w < 0.0) return 0.0;
 	return float4(shadeWaterHitColor(hit.xy, exposure, prevExposure, f, scene, depth, prev), hit.z);
 #endif

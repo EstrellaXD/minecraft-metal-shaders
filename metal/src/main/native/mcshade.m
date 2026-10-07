@@ -46,6 +46,9 @@ static id<MTLSamplerState> shadowSampler;
 static id<MTLBuffer> lookBuffer;
 static uint64_t lookOffset;
 static id<MTLBuffer> gpuBuffer;
+
+// ShadeGpu for passes encoded elsewhere (mctaa.m's resolve reads the exposure ratio from it); nil before mc_shade_set_m2.
+id<MTLBuffer> mc_shade_gpu_buffer(void) { return gpuBuffer; }
 #define SHADE_RESOURCES 8
 static id<MTLBuffer> resourceBuffer;
 static id<MTLTexture> resourceTextures[SHADE_RESOURCES];

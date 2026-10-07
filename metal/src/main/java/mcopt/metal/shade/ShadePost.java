@@ -57,10 +57,12 @@ public final class ShadePost {
 	 * What a hook gets. enc: the native Enc* (encode with ShadeRender.pass / dispatch, or your own natives on its command
 	 * buffer). scene: this frame's HDR world target (MTLTexture; format hdrFormat; pre-exposed radiance, ShadeGpu.exposure.x);
 	 * prevScene: last frame's (exposure ShadeGpu.exposure.z); depth: the main depth (Depth32Float, reversed Z, world only:
-	 * read before the hand pass clears it). width x height: their size. A hook may draw into scene (load action LOAD).
+	 * read before the hand pass clears it). width x height: the live render size, i.e. the sub-rect (0, 0, width, height) of
+	 * scene and depth that this frame drew (TAAU dynamic resolution: the textures are texWidth x texHeight, allocated once
+	 * at the preset's maximum scale; without TAAU both sizes are equal). A hook may draw into scene (load action LOAD).
 	 */
 	public record Context(long enc, Object encoder, long scene, long prevScene, long depth, int width, int height, int hdrFormat, ShadeFrame frame,
-		ShadeLook look) {
+		ShadeLook look, int texWidth, int texHeight) {
 	}
 
 	/**
@@ -104,8 +106,13 @@ public final class ShadePost {
 	private static long enc;
 	/** Textures waiting for the frames that may still use them to finish: {handle, frame to release at}. */
 	private static final List<long[]> retired = new ArrayList<>();
-	private static final ByteBuffer params = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN);
+	private static final ByteBuffer params = ByteBuffer.allocateDirect(80).order(ByteOrder.LITTLE_ENDIAN);
 	private static boolean loggedDh;
+	/** This frame's live render size (the TAAU sub-rect of the HDR targets; = width x height without TAAU) and world depth. */
+	private static int liveWidth, liveHeight;
+	private static @Nullable GpuTexture worldDepth;
+	/** Bloom's first level: xy the part of its source's uv range that holds the image (the TAAU sub-rect). */
+	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
 	private static long vlLight, vlDist;
 	private static float vlMaxDist;
@@ -129,6 +136,22 @@ public final class ShadePost {
 		vlLight = light;
 		vlDist = dist;
 		vlMaxDist = maxDist;
+	}
+
+	/** TAAU when it drives this frame (on, set up and standing in for the main target), else null. */
+	private static mcopt.metal.shade.taa.@Nullable ShadeTaa taa() {
+		if (!mcopt.metal.shade.taa.ShadeTaa.ON) return null;
+		mcopt.metal.shade.taa.ShadeTaa t = mcopt.metal.shade.taa.ShadeTaa.get();
+		return t != null && t.swapped() && t.outputTarget() != null ? t : null;
+	}
+
+	/** This frame's live render size (the TAAU sub-rect of the HDR target, or its whole size). */
+	public static int liveWidth() {
+		return liveWidth;
+	}
+
+	public static int liveHeight() {
+		return liveHeight;
 	}
 
 	/** Whether world passes are currently redirected into the HDR target. */
@@ -186,11 +209,25 @@ public final class ShadePost {
 		if (w != width || h != height || hdr[0] == 0) resize(w, h);
 		frame++;
 		mainColor = color;
+		worldDepth = main.getDepthTexture();
 		world = true;
 		bridgeOpen = false;
 		bridgeUsed = false;
 		vlLight = vlDist = 0;
-		ShadeRender.resource(1, hdr[(frame + 1) & 1]);
+		liveWidth = w;
+		liveHeight = h;
+		long prevScene = hdr[(frame + 1) & 1];
+		mcopt.metal.shade.taa.ShadeTaa taa = taa();
+		if (taa != null) {
+			// TAAU: the world draws into the live sub-rect; last frame's finished image is the TAA history (output size, whole
+			// texture = the whole view, pre-exposed with last frame's exposure like the HDR target it replaces): SSR's colour
+			// source then never samples a stale border of a larger sub-rect
+			liveWidth = taa.width(w);
+			liveHeight = taa.height(h);
+			long history = taa.history();
+			if (history != 0) prevScene = history;
+		}
+		ShadeRender.resource(1, prevScene);
 		ShadeRender.resource(2, hdr[frame & 1]);
 	}
 
@@ -295,7 +332,7 @@ public final class ShadePost {
 		if (bridgeOpen) closeBridge();
 		if (mainColor == null) return;
 		long scene = hdr[frame & 1], prev = hdr[(frame + 1) & 1];
-		GpuTexture depthTexture = main.getDepthTexture();
+		GpuTexture depthTexture = worldDepth != null ? worldDepth : main.getDepthTexture();
 		long depth = 0;
 		if (depthTexture != null) {
 			MetalBridge.flushClear(encoder, depthTexture);
@@ -304,7 +341,7 @@ public final class ShadePost {
 		ShadeFrame f = ShadeFrameUpdater.FRAME;
 		ShadeLook look = ShadeFrameUpdater.LOOK;
 		if (!BEFORE_TONEMAP.isEmpty()) {
-			Context c = new Context(enc, encoder, scene, prev, depth, width, height, ShadeConfig.HDR_FORMAT, f, look);
+			Context c = new Context(enc, encoder, scene, prev, depth, liveWidth, liveHeight, ShadeConfig.HDR_FORMAT, f, look, width, height);
 			for (Ordered o : List.copyOf(BEFORE_TONEMAP)) {
 				try {
 					o.hook.run(c);
@@ -313,21 +350,44 @@ public final class ShadePost {
 				}
 			}
 		}
-		Resolver r = resolver;
-		if (r != null) {
-			try {
-				long resolved = r.resolve(new Context(enc, encoder, scene, prev, depth, width, height, ShadeConfig.HDR_FORMAT, f, look));
-				if (resolved != 0) scene = resolved;
-			} catch (RuntimeException e) {
-				System.out.println("[mcopt] shade: resolver failed: " + e);
+		// the image bloom starts from: this frame's internal-resolution HDR world (its live sub-rect), also under TAAU
+		// (bible E19: bloom L0 before the upscale, a 0.45x read instead of the output-size history)
+		long bloomSource = scene;
+		float srcU = (float) liveWidth / width, srcV = (float) liveHeight / height;
+		GpuTexture out = mainColor;
+		mcopt.metal.shade.taa.ShadeTaa taa = taa();
+		float sharpen = 0f;
+		if (taa != null && depth != 0) {
+			// TAAU (E18): the jittered internal-resolution world + last frame's history -> this frame's output-size history,
+			// which the final pass tone-maps (sharpened) into the game's real main target, before the hand
+			scene = taa.resolveHdr(scene, depth);
+			out = taa.outputTarget().getColorTexture();
+			sharpen = mcopt.metal.shade.taa.TaaConfig.sharpen(taa.scale());
+		} else {
+			Resolver r = resolver;
+			if (r != null) {
+				try {
+					long resolved = r.resolve(new Context(enc, encoder, scene, prev, depth, liveWidth, liveHeight, ShadeConfig.HDR_FORMAT, f, look, width, height));
+					if (resolved != 0) {
+						scene = resolved;
+						bloomSource = resolved;
+						srcU = srcV = 1f;
+					}
+				} catch (RuntimeException e) {
+					System.out.println("[mcopt] shade: resolver failed: " + e);
+				}
 			}
 		}
+		if (out == null) return;
+		// the bloom pyramid follows the output image (constant under dynamic resolution)
 		if (scene != hdr[frame & 1]) sizeBloom(ShadeRender.width(scene), ShadeRender.height(scene));
 		else sizeBloom(width, height);
 		float bloomNorm = 0f, w0 = 0f;
 		int n = bloomLevels.length;
 		if (n > 0) {
-			pass(psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {scene}, null, "mcopt shade: bloom down 0");
+			downParams.clear();
+			downParams.putFloat(srcU).putFloat(srcV).putFloat(0f).putFloat(0f).flip();
+			pass(psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {bloomSource}, downParams, "mcopt shade: bloom down 0");
 			for (int i = 1; i < n; i++) {
 				pass(psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");
 			}
@@ -355,9 +415,11 @@ public final class ShadePost {
 		params.clear();
 		boolean vl = vlLight != 0 && vlDist != 0;
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
-		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(0f).putFloat(0f).flip();
-		long mainHandle = MetalBridge.textureHandle(mainColor);
-		MetalBridge.takePendingColorClear(encoder, mainColor);
+		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(0f).putFloat(0f);
+		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
+		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(0f).flip();
+		long mainHandle = MetalBridge.textureHandle(out);
+		MetalBridge.takePendingColorClear(encoder, out);
 		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,
 			vl ? vlLight : scene, vl ? vlDist : scene}, params, "mcopt shade: final");
 		vlLight = vlDist = 0;

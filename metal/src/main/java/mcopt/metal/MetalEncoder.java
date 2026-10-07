@@ -81,6 +81,27 @@ final class MetalEncoder implements CommandEncoderBackend {
 	private record Frame(long index, long cmd, List<Runnable> after) {
 	}
 
+	/** Native shading's dynamic resolution (MetalBridge.setSubRect): passes on these textures draw into (0, 0, subWidth, subHeight). */
+	private @Nullable GpuTexture subColor, subDepth;
+	private int subWidth, subHeight;
+
+	void setSubRect(@Nullable GpuTexture color, @Nullable GpuTexture depth, int width, int height) {
+		boolean on = width > 0 && height > 0 && (color != null || depth != null);
+		this.subColor = on ? color : null;
+		this.subDepth = on ? depth : null;
+		this.subWidth = on ? width : 0;
+		this.subHeight = on ? height : 0;
+	}
+
+	/** Whether the pass with these attachments draws into the sub-rect. */
+	private boolean inSubRect(List<RenderPassDescriptor.@Nullable Attachment<Optional<Vector4fc>>> colors, RenderPassDescriptor.@Nullable Attachment<OptionalDouble> depth) {
+		if (this.subWidth == 0) return false;
+		for (var c : colors) {
+			if (c != null && c.textureView().texture() == this.subColor && c.textureView().baseMipLevel() == 0) return true;
+		}
+		return depth != null && depth.textureView().texture() == this.subDepth;
+	}
+
 	MetalEncoder(long ctx) {
 		this.ctx = ctx;
 		this.enc = Native.encNew(ctx);
@@ -219,6 +240,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 		try {
 			Native.cmdWait(frame.cmd);
 			if (GPU_TIMES) GpuTimes.retire(frame.index, frame.cmd);
+			if (mcopt.metal.shade.ShadeBindings.ON && mcopt.metal.shade.taa.ShadeTaa.ON) mcopt.metal.shade.taa.ShadeTaa.gpuFrame(Native.cmdGpuStart(frame.cmd), Native.cmdGpuEnd(frame.cmd));
 			if (event != null) event.gpuMicros = Native.cmdGpuMicros(frame.cmd);
 		} finally {
 			MetalEvents.end(event);
@@ -253,6 +275,8 @@ final class MetalEncoder implements CommandEncoderBackend {
 			else if (!this.isAttachment(t, colors, depth)) this.flushClear(t);
 		}
 		int width = 0, height = 0;
+		long subPixels = 0;
+		boolean sub = false;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long colorHandles = stack.nmalloc(8, Math.max(1, colors.size()) * 8);
 			long clears = stack.ncalloc(4, Math.max(1, colors.size()) * 5, 4);
@@ -289,6 +313,14 @@ final class MetalEncoder implements CommandEncoderBackend {
 				texture.pendingDepthClear = Double.NaN;
 			}
 			this.forgetSettledClears();
+			// native shading's dynamic resolution: the world target's passes draw into its live sub-rect (viewport = pass size);
+			// also when a redirector (M2's HDR world target) takes the pass over: its targets are allocated like the world target
+			sub = mcopt.metal.shade.ShadeBindings.ON && this.subWidth != 0 && this.inSubRect(descriptor.colorAttachments(), descriptor.depthAttachment());
+			if (sub && redirect == null) {
+				subPixels = (long) width * height;
+				width = Math.min(width, this.subWidth);
+				height = Math.min(height, this.subHeight);
+			}
 			int colorCount = colors.size();
 			if (redirect != null) {
 				colorHandles = stack.nmalloc(8, Math.max(1, redirect.colors().length) * 8);
@@ -302,6 +334,11 @@ final class MetalEncoder implements CommandEncoderBackend {
 				colorCount = redirect.colors().length;
 				width = redirect.width();
 				height = redirect.height();
+				if (sub) {
+					subPixels = (long) width * height;
+					width = Math.min(width, this.subWidth);
+					height = Math.min(height, this.subHeight);
+				}
 				if (redirect.depth() != 0) {
 					depthHandle = redirect.depth();
 					clearDepth = !Float.isNaN(redirect.depthClear());
@@ -335,7 +372,14 @@ final class MetalEncoder implements CommandEncoderBackend {
 		int[] formats = redirect != null && redirect.delegate() == null ? redirect.colorFormats() : null;
 		this.passFormats = formats;
 		if (redirect != null && redirect.depth() != 0) {
-			this.currentPass = new MetalRenderPass(this, true, 0, 0, redirect.width(), redirect.height(), redirect.delegate(), formats);
+			this.currentPass = new MetalRenderPass(this, true, 0, 0, sub ? width : redirect.width(), sub ? height : redirect.height(), redirect.delegate(), formats);
+			if (sub) this.currentPass.pickPixels = subPixels;
+			return this.currentPass;
+		}
+		if (subPixels != 0) { // the live sub-rect; terrain occlusion's path pick keeps timing by the full size (scale changes don't restart it)
+			this.currentPass = new MetalRenderPass(this, depth != null, area.x(), area.y(), Math.min(area.width(), width), Math.min(area.height(), height),
+				redirect != null ? redirect.delegate() : keptDelegate, formats);
+			this.currentPass.pickPixels = subPixels;
 			return this.currentPass;
 		}
 		this.currentPass = new MetalRenderPass(this, depth != null, area.x(), area.y(), area.width(), area.height(),

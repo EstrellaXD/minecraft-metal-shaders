@@ -56,7 +56,7 @@ struct ShadeLook {
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
 	float4 ssr;        // 688  reserved for the water module (SSR)
 	float4 taa;        // 704  reserved for TAAU
-	float4 renderScale;// 720  reserved for dynamic resolution: x scale, y mip bias, zw active size
+	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)
 	float4 dimTint;    // 752  reserved
 	float4 flash;      // 768  reserved

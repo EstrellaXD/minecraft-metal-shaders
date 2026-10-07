@@ -45,6 +45,27 @@ public final class Shade {
 	/** Sun shadows (mcopt.shade.shadows, default true); the shadow pass's own settings are in shadow.ShadowConfig. */
 	public static final boolean SHADOWS = ENABLED && Boolean.parseBoolean(System.getProperty("mcopt.shade.shadows", "true"));
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
+	/**
+	 * The quality preset every module reads its defaults from (mcopt.shade.preset: performance | balanced | quality | ultra,
+	 * or p/b/q/u): render scale and dynamic resolution (TAAU), HDR format, bloom levels, volumetric light resolution and
+	 * steps, SSR steps, shadow map size. Default {@link #PRESET_DEFAULT}; unknown names fall back to it.
+	 */
+	public static final String PRESET_DEFAULT = "balanced";
+	public static final int TIER = tier(System.getProperty("mcopt.shade.preset", PRESET_DEFAULT));
+	public static final String PRESET = new String[] {"performance", "balanced", "quality", "ultra"}[TIER];
+
+	private static int tier(String name) {
+		return switch (name.trim().toLowerCase(java.util.Locale.ROOT)) {
+			case "performance", "p" -> 0;
+			case "balanced", "b" -> 1;
+			case "quality", "q" -> 2;
+			case "ultra", "u" -> 3;
+			default -> {
+				System.out.println("[mcopt] shade: unknown mcopt.shade.preset '" + name + "', using " + PRESET_DEFAULT);
+				yield tier(PRESET_DEFAULT);
+			}
+		};
+	}
 	/** Sun path tilt in degrees (mcopt.shade.sunTilt); see ShadeSky.SUN_TILT. */
 	public static final float SUN_TILT = ShadeSky.SUN_TILT;
 

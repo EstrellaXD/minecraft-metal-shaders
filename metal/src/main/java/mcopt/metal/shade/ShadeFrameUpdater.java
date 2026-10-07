@@ -148,6 +148,20 @@ public final class ShadeFrameUpdater {
 		var target = mc.gameRenderer.mainRenderTarget();
 		f.width = Math.max(1, target.width);
 		f.height = Math.max(1, target.height);
+		f.jitterX = f.jitterY = 0f;
+		f.mipScale = 1f;
+		f.renderScale = 1f;
+		if (mcopt.metal.shade.taa.ShadeTaa.ON) { // TAA: the world draws into a live sub-rect of the world target, jittered
+			var taa = mcopt.metal.shade.taa.ShadeTaa.get();
+			if (taa != null && taa.swapped()) {
+				f.width = taa.width(f.width);
+				f.height = taa.height(f.height);
+				f.jitterX = taa.jitterNdcX();
+				f.jitterY = taa.jitterNdcY();
+				f.mipScale = taa.mipScale();
+				f.renderScale = taa.scale();
+			}
+		}
 
 		// sky, dimension
 		f.dimension = sky.skybox == DimensionType.Skybox.OVERWORLD ? ShadeFrame.DIM_OVERWORLD

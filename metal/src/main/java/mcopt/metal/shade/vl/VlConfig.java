@@ -48,13 +48,8 @@ import mcopt.metal.shade.Shade;
  */
 public final class VlConfig {
 	public static final boolean ENABLED = Shade.ENABLED && Boolean.parseBoolean(System.getProperty("mcopt.shade.vl", "true"));
-	public static final String PRESET = System.getProperty("mcopt.shade.preset", "performance").trim().toLowerCase(java.util.Locale.ROOT);
-	private static final int TIER = switch (PRESET) {
-		case "performance", "p" -> 0;
-		case "quality", "q" -> 2;
-		case "ultra", "u" -> 3;
-		default -> 1;
-	};
+	public static final String PRESET = Shade.PRESET;
+	private static final int TIER = Shade.TIER;
 	public static final float SCALE = clamp(floatProperty("mcopt.shade.vl.scale", new float[] {0.25f, 0.33f, 0.5f, 0.5f}[TIER]), 0.125f, 1f);
 	public static final int STEPS = Math.max(4, Math.min(64, Integer.getInteger("mcopt.shade.vl.steps", new int[] {10, 12, 16, 24}[TIER])));
 	public static final int SS_TAPS = Math.max(0, Math.min(32, Integer.getInteger("mcopt.shade.vl.ssTaps", new int[] {6, 8, 10, 12}[TIER])));

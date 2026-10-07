@@ -58,12 +58,15 @@ static inline half3 shadeDown13(texture2d<half> src, float2 uv, float2 texel, bo
 
 // The first level reads the full-resolution scene: 4 bilinear taps (a 4x4 texel box), each Karis-weighted 1 / (1 + luma) so
 // a few very bright texels (the sun, specular sparkles) can't flicker the whole bloom; the 13-tap filter takes over below.
-fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]]) {
+// p.xy: the part of src's uv range that holds the image (TAAU: the live sub-rect of the internal-resolution HDR world,
+// whose stale border must not bleed in; 1, 1 otherwise). Level 0 itself is half the output size.
+fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]], constant float4 &p [[buffer(0)]]) {
 	float2 texel = 1.0 / float2(src.get_width(), src.get_height());
-	half3 a = min(src.sample(shadeLinearClamp, in.uv + texel * float2(-1, -1)).rgb, half3(30000.0h));
-	half3 b = min(src.sample(shadeLinearClamp, in.uv + texel * float2(1, -1)).rgb, half3(30000.0h));
-	half3 c = min(src.sample(shadeLinearClamp, in.uv + texel * float2(-1, 1)).rgb, half3(30000.0h));
-	half3 d = min(src.sample(shadeLinearClamp, in.uv + texel * float2(1, 1)).rgb, half3(30000.0h));
+	float2 uv = in.uv * p.xy, lo = texel, hi = p.xy - texel;
+	half3 a = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(-1, -1), lo, hi)).rgb, half3(30000.0h));
+	half3 b = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(1, -1), lo, hi)).rgb, half3(30000.0h));
+	half3 c = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(-1, 1), lo, hi)).rgb, half3(30000.0h));
+	half3 d = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(1, 1), lo, hi)).rgb, half3(30000.0h));
 	half wa = 1.0h / (1.0h + shadeLumaH(a)), wb = 1.0h / (1.0h + shadeLumaH(b)), wc = 1.0h / (1.0h + shadeLumaH(c)), wd = 1.0h / (1.0h + shadeLumaH(d));
 	return half4((a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd), 1.0h);
 }
@@ -90,8 +93,27 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 }
 
 // p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0;
-// v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks)
-struct ShadeFinalParams { float4 p; float4 q; float4 v; };
+// v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks);
+// r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
+// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off)
+struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; };
+
+// Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
+// full-resolution pass less): an unsharp mask from the 4-neighbour cross, weaker where the local contrast is already high,
+// clamped to the neighbourhood's range so it never overshoots into halos. Restores the crispness of pixel-art textures the
+// temporal resolve softens. Linear pre-exposed HDR: the contrast measure is relative, so it behaves the same at any level.
+static inline half3 shadeSharpen(texture2d<half> img, uint2 px, half3 m, half amount) {
+	int2 c = int2(px), last = int2(img.get_width(), img.get_height()) - 1;
+	half3 n = img.read(uint2(min(c + int2(0, 1), last))).rgb;
+	half3 s = img.read(uint2(max(c - int2(0, 1), int2(0)))).rgb;
+	half3 e = img.read(uint2(min(c + int2(1, 0), last))).rgb;
+	half3 w = img.read(uint2(max(c - int2(1, 0), int2(0)))).rgb;
+	half3 lo = min(m, min(min(n, s), min(e, w)));
+	half3 hi = max(m, max(max(n, s), max(e, w)));
+	half range = dot(hi - lo, half3(0.2126h, 0.7152h, 0.0722h)) / max(dot(hi, half3(0.2126h, 0.7152h, 0.0722h)), 0.02h);
+	half k = amount * 2.0h * (1.0h - smoothstep(0.15h, 0.9h, range));
+	return clamp(m + (m - (n + s + e + w) * 0.25h) * k, lo, hi);
+}
 
 // Volumetric light folded into the final pass (the VL module's low-resolution result, ShadePost.setVolumetric): vlT holds
 // rgb = in-scattered light (radiance before exposure), a = transmittance of its medium; vlD the matching VL history, a =
@@ -148,12 +170,15 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
                             texture2d<half> vlT [[texture(4)]], texture2d<half> vlD [[texture(5)]], constant ShadeFinalParams &P [[buffer(0)]],
                             constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]]) {
 	uint2 px = uint2(in.position.xy);
-	float3 c = float3(scene.read(px).rgb);
+	half3 c0 = scene.read(px).rgb;
+	if (P.r.z > 0.0) c0 = shadeSharpen(scene, px, c0, half(P.r.z));
+	float3 c = float3(c0);
 	float ex = max(g.exposure.x, 1e-6);
 	// height haze and mist (E06) from depth, once per pixel (the shaded pipelines skip it in the HDR target): surfaces in the
 	// air only (under water / in lava the game's fog owns it), not the sky (the atmosphere has its own) nor Distant Horizons'
 	// LODs (not in this depth; DH fogs them). Depth may be smaller than the image (a resolver's output over the internal world).
-	uint2 dpx = min(uint2(in.uv * float2(depth.get_width(), depth.get_height())), uint2(depth.get_width() - 1, depth.get_height() - 1));
+	float2 dsize = P.r.x > 0.0 ? P.r.xy : float2(depth.get_width(), depth.get_height());
+	uint2 dpx = min(uint2(in.uv * dsize), uint2(dsize) - 1u);
 	float d = depth.read(dpx);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;

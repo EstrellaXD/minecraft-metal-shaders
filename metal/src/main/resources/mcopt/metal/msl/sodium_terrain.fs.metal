@@ -86,6 +86,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     float waterFootprint = max(length(dpx), length(dpy));
     float2 waterFlow = shadeWaterFlowDir(dpx, dpy, du, dv);
 #endif
+    // TAA render scale (cameraBlock.w, 1 at native): gradients as at native resolution, i.e. mip bias log2(scale), so
+    // textures keep their native sharpness; the jitter and the temporal resolve take care of the extra texture aliasing
+    float mipScale = sf.cameraBlock.w > 0.0 ? sf.cameraBlock.w : 1.0;
+    du *= mipScale;
+    dv *= mipScale;
 #endif
     float2 texelScreenSize = sqrt(du * du + dv * dv);
     float4 color = sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);

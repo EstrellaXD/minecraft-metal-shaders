@@ -108,7 +108,7 @@ public final class ShadeVl {
 			if (color == null || depth == null || !ready(encoder, false)) return;
 			MetalBridge.flushClear(encoder, color);
 			MetalBridge.flushClear(encoder, depth);
-			render(encoder, MetalBridge.enc(encoder), MetalBridge.textureHandle(color), MetalBridge.textureHandle(depth), main.width, main.height, null);
+			render(encoder, MetalBridge.enc(encoder), MetalBridge.textureHandle(color), MetalBridge.textureHandle(depth), main.width, main.height, main.width, main.height, null);
 		} catch (Throwable t) {
 			fail(t);
 		}
@@ -119,7 +119,7 @@ public final class ShadeVl {
 		if (failed || c.depth() == 0 || c.scene() == 0) return;
 		try {
 			if (!ready(c.encoder(), true)) return;
-			render(c.encoder(), c.enc(), c.scene(), c.depth(), c.width(), c.height(), c.look());
+			render(c.encoder(), c.enc(), c.scene(), c.depth(), c.width(), c.height(), c.texWidth(), c.texHeight(), c.look());
 		} catch (Throwable t) {
 			fail(t);
 		}
@@ -140,9 +140,11 @@ public final class ShadeVl {
 
 	/**
 	 * One frame of VL onto color (the main RGBA8 target, or M2's HDR world target when look != null) with depth (the main
-	 * depth), both width x height, on the frame's command buffer of enc.
+	 * depth), both texWidth x texHeight with the live render in their sub-rect (0, 0, width, height) (TAAU dynamic resolution;
+	 * equal sizes otherwise), on the frame's command buffer of enc. The VL targets follow the texture size (they never
+	 * reallocate when the render scale moves) and cover the live sub-rect: VlParams.size.zw is the live size.
 	 */
-	private static void render(Object encoder, long enc, long color, long depth, int width, int height, ShadeLook look) {
+	private static void render(Object encoder, long enc, long color, long depth, int width, int height, int texWidth, int texHeight, ShadeLook look) {
 		ShadeFrame f = Shade.frame();
 		Minecraft mc = Minecraft.getInstance();
 		ClientLevel level = mc.level;
@@ -170,7 +172,7 @@ public final class ShadeVl {
 		if (lastLevel != level) resetCanopy = true;
 		lastLevel = level;
 
-		int vw = Math.max(1, Math.round(width * VlConfig.SCALE)), vh = Math.max(1, Math.round(height * VlConfig.SCALE));
+		int vw = Math.max(1, Math.round(texWidth * VlConfig.SCALE)), vh = Math.max(1, Math.round(texHeight * VlConfig.SCALE));
 		if (!pack(f, look, level, width, height, vw, vh, dx, dy, dz, dt, reset)) {
 			hasPrevious = false; // nothing to draw (deep in a cave, no light): no passes at all
 			return;

@@ -34,7 +34,8 @@ import java.util.Locale;
  * <li>{@code mcopt.shade.haze} (true): height haze, ground mist, border fog.</li>
  * <li>{@code mcopt.shade.light2} (true): lighting model v2.</li>
  * <li>{@code mcopt.shade.look} (epic): epic, storybook or natural art preset.</li>
- * <li>{@code mcopt.shade.preset} (performance): performance, balanced, quality or ultra (tier; bloom levels).</li>
+ * <li>{@code mcopt.shade.preset} (Shade.PRESET_DEFAULT, balanced): performance, balanced, quality or ultra (Shade.TIER: bloom
+ * levels, HDR format and every module's defaults).</li>
  * <li>{@code mcopt.shade.dhBridge} (true): Distant Horizons' passes see a display-referred copy of the HDR sky and their
  * result comes back into the HDR target (ShadePost).</li>
  * <li>{@code mcopt.shade.ev} (0): exposure compensation in EV.</li>
@@ -62,12 +63,7 @@ public final class ShadeConfig {
 		case "natural" -> 2;
 		default -> 0;
 	};
-	public static final int TIER = switch (System.getProperty("mcopt.shade.preset", "performance").trim().toLowerCase(Locale.ROOT)) {
-		case "balanced" -> 1;
-		case "quality" -> 2;
-		case "ultra" -> 3;
-		default -> 0;
-	};
+	public static final int TIER = Shade.TIER;
 	/** Bloom levels (half size down to 1/2^levels). */
 	public static final int BLOOM_LEVELS = TIER >= 2 ? 7 : 6;
 
@@ -78,8 +74,7 @@ public final class ShadeConfig {
 		String v = System.getProperty("mcopt.shade.hdrFormat", "auto").trim().toLowerCase(Locale.ROOT);
 		if (v.equals("rg11b10f")) return 92;
 		if (v.equals("rgba16f")) return 115;
-		String preset = System.getProperty("mcopt.shade.preset", "performance").trim().toLowerCase(Locale.ROOT); // (TIER is initialized later)
-		return preset.equals("quality") || preset.equals("ultra") ? 115 : 92;
+		return Shade.TIER >= 2 ? 115 : 92;
 	}
 
 	static boolean flag(String key, boolean fallback) {

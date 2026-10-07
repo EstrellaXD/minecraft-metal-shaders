@@ -27,7 +27,7 @@ static id<MTLTexture> xdrExcess;  // retained; this frame's (valid while xdrVali
 static int xdrValid;
 static void *xdrCmd;  // the command buffer the final pass encoded into: the excess counts only for that frame's present
 static id<MTLLibrary> xdrLib;
-static id<MTLRenderPipelineState> xdrCompose, xdrPresent;
+static id<MTLRenderPipelineState> xdrCompose, xdrCompose16, xdrPresent;
 
 static const char *xdrSource =
 	"#include <metal_stdlib>\n"
@@ -107,7 +107,7 @@ void mc_xdr_frame(Enc *enc, id<MTLTexture> excess) {
 }
 
 static int ensurePipelines(id<MTLDevice> device) {
-	if (xdrCompose && xdrPresent) return 1;
+	if (xdrCompose && xdrCompose16 && xdrPresent) return 1;
 	@autoreleasepool {
 		NSError *e = nil;
 		if (!xdrLib) xdrLib = [device newLibraryWithSource:[NSString stringWithUTF8String:xdrSource] options:nil error:&e];
@@ -118,13 +118,17 @@ static int ensurePipelines(id<MTLDevice> device) {
 		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
 		pd.vertexFunction = [[xdrLib newFunctionWithName:@"xdr_vs"] autorelease];
 		pd.fragmentFunction = [[xdrLib newFunctionWithName:@"xdr_compose_fs"] autorelease];
-		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+		// the staging slot: shared-exponent RGB9E5 (4 B/px: 9-bit mantissas, plenty for an image up to ~16x SDR white) instead
+		// of RGBA16Float, half the bytes of the compose write and the present read; the drawable itself is RGBA16Float
+		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGB9E5Float;
 		xdrCompose = [device newRenderPipelineStateWithDescriptor:pd error:&e];
+		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+		xdrCompose16 = [device newRenderPipelineStateWithDescriptor:pd error:&e];
 		pd.fragmentFunction = [[xdrLib newFunctionWithName:@"xdr_present_fs"] autorelease];
 		xdrPresent = [device newRenderPipelineStateWithDescriptor:pd error:&e];
-		if (!xdrCompose || !xdrPresent) NSLog(@"mcopt shade xdr: %@", e);
+		if (!xdrCompose || !xdrCompose16 || !xdrPresent) NSLog(@"mcopt shade xdr: %@", e);
 	}
-	return xdrCompose && xdrPresent;
+	return xdrCompose && xdrCompose16 && xdrPresent;
 }
 
 // The present pipeline for an RGBA16Float drawable (nil: use the backend's own).
@@ -133,7 +137,7 @@ id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device) {
 }
 
 // Verification aid (env MCOPT_XDR_DUMP=<path prefix>): every 8 s one composed frame is written as raw RGBA16Float
-// (<prefix>-<n>-<w>x<h>.rgba16f, linear extended Display P3) for offline inspection (screenshots only see the SDR image).
+// (<prefix>-<n>-<w>x<h>.rgb9e5 / .rgba16f, linear extended Display P3) for offline inspection (screenshots only see the SDR image).
 static void dumpMaybe(id<MTLCommandBuffer> cb, id<MTLTexture> dst, int valid) {
 	static const char *prefix;
 	static int checked, n;
@@ -146,15 +150,16 @@ static void dumpMaybe(id<MTLCommandBuffer> cb, id<MTLTexture> dst, int valid) {
 	double now = CACurrentMediaTime();
 	if (now - last < 8.0) return;
 	last = now;
-	NSUInteger w = dst.width, h = dst.height, bytes = w * h * 8;
+	NSUInteger bpp = dst.pixelFormat == MTLPixelFormatRGB9E5Float ? 4 : 8;
+	NSUInteger w = dst.width, h = dst.height, bytes = w * h * bpp;
 	id<MTLBuffer> buf = [cb.device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
 	id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
 	[b copyFromTexture:dst sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(w, h, 1) toBuffer:buf
-		destinationOffset:0 destinationBytesPerRow:w * 8 destinationBytesPerImage:bytes];
+		destinationOffset:0 destinationBytesPerRow:w * bpp destinationBytesPerImage:bytes];
 	[b endEncoding];
 	int k = n++;
 	char path[1024];
-	snprintf(path, sizeof path, "%s-%d-%lux%lu.rgba16f", prefix, k, (unsigned long) w, (unsigned long) h);
+	snprintf(path, sizeof path, "%s-%d-%lux%lu.%s", prefix, k, (unsigned long) w, (unsigned long) h, bpp == 4 ? "rgb9e5" : "rgba16f");
 	char *pathCopy = strdup(path);
 	[cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
 		FILE *fp = fopen(pathCopy, "wb");
@@ -178,7 +183,7 @@ int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> d
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shade: XDR compose";
-		[r setRenderPipelineState:xdrCompose];
+		[r setRenderPipelineState:dst.pixelFormat == MTLPixelFormatRGB9E5Float ? xdrCompose : xdrCompose16];
 		int valid = xdrValid && (void *) cb == xdrCmd && xdrExcess && xdrExcess.width == src.width && xdrExcess.height == src.height;
 		struct { int flip, valid, pad0, pad1; } p = {flip, valid, 0, 0};
 		[r setFragmentTexture:src atIndex:0];

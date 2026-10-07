@@ -1279,8 +1279,8 @@ static int pqFill(Enc *enc, id<MTLTexture> src) {
 			pqEvent = [ctx->device newEvent];
 		}
 		id<MTLTexture> st = pqStaging[k];
-		int xdr = mc_xdr_on();  // XDR (mcxdr.m): the slot holds the composed RGBA16Float image instead of a copy
-		MTLPixelFormat format = xdr ? MTLPixelFormatRGBA16Float : src.pixelFormat;
+		int xdr = mc_xdr_on();  // XDR (mcxdr.m): the slot holds the composed extended-range image (RGB9E5) instead of a copy
+		MTLPixelFormat format = xdr ? MTLPixelFormatRGB9E5Float : src.pixelFormat;
 		if (!st || st.width != src.width || st.height != src.height || st.pixelFormat != format) {
 			[st release];  // not busy: the present that read it has completed
 			MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:src.width height:src.height mipmapped:NO];

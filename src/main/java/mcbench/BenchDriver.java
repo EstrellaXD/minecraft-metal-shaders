@@ -967,6 +967,15 @@ public final class BenchDriver {
 
 		@Override
 		boolean poll(Minecraft mc, long now) {
+			// a screen opened by a stray key press (the game has the keyboard while it is fullscreen on the built-in panel,
+			// e.g. E = inventory) would end up in the shot: close it and hold again
+			if (mc.gui.screen() != null) {
+				warnings.add("closed screen " + mc.gui.screen().getClass().getSimpleName() + " before shot " + name.substring(5));
+				mc.gui.setScreen(null);
+				hideHud(mc);
+				curStart = now;
+				return false;
+			}
 			return secs(now - curStart) >= sec;
 		}
 	}

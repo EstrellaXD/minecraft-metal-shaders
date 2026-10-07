@@ -1,6 +1,6 @@
 // Copyright 2026 mcopt-shade contributors. Licensed under the Apache License, Version 2.0.
 // Dev tool: compiles the volumetric light MSL (ShadeMsl.prelude + vl.metal, as VlConfig.source() assembles it) like
-// mcvl.m does (MSL 3.0, fast math) and builds every pipeline mcvl.m builds: march and temporal (RGBA16Float), vl_composite
+// mcvl.m does (MSL 3.0, fast math) and builds every pipeline mcvl.m builds: march and temporal (RGBA16Float; vl_temporal_fold with its RGBA16Float lightT target), vl_composite
 // for the LDR main target (RGBA8Unorm, programmable blending), vl_composite_hdr for both M2 HDR world formats (RG11B10Float
 // and RGBA16Float, One / SourceAlpha blending), and the canopy kernel with VL_HDR false and true. Usage: vlcheck <file.metal>
 #import <Foundation/Foundation.h>
@@ -17,7 +17,8 @@ static int build(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFo
 	pd.fragmentFunction = f;
 	pd.colorAttachments[0].pixelFormat = fmt;
 	if ([fs isEqualToString:@"vl_march"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm;
-	if (hdr) {
+	if ([fs isEqualToString:@"vl_temporal_fold"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatRGBA16Float;
+	if (hdr && [fs isEqualToString:@"vl_composite_hdr"]) {
 		pd.colorAttachments[0].blendingEnabled = YES;
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
 		pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorSourceAlpha;
@@ -45,6 +46,7 @@ int main(int argc, const char **argv) {
 		int fail = 0;
 		fail |= build(dev, lib, @"vl_march", MTLPixelFormatRGBA16Float, false);
 		fail |= build(dev, lib, @"vl_temporal", MTLPixelFormatRGBA16Float, false);
+		fail |= build(dev, lib, @"vl_temporal_fold", MTLPixelFormatRGBA16Float, true);
 		fail |= build(dev, lib, @"vl_composite", MTLPixelFormatRGBA8Unorm, false);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRG11B10Float, true);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRGBA16Float, true);

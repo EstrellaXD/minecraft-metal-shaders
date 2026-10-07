@@ -55,12 +55,21 @@ public final class ShadeVl {
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
 	private static final float HDR_HAZE = 4.6f, HDR_MIST = 4.2f;
+	/**
+	 * M2 look (tuned in game against VL off and Complementary, bench vi*): HDR shows the in-scattering without M1's curve
+	 * compressing it, so the shafts are scaled down (air, under water), the canopy mist's grey veil and its extinction are
+	 * lighter, and more of the open air's unshadowed glow is left to the base haze (shafts = structure, not a milky veil).
+	 */
+	private static final float HDR_AIR = 0.6f, HDR_WATER = 0.45f, HDR_VEIL = 0.1f, HDR_EXT = 0.35f, HDR_OPEN_CUT = 0.7f, HDR_CARVE = 0.4f, HDR_CARVE_WATER = 0.55f;
 
 	private static long state;
 	private static boolean failed, logged;
 	private static final ByteBuffer PARAMS = MemoryUtil.memAlloc(PARAM_BYTES).order(ByteOrder.nativeOrder());
 	private static final long CANOPY_OUT = MemoryUtil.nmemCalloc(2, 4);
 	private static final long TIMES_OUT = MemoryUtil.nmemCalloc(4, 4);
+	/** Measurement only: run the passes but don't fold them into the final pass (prices the final pass's share). */
+	private static final boolean FOLD_SKIP = Boolean.getBoolean("mcopt.shade.vl.foldSkip");
+	private static final long OUTPUTS_OUT = MemoryUtil.nmemCalloc(2, 8);
 	private static double prevX, prevY, prevZ;
 	private static boolean hasPrevious;
 	private static long lastNanos, lastLog;
@@ -167,12 +176,17 @@ public final class ShadeVl {
 			return;
 		}
 
-		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (look != null ? 4 : 0) | (VlConfig.GPU_TIMER ? 8 : 0);
+		boolean fold = look != null && VlConfig.FOLD;
+		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (look != null ? 4 : 0) | (VlConfig.GPU_TIMER ? 8 : 0) | (fold ? 16 : 0);
 		if (MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'VL canopy/march/temporal/composite' (" + vw + "x" + vh + ")");
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, ERR, 1);
 			int r = VlNative.render(enc, state, color, depth, MemoryUtil.memAddress0(PARAMS), PARAM_BYTES, vw, vh, flags, err, ERR);
 			if (r != 0) throw new IllegalStateException("volumetric light: " + MemoryUtil.memUTF8(err));
+		}
+		if (fold && !FOLD_SKIP) {
+			VlNative.outputs(state, OUTPUTS_OUT);
+			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), VlConfig.DIST);
 		}
 		resetCanopy = false;
 		frame++;
@@ -290,7 +304,8 @@ public final class ShadeVl {
 		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST * eyeLight(f);
 		// its sky-lit colour in the shade (the canopy hides most of the sky): what it dims the scene behind it toward
 		float[] amb = f.sky.ambientSky;
-		float ambK = 0.2f * (f.underwater ? 0f : eyeLight(f));
+		boolean hdr = look != null;
+		float ambK = (hdr ? HDR_VEIL : 0.2f) * (f.underwater ? 0f : eyeLight(f));
 		float camY = (float) f.cameraY;
 
 		// strength: rain flattens the light; caves have no sun; the sun -> moon handover fades through ~0
@@ -299,7 +314,7 @@ public final class ShadeVl {
 		float strength = VlConfig.STRENGTH * (1f - 0.6f * rain) * (f.underwater ? 1f : eye) * lightUp * (sunLight ? 1f : 2.0f * VlConfig.MOON);
 		// M2: the art layer's VL keyframe (bible §3.2: strongest at golden hour) and look preset, softened (shafts under a canopy
 		// stay visible at noon)
-		if (look != null) strength *= look.vlFactor();
+		if (hdr) strength *= look.vlFactor() * (f.underwater ? HDR_WATER : HDR_AIR);
 
 		// light colour (irradiance / pi, pre-exposure): saturated toward the low sun (golden hour), plain moonlight
 		float[] c = f.sky.light;
@@ -342,10 +357,10 @@ public final class ShadeVl {
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
 		put(b, 0.7f, 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                             // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, 0f);                               // extra
-		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, 0.5f);                            // mist: range, top, extinction on, its scale
-		float sunK = 0.05f * ambK / 0.2f; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
-		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, 0.5f); // mistAmb, open glow left out
-		put(b, 0f, 0f, 0f, 0f);
+		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
+		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
+		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, hdr ? HDR_OPEN_CUT : 0.5f); // mistAmb, open glow left out
+		put(b, hdr ? HDR_CARVE : 0f, hdr ? HDR_CARVE_WATER : 0f, 0f, 0f);                 // carve
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

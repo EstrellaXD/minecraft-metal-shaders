@@ -89,8 +89,51 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 	return half4(l * half(p.w.x) + u * half(p.w.y / 16.0), 1.0h);
 }
 
-// p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0
-struct ShadeFinalParams { float4 p; float4 q; };
+// p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0;
+// v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks)
+struct ShadeFinalParams { float4 p; float4 q; float4 v; };
+
+// Volumetric light folded into the final pass (the VL module's low-resolution result, ShadePost.setVolumetric): vlT holds
+// rgb = in-scattered light (radiance before exposure), a = transmittance of its medium; vlD the matching VL history, a =
+// the distance each texel marched (blocks, 1e4 = sky). Depth-aware bilinear upsample to the pixel at uv with scene distance
+// dist: bilinear x distance similarity; where no low-resolution texel is at this depth (a thin leaf against the sky), the
+// closest one, its light scaled by how much air this pixel's ray crosses (no halos around foliage).
+static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, float2 uv, float dist, float maxD) {
+	float2 size = float2(vlT.get_width(), vlT.get_height());
+	float2 lp = uv * size - 0.5;
+	float2 fl = floor(lp);
+	half2 fr = half2(lp - fl);
+	int2 base = int2(fl), hi = int2(size) - 1;
+	half invTol = half(1.0 / (0.04 * dist + 0.15));
+	half hd = half(min(dist, 3e4));
+	// the four distances of the bilinear footprint in one fetch (gather order: (0,1) (1,1) (1,0) (0,0)); when all of them
+	// are at this pixel's depth (most of the screen) one hardware-filtered sample does it
+	half4 dd = vlD.gather(shadeLinearClamp, uv, int2(0), component::w);
+	if (all(abs(dd - hd) * invTol < 0.5h)) return vlT.sample(shadeLinearClamp, uv);
+	half4 sum = 0.0h, bestC = half4(0.0h, 0.0h, 0.0h, 1.0h);
+	half wsum = 0.0h, best = 6e4h, bestD = 1.0h;
+	for (int j = 0; j <= 1; j++) {
+		for (int i = 0; i <= 1; i++) {
+			uint2 q = uint2(clamp(base + int2(i, j), int2(0), hi));
+			half4 s = vlT.read(q);
+			half sd = j == 0 ? (i == 0 ? dd.w : dd.z) : (i == 0 ? dd.x : dd.y);
+			half bw = (i == 0 ? 1.0h - fr.x : fr.x) * (j == 0 ? 1.0h - fr.y : fr.y) + 1e-3h;
+			half diff = abs(sd - hd);
+			half x = diff * invTol;
+			half w = bw / (1.0h + x * x * (1.0h + x)); // ~ e^-x near 0, falls faster beyond
+			sum += s * w;
+			wsum += w;
+			if (diff < best) {
+				best = diff;
+				bestC = s;
+				bestD = sd;
+			}
+		}
+	}
+	if (wsum > 0.02h) return sum / wsum;
+	half mD = half(maxD);
+	return half4(bestC.rgb * saturate((min(hd, mD) + 0.5h) / (min(bestD, mD) + 0.5h)), bestC.a);
+}
 
 // Camera-relative world position of the pixel at uv = (pixel + 0.5) / size with reversed-Z depth d. Targets hold GL row
 // order (row 0 = the bottom of the view), so the NDC is uv * 2 - 1 with no flip.
@@ -101,7 +144,8 @@ static inline float3 shadeWorldFromDepth(float2 uv, float d, constant ShadeFrame
 }
 
 fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], texture2d<half> bloom [[texture(1)]],
-                            depth2d<float> depth [[texture(2)]], texture2d<half> bloom0 [[texture(3)]], constant ShadeFinalParams &P [[buffer(0)]],
+                            depth2d<float> depth [[texture(2)]], texture2d<half> bloom0 [[texture(3)]],
+                            texture2d<half> vlT [[texture(4)]], texture2d<half> vlD [[texture(5)]], constant ShadeFinalParams &P [[buffer(0)]],
                             constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]]) {
 	uint2 px = uint2(in.position.xy);
 	float3 c = float3(scene.read(px).rgb);
@@ -113,16 +157,24 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	float d = depth.read(dpx);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
+	float3 wp = d > 0.0 ? shadeWorldFromDepth(in.uv, d, f) : float3(0.0);
 	if (d > 0.0 && hazeOn) {
-		float3 wp = shadeWorldFromDepth(in.uv, d, f);
 		if (dot(wp, wp) > 4.0) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
 			c = c * T + S * ex;
 		}
 	}
+	// volumetric light (god rays, canopy mist; VL module): its medium is the air near the camera, in front of the haze
+	float tv = 1.0;
+	if (P.v.x > 0.5) {
+		half4 v = shadeVlUpsample(vlT, vlD, in.uv, d > 0.0 ? length(wp) : 1e4, P.v.y);
+		tv = float(v.a);
+		c = c * tv + min(float3(v.rgb) * ex, 30000.0);
+	}
 	if (P.p.y > 0.5) {
 		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb + bloom0.sample(shadeLinearClamp, in.uv).rgb * half(P.q.x)) * P.p.x;
-		float m = L.bloom.x + (d > 0.0 ? L.bloom.z * (1.0 - shadeLuma(T)) : L.bloom.z * 0.25);
+		// fog glow: the haze and the canopy mist both soften what is behind them
+		float m = L.bloom.x + (d > 0.0 ? L.bloom.z * (1.0 - shadeLuma(T) * tv) : L.bloom.z * (0.25 + 0.75 * (1.0 - tv)));
 		c = mix(c, b, saturate(m));
 	}
 	// Purkinje: dim light (scene luminance, not exposed) shifts toward the rods' cool grey

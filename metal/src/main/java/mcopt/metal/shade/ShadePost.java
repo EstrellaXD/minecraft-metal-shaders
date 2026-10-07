@@ -106,6 +106,9 @@ public final class ShadePost {
 	private static final List<long[]> retired = new ArrayList<>();
 	private static final ByteBuffer params = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN);
 	private static boolean loggedDh;
+	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
+	private static long vlLight, vlDist;
+	private static float vlMaxDist;
 
 	private ShadePost() {
 	}
@@ -113,6 +116,19 @@ public final class ShadePost {
 	/** The HDR world target of this frame (MTLTexture), or 0 outside HDR mode or before the first frame. */
 	public static long sceneTexture() {
 		return ShadeConfig.HDR && initialized ? hdr[frame & 1] : 0;
+	}
+
+	/**
+	 * Folds a volumetric result into this frame's final pass (call from a before-tonemap hook; reset every frame): light: rgb
+	 * in-scattered radiance before exposure, a = transmittance of its medium (the final pass does scene * a + rgb * exposure
+	 * after the haze, before bloom's mix); dist: same size, a = the distance each texel stands for (blocks, 1e4 = sky), for
+	 * the depth-aware upsample; maxDist: the march's max distance. Any resolution (upsampled by uv). Saves a full-resolution
+	 * read-modify-write of the HDR target over a composite pass; bloom and the exposure meter then don't see the light.
+	 */
+	public static void setVolumetric(long light, long dist, float maxDist) {
+		vlLight = light;
+		vlDist = dist;
+		vlMaxDist = maxDist;
 	}
 
 	/** Whether world passes are currently redirected into the HDR target. */
@@ -173,6 +189,7 @@ public final class ShadePost {
 		world = true;
 		bridgeOpen = false;
 		bridgeUsed = false;
+		vlLight = vlDist = 0;
 		ShadeRender.resource(1, hdr[(frame + 1) & 1]);
 		ShadeRender.resource(2, hdr[frame & 1]);
 	}
@@ -336,10 +353,14 @@ public final class ShadePost {
 		}
 		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");
 		params.clear();
-		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f).flip();
+		boolean vl = vlLight != 0 && vlDist != 0;
+		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
+		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(0f).putFloat(0f).flip();
 		long mainHandle = MetalBridge.textureHandle(mainColor);
 		MetalBridge.takePendingColorClear(encoder, mainColor);
-		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene}, params, "mcopt shade: final");
+		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,
+			vl ? vlLight : scene, vl ? vlDist : scene}, params, "mcopt shade: final");
+		vlLight = vlDist = 0;
 	}
 
 	/** ShadeRender.pass on this frame's encoder, named in the -Dmcopt.metal.trace output (its GPU time is the next encoder #). */

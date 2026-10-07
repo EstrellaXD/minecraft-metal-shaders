@@ -59,7 +59,9 @@ struct VlParams {
 	                  //     keeps the veil light while the shafts stay bright)
 	float4 mistAmb;   // 224 rgb ambient (sky) light of the shadowed canopy mist (irradiance / pi, pre-exposure), w share of the
 	                  //     open-air haze's unshadowed glow left out (the sky and M1's haze have it already)
-	float4 pad2;      // 240
+	float4 carve;     // 240 x canopy mist carve k: keep max(lit - k unshadowed, 0) / (1 - k) of it (0 = all; M2 > 0: the
+	                  //     uniform part goes, rays crossing shadows darken -> visible beams), y the same for the caustic
+	                  //     shafts under water (relative to the light without caustics), zw 0
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -237,7 +239,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float mist = p.medium.y;
 		// canopy mist: the humid air under trees and overhangs, around the camera's height (not the sea's)
 		float local = p.light.w * canopy;
-		float sumOpen = 0.0, sumOpenLit = 0.0, sumLocal = 0.0, trans = 1.0, prevB = 0.0;
+		float sumOpen = 0.0, sumOpenLit = 0.0, sumLocal = 0.0, sumLocalAll = 0.0, trans = 1.0, prevB = 0.0;
 		float invN = 1.0 / float(n);
 		for (int i = 0; i < n; i++) {
 			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
@@ -253,12 +255,15 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			sumOpen += sOpen * seg;
 			sumOpenLit += v * sOpen * seg;
 			sumLocal += v * sLocal * seg;
+			sumLocalAll += sLocal * seg;
 			trans *= exp(-(sOpen + sLocal * p.mist.w) * dt);
 		}
 		// The open-air haze's sun glow is already in the sky and M1's aerial haze: keep only what the shadows carve out of
 		// it (the lit part above a share of its unshadowed value) so shafts read as structure, not as a milky veil. The
 		// canopy mist (ours alone) counts fully. Each layer has its art gate.
 		float openPart = max(sumOpenLit - p.mistAmb.w * sumOpen, 0.0);
+		float k = p.carve.x;
+		sumLocal = max(sumLocal - k * sumLocalAll, 0.0) / (1.0 - k);
 		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * (openPart * p.gate.x + sumLocal * p.gate.y) * p.shape.x);
 	} else {
 		// Under water: the medium is the water; sunlight reaches each point through the water above it (extinction along the
@@ -266,7 +271,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// light direction: curtains of light (shafts) that sway with the waves.
 		float D = min(dist, p.water2.z);
 		float3 ext = p.water.rgb;
-		float3 sum = float3(0.0);
+		float3 sum = float3(0.0), sumAll = float3(0.0);
 		int nw = n + 2;
 		float prevB = 0.0, invN = 1.0 / float(nw);
 		half4 ta, tb;
@@ -285,8 +290,12 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			half hb = half(min(below, 60.0));
 			half c = mix(1.0h, vlCaustic(q, ta, ta4, tb, tb4), half(p.water2.w) * (1.0h - exp2(-0.5771h * hb)) * exp2(-0.0721h * hb));
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
-			sum += float3(exp2(half3(-1.442695 * ext * min(path + t, 200.0)))) * (v * float(c) * dt);
+			float3 tr = float3(exp2(half3(-1.442695 * ext * min(path + t, 200.0)))) * (v * dt);
+			sum += tr * float(c);
+			sumAll += tr;
 		}
+		// carve (M2): drop part of the uniform glow so the caustic curtains read as shafts
+		sum = max(sum - p.carve.y * sumAll, 0.0) / (1.0 - p.carve.y);
 		float phase = 0.75 * vlHG(mu, 0.65) + 0.25 * 0.0795775;
 		scatter = p.light.rgb * sum * (p.water.w * 3.14159265 * phase * p.shape.x) * float(L.y > 0.0);
 	}
@@ -319,8 +328,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 }
 
 // ---- temporal -------------------------------------------------------------------------------------------------------------
-fragment half4 vl_temporal(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
-                           texture2d<half> raw [[texture(0)]], texture2d<half> history [[texture(1)]]) {
+static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlParams &p, texture2d<half> raw, texture2d<half> history) {
 	constexpr sampler lin(filter::linear, address::clamp_to_edge);
 	int2 px = int2(in.position.xy);
 	int2 hi = int2(p.size.xy) - 1;
@@ -362,6 +370,37 @@ fragment half4 vl_temporal(VlOut in [[stage_in]], constant ShadeFrame &f [[buffe
 	float3 mid = 0.5 * (mn + mx), ext = 0.5 * (mx - mn) * 1.25 + 0.002 * (mid + 0.001);
 	float3 hc = clamp(float3(h.rgb), mid - ext, mid + ext);
 	return half4(half3(mix(cur, hc, p.temporal.x)), half(d));
+}
+
+fragment half4 vl_temporal(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
+                           texture2d<half> raw [[texture(0)]], texture2d<half> history [[texture(1)]]) {
+	return vlTemporal(in, f, p, raw, history);
+}
+
+// M2 "fold" (ShadePost.setVolumetric): the temporal pass also writes what the final pass blends in, at VL resolution:
+// rgb = in-scattered light incl. the canopy mist's sky-lit veil (radiance before exposure), a = the canopy mist's
+// transmittance T (analytic, per VL texel; the final pass upsamples it depth-aware with the history's distances).
+struct VlFoldOut {
+	half4 history [[color(0)]];
+	half4 lightT [[color(1)]];
+};
+
+fragment VlFoldOut vl_temporal_fold(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
+                                    constant VlState &st [[buffer(1)]], texture2d<half> raw [[texture(0)]], texture2d<half> history [[texture(1)]]) {
+	VlFoldOut o;
+	o.history = vlTemporal(in, f, p, raw, history);
+	float3 light = float3(o.history.rgb);
+	float T = 1.0;
+	float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
+	float mistK = p.light.w * canopy * p.mist.w * p.mist.z;
+	if (mistK > 1e-5 && p.water2.y < 0.5) {
+		float2 fpos = floor(in.position.xy * (p.size.zw / p.size.xy)) + 0.5;
+		float2 ndc = fpos / p.size.zw * 2.0 - 1.0;
+		T = exp2(-1.442695 * mistK * vlMistDepth(vlDirection(ndc, f), min(float(o.history.a), p.shape.y), p));
+		light += p.mistAmb.rgb * (1.0 - T);
+	}
+	o.lightT = half4(half3(min(light, 30000.0)), half(T));
+	return o;
 }
 
 // ---- composite ------------------------------------------------------------------------------------------------------------

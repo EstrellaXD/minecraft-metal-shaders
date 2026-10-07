@@ -20,11 +20,12 @@ int mc_shade_bind_compute(id<MTLComputeCommandEncoder> c);
 
 typedef struct {
 	id<MTLLibrary> lib;
-	id<MTLRenderPipelineState> march, temporal, composite;
+	id<MTLRenderPipelineState> march, temporal, composite, temporalFold; // temporalFold: M2 fold (flag 16), MRT history + lightT
 	MTLPixelFormat compositeFormat;
 	int compositeHdr;
 	id<MTLComputePipelineState> canopy;
 	id<MTLTexture> raw, hist[2], sky[2]; // sky: R8 sky masks (march output, read by the next frame's crepuscular taps)
+	id<MTLTexture> lightT;               // fold: light (before exposure) + canopy mist transmittance, for ShadePost's final pass
 	int width, height, cur, lossy;
 	id<MTLBuffer> state;  // VlState: the canopy factor (GPU-written, read by the march)
 	// GPU timer (flag 8, -Dmcopt.shade.vl.gpuTimer): per-pass fragment start/end timestamps, a ring of 4 frames x 3 passes
@@ -55,6 +56,7 @@ static id<MTLRenderPipelineState> pso(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 	pd.fragmentFunction = [fs autorelease];
 	pd.colorAttachments[0].pixelFormat = format;
 	if ([fragment isEqualToString:@"vl_march"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm;
+	if ([fragment isEqualToString:@"vl_temporal_fold"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatRGBA16Float;
 	if ([fragment isEqualToString:@"vl_composite_hdr"]) {
 		pd.colorAttachments[0].blendingEnabled = YES;  // M2: scene * T (source alpha) + light, into the pre-exposed HDR scene
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
@@ -86,6 +88,16 @@ VlState *mc_vl_new(Ctx *ctx, const char *source, int flags, char *err, int errCa
 		s->lossy = lossy;
 		s->march = pso(ctx->device, lib, @"vl_march", MTLPixelFormatRGBA16Float, hdr, err, errCap);
 		s->temporal = s->march ? pso(ctx->device, lib, @"vl_temporal", MTLPixelFormatRGBA16Float, hdr, err, errCap) : nil;
+		if (hdr && s->temporal) {
+			s->temporalFold = pso(ctx->device, lib, @"vl_temporal_fold", MTLPixelFormatRGBA16Float, hdr, err, errCap);
+			if (!s->temporalFold) {
+				[s->march release];
+				[s->temporal release];
+				[lib release];
+				free(s);
+				return NULL;
+			}
+		}
 		MTLFunctionConstantValues *fc = [[MTLFunctionConstantValues new] autorelease];
 		bool h = hdr != 0;
 		[fc setConstantValue:&h type:MTLDataTypeBool atIndex:0];
@@ -113,8 +125,10 @@ void mc_vl_free(VlState *s) {
 	[s->march release];
 	[s->temporal release];
 	[s->composite release];
+	[s->temporalFold release];
 	[s->canopy release];
 	[s->raw release];
+	[s->lightT release];
 	[s->hist[0] release];
 	[s->hist[1] release];
 	[s->sky[0] release];
@@ -152,10 +166,11 @@ static void timesCollect(VlState *s, id<MTLDevice> device, int r) {
 		if (data.length < 6 * sizeof(MTLCounterResultTimestamp)) return;
 		const MTLCounterResultTimestamp *ts = data.bytes;
 		if (ts[0].timestamp == MTLCounterErrorValue || ts[0].timestamp == 0 || ts[0].timestamp == s->timeLast[r]) return;
-		for (int i = 0; i < 6; i++) if (ts[i].timestamp == MTLCounterErrorValue || ts[i].timestamp == 0) return;
+		for (int i = 0; i < 4; i++) if (ts[i].timestamp == MTLCounterErrorValue || ts[i].timestamp == 0) return;
 		s->timeLast[r] = ts[0].timestamp;
 		for (int p = 0; p < 3; p++) {
 			uint64_t a = ts[2 * p].timestamp, b = ts[2 * p + 1].timestamp;
+			if (a == MTLCounterErrorValue || b == MTLCounterErrorValue || a == 0) continue; // no composite pass (fold)
 			if (b > a) s->timeSum[p] += (double) (b - a) * nsPerTick / 1e6;
 		}
 		s->timeCount++;
@@ -219,13 +234,14 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out
 
 // One frame of volumetric light onto color (the game's main colour, read and written in place) from depth (its depth).
 // params: VlParams (vl.metal), paramBytes of it; vlWidth x vlHeight the march resolution. flags: 1 canopy pass,
-// 2 drop the history, 4 HDR composite (scene * T + light; M2), 8 GPU timer (mc_vl_times). Returns 0, or -1 when the composite pipeline can't be built (err).
+// 2 drop the history, 4 HDR composite (scene * T + light; M2), 8 GPU timer (mc_vl_times), 16 fold (M2, needs a state made
+// with HDR: no composite pass, the temporal pass also writes lightT for ShadePost's final pass, see mc_vl_outputs). Returns 0, or -1 when the composite pipeline can't be built (err).
 int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> depth, const void *params, int paramBytes, int vlWidth,
 	int vlHeight, int flags, char *err, int errCap) {
 	@autoreleasepool {
 		id<MTLDevice> dev = enc->ctx->device;
-		int hdr = (flags & 4) != 0;
-		if (!s->composite || s->compositeFormat != color.pixelFormat || s->compositeHdr != hdr) {
+		int hdr = (flags & 4) != 0, fold = (flags & 16) != 0 && s->temporalFold;
+		if (!fold && (!s->composite || s->compositeFormat != color.pixelFormat || s->compositeHdr != hdr)) {
 			[s->composite release];
 			s->composite = pso(dev, s->lib, hdr ? @"vl_composite_hdr" : @"vl_composite", color.pixelFormat, hdr, err, errCap);
 			s->compositeFormat = color.pixelFormat;
@@ -239,11 +255,14 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[s->hist[1] release];
 			[s->sky[0] release];
 			[s->sky[1] release];
+			[s->lightT release];
+			s->lightT = nil;
 			s->raw = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL march");
 			s->hist[0] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history A");
 			s->hist[1] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history B");
 			s->sky[0] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask A");
 			s->sky[1] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask B");
+			if (s->temporalFold) s->lightT = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL light + T");
 			s->width = vlWidth;
 			s->height = vlHeight;
 			reset = 1;
@@ -280,13 +299,25 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 		// the march writes this frame's sky mask and reads last frame's (the crepuscular streaks' occluders)
 		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur],
 			times, base);
-		pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw, s->hist[s->cur],
-			times, base + 2);
-		pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth,
-			times, base + 4);
+		if (fold) {
+			// M2 fold: no full-resolution pass here; ShadePost's final pass upsamples lightT (mc_vl_outputs)
+			pass(cb, s->hist[next], s->lightT, MTLLoadActionDontCare, s->temporalFold, @"mcopt shade: VL temporal", params, paramBytes, s->state,
+				s->raw, s->hist[s->cur], times, base + 2);
+		} else {
+			pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw,
+				s->hist[s->cur], times, base + 2);
+			pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth,
+				times, base + 4);
+		}
 		s->cur = next;
 		return 0;
 	}
+}
+
+// After an mc_vl_render with flag 16 (fold): out[0] = the light + T texture, out[1] = the history it matches (a = distance).
+void mc_vl_outputs(VlState *s, uint64_t *out) {
+	out[0] = (uint64_t) s->lightT;
+	out[1] = (uint64_t) s->hist[s->cur];
 }
 
 // The canopy factor the GPU wrote (smoothed, raw shadowed fraction) as of the last completed frame, for logs and tests.

@@ -37,6 +37,9 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.temporal} (true): temporal accumulation (off: raw noisy march, for comparisons).</li>
  * <li>{@code mcopt.shade.vl.canopy} (-1): force the canopy factor 0..1 (debug); negative = measured on the GPU.</li>
  * <li>{@code mcopt.shade.vl.lossy} (false): lossy-compressed VL targets.</li>
+ * <li>{@code mcopt.shade.vl.fold} (true): on the HDR pipeline (M2), the light is upsampled and blended in the post chain's
+ * final pass (saves a full-resolution read-modify-write of the HDR target; bloom and the exposure meter don't see it);
+ * false: a composite pass into the HDR target before bloom. The debug views always use the composite.</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
  * <li>{@code mcopt.shade.vl.gpuTimer} (false): GPU timestamps around each pass; the log line (forced on) gets their
@@ -65,6 +68,8 @@ public final class VlConfig {
 	public static final float CANOPY = floatProperty("mcopt.shade.vl.canopy", -1f);
 	public static final boolean LOSSY = Boolean.getBoolean("mcopt.shade.vl.lossy");
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.vl.debug", 0);
+	/** M2: blend the light in ShadePost's final pass instead of a full-resolution composite pass (not with the debug views). */
+	public static final boolean FOLD = DEBUG == 0 && Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.fold", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
@@ -92,6 +97,6 @@ public final class VlConfig {
 
 	static String describe() {
 		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
-			+ (TEMPORAL ? "" : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
+			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? "" : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
 }

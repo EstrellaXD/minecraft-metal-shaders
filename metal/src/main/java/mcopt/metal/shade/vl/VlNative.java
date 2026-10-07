@@ -33,6 +33,7 @@ final class VlNative {
 	private static final MethodHandle CANOPY = fn("mc_vl_canopy", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle FREE = fn("mc_vl_free", null, JAVA_LONG);
 	private static final MethodHandle TIMES = fn("mc_vl_times", null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle OUTPUTS = fn("mc_vl_outputs", null, JAVA_LONG, JAVA_LONG);
 
 	private VlNative() {
 	}
@@ -77,6 +78,15 @@ final class VlNative {
 	static void times(long state, long out) {
 		try {
 			TIMES.invokeExact(state, out);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** out: 2 pointers, the fold outputs of the last render (light + T, the matching history). */
+	static void outputs(long state, long out) {
+		try {
+			OUTPUTS.invokeExact(state, out);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

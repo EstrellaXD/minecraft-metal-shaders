@@ -93,6 +93,12 @@ struct ShadeFrame {
 #define SHADE_DEV_FLAT_SKY 4      // sky pixels: the zenith colour only
 #define SHADE_DEV_NO_WATER 8      // no water reflection
 #define SHADE_DEV_FLAT_LIGHT 16   // terrain: albedo * constant (no lighting, fog or tone curve maths)
+// M3 weather (weather_surface.metal, weather.metal); high bits so other modules' new bits don't collide
+#define SHADE_DEV_WX_NO_SSR 1024      // puddles reflect the sky only (no march of last frame's image)
+#define SHADE_DEV_WX_NO_RIPPLES 2048  // no raindrop rings on puddles
+#define SHADE_DEV_WX_DRY 4096         // terrain stays dry (no wet layer, puddles, snow)
+#define SHADE_DEV_WX_PLAIN_RAIN 8192  // rain streaks shaded the M2 way (no sky lookup)
+#define SHADE_DEV_WX_NO_TINT 16384    // no coloured-shadow lookup on the terrain (the tint pass still runs)
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

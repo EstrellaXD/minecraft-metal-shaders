@@ -124,7 +124,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	w.snow = 0.0h;
 	w.slope = float2(0.0);
 	half open = smoothstep(0.90h, 0.995h, sky);
-	if (open <= 0.0h) return w;
+	if (open <= 0.0h || shadeDev(f, SHADE_DEV_WX_DRY)) return w;
 	half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h; // walls get wet streaks, undersides stay dry
 	w.omega = half(L.wet.x) * open * face * (thin ? 0.45h : foliage ? 0.7h : 1.0h);
 	float2 xa = shadeWxXZ(p.xz, f);
@@ -145,7 +145,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
 		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
-		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0), footprint) * (fade * 1.6);
+		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_RIPPLES)) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0), footprint) * (fade * 1.6);
 #endif
 	}
 #endif
@@ -348,9 +348,9 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, saturate(rough * 1.6)) * open;
 #ifdef SHADE_PUDDLE_SSR
 #ifdef SHADE_PUDDLE_QUAD
-	if (quadPuddle && in.histOk && in.prevExposure > 0.0) { // quad-uniform (histOk, prevExposure: per frame)
+	if (quadPuddle && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (histOk, prevExposure, dev: per frame)
 #else
-	if (P > 0.02 && in.histOk && in.prevExposure > 0.0) {
+	if (P > 0.02 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) {
 #endif
 		float4 hit = shadeWxHistSsr(in.p, r, in.pixel, SHADE_PUDDLE_DIST, in.prevExposure, f, L, hist, histDepth);
 		if (P > 0.02) refl = mix(refl, hit.rgb, hit.w);

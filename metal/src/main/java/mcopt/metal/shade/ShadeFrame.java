@@ -41,6 +41,14 @@ public final class ShadeFrame {
 	/** mcopt.shade.dev: feature-off bits for pricing them in game (SHADE_DEV_* in shade_common.metal); 0 normally. */
 	static final int DEV_BITS = Integer.getInteger("mcopt.shade.dev", 0);
 
+	/**
+	 * The dev bits this frame: mcopt.shade.dev is read again every frame (a bench can price a feature inside one session by
+	 * setting the system property between phases, as mcbench's weather perf phases do); the startup value otherwise.
+	 */
+	static int devBits() {
+		return Integer.getInteger("mcopt.shade.dev", DEV_BITS);
+	}
+
 	/** DIM_VANILLA: the overworld drawn the vanilla way (shading setup failed half way; see ShadeBindings.fallback). */
 	public static final int DIM_OVERWORLD = 0, DIM_NETHER = 1, DIM_END = 2, DIM_VANILLA = 3;
 	public static final int FOG_AIR = 0, FOG_WATER = 1, FOG_LAVA = 2, FOG_POWDER_SNOW = 3;
@@ -172,7 +180,7 @@ public final class ShadeFrame {
 		put3(b, AMBIENT_AWAY, this.sky.ambientAway, 0);
 		b.putInt(FLAGS, this.dimension).putInt(FLAGS + 4, this.fogType).putInt(FLAGS + 8, this.shadowsEnabled ? 1 : 0).putInt(FLAGS + 12, this.debug);
 		b.putInt(FLAGS2, this.frameIndex).putInt(FLAGS2 + 4, this.underwater ? 1 : 0).putInt(FLAGS2 + 8, this.cascades).putInt(FLAGS2 + 12, this.eyeSkyLight);
-		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(ShadeSky.SUN_TILT)), (float) Math.cos(Math.toRadians(ShadeSky.SUN_TILT)), DEV_BITS, this.waterTime);
+		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(ShadeSky.SUN_TILT)), (float) Math.cos(Math.toRadians(ShadeSky.SUN_TILT)), devBits(), this.waterTime);
 	}
 
 	/** Only the shadow fields, for patching a slot already packed this frame. */

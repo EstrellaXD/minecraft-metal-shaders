@@ -1,6 +1,6 @@
 # Shade water and reflections (M2 module, branch `m2-water`, merged into `m2`)
 
-**M2.1 (branch `m2.1`):** fine ripples + pixel texture, straight refraction, SSR to the screen sides, real-time water
+**M2.1 (branch `m2.1`, release `work/release/mcopt-shade-M2.1.jar`):** fine ripples (own faster baked layer) + pixel texture, straight refraction, SSR to the screen sides, real-time water
 clock (flags `mcopt.shade.waterDetail`, `ssrEdge`, `waterClock`): see WATER_M21.md.
 
 **Status:** merged into the M2 HDR base on branch `m2` (via `m2-wint`). What changed in the merge (HDR wiring, reflections

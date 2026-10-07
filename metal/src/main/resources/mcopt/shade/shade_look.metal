@@ -52,7 +52,7 @@ struct ShadeLook {
 	float4 heldLight;  // 608  reserved
 	float4 eye;        // 624  xyz camera-relative feet position, w smoothed sky light at the eye 0..1
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0
-	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w 0
+	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w M3 evening rose hue weight (sky LUT)
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
 	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), yzw reserved (SSR)
 	float4 taa;        // 704  reserved for TAAU

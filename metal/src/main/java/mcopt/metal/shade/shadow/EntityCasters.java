@@ -86,17 +86,26 @@ public final class EntityCasters {
 		recorded = dropped = 0;
 	}
 
-	// the camera the committed casters were recorded with, and their frame
+	// the camera the committed casters were recorded with; fresh: committed since the last cast
 	private static double camX, camY, camZ;
-	private static long committedFrame = -10;
+	private static boolean fresh;
+	private static final boolean LOG = Boolean.getBoolean("mcopt.shade.entityShadows.log");
+	private static long lastLog;
+	private static int lastRecorded, lastDropped;
 
-	/** The near cascade is about to draw (frame `frame`, camera x, y, z): shift last frame's casters onto it. */
+	/** The near cascade is about to draw (camera x, y, z): shift last frame's casters onto it. */
 	static void prepareCast(long frame, double x, double y, double z) {
 		if (shadow == 0) return;
-		boolean stale = committedFrame != frame - 1;
+		boolean stale = !fresh;
+		fresh = false;
 		double dx = camX - x, dy = camY - y, dz = camZ - z;
 		if (dx * dx + dy * dy + dz * dz > 64 * 64) stale = true; // a teleport: they'd land in the wrong place
 		ShadowNative.entityShift(shadow, (float) dx, (float) dy, (float) dz, stale ? 1 : 0);
+		if (LOG && System.nanoTime() - lastLog > 4_000_000_000L) {
+			lastLog = System.nanoTime();
+			System.out.println("[mcopt] shade: entity casters: " + ShadowNative.entityCount(shadow) + " draws cast this frame" + (stale ? " (stale: dropped)" : "")
+				+ ", last frame recorded " + lastRecorded + ", dropped " + lastDropped + ", shift " + String.format("%.3f %.3f %.3f", dx, dy, dz));
+		}
 	}
 
 	/** End of the world (ShadePost.beforeHand): copy this frame's recorded casters for the next frame's near cascade. */
@@ -107,7 +116,9 @@ public final class EntityCasters {
 		camX = p.camX();
 		camY = p.camY();
 		camZ = p.camZ();
-		committedFrame = p.frame();
+		fresh = true;
+		lastRecorded = recorded;
+		lastDropped = dropped;
 		recorded = dropped = 0;
 	}
 

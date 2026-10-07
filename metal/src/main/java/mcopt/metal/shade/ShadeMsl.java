@@ -172,12 +172,18 @@ public final class ShadeMsl {
 		return colorFormats.length == 1 && (colorFormats[0] == ShadeRender.RGBA16F || colorFormats[0] == ShadeRender.RG11B10F);
 	}
 
+	private static final String ENTITY_BLOB = "minecraft:pipeline/entity_shadow", VERTEX_FLIP = "out.gl_Position.y = -(out.gl_Position.y);";
+
 	/** MetalShaderRegistry's format adapter for the HDR world target (see the class comment). */
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
 		public String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats) {
 			if (!hdrTarget(colorFormats)) return msl;
 			if (registry) return "#define MCOPT_HDR\n" + msl;
+			// M3: real entity shadows replace vanilla's blob under each mob (as Iris does with a shadow map): no triangles
+			if (pipelineName.equals(ENTITY_BLOB) && mcopt.metal.shade.shadow.EntityCasters.ON && msl.contains(VERTEX_FLIP)) {
+				return msl.replace(VERTEX_FLIP, VERTEX_FLIP + "\n    out.gl_Position = float4(0.0);");
+			}
 			String lit = ShadeEntity.vertex(pipelineName, msl); // M3: entities, items, moving blocks, particles lit by shade
 			return lit != null ? lit : msl;
 		}

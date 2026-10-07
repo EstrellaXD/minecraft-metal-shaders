@@ -70,6 +70,12 @@ public final class ShadeLook {
 		{40, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f},
 	};
 	public final float[] skyGold = {1f, 1f, 1f, 1f, 1f, 1f};
+	// M3 evening hue shift of the upper sky toward rose / peach (sky LUT, ShadeLook.skyGoldZ.w): sun elevation, weight
+	private static final float[][] SKY_ROSE = {{-6, 0f}, {-3, 0.30f}, {0, 0.58f}, {4, 0.62f}, {9, 0.48f}, {16, 0.24f}, {26, 0.06f}, {34, 0f}};
+	/** This frame's rose weight (0 by day and in rain). */
+	public float skyRose;
+	/** Rose strength per look (epic, storybook, natural). */
+	private static final float[] ROSE_LOOK = {1f, 1.15f, 0.6f};
 	private static final int K_GAMMA = 1, K_LIGHT = 2, K_AMB = 3, K_SAT = 6, K_CONTRAST = 7, K_BLOOM = 8, K_VL = 9, K_MIST = 10, K_WB = 11;
 
 	// ---- look presets (bible §3.6): epic, storybook, natural -------------------------------------------------------------
@@ -153,6 +159,15 @@ public final class ShadeLook {
 		}
 		float goldK = (this.rising > 0f ? 0.7f : 1f) * (1f - rain);
 		for (int c = 0; c < 6; c++) this.skyGold[c] = 1f + (sg[c + 1] - 1f) * goldK;
+		float rose = 0f;
+		for (int i = 0; i + 1 < SKY_ROSE.length; i++) {
+			if (this.elevation >= SKY_ROSE[i][0] && this.elevation < SKY_ROSE[i + 1][0]) {
+				float t = (this.elevation - SKY_ROSE[i][0]) / (SKY_ROSE[i + 1][0] - SKY_ROSE[i][0]);
+				rose = SKY_ROSE[i][1] + (SKY_ROSE[i + 1][1] - SKY_ROSE[i][1]) * t;
+				break;
+			}
+		}
+		this.skyRose = rose * goldK * ROSE_LOOK[ShadeConfig.LOOK];
 		// night: the keyframes' desaturation would grey the torch-lit pools too; the dim parts get the Purkinje shift (final
 		// pass, luminance-gated) instead, so the grade keeps colour where there is light
 		float night = 1f - smooth(-10f, -2f, this.elevation);
@@ -241,7 +256,7 @@ public final class ShadeLook {
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
 		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], 0f);
-		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], 0f);
+		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], this.skyRose);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
 		put4(b, RENDER_SCALE, f.renderScale, (float) (Math.log(f.mipScale) / Math.log(2)), f.width, f.height);
 		// at night the meter may brighten less (night stays night: the reference is already lifted for it)

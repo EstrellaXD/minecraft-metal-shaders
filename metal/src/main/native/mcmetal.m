@@ -1092,9 +1092,21 @@ void mc_clear_rect(Enc *enc, id<MTLTexture> color, id<MTLTexture> depthTex, floa
 
 // ---- surface ----
 
+int mc_xdr_on(void);  // mcxdr.m: native shading's EDR output (off unless shade turned it on)
+int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, int flip);
+id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device);
+
 void mc_layer_configure(Ctx *ctx, CAMetalLayer *layer, int width, int height, int vsync) {
 	layer.device = ctx->device;
-	layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+	if (mc_xdr_on()) { // EDR: linear extended Display P3 in half floats, values above 1 brighter than SDR white
+		layer.pixelFormat = MTLPixelFormatRGBA16Float;
+		CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearDisplayP3);
+		layer.colorspace = cs;
+		CGColorSpaceRelease(cs);
+		layer.wantsExtendedDynamicRangeContent = YES;
+	} else {
+		layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+	}
 	layer.framebufferOnly = YES;
 	layer.drawableSize = CGSizeMake(width, height);
 	// vsync: bit 0 = display sync; bits 8-15 = maximumDrawableCount (0 = the default, 3; -Dmcopt.metal.drawables)
@@ -1211,12 +1223,16 @@ void mc_present(Enc *enc, id<CAMetalDrawable> drawable, id<MTLTexture> src) {
 		rp.colorAttachments[0].texture = drawable.texture;
 		rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-		id<MTLRenderCommandEncoder> r = [cmd(enc) renderCommandEncoderWithDescriptor:rp];
-		[r setRenderPipelineState:enc->ctx->present];
-		[r setFragmentTexture:src atIndex:0];
-		[r setFragmentSamplerState:enc->ctx->presentSampler atIndex:0];
-		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-		[r endEncoding];
+		if (drawable.texture.pixelFormat == MTLPixelFormatRGBA16Float && mc_xdr_compose(cmd(enc), src, drawable.texture, 1)) {
+			// XDR (mcxdr.m): composed straight into the drawable
+		} else {
+			id<MTLRenderCommandEncoder> r = [cmd(enc) renderCommandEncoderWithDescriptor:rp];
+			[r setRenderPipelineState:enc->ctx->present];
+			[r setFragmentTexture:src atIndex:0];
+			[r setFragmentSamplerState:enc->ctx->presentSampler atIndex:0];
+			[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+			[r endEncoding];
+		}
 		double encodedAt = CACurrentMediaTime();
 		[cmd(enc) addCompletedHandler:^(id<MTLCommandBuffer> b) { gpuLatency += (CACurrentMediaTime() - encodedAt - gpuLatency) * 0.1; }];
 		paceWatch(drawable);
@@ -1263,19 +1279,23 @@ static int pqFill(Enc *enc, id<MTLTexture> src) {
 			pqEvent = [ctx->device newEvent];
 		}
 		id<MTLTexture> st = pqStaging[k];
-		if (!st || st.width != src.width || st.height != src.height || st.pixelFormat != src.pixelFormat) {
+		int xdr = mc_xdr_on();  // XDR (mcxdr.m): the slot holds the composed RGBA16Float image instead of a copy
+		MTLPixelFormat format = xdr ? MTLPixelFormatRGBA16Float : src.pixelFormat;
+		if (!st || st.width != src.width || st.height != src.height || st.pixelFormat != format) {
 			[st release];  // not busy: the present that read it has completed
-			MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:src.pixelFormat width:src.width height:src.height mipmapped:NO];
-			d.usage = MTLTextureUsageShaderRead;
+			MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:src.width height:src.height mipmapped:NO];
+			d.usage = xdr ? MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget : MTLTextureUsageShaderRead;
 			d.storageMode = MTLStorageModePrivate;
 			st = pqStaging[k] = [ctx->device newTextureWithDescriptor:d];
 		}
 		atomic_store(&pqBusy[k], 1);
 		pqNext = (k + 1) % PQ_SLOTS;
-		id<MTLBlitCommandEncoder> b = [cmd(enc) blitCommandEncoder];
-		[b copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(src.width, src.height, 1)
-			toTexture:st destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-		[b endEncoding];
+		if (!xdr || !mc_xdr_compose(cmd(enc), src, st, 0)) {
+			id<MTLBlitCommandEncoder> b = [cmd(enc) blitCommandEncoder];
+			[b copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(src.width, src.height, 1)
+				toTexture:st destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+			[b endEncoding];
+		}
 		[cmd(enc) encodeSignalEvent:pqEvent value:++pqValue];
 	}
 	return k;
@@ -1292,7 +1312,8 @@ static void pqEncodePresent(id<CAMetalDrawable> drawable, int slot, uint64_t wai
 	rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
 	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 	id<MTLRenderCommandEncoder> r = [p renderCommandEncoderWithDescriptor:rp];
-	[r setRenderPipelineState:ctx->present];
+	id<MTLRenderPipelineState> pso = drawable.texture.pixelFormat == MTLPixelFormatRGBA16Float ? mc_xdr_present_pso(ctx->device) : nil;
+	[r setRenderPipelineState:pso ? pso : ctx->present];
 	[r setFragmentTexture:pqStaging[slot] atIndex:0];
 	[r setFragmentSamplerState:ctx->presentSampler atIndex:0];
 	[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];

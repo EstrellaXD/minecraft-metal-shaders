@@ -96,6 +96,9 @@ public final class ShadePost {
 	// ---- state -----------------------------------------------------------------------------------------------------------
 	private static boolean initialized, failed;
 	private static long library, psoDown0, psoDown, psoUp, psoFinal, psoEncode, psoDecode, psoHistogram, psoExposure, milkyWay;
+	/** M3 XDR (mcopt.shade.xdr, dims.ShadeXdr): the final pass with a second target, the highlights' excess above SDR white. */
+	private static long psoFinalXdr, xdrExcess;
+	private static int xdrWidth, xdrHeight;
 	private static final long[] hdr = new long[2];
 	private static long[] bloomLevels = new long[0], bloomAccum = new long[0];
 	private static int width, height, frame, bloomWidth, bloomHeight;
@@ -109,7 +112,7 @@ public final class ShadePost {
 	private static long enc;
 	/** Textures waiting for the frames that may still use them to finish: {handle, frame to release at}. */
 	private static final List<long[]> retired = new ArrayList<>();
-	private static final ByteBuffer params = ByteBuffer.allocateDirect(80).order(ByteOrder.LITTLE_ENDIAN);
+	private static final ByteBuffer params = ByteBuffer.allocateDirect(96).order(ByteOrder.LITTLE_ENDIAN);
 	private static boolean loggedDh;
 	/** This frame's live render size (the TAAU sub-rect of the HDR targets; = width x height without TAAU) and world depth. */
 	private static int liveWidth, liveHeight;
@@ -178,6 +181,10 @@ public final class ShadePost {
 			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RGBA16F, 0);
 			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RGBA16F, 0);
 			psoFinal = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final", ShadeRender.RGBA8, 0);
+			if (mcopt.metal.shade.dims.ShadeXdr.active()) {
+				psoFinalXdr = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr", ShadeRender.RGBA8,
+					ShadeRender.RG11B10F);
+			}
 			psoEncode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_encode", ShadeRender.RGBA8, 0);
 			psoDecode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_decode", ShadeConfig.HDR_FORMAT, 0);
 			psoHistogram = ShadeRender.computePipeline(library, "shade_histogram");
@@ -189,7 +196,7 @@ public final class ShadePost {
 			ShadeRender.resource(0, milkyWay);
 			MetalHooks.addRedirector(0, ShadePost::redirect);
 			initialized = true;
-			System.out.println("[mcopt] shade: HDR post chain ready (" + ShadeConfig.describe() + ")");
+			System.out.println("[mcopt] shade: HDR post chain ready (" + ShadeConfig.describe() + "; " + mcopt.metal.shade.dims.DimsConfig.describe() + ")");
 			return true;
 		} catch (Throwable e) {
 			failed = true;
@@ -439,11 +446,29 @@ public final class ShadePost {
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
-		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(0f).flip();
+		// w: Distant Horizons drew into this frame (its LODs are where the depth is empty: the Nether's fog leaves them)
+		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(bridgeUsed ? 1f : 0f);
+		// x: XDR (M3): on, peak (x SDR white), knee, octaves to the peak
+		boolean xdr = psoFinalXdr != 0;
+		if (xdr) mcopt.metal.shade.dims.ShadeXdr.params(params);
+		else params.putFloat(0f).putFloat(1f).putFloat(1f).putFloat(1f);
+		params.flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
-		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,
-			vl ? vlLight : scene, vl ? vlDist : scene}, params, "mcopt shade: final");
+		long[] finalInputs = {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene, vl ? vlLight : scene, vl ? vlDist : scene};
+		if (xdr) {
+			int ow = out.getWidth(0), oh = out.getHeight(0);
+			if (xdrExcess == 0 || ow != xdrWidth || oh != xdrHeight) {
+				retire(xdrExcess);
+				xdrWidth = ow;
+				xdrHeight = oh;
+				xdrExcess = ShadeRender.texture(ShadeRender.RG11B10F, ow, oh, false, "mcopt shade: XDR excess");
+			}
+			if (encoder != null && MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'mcopt shade: final (XDR)'");
+			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, psoFinalXdr, mainHandle, xdrExcess, finalInputs, params, "mcopt shade: final (XDR)");
+		} else {
+			pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, finalInputs, params, "mcopt shade: final");
+		}
 		// after the final pass: the kernel advances ShadeGpu.exposure.x to next frame's value, and everything this frame
 		// (world, TAA history, haze and VL in the final pass, Purkinje) must use this frame's
 		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");

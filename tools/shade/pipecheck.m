@@ -2,7 +2,7 @@
 // (http://www.apache.org/licenses/LICENSE-2.0). Dev tool for mcopt native shading, not part of the mod.
 // pipecheck LAYOUT VS.metal FS.metal [VENTRY FENTRY]   |   pipecheck compile FILE.metal
 // Compiles both stages like mcopt (MSL 3.0, fast math) and builds a real MTLRenderPipelineState with mcopt's vertex
-// layout for LAYOUT (sodium | none | pos | postex | poscolor | lut), RGBA8Unorm color + Depth32Float (lut: RGBA16Float only). Prints OK or the error.
+// layout for LAYOUT (sodium | none | pos | postex | postexcolor | poscolor | lut | mrt), RGBA8Unorm color + Depth32Float (lut: RGBA16Float only; mrt: + RG11B10Float, no depth). Prints OK or the error.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
@@ -45,6 +45,11 @@ int main(int argc, const char **argv) {
 			vd.layouts[27].stride = 20;
 			vd.attributes[0].bufferIndex = 27; vd.attributes[0].format = MTLVertexFormatFloat3;
 			vd.attributes[1].bufferIndex = 27; vd.attributes[1].offset = 12; vd.attributes[1].format = MTLVertexFormatFloat2;
+		} else if ([layout isEqualToString:@"postexcolor"]) { // POSITION_TEX_COLOR (the End sky box)
+			vd.layouts[27].stride = 24;
+			vd.attributes[0].bufferIndex = 27; vd.attributes[0].format = MTLVertexFormatFloat3;
+			vd.attributes[1].bufferIndex = 27; vd.attributes[1].offset = 12; vd.attributes[1].format = MTLVertexFormatFloat2;
+			vd.attributes[2].bufferIndex = 27; vd.attributes[2].offset = 20; vd.attributes[2].format = MTLVertexFormatUChar4Normalized;
 		} else if ([layout isEqualToString:@"poscolor"]) {
 			vd.layouts[27].stride = 16;
 			vd.attributes[0].bufferIndex = 27; vd.attributes[0].format = MTLVertexFormatFloat3;
@@ -53,9 +58,10 @@ int main(int argc, const char **argv) {
 			useVd = NO;
 		}
 		if (useVd) pd.vertexDescriptor = vd;
-		BOOL lut = [layout isEqualToString:@"lut"];
+		BOOL lut = [layout isEqualToString:@"lut"], mrt = [layout isEqualToString:@"mrt"];
 		pd.colorAttachments[0].pixelFormat = lut ? MTLPixelFormatRGBA16Float : MTLPixelFormatRGBA8Unorm;
-		if (!lut) pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+		if (mrt) pd.colorAttachments[1].pixelFormat = MTLPixelFormatRG11B10Float; // the XDR final pass: main + excess, no depth
+		if (!lut && !mrt) pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 		NSError *e = nil;
 		MTLRenderPipelineReflection *refl = nil;
 		id<MTLRenderPipelineState> pso = [dev newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionBindingInfo reflection:&refl error:&e];

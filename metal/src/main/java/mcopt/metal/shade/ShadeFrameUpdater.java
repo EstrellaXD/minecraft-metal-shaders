@@ -59,6 +59,11 @@ public final class ShadeFrameUpdater {
 	private ShadeFrameUpdater() {
 	}
 
+	/** The art layer of the frame being packed (tools and modules: its CPU display transform and inverse). */
+	public static ShadeLook look() {
+		return LOOK;
+	}
+
 	/** Every chunk meshed again (F3+A), e.g. after the face shade setting changed. */
 	static void rebuildChunks() {
 		Minecraft mc = Minecraft.getInstance();
@@ -244,6 +249,10 @@ public final class ShadeFrameUpdater {
 		lastDimension = f.dimension;
 		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
 		if (snap) LOOK.snapExposure();
+		// M3 sky and dimensions (mcopt.shade.dims / aurora): Nether and End light, palettes and exposure; the aurora's state
+		if (mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.AURORA != 0) {
+			mcopt.metal.shade.dims.ShadeDims.update(f, level, sky, camera.blockPos, Math.min(dt, 0.25f), snap);
+		}
 		ShadeShadows.beforePack(camera, f);
 		LOOK.update(f, moonPhaseIndex, dt); // grades f.sky.light: before f.pack
 
@@ -252,6 +261,8 @@ public final class ShadeFrameUpdater {
 		}
 		f.pack(ShadeBindings.nextSlot());
 		LOOK.pack(ShadeBindings.currentLook(), f);
+		mcopt.metal.shade.dims.ShadeDims.pack(ShadeBindings.currentLook(), ShadeBindings.currentSlot(), f);
+		if (mcopt.metal.shade.dims.ShadeXdr.active()) mcopt.metal.shade.dims.ShadeXdr.frame(Math.min(dt, 0.25f));
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
 		if (mcopt.metal.shade.water.ShadeWater.ON) mcopt.metal.shade.water.ShadeWater.bake(ShadeBindings.ctx(), enc);

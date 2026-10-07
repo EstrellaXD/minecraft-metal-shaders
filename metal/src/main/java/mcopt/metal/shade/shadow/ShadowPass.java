@@ -247,8 +247,19 @@ public final class ShadowPass {
 		Minecraft mc = Minecraft.getInstance();
 		if (mc.level == null || !cam.initialized) return;
 		SkyRenderState sky = mc.gameRenderer.gameRenderState().levelRenderState.skyRenderState;
-		if (sky.skybox == DimensionType.Skybox.NONE || sky.skybox == DimensionType.Skybox.END) return; // no sun: Nether, End
-		this.chooseLight(sky.sunAngle, sky.moonAngle);
+		if (sky.skybox == DimensionType.Skybox.NONE) return; // no sun: Nether
+		if (sky.skybox == DimensionType.Skybox.END) {
+			// M3 (mcopt.shade.endShadows): the End's fixed key light (ShadeDims), so the far cascade stays cached
+			if (!mcopt.metal.shade.dims.DimsConfig.END_SHADOWS) return;
+			float[] e = mcopt.metal.shade.dims.ShadeDims.endLight();
+			this.light[0] = e[0];
+			this.light[1] = e[1];
+			this.light[2] = e[2];
+			this.lightIsMoon = false;
+			this.lightKey = 0x456e64L; // constant: never forces a far redraw
+		} else {
+			this.chooseLight(sky.sunAngle, sky.moonAngle);
+		}
 		double x = cam.pos.x, y = cam.pos.y, z = cam.pos.z;
 		this.camX = x;
 		this.camY = y;

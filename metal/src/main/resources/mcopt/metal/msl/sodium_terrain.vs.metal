@@ -77,7 +77,8 @@ static main0_out shade(uint2 a_Position, float4 a_Color, uint2 a_TexCoord, uint4
     out.v_Pos = position;
     out.v_Light = half3(half2(saturate(float2(a_LightAndData.xy) * (1.0 / 240.0))), fade);
     half4 color = half4(a_Color);
-    if (sf.flags.x != SHADE_DIM_OVERWORLD) color *= half4(lightTex.sample(lightSampler, float2(a_LightAndData.xy) / 256.0, level(0.0)));
+    // outside the overworld vanilla's lightmap, unless the dims module lights the Nether/End per pixel (shade_dims.metal)
+    if (sf.flags.x != SHADE_DIM_OVERWORLD && !shadeDimsLit(sf)) color *= half4(lightTex.sample(lightSampler, float2(a_LightAndData.xy) / 256.0, level(0.0)));
     out.v_Color = color;
 #else
 

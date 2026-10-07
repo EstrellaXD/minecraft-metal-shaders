@@ -18,9 +18,11 @@ struct SkyOut {
 };
 
 static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSmplr, constant ShadeFrame &sf, constant ShadeLook &sl, float ex,
-                            constant ShadeResources &sr) {
+                            constant ShadeResources &sr, float2 pixel) {
 	float pixelAngle = 2.0 * atan(1.0 / max(abs(sf.proj[1][1]), 1e-3)) * sf.screen.w;
 	float3 sky = shadeSkyRadiance2(dir, skyLut, skyLutSmplr, sf, sl, sr.milkyWay, pixelAngle);
+	// M3 aurora (shade_dims.metal; ShadeLook.night.z, 0 unless it shows tonight): emission over the night sky
+	if (sl.night.z > 0.002) sky += shadeAurora(dir, sf, sl, sr.milkyWay, pixel);
 	float vanillaSky = dir.y <= 0.0 ? 1.0 : saturate(min(16.0 / max(dir.y, 1e-3), 512.0) / max(sf.fogSky.x, 1.0));
 	return shadeFinish2(sky, vanillaSky, sf, sl, ex);
 }
@@ -35,10 +37,10 @@ fragment float4 main0(SkyOut in [[stage_in]], constant ShadeFrame& sf [[buffer(1
 		float a = saturate(in.vanilla.y / max(fog.FogSkyEnd, 1e-3));
 		float b = in.vanilla.z >= fog.FogSkyEnd ? 1.0 : 0.0;
 		float fogValue = max(a, b);
-		float3 behind = sf.flags.x == SHADE_DIM_OVERWORLD ? shadeSkyPixel(normalize(in.dir), skyLut, skyLutSmplr, sf, sl, ex, sr)
+		float3 behind = sf.flags.x == SHADE_DIM_OVERWORLD ? shadeSkyPixel(normalize(in.dir), skyLut, skyLutSmplr, sf, sl, ex, sr, in.position.xy)
 			: shadeVanillaOut(fog.FogColor.rgb, sl);
 		return float4(mix(shadeVanillaOut(dt.ColorModulator.rgb, sl), behind, fogValue * (sf.flags.x == SHADE_DIM_OVERWORLD ? 1.0 : fog.FogColor.a)),
 			dt.ColorModulator.a);
 	}
-	return float4(shadeSkyPixel(normalize(in.dir), skyLut, skyLutSmplr, sf, sl, ex, sr), 1.0);
+	return float4(shadeSkyPixel(normalize(in.dir), skyLut, skyLutSmplr, sf, sl, ex, sr, in.position.xy), 1.0);
 }

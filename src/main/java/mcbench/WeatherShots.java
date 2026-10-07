@@ -20,7 +20,7 @@ import net.minecraft.world.level.material.Fluids;
 
 /**
  * Opt-in weather screenshots ({@code -Dmcbench.weather=true} for all of them, or a comma list of
- * {@code perf,rain,sunset,night,water,storm,glass}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
+ * {@code perf,rain,sunset,night,water,storm,glass,caustics}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
  * weather work (branch m3-weather). Poses are found in the loaded world around the bench spot (server thread):
  * <ul>
  * <li>{@code perf}: two recorded perf phases at the ground pose (results.json perf.wxdry / perf.wxrain, gpu.*): 10 s panning
@@ -34,6 +34,8 @@ import net.minecraft.world.level.material.Fluids;
  * raindrop rings on water.</li>
  * <li>{@code wx_storm} (noon, rain): the sunset spot looking west over the water; a lightning bolt is summoned on the water
  * 45-90 blocks ahead and the shot is taken while it flashes.</li>
+ * <li>{@code wx_caustics} (noon, clear): 5 blocks above shallow water (1-3 deep) near the sunset spot, looking down at its
+ * floor: water caustics in the coloured-shadow map.</li>
  * <li>{@code wx_glass_noon} / {@code wx_glass_evening} (6000 / 11000, clear): a 6x6 roof of six colours of stained glass, 4
  * blocks above a flat grass patch beside the torch grid: coloured shadows. The glass is set back to air afterwards (and
  * before, in case an earlier run was interrupted: only stained glass is replaced, natural blocks are never touched).</li>
@@ -58,14 +60,14 @@ final class WeatherShots {
 		return false;
 	}
 
-	record Poses(Pose ground, Pose water, Pose storm, double[] bolt, Pose glassNoon, Pose glassEvening, int[] glassSite) {
+	record Poses(Pose ground, Pose water, Pose storm, double[] bolt, Pose glassNoon, Pose glassEvening, int[] glassSite, Pose shallow) {
 	}
 
 	static Poses poses;
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("perf") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass"))) return;
+		if (!(on("perf") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass") || on("caustics"))) return;
 		BenchDriver.results.put("weatherShots", JSON);
 		// the torch grid's area must be loaded on the server to read the ground (and place the glass)
 		steps.add(new BenchDriver.Scene("wx-site", 6000, false, () -> BenchDriver.spot.night));
@@ -102,6 +104,7 @@ final class WeatherShots {
 					shot(extra, "wx_glass_noon", 6000, false, p.glassNoon);
 					shot(extra, "wx_glass_evening", 11000, false, p.glassEvening);
 				}
+				if (on("caustics") && p.shallow != null) shot(extra, "wx_caustics", 6000, false, p.shallow);
 				if (on("perf") && p.ground != null) {
 					// the cost of the weather: the same 10 s pan over the ground pose, dry, then soaked in rain
 					perf(extra, "wxdry", false, p.ground);
@@ -280,7 +283,38 @@ final class WeatherShots {
 			// evening (sun in the west): the shadow falls east; from the south looking at the area east of the roof
 			glassEvening = Pose.lookAt(cx + 4, site[3] + 1 + 6.5, cz + 11, cx + 7, site[3] + 1, cz);
 		}
-		return new Poses(ground, water, storm, bolt, glassNoon, glassEvening, site);
+		// 5. shallow water (caustics): the nearest column within 48 blocks of the sunset spot whose water is 1-3 blocks deep with
+		// water around it (+-2 blocks); 5 blocks above the surface, 4 blocks south of it, looking down at it
+		Pose shallow = null;
+		int bx = (int) Math.floor(sp.x()), bz = (int) Math.floor(sp.z());
+		for (int r = 0; r <= 48 && shallow == null; r += 2) {
+			for (int dx = -r; dx <= r && shallow == null; dx += 2) {
+				for (int dz = -r; dz <= r && shallow == null; dz += 2) {
+					if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+					int x = bx + dx, z = bz + dz;
+					if (shallowDepth(l, x, z, sea) == 0) continue;
+					boolean ok = true;
+					for (int i = -2; i <= 2 && ok; i += 2) for (int j = -2; j <= 2 && ok; j += 2) ok = shallowDepth(l, x + i, z + j, sea) > 0;
+					if (ok) shallow = Pose.lookAt(x + 0.5, sea + 1 + 5, z + 4.5, x + 0.5, sea - 1, z + 0.5);
+				}
+			}
+		}
+		return new Poses(ground, water, storm, bolt, glassNoon, glassEvening, site, shallow);
+	}
+
+	/** Depth of the water column at x, z when it is 1-3 blocks over a solid floor at sea level, else 0. */
+	private static int shallowDepth(ServerLevel l, int x, int z, int sea) {
+		if (!l.hasChunk(x >> 4, z >> 4)) return 0;
+		int d = 0;
+		for (int y = sea; y > sea - 5; y--) {
+			BlockPos bp = new BlockPos(x, y, z);
+			if (l.getFluidState(bp).getType() == Fluids.WATER) {
+				d++;
+				continue;
+			}
+			return d >= 1 && d <= 3 && l.getBlockState(bp).isSolidRender() && l.getBlockState(new BlockPos(x, sea + 1, z)).isAir() ? d : 0;
+		}
+		return 0;
 	}
 
 	/** Places the roof (one colour per 1-block column of 6), clearing an earlier one there first. */

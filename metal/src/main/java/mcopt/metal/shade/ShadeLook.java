@@ -52,8 +52,8 @@ public final class ShadeLook {
 		{-15, 1.00f, 1.00f, 0.80f, 0.88f, 1.16f, 0.74f, 1.30f, 0.130f, 0.30f, 1.5f, -20},
 		{-9, 1.00f, 1.00f, 0.84f, 0.86f, 1.20f, 0.82f, 1.32f, 0.120f, 0.15f, 2.0f, -25},
 		{-4, 1.00f, 1.00f, 0.86f, 0.84f, 1.22f, 1.10f, 1.34f, 0.110f, 0.05f, 2.5f, -30},
-		{0, 1.60f, 0.85f, 1.04f, 0.93f, 1.05f, 1.28f, 1.36f, 0.100f, 1.00f, 5.0f, 55},
-		{5, 1.40f, 1.00f, 1.00f, 0.95f, 1.05f, 1.22f, 1.38f, 0.090f, 0.85f, 4.0f, 40},
+		{0, 1.60f, 0.85f, 1.04f, 0.93f, 1.05f, 1.22f, 1.36f, 0.100f, 1.00f, 5.0f, 40},
+		{5, 1.40f, 1.00f, 1.00f, 0.95f, 1.05f, 1.18f, 1.38f, 0.090f, 0.85f, 4.0f, 30},
 		{12, 1.18f, 1.00f, 0.98f, 0.98f, 1.04f, 1.12f, 1.40f, 0.085f, 0.55f, 2.5f, 18},
 		{25, 1.05f, 1.00f, 0.96f, 1.00f, 1.06f, 1.04f, 1.40f, 0.080f, 0.32f, 1.2f, 5},
 		{45, 1.00f, 1.00f, 0.95f, 1.00f, 1.08f, 1.02f, 1.40f, 0.075f, 0.22f, 0.6f, 0},
@@ -164,7 +164,8 @@ public final class ShadeLook {
 		invert(this.gradeIn, this.gradeInInv);
 		invert(this.gradeOut, this.gradeOutInv);
 		// exposure reference: M1's eye-adapted exposure (sky model + eye sky light), with the user's compensation
-		this.exposureRef = f.exposure * (float) Math.pow(2, ShadeConfig.EV);
+		// overcast is darker than a clear day (rain palette, bible §3.3): -0.7 EV at full rain
+		this.exposureRef = f.exposure * (float) Math.pow(2, ShadeConfig.EV - 0.7f * rain);
 		this.eyeSky += (f.eyeSkyLight / 15f - this.eyeSky) * (1f - (float) Math.exp(-this.dt / 1.5f));
 		// night sky
 		this.starBrightness = f.starBrightness * (1f - rain);

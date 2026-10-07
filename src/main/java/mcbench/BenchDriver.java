@@ -66,6 +66,7 @@ import net.minecraft.world.phys.Vec3;
  * <li>{@code -Dmcbench.water=true} (opt-in): water screenshots found in the world after the standard shots (WaterShots)</li>
  * <li>{@code -Dmcbench.standardShots=false} (opt-in): skip the five standard screenshots</li>
  * <li>{@code -Dmcbench.motionShots=forest;overview;sunset} (opt-in): screenshots taken while the camera moves (MotionShots)</li>
+ * <li>{@code -Dmcbench.entities=true} or {@code noon,evening,night,hand,motion} (opt-in): mobs, block entities, items, the hand (EntityShots)</li>
  * </ul>
  * Output: results.json, frametimes.csv, screenshots/*.png, gputimes.csv (with mcopt -Dmcopt.metal.gpuTimes=true),
  * error.txt on failure. The game then quits (Minecraft.stop).
@@ -245,6 +246,7 @@ public final class BenchDriver {
 			GodRayShots.plan(steps); // opt-in -Dmcbench.godRays=true
 			WaterShots.plan(steps); // opt-in -Dmcbench.water=true
 			MotionShots.plan(steps); // opt-in -Dmcbench.motionShots=forest;overview;...
+			EntityShots.plan(steps); // opt-in -Dmcbench.entities=true|noon,evening,night,hand,motion (M3 entities)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)

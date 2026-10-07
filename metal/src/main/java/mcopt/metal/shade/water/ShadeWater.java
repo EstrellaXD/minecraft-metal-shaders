@@ -51,7 +51,8 @@ import org.lwjgl.system.MemoryUtil;
  * <li>{@code mcopt.shade.caustics} (true): caustics on the bottom seen through the surface.</li>
  * <li>{@code mcopt.shade.waterFoam} (true): shoreline foam.</li>
  * <li>{@code mcopt.shade.waterReflect} (1.0): reflection strength (artistic scale on the Fresnel term).</li>
- * <li>{@code mcopt.shade.waterDetail} (true, M2.1): fine ripples, pixel-scale ripple pattern, calmer long waves, softer refraction.</li>
+ * <li>{@code mcopt.shade.waterDetail} (true, M2.1): fine ripples (their own faster baked layer), pixel-scale ripple pattern, calmer long
+ * waves, softer refraction.</li>
  * <li>{@code mcopt.shade.ssrEdge} (true, M2.1): reflections reach the left and right screen edges.</li>
  * <li>{@code mcopt.shade.waterClock} (true, M2.1): the waves run on real time (smooth) instead of the game time.</li>
  * <li>{@code mcopt.shade.glossy} (false, opt-in until checked in game: the bench world has no ice or stained glass): stained
@@ -162,7 +163,7 @@ public final class ShadeWater {
 		return state != 0;
 	}
 
-	private static long bakePso, library;
+	private static long bakePso, bakeDetailPso, library;
 	private static boolean bakeFailed, bakedOnce;
 	private static int capturesAtBake = -1;
 
@@ -191,6 +192,15 @@ public final class ShadeWater {
 			}
 			long tex = WaterNative.waves(ctx, state, BAKE_SIZE);
 			mcopt.metal.shade.ShadeRender.pass(enc, bakePso, tex, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: wave bake");
+			if (DETAIL) {
+				// M2.1: the fine-ripple layer (water.metal shade_water_bake_detail_fs: the same waves, faster), texture(22)
+				if (bakeDetailPso == 0) {
+					bakeDetailPso = mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_bake_detail_fs",
+						mcopt.metal.shade.ShadeRender.RGBA16F, mcopt.metal.shade.ShadeRender.BLEND_NONE);
+				}
+				long det = WaterNative.wavesDetail(ctx, state, BAKE_SIZE);
+				mcopt.metal.shade.ShadeRender.pass(enc, bakeDetailPso, det, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: ripple bake");
+			}
 			WaterNative.wavesDone(enc, state);
 		} catch (Throwable e) {
 			bakeFailed = true;

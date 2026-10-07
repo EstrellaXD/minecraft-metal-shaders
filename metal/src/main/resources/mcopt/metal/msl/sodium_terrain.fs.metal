@@ -68,6 +68,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef SHADE_WATER
                          , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
                          , texture2d<half> waterWaves [[texture(20)]], texture2d<float> waterCoarse [[texture(21)]]
+                         , texture2d<half> waterDetail [[texture(22)]]
 #ifdef MCOPT_HDR
                          , constant ShadeResources& sr [[buffer(19)]]
 #endif
@@ -186,7 +187,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.dxz = float4(dpx.xz, dpy.xz);
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL
-        if (n.y > 0.5h && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterWaves); // M2.1 fine ripples (top faces, baked waves)
+        // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
+        if ((n.y > 0.5h || (n.y < -0.5h && sf.flags2.y != 0)) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
         wi.exposure = ex;

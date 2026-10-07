@@ -231,7 +231,8 @@ public final class ShadeFrameUpdater {
 		float dt = lastNanos == 0 ? 0f : (now - lastNanos) / 1e9f;
 		lastNanos = now;
 		boolean snap = lastDimension != f.dimension || dt > 1f;
-		// the water's clock: real time (frame deltas, a stall counts at most 0.25 s), wrapped every 4096 s. The game time is
+		// the water's clock: real time (frame deltas, a stall counts at most 0.25 s), wrapped every 4096 s (water.metal rounds every
+		// wave speed to whole turns per 4096 s: the wrap is seamless). The game time is
 		// tick-based and the integrated server resets it every second (ClientboundSetTimePacket), so waves driven by it
 		// jump back or forward whenever the server lags (chunk generation): the "choppy" water of M2.
 		if (mcopt.metal.shade.water.ShadeWater.CLOCK) {
@@ -263,8 +264,9 @@ public final class ShadeFrameUpdater {
 		}
 	}
 
-	/** mcopt.shade.log=N: a line with the art layer's state every N seconds (0 = never). */
+	/** The water's real-time clock (seconds, wrapped every 4096 s: water.metal SHADE_WATER_CLOCK_WRAP, seamless). */
 	private static double waterClock;
 
+	/** mcopt.shade.log=N: a line with the art layer's state every N seconds (0 = never). */
 	private static final int LOG_EVERY = Integer.getInteger("mcopt.shade.log", 0);
 }

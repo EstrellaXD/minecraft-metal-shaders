@@ -35,6 +35,8 @@ typedef struct {
 	id<MTLTexture> color, depth;            // the copies (recreated when the attachments' size or format change)
 	id<MTLTexture> dummyColor, dummyDepth;  // bound until the first capture
 	id<MTLTexture> waves;                   // the baked wave field (RGBA16F 512^2 or 1024^2 by preset, mipmapped), rendered by ShadeWater.bake
+	id<MTLTexture> detail;                  // M2.1: the fine-ripple layer (same format, the waves baked faster), texture(22)
+	int detailBaked;                        // detail was rendered this frame (else texture(22) falls back to waves)
 	id<MTLTexture> hz, dummyHz;             // the SSR march's half-size nearest depth (R32F reversed-Z), made after each copy
 	id<MTLRenderPipelineState> hzPso;       // water.metal shade_water_hz_fs (set by ShadeWater; no coarse depth without it)
 	WaterParams params;
@@ -74,6 +76,7 @@ void mc_water_free(WaterState *s) {
 	[s->dummyColor release];
 	[s->dummyDepth release];
 	[s->waves release];
+	[s->detail release];
 	[s->hz release];
 	[s->dummyHz release];
 	[s->hzPso release];
@@ -106,6 +109,7 @@ void mc_water_bind(Enc *enc) {
 	[r setFragmentTexture:valid ? s->color : s->dummyColor atIndex:18];
 	[r setFragmentTexture:valid ? s->depth : s->dummyDepth atIndex:19];
 	[r setFragmentTexture:s->params.state[3] > 0.5f ? s->waves : s->dummyColor atIndex:20];
+	[r setFragmentTexture:s->params.state[3] > 0.5f ? (s->detailBaked && s->detail ? s->detail : s->waves) : s->dummyColor atIndex:22];
 	[r setFragmentTexture:valid && s->hz && s->hzPso ? s->hz : s->dummyHz atIndex:21];
 	[r setFragmentBytes:&s->params length:sizeof(WaterParams) atIndex:23];
 }
@@ -179,17 +183,29 @@ void mc_water_set_hz(WaterState *s, id<MTLRenderPipelineState> pso) {
 
 // The baked wave field's texture (size^2, made on first use): ShadeWater.bake renders mip 0 with a ShadeRender pass, then calls
 // mc_water_waves_done. RenderTarget|ShaderRead, private, losslessly compressed.
-id<MTLTexture> mc_water_waves(Ctx *ctx, WaterState *s, int size) {
-	if (s->waves) return s->waves;
+static id<MTLTexture> wavesTexture(Ctx *ctx, int size, NSString *label) {
 	if (size < 64) size = 64;
 	@autoreleasepool {
 		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:size height:size mipmapped:YES];
 		td.storageMode = MTLStorageModePrivate;
 		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-		s->waves = [ctx->device newTextureWithDescriptor:td];
-		s->waves.label = @"mcopt shade water: baked waves";
+		id<MTLTexture> t = [ctx->device newTextureWithDescriptor:td];
+		t.label = label;
+		return t;
 	}
+}
+
+id<MTLTexture> mc_water_waves(Ctx *ctx, WaterState *s, int size) {
+	if (!s->waves) s->waves = wavesTexture(ctx, size, @"mcopt shade water: baked waves");
 	return s->waves;
+}
+
+// M2.1: the fine-ripple layer's texture (same size and format), rendered right after the long waves' (ShadeWater.bake);
+// mc_water_waves_done makes its mips too. Bound at texture(22) when it was rendered this frame.
+id<MTLTexture> mc_water_waves_detail(Ctx *ctx, WaterState *s, int size) {
+	if (!s->detail) s->detail = wavesTexture(ctx, size, @"mcopt shade water: baked ripples");
+	s->detailBaked = 1;
+	return s->detail;
 }
 
 // After the bake pass wrote mip 0: the mip chain (one blit), and the shaders may sample it this frame (state.w).
@@ -200,6 +216,7 @@ void mc_water_waves_done(Enc *enc, WaterState *s) {
 		id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
 		b.label = @"mcopt shade water: wave mips";
 		[b generateMipmapsForTexture:s->waves];
+		if (s->detailBaked && s->detail) [b generateMipmapsForTexture:s->detail];
 		[b endEncoding];
 	}
 	s->params.state[3] = 1.0f;

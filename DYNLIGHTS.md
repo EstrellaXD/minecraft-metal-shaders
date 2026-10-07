@@ -8,7 +8,7 @@ What moves and glows now lights its surroundings in real time, in every shaded p
 
 | Source | Light | Position |
 |---|---|---|
-| The local player's main and off hand | the item's light level and our colour (table below) | first person: in front of the eye, low, on the arm's side (`0.45` forward, `0.42` sideways, `0.32` down); third person: at the model's hand |
+| The local player's main and off hand | the item's light level and our colour (table below) | first person: in front of the eye, low, on the arm's side (`0.45` forward, `0.42` sideways, `0.32` down); third person: at the model's hand. Pulled back toward the eye (mobs: toward the body) when that point is inside an opaque block or behind one, so hugging a wall never lights the room behind it |
 | Other players and any mob holding a luminous item (both hands) | same | at the model's hands (body yaw, main arm, width and height) |
 | Dropped luminous items, items in item frames | same (frames 85 %) | the item |
 | Burning entities (`displayFireAnimation`: on fire or visual fire) | fire, level 15 (12 when small), flicker | the middle of its box |
@@ -40,7 +40,12 @@ LevelRenderer.render HEAD (ShadeFrameUpdater, after the globals and the sky LUT)
                               its reach changed or the occupancy changed (static mobs / items cost nothing after the first frame)
     pack .................... lights + light grid into this frame's ring slot (buffer 24)
     mc_dl_vis ............... GPU compute, before the world passes: one thread per voxel of each slab to recompute
-  world passes .............. Sodium terrain (plain and pulled share the fragment), water, glass: shadeDynamicLights
+    mc_dl_irr ............... GPU compute: the irradiance volume, 80 x 48 x 80 blocks around the camera, every light of
+                              the voxel's grid cell (visibility read from its slab) -> rgb light + mean light direction;
+                              dispatched only over the box the lights reach, united with last frame's box (which it clears)
+  world passes .............. Sodium terrain (plain and pulled share the fragment), glass, the water body:
+                              shadeDynamicLightsVol (2 trilinear fetches, any number of lights)
+                              water surface seen from above: shadeDynamicLightsSpec (per light: diffuse + glint)
                               game entity / item / block entity / particle vertex stages (HDR variants): shadeDynLightmap
 render3dHud ................. the first-person hand: its packed light raised by DynLights.levelAt (CPU)
 ```
@@ -58,9 +63,15 @@ render3dHud ................. the first-person hand: its packed light raised by 
   into): 1 where the light's centre sees that voxel's centre through air. Light stops at walls, floors and ceilings with
   block-sized soft edges; it goes through glass, leaves and water (only `BlockState.canOcclude` blocks stop it).
   Lights without a slab (17th and later, beyond 40 blocks, lightning) are unoccluded.
-- **Cost control**: a light grid of 16 x 12 x 16 cells of 8 blocks around the camera, each cell a 64-bit mask of the
-  lights whose sphere can reach it; a pixel loops only over its cell's bits, and a light out of reach exits before any
-  texture fetch.
+- **Cost control: the irradiance volume.** Per-pixel loops over the lights (first version) cost ~1 ms at balanced with the
+  hands + 9 lights, because grass and leaves overdraw and every fragment looped over every nearby light. Now a compute
+  pass evaluates every light once per block voxel (80 x 48 x 80 around the camera, RGBA16F rgb light + RGBA16F mean
+  direction weighted by each light's luminance) and the terrain fragment does two trilinear fetches half a block in front of
+  its face, with the wrapped N.L taken against the mean direction (its length < 1 where lights come from several sides:
+  the term blends toward 0.6). Same model as the per-light loop for one light; cost independent of the light count. The
+  light grid (16 x 12 x 16 cells of 8 blocks, a 64-bit mask per cell, sphere-tested) keeps the compute, the water glint and
+  the entity vertices to the lights that can reach them. Lights stop 2 blocks short of their reach (level < 2, < 0.2 % of
+  the core), faded over the last block.
 - **Water**: the water body takes the diffuse term (into `ShadeWaterIn.lit`), and the surface seen from above gets a
   Blinn-Phong glint per light (exponent 160, Fresnel-weighted, normal tilted by the fine ripples): torchlight sparkles on
   the water while walking along a shore. Glass and ice take the diffuse term like any texel.
@@ -81,8 +92,9 @@ render3dHud ................. the first-person hand: its packed light raised by 
 
 | Slot | Content | Writer |
 |---|---|---|
-| `buffer(24)` (vertex + fragment) | `ShadeDynLights`, 27712 B: header (count, volumes, frame; grid origin and 1/cell; slabs, strength, specular, entity strength; hand light), 64 lights x 48 B (pos + reach, tint x intensity + specular, slab origin + slab index), 3072 cells x `uint2` | CPU, ring of 4 shared buffers (`mcdynlight.m`) |
+| `buffer(24)` (vertex + fragment) | `ShadeDynLights`, 27712 B: header (count, volumes, frame; grid origin and 1/cell; slabs, strength, specular, entity strength; irradiance volume origin), 64 lights x 48 B (pos + reach, tint x intensity + specular, slab origin + slab index), 3072 cells x `uint2` | CPU, ring of 4 shared buffers (`mcdynlight.m`) |
 | `texture(23)` (vertex + fragment) | visibility, `texture3d<half>` R8Unorm 32 x 32 x (32 x volumes) | `shade_dl_vis` compute (`dynlight_vis.metal`) |
+| `texture(24)`, `texture(25)` (fragment) | irradiance volume: rgb light, mean light direction (`texture3d<half>` RGBA16F, 80 x 48 x 80, one voxel per block; origin in `ShadeDynLights.irr`) | `shade_dl_irr` compute (`dynlight.metal`, `SHADE_DL_KERNELS`) |
 | compute only | block occupancy, 256 KB shared buffer, 1 bit per block, toroidal 8^3 sections | CPU (`Occupancy`) |
 
 Both slots are free in every pipeline that binds the shade globals: vanilla's uniforms and samplers count from 0, Sodium

@@ -124,6 +124,13 @@ constant float2 SHADE_VOGEL[16] = {
 	float2(0.6847, 0.2108), float2(-0.6649, 0.3468), float2(0.2700, -0.7279), float2(0.3346, 0.7428),
 	float2(-0.7958, -0.2903), float2(0.8215, -0.3082), float2(-0.3472, 0.8343), float2(-0.2857, -0.9108)};
 
+// 8 taps of a Vogel disc (golden angle, r = sqrt((i + 0.5) / 8)), each a hardware 2x2 PCF
+constant float2 SHADE_VOGEL8[8] = {
+	float2(0.2500, 0.0000), float2(-0.3201, 0.2931), float2(0.0549, -0.5564), float2(0.4228, 0.4807),
+	float2(-0.7319, -0.1257), float2(0.6453, -0.4760), float2(-0.2162, 0.8480), float2(-0.5028, -0.8020)};
+#define SHADE_PCSS_TAPS 8
+#define SHADE_PCSS_FAR 40.0 // blocks: PCSS within, M1's tent beyond
+
 static half shadeShadow2(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, constant ShadeLook &L, float3 p, half3 n, bool thin,
                          bool foliage, float2 pixel, half sky) {
 	if (f.flags.z == 0 || shadeDev(f, SHADE_DEV_NO_SHADOW)) return half(1.0);
@@ -139,7 +146,12 @@ static half shadeShadow2(depth2d_array<float> map, sampler cmp, constant ShadeFr
 	float m0 = max(abs(c.x), abs(c.y));
 	if (c.z <= 0.0 || c.z >= 1.0) m0 = 2.0;
 	float nearVis = 1.0;
-	if (m0 < 1.0) {
+	if (m0 < 1.0 && length(p) > SHADE_PCSS_FAR) {
+		// past PCSS range penumbrae are about a pixel wide: M1's 4-tap tent
+		float mm;
+		nearVis = shadeShadowCascade(map, cmp, 0u, f.shadowViewProj[0], p, dir * f.cascadeSplits.z, texelUv, 0.75, mm);
+		if (m0 < 0.85) return half(nearVis);
+	} else if (m0 < 1.0) {
 		float2 uv = shadeShadowUV(c.xyz);
 		float blocksPerTexel = f.cascadeSplits.z;
 		float zBlocks = 1.0 / max(length(float3(f.shadowViewProj[0][0][2], f.shadowViewProj[0][1][2], f.shadowViewProj[0][2][2])), 1e-6);
@@ -158,8 +170,8 @@ static half shadeShadow2(depth2d_array<float> map, sampler cmp, constant ShadeFr
 			float zb = (dot(d0, b0) + dot(d1, b1)) / count;
 			float wTex = clamp((zb - c.z) * zBlocks * tanSun / blocksPerTexel, 0.6, searchTex);
 			float s = 0.0;
-			for (int i = 0; i < 12; i++) s += map.sample_compare(cmp, uv + R * SHADE_VOGEL[i] * (wTex * texelUv), 0u, c.z);
-			s *= 1.0 / 12.0;
+			for (int i = 0; i < SHADE_PCSS_TAPS; i++) s += map.sample_compare(cmp, uv + R * SHADE_VOGEL8[i] * (wTex * texelUv), 0u, c.z);
+			s *= 1.0 / float(SHADE_PCSS_TAPS);
 			float k = clamp(2.0 / wTex, 1.0, 3.0);
 			nearVis = saturate((s - 0.5) * k + 0.5);
 		} else {
@@ -238,11 +250,14 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	bool needSky = ap > 0.002 || L.fogMisc.z > 0.0;
 	if (needSky) skyBehind = shadeSkyLookup(float3(v.x, max(v.y, 0.0), v.z), lut, s, f);
 	if (ap > 0.002) radiance = mix(radiance, skyBehind, ap * 0.6);
+#ifndef MCOPT_HDR
+	// (in the HDR target the final pass applies the haze once per pixel, from depth: no cost per overdrawn fragment)
 	if (air && d > 2.0) {
 		float3 T;
 		float3 S = shadeHazeInscatter(p, f, L, 1.0, T);
 		radiance = radiance * T + S;
 	}
+#endif
 	if (air) {
 		float edge;
 		if (L.fogMisc.z > 0.0) { // border fog: l4 norm on xz (square like the loaded chunks), into the horizon sky

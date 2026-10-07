@@ -203,9 +203,9 @@ public final class ShadePost {
 			lw = Math.max(1, (lw + 1) / 2);
 			lh = Math.max(1, (lh + 1) / 2);
 			bloomLevels[i] = ShadeRender.texture(ShadeRender.RGBA16F, lw, lh, true, "mcopt shade: bloom L" + i);
-			bloomAccum[i] = ShadeRender.texture(ShadeRender.RGBA16F, lw, lh, true, "mcopt shade: bloom U" + i);
+			bloomAccum[i] = i == 0 ? 0 : ShadeRender.texture(ShadeRender.RGBA16F, lw, lh, true, "mcopt shade: bloom U" + i);
 		}
-		ShadeRender.resource(3, n > 0 ? bloomAccum[0] : 0);
+		ShadeRender.resource(3, n > 1 ? bloomAccum[1] : 0);
 	}
 
 	private static void retire(long t) {
@@ -223,15 +223,17 @@ public final class ShadePost {
 	// ---- the redirect ------------------------------------------------------------------------------------------------------
 	private static MetalHooks.@Nullable Redirect redirect(RenderPassDescriptor d) {
 		if (!world || mainColor == null) return null;
+		// Distant Horizons: every one of its passes (also those drawing into its own targets: its far fade samples the main
+		// colour) sees the display-referred image in main and composites there, as without shading
+		String label = d.label().get();
+		if (label != null && label.startsWith("distantHorizons:")) {
+			if (ShadeConfig.DH_BRIDGE && !bridgeOpen) openBridge();
+			return null;
+		}
 		var colors = d.colorAttachments();
 		if (colors.size() != 1 || colors.get(0) == null) return null;
 		var attachment = colors.get(0);
 		if (attachment.textureView().texture() != mainColor || attachment.textureView().baseMipLevel() != 0) return null;
-		String label = d.label().get();
-		if (label != null && label.startsWith("distantHorizons:")) {
-			if (ShadeConfig.DH_BRIDGE && !bridgeOpen) openBridge();
-			return null; // DH composites into main RGBA8 as it would without shading
-		}
 		if (bridgeOpen) closeBridge();
 		float[] clear = null;
 		Optional<Vector4fc> explicit = attachment.clearValue();
@@ -259,13 +261,13 @@ public final class ShadePost {
 		}
 		long main = MetalBridge.textureHandle(mainColor);
 		MetalBridge.takePendingColorClear(encoder, mainColor);
-		ShadeRender.pass(enc, psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
+		pass(psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
 	}
 
 	private static void closeBridge() {
 		bridgeOpen = false;
 		long main = MetalBridge.textureHandle(mainColor);
-		ShadeRender.pass(enc, psoDecode, hdr[frame & 1], ShadeRender.LOAD, new long[] {main}, null, "mcopt shade: DH bridge decode");
+		pass(psoDecode, hdr[frame & 1], ShadeRender.LOAD, new long[] {main}, null, "mcopt shade: DH bridge decode");
 	}
 
 	// ---- before the hand: hooks, bloom, exposure, tone map ---------------------------------------------------------------
@@ -305,12 +307,12 @@ public final class ShadePost {
 		}
 		if (scene != hdr[frame & 1]) sizeBloom(ShadeRender.width(scene), ShadeRender.height(scene));
 		else sizeBloom(width, height);
-		float bloomNorm = 0f;
+		float bloomNorm = 0f, w0 = 0f;
 		int n = bloomLevels.length;
 		if (n > 0) {
-			ShadeRender.pass(enc, psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {scene}, null, "mcopt shade: bloom down 0");
+			pass(psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {scene}, null, "mcopt shade: bloom down 0");
 			for (int i = 1; i < n; i++) {
-				ShadeRender.pass(enc, psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");
+				pass(psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");
 			}
 			if (ShadeConfig.AUTO_EXPOSURE && n > 2) {
 				long l2 = bloomLevels[2];
@@ -318,22 +320,32 @@ public final class ShadePost {
 			}
 			float spectrum = ShadeConfig.LOOK == 1 ? 0.9f : ShadeConfig.LOOK == 2 ? 0.3f : 0.6f;
 			float sum = 0f;
-			for (int i = n - 1; i >= 0; i--) {
+			// U_i = w_i L_i + tent(U_i+1) down to U_1; level 0 (half size) is added in the final pass (w0 L0 + bilinear U1):
+			// one half-size pass less, the biggest one
+			for (int i = n - 1; i >= 1; i--) {
 				float w = (float) Math.pow(i + 1, spectrum);
 				sum += w;
 				params.clear();
 				params.putFloat(w).putFloat(i == n - 1 ? 0f : 1f).putFloat(0f).putFloat(0f).flip();
 				long coarser = i == n - 1 ? bloomLevels[i] : bloomAccum[i + 1];
-				ShadeRender.pass(enc, psoUp, bloomAccum[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i], coarser}, params, "mcopt shade: bloom up");
+				pass(psoUp, bloomAccum[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i], coarser}, params, "mcopt shade: bloom up");
 			}
+			w0 = 1f;
+			sum += w0;
 			bloomNorm = 1f / sum;
 		}
 		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");
 		params.clear();
-		params.putFloat(bloomNorm).putFloat(n > 0 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).flip();
+		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f).flip();
 		long mainHandle = MetalBridge.textureHandle(mainColor);
 		MetalBridge.takePendingColorClear(encoder, mainColor);
-		ShadeRender.pass(enc, psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 0 ? bloomAccum[0] : scene, depth}, params, "mcopt shade: final");
+		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene}, params, "mcopt shade: final");
+	}
+
+	/** ShadeRender.pass on this frame's encoder, named in the -Dmcopt.metal.trace output (its GPU time is the next encoder #). */
+	private static void pass(long pso, long target, int load, long @Nullable [] textures, @Nullable ByteBuffer p, String label) {
+		if (encoder != null && MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass '" + label + "'");
+		ShadeRender.pass(enc, pso, target, load, textures, p, label);
 	}
 
 	/** Whether Distant Horizons' passes went through the bridge this frame. */

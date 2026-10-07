@@ -41,7 +41,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 	private static long TRACE_SUBMIT = TracePhase.fixed(); // -Dmcopt.metal.trace=N, or PHASE+N (TracePhase) once the bench reaches it
 	/** Above this, an upload is cheaper as an async GPU blit than as a memcpy on the render thread. */
 	private static final long CPU_COPY_MAX = 256 << 10;
-	private static final int PROFILE_FRAMES = 100, PROFILE_ENCODERS = 16;
+	private static final int PROFILE_FRAMES = 100, PROFILE_ENCODERS = Math.max(1, Integer.getInteger("mcopt.metal.profileEncoders", 16)); // -Dmcopt.metal.profileEncoders: more for native shading's post passes
 	private static final boolean GPU_TIMES = Boolean.getBoolean("mcopt.metal.gpuTimes");
 	/**
 	 * -Dmcopt.metal.presentQueue=true (idea: ByteV0rtex, noahdunnagan/mcopt#2): present from a second command queue, so the frame's

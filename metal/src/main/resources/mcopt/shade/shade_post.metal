@@ -56,9 +56,16 @@ static inline half3 shadeDown13(texture2d<half> src, float2 uv, float2 texel, bo
 	return (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / (w0 + w1 + w2 + w3 + w4);
 }
 
+// The first level reads the full-resolution scene: 4 bilinear taps (a 4x4 texel box), each Karis-weighted 1 / (1 + luma) so
+// a few very bright texels (the sun, specular sparkles) can't flicker the whole bloom; the 13-tap filter takes over below.
 fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]]) {
 	float2 texel = 1.0 / float2(src.get_width(), src.get_height());
-	return half4(min(shadeDown13(src, in.uv, texel, true), half3(30000.0h)), 1.0h);
+	half3 a = min(src.sample(shadeLinearClamp, in.uv + texel * float2(-1, -1)).rgb, half3(30000.0h));
+	half3 b = min(src.sample(shadeLinearClamp, in.uv + texel * float2(1, -1)).rgb, half3(30000.0h));
+	half3 c = min(src.sample(shadeLinearClamp, in.uv + texel * float2(-1, 1)).rgb, half3(30000.0h));
+	half3 d = min(src.sample(shadeLinearClamp, in.uv + texel * float2(1, 1)).rgb, half3(30000.0h));
+	half wa = 1.0h / (1.0h + shadeLumaH(a)), wb = 1.0h / (1.0h + shadeLumaH(b)), wc = 1.0h / (1.0h + shadeLumaH(c)), wd = 1.0h / (1.0h + shadeLumaH(d));
+	return half4((a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd), 1.0h);
 }
 
 fragment half4 shade_bloom_down(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]]) {
@@ -82,8 +89,8 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 	return half4(l * half(p.w.x) + u * half(p.w.y / 16.0), 1.0h);
 }
 
-// x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view
-struct ShadeFinalParams { float4 p; };
+// p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0
+struct ShadeFinalParams { float4 p; float4 q; };
 
 // Camera-relative world position of the pixel at uv = (pixel + 0.5) / size with reversed-Z depth d. Targets hold GL row
 // order (row 0 = the bottom of the view), so the NDC is uv * 2 - 1 with no flip.
@@ -94,24 +101,28 @@ static inline float3 shadeWorldFromDepth(float2 uv, float d, constant ShadeFrame
 }
 
 fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], texture2d<half> bloom [[texture(1)]],
-                            depth2d<float> depth [[texture(2)]], constant ShadeFinalParams &P [[buffer(0)]],
+                            depth2d<float> depth [[texture(2)]], texture2d<half> bloom0 [[texture(3)]], constant ShadeFinalParams &P [[buffer(0)]],
                             constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]]) {
 	uint2 px = uint2(in.position.xy);
 	float3 c = float3(scene.read(px).rgb);
 	float ex = max(g.exposure.x, 1e-6);
-	if (P.p.y > 0.5) {
-		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb) * P.p.x;
-		// depth may be smaller than the image (a resolver's output-resolution image over the internal-resolution world)
-		uint2 dpx = min(uint2(in.uv * float2(depth.get_width(), depth.get_height())), uint2(depth.get_width() - 1, depth.get_height() - 1));
-		float d = depth.read(dpx);
-		float m = L.bloom.x;
-		if (d > 0.0) {
-			float3 wp = shadeWorldFromDepth(in.uv, d, f);
-			float3 T = shadeHazeTransmittance(wp, f, L);
-			m += L.bloom.z * (1.0 - shadeLuma(T));
-		} else {
-			m += L.bloom.z * 0.25;
+	// height haze and mist (E06) from depth, once per pixel (the shaded pipelines skip it in the HDR target): surfaces in the
+	// air only (under water / in lava the game's fog owns it), not the sky (the atmosphere has its own) nor Distant Horizons'
+	// LODs (not in this depth; DH fogs them). Depth may be smaller than the image (a resolver's output over the internal world).
+	uint2 dpx = min(uint2(in.uv * float2(depth.get_width(), depth.get_height())), uint2(depth.get_width() - 1, depth.get_height() - 1));
+	float d = depth.read(dpx);
+	float3 T = float3(1.0);
+	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
+	if (d > 0.0 && hazeOn) {
+		float3 wp = shadeWorldFromDepth(in.uv, d, f);
+		if (dot(wp, wp) > 4.0) {
+			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
+			c = c * T + S * ex;
 		}
+	}
+	if (P.p.y > 0.5) {
+		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb + bloom0.sample(shadeLinearClamp, in.uv).rgb * half(P.q.x)) * P.p.x;
+		float m = L.bloom.x + (d > 0.0 ? L.bloom.z * (1.0 - shadeLuma(T)) : L.bloom.z * 0.25);
 		c = mix(c, b, saturate(m));
 	}
 	// Purkinje: dim light (scene luminance, not exposed) shifts toward the rods' cool grey

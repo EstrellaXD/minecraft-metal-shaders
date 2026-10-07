@@ -52,9 +52,9 @@ public final class ShadeLook {
 		{-15, 1.00f, 1.00f, 0.80f, 0.88f, 1.16f, 0.74f, 1.30f, 0.130f, 0.30f, 1.5f, -20},
 		{-9, 1.00f, 1.00f, 0.84f, 0.86f, 1.20f, 0.82f, 1.32f, 0.120f, 0.15f, 2.0f, -25},
 		{-4, 1.00f, 1.00f, 0.86f, 0.84f, 1.22f, 1.10f, 1.34f, 0.110f, 0.05f, 2.5f, -30},
-		{0, 1.60f, 0.85f, 1.04f, 0.93f, 1.05f, 1.16f, 1.36f, 0.100f, 1.00f, 5.0f, 55},
-		{5, 1.40f, 1.00f, 1.00f, 0.95f, 1.05f, 1.13f, 1.38f, 0.090f, 0.85f, 4.0f, 40},
-		{12, 1.18f, 1.00f, 0.98f, 0.98f, 1.04f, 1.08f, 1.40f, 0.085f, 0.55f, 2.5f, 18},
+		{0, 1.60f, 0.85f, 1.04f, 0.93f, 1.05f, 1.28f, 1.36f, 0.100f, 1.00f, 5.0f, 55},
+		{5, 1.40f, 1.00f, 1.00f, 0.95f, 1.05f, 1.22f, 1.38f, 0.090f, 0.85f, 4.0f, 40},
+		{12, 1.18f, 1.00f, 0.98f, 0.98f, 1.04f, 1.12f, 1.40f, 0.085f, 0.55f, 2.5f, 18},
 		{25, 1.05f, 1.00f, 0.96f, 1.00f, 1.06f, 1.04f, 1.40f, 0.080f, 0.32f, 1.2f, 5},
 		{45, 1.00f, 1.00f, 0.95f, 1.00f, 1.08f, 1.02f, 1.40f, 0.075f, 0.22f, 0.6f, 0},
 		{65, 1.00f, 1.00f, 0.95f, 1.00f, 1.10f, 1.00f, 1.42f, 0.075f, 0.18f, 0.5f, -5},
@@ -70,14 +70,14 @@ public final class ShadeLook {
 	/** Tone curve anchors: mid-grey in -> out, white point (scene) -> peak (display). */
 	static final float MID_IN = 0.18f, MID_OUT = 0.20f, WHITE = 16f, SHOULDER = 0.92f;
 	/** Auto-exposure metering key (the metered mean luminance maps to this, pre-exposed) and bounds around the reference. */
-	static final float METER_KEY = 0.30f, EV_DOWN = 1.75f, EV_UP = 1.75f, TAU_UP = 0.6f, TAU_DOWN = 2.2f;
+	static final float METER_KEY = 0.30f, EV_DOWN = 1.75f, EV_UP = 1.75f, EV_UP_NIGHT = 0.6f, TAU_UP = 0.6f, TAU_DOWN = 2.2f;
 	/** Haze (Rayleigh-like) extinction at its base, per block, and scale height; base height above sea level. */
 	static final float[] HAZE_SIGMA = {0.22e-3f * 0.40f, 0.48e-3f * 0.40f, 1.0e-3f * 0.40f};
 	/** The keyframes' mist sigma column (x 1e-3 / block) is scaled by this: at full strength a low sun drowns the near field. */
 	static final float MIST_SCALE = 0.35f;
 	static final float HAZE_H = 48f, HAZE_BASE = 16f, MIST_H = 10f, MIST_BASE = 4f, MIST_ALBEDO = 0.9f, SEA = 63f;
 	/** Sun and moon disc angular radius (radians). */
-	static final float SUN_RADIUS = (float) Math.toRadians(0.75), MOON_RADIUS = (float) Math.toRadians(0.65);
+	static final float SUN_RADIUS = (float) Math.toRadians(1.0), MOON_RADIUS = (float) Math.toRadians(0.65);
 
 	// ---- per-frame values (read by tools and the debug log) --------------------------------------------------------------
 	public float elevation, rising, chromaGamma, lightMul, saturation, contrast, bloomMix, vlStrength, mistSigma, whiteBalance;
@@ -134,7 +134,7 @@ public final class ShadeLook {
 		this.saturation *= 1f - 0.25f * rain;
 		this.contrast -= 0.08f * rain;
 		this.bloomMix += 0.03f * rain;
-		this.mistSigma *= 1f + 7f * rain;
+		this.mistSigma *= 1f + 4f * rain;
 		this.whiteBalance -= 10f * rain;
 		this.lightMul *= 1f - 0.1f * thunder;
 		// grade the light (sun or moon) in place: chroma power keeps luminance, deepens the colour
@@ -205,7 +205,7 @@ public final class ShadeLook {
 		float inverseMax = Math.min(0.80f, 0.95f / (this.toneB * SHOULDER));
 		put4(b, OUTPUT, 1f, 1f, 1f, inverseMax);
 		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeConfig.LOOK], 0.06f * (1f + f.rain), 0f);
-		float haze = 1f + 1.5f * f.rain;
+		float haze = 1f + 1.0f * f.rain;
 		put4(b, FOG_R, HAZE_SIGMA[0] * haze, HAZE_SIGMA[1] * haze, HAZE_SIGMA[2] * haze, HAZE_H);
 		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, f.rain > 0.5f ? 0.6f : MIST_ALBEDO);
 		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, 0.6f * (1f - f.rain));
@@ -213,7 +213,9 @@ public final class ShadeLook {
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
 		put4(b, RENDER_SCALE, 1f, 0f, f.width, f.height);
-		put4(b, EXPOSURE_CFG, EV_DOWN, EV_UP, TAU_UP, TAU_DOWN);
+		// at night the meter may brighten less (night stays night: the reference is already lifted for it)
+		float nightUp = EV_UP - (EV_UP - EV_UP_NIGHT) * (1f - smooth(-10f, -2f, this.elevation));
+		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP, TAU_DOWN);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
 		b.putInt(TIER, ShadeConfig.TIER).putInt(TIER + 4, this.features).putInt(TIER + 8, ShadeConfig.LOOK).putInt(TIER + 12, f.debug);
 		putRows(b, GRADE_IN, this.gradeIn);

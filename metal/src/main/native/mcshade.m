@@ -345,6 +345,15 @@ void mc_shade_pass(Enc *enc, id<MTLRenderPipelineState> pso, id<MTLTexture> targ
 		rp.colorAttachments[0].loadAction = load == 1 ? MTLLoadActionLoad : load == 2 ? MTLLoadActionClear : MTLLoadActionDontCare;
 		rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+		if (enc->samples && enc->sampleCount + 4 <= (int) enc->samples.sampleCount) { // -Dmcopt.metal.trace: profiled like the game's encoders
+			MTLRenderPassSampleBufferAttachmentDescriptor *s = rp.sampleBufferAttachments[0];
+			s.sampleBuffer = enc->samples;
+			s.startOfVertexSampleIndex = enc->sampleCount;
+			s.endOfVertexSampleIndex = enc->sampleCount + 1;
+			s.startOfFragmentSampleIndex = enc->sampleCount + 2;
+			s.endOfFragmentSampleIndex = enc->sampleCount + 3;
+			enc->sampleCount += 4;
+		}
 		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 		if (label) r.label = [NSString stringWithUTF8String:label];
 		[r setRenderPipelineState:pso];

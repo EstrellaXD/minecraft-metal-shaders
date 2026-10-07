@@ -94,7 +94,7 @@ struct ShadeResources {
 	texture2d<half> milkyWay;    // 0  RGBA16F equirectangular in galactic longitude/latitude (baked once)
 	texture2d<half> prevScene;   // 1  last frame's HDR world (pre-exposed with ShadeGpu.exposure.z), before the tonemap: SSR source
 	texture2d<half> scene;       // 2  this frame's HDR world target (read it only outside the world passes: it is their attachment)
-	texture2d<half> bloom;       // 3  bloom accumulation (half size), after the post chain of the previous frame
+	texture2d<half> bloom;       // 3  bloom accumulation from level 1 down (quarter size), after the post chain of the previous frame
 	texture2d<half> reserved4;
 	texture2d<half> reserved5;
 	texture2d<half> reserved6;

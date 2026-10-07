@@ -34,7 +34,8 @@ import net.minecraft.world.level.material.Fluids;
  * the time follows the door's direction. Skipped if no door faces east or west.</li>
  * <li>{@code vl_underwater}: 7 blocks under the surface of deep water, looking up toward the morning sun.</li>
  * </ul>
- * The chosen poses go to results.json "godRays".
+ * Times are golden-hour low sun (sun elevation about 14 degrees at 250 and 11750, 19 at 600 with mcopt-shade's default 30
+ * degree sun path tilt). The chosen poses go to results.json "godRays".
  */
 final class GodRayShots {
 	static final boolean ON = Boolean.getBoolean("mcbench.godRays");
@@ -135,8 +136,8 @@ final class GodRayShots {
 		}
 		if (bestScore > 0) {
 			double ex = bx + 0.5, ez = bz + 0.5, ey = by + 0.2; // feet
-			out.put("vl_forest_morning", new Object[] {new Pose(ex, ey, ez, -90f, -10f), 900});
-			out.put("vl_forest_side", new Object[] {new Pose(ex, ey, ez, 0f, -6f), 1300});
+			out.put("vl_forest_morning", new Object[] {new Pose(ex, ey, ez, -90f, -10f), 250});
+			out.put("vl_forest_side", new Object[] {new Pose(ex, ey, ez, 0f, -6f), 600});
 			// 2. forest edge, evening: walk east from the canopy spot to open ground, then a few blocks more; look back west
 			int x = bx;
 			int open = 0;
@@ -149,7 +150,7 @@ final class GodRayShots {
 				open = covered(l, x, bz, g) ? 0 : open + 1;
 			}
 			int g = ground(l, x + 4, bz);
-			if (open >= 5 && g != Integer.MIN_VALUE) out.put("vl_forest_evening", new Object[] {new Pose(x + 4.5, g + 0.2, bz + 0.5, 90f, -6f), 11450});
+			if (open >= 5 && g != Integer.MIN_VALUE) out.put("vl_forest_evening", new Object[] {new Pose(x + 4.5, g + 0.2, bz + 0.5, 90f, -6f), 11750});
 		}
 		// 3. shelter: a village door facing east or west, the camera inside looking out
 		Pose shelter = null;
@@ -175,7 +176,7 @@ final class GodRayShots {
 						if (d < bestD) {
 							bestD = d;
 							shelter = new Pose(ix + 0.5 + sgn * 0.3, y + 0.05, z + 0.5, outsideEast ? -90f : 90f, -2f);
-							shelterTime = outsideEast ? 700 : 11550;
+							shelterTime = outsideEast ? 250 : 11750;
 						}
 					}
 				}

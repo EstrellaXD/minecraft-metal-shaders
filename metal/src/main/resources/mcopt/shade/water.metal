@@ -417,7 +417,10 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		float2 uvR = clamp(uv + float2(f.proj[0][0] * tilt.x, f.proj[1][1] * tilt.y) * (1.2 / max(wSurf, 0.5)), 0.5 / size, 1.0 - 0.5 / size);
 		float zR = depth.read(uint2(uvR * size));
 		float3 sky = shadeSkyLookup(t, lut, lutS, f);
-		if (f.lightDirWorld.w > 0.5) sky += f.sunColor.rgb * min(shadeGgxSpec(up, -t, f.lightDirWorld.xyz, 0.06) * 3.0, 40.0) * float(w.shadow);
+		// the sun seen through the rippled window: a small hot core and a soft glare around the refracted direction, so
+		// the ripples break it into dancing sparkles
+		float ct = dot(t, f.lightDirWorld.xyz);
+		if (f.lightDirWorld.w > 0.5) sky += f.sunColor.rgb * (exp((ct - 1.0) * 6000.0) * 30.0 + exp((ct - 1.0) * 90.0) * 0.6) * float(w.shadow);
 		above = zR > 0.0 ? shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure) : sky;
 		above *= float(shadeSkyCurve(w.sky)) * 0.6 + 0.4;
 	}

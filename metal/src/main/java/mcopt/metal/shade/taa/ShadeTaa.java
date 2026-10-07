@@ -77,6 +77,8 @@ public final class ShadeTaa {
 	private @Nullable Object level;
 	private long lastResolve;
 	private float lastLogged;
+	/** History rescale this frame: exposure now / exposure when the history was made (M2's eye adaptation), 1 without. */
+	private float historyRescale = 1f;
 
 	private ShadeTaa(Object encoder, long taa) {
 		this.encoder = encoder;
@@ -171,6 +173,11 @@ public final class ShadeTaa {
 			this.allocWidth, this.allocHeight));
 	}
 
+	/** M2: exposure(now) / exposure(previous frame) (ShadeGpu.exposure.x / .z), so the history follows eye adaptation. */
+	public void setHistoryRescale(float rescale) {
+		this.historyRescale = rescale > 0 && Float.isFinite(rescale) ? rescale : 1f;
+	}
+
 	/** Whether the world target stands in for the main one right now (between beginWorld and resolve). */
 	public boolean swapped() {
 		return this.swapped;
@@ -257,8 +264,8 @@ public final class ShadeTaa {
 			put4(p + 160, this.outWidth, this.outHeight, 1f / this.outWidth, 1f / this.outHeight);
 			put4(p + 176, this.jittered ? this.jitterX : 0, this.jittered ? this.jitterY : 0, (float) this.width / this.outWidth, (float) this.height / this.outHeight);
 			put4(p + 192, TaaConfig.alphaMin(), TaaConfig.clipGamma(still), 32, cut ? 1 : 0);
-			put4(p + 208, 1f, 0f, reactive != 0 ? 0.85f : 0f, TaaConfig.DEBUG); // no mask: the shader skips its read
-			put4(p + 224, sharpen, 0, 0, 0);
+			put4(p + 208, this.historyRescale, 0f, reactive != 0 ? 0.85f : 0f, TaaConfig.DEBUG); // no mask: the shader skips its read
+			put4(p + 224, sharpen, TaaConfig.motionAlpha(), 0, 0);
 			TaaNative.resolve(this.enc, this.taa, color, depth, reactive, dst, p, PARAMS);
 		}
 		this.prevViewProj.set(this.viewProj);

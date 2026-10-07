@@ -123,6 +123,11 @@ public final class TaaConfig {
 		return STABLE ? 0.08f : 0.12f;
 	}
 
+	/** Floor of the current frame's weight on pixels moving > 1.5 px/frame (Responsive 0.2, Stable 0.15): keeps texture detail while moving. */
+	public static float motionAlpha() {
+		return STABLE ? 0.15f : 0.2f;
+	}
+
 	/** Variance clip box size in standard deviations (Responsive 1.0, Stable 1.25), +0.5 while the camera is still. */
 	public static float clipGamma(boolean still) {
 		return (STABLE ? 1.25f : 1.0f) + (still ? 0.5f : 0f);

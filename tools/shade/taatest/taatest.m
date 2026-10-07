@@ -212,7 +212,7 @@ static void run(Ctx *ctx, Enc *enc, Taa *taa, const char *name, Motion m, float 
 		bool still = m.yawRate == 0 && m.speed == 0;
 		p.blend = simd_make_float4(0.08f, still ? 1.75f : 1.25f, 32, f == 0 ? 1 : 0);
 		p.misc = simd_make_float4(1, 0, 0, 0);
-		p.sharpen = simd_make_float4(sharpen, 0, 0, 0);
+		p.sharpen = simd_make_float4(sharpen, 0.15f, 0, 0); // Stable's motion floor (TaaConfig.motionAlpha)
 		mc_taa_resolve(enc, taa, color, depth, nil, out, &p, sizeof p);
 		id<MTLCommandBuffer> c = mc_enc_commit(enc);
 		[c waitUntilCompleted];

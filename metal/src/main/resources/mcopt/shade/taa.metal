@@ -40,7 +40,7 @@ struct TaaParams {
 	float4 jitter;    // 176  xy this frame's jitter (input px), zw input px per output px (input.xy / output.xy)
 	float4 blend;     // 192  x minimum blend weight of the current frame, y clip box size (sigmas), z history age cap, w 1 = no history
 	float4 misc;      // 208  x history rescale (exposure now / then), y unused (HDR input: function constant TAA_HDR), z reactive strength, w debug view
-	float4 sharpen;   // 224  x strength (0 off), yzw unused
+	float4 sharpen;   // 224  x strength (0 off), y current-frame weight floor in motion (> 1.5 px/frame), zw unused
 };
 
 struct TaaVOut { float4 position [[position]]; };
@@ -173,6 +173,11 @@ fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(
 	// and where the reactive mask says the input is not reprojectable (particles, animated translucents).
 	half alpha = age < 0.5h ? 1.0h : max(1.0h / (age + 1.0h), half(p.blend.x)) * mix(0.35h, 1.0h, wnear);
 	alpha = max(alpha, saturate((outside - 1.0h) * 0.25h) * 0.5h);
+	// Motion: every frame in motion resamples the history at a new sub-pixel offset, which slowly low-passes fine texture
+	// (pixel-art detail smeared while strafing). A floor on the current frame's weight once the pixel moves more than ~1.5
+	// px per frame trades a little stability for detail (taatest moving 0.67x: error vs truth 4.55 -> ~4.2).
+	float motionPx = length(uvPrev * p.output.xy - q);
+	alpha = max(alpha, half(p.sharpen.y) * half(saturate(motionPx * (1.0 / 1.5))));
 	if (p.misc.z > 0.0) alpha = max(alpha, reactive.read(uint2(clamp(base, int2(0), int2(reactive.get_width(), reactive.get_height()) - 1))).r * half(p.misc.z));
 	half3 resolved = mix(clipped, current, saturate(alpha));
 	float3 rgb = taaExpand(float3(resolved));

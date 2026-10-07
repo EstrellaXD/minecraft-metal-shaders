@@ -60,7 +60,7 @@ public final class ShadeVl {
 	 * compressing it, so the shafts are scaled down (air, under water), the canopy mist's grey veil and its extinction are
 	 * lighter, and more of the open air's unshadowed glow is left to the base haze (shafts = structure, not a milky veil).
 	 */
-	private static final float HDR_AIR = 0.6f, HDR_WATER = 0.45f, HDR_VEIL = 0.1f, HDR_EXT = 0.35f, HDR_OPEN_CUT = 0.7f, HDR_CARVE = 0.4f, HDR_CARVE_WATER = 0.55f;
+	private static final float HDR_AIR = 0.6f, HDR_WATER = 0.45f, HDR_VEIL = 0.1f, HDR_EXT = 0.35f, HDR_OPEN_CUT = 0.7f, HDR_CARVE = 0.6f, HDR_CARVE_WATER = 0.55f;
 
 	private static long state;
 	private static boolean failed, logged;
@@ -377,14 +377,15 @@ public final class ShadeVl {
 		put(b, haze, mist, mistBase - camY, mistH);                                      // medium
 		put(b, hazeBase - camY, hazeH, 0.35f, 0.05f);                                    // haze
 		put(b, lr, lg, lb, canopyMist);                                                  // light
-		put(b, VlConfig.SS_TAPS > 0 ? 0.12f + 0.2f * golden : 0f, VlConfig.SS_TAPS, onScreen, 6f); // crep
+		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
+		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) : 0f, VlConfig.SS_TAPS, onScreen, 6f);
 		put(b, sx, sy, 0f, 0f);                                                          // sunPx
 		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		put(b, VlConfig.TEMPORAL ? 0.9f : 0f, reset ? 1f : 0f, frame & 1023, f.gameTimeSeconds); // temporal
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
-		put(b, 0.7f, 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                             // gate: open air, canopy mist, override, debug
-		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, 0f);                               // extra
+		put(b, 0.7f, hdr ? 2.4f : 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                // gate: open air, canopy mist, override, debug
+		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, hdr ? HDR_OPEN_CUT : 0.5f); // mistAmb, open glow left out

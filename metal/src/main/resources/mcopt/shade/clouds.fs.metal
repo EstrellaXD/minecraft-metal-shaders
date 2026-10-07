@@ -46,8 +46,8 @@ fragment float4 main0(CloudIn in [[stage_in]], constant ShadeFrame& sf [[buffer(
 	// Per-face light with real contrast: tops and sun-facing sides bright, the far sides and the underside in the sky's
 	// (and the ground's) fill; a forward-scattering silver lining on the sides when looking toward the light.
 	// (a low sun reaches the undersides too: sunset clouds glow from below)
-	float under = 0.15 + 0.55 * (1.0 - smoothstep(0.0, 0.3, L.y));
-	float3 direct = sf.sunColor.rgb * saturate(ndl * 0.6 + 0.4) * (n.y < -0.5 ? under : 1.0);
+	float under = 0.15 + 0.75 * (1.0 - smoothstep(-0.05, 0.3, L.y));
+	float3 direct = sf.sunColor.rgb * (n.y < -0.5 ? 0.6 * under : saturate(ndl * 0.6 + 0.4));
 	float mu = dot(dir, L), g = 0.6;
 	float hg = (1.0 - g * g) / (12.566 * pow(1.0 + g * g - 2.0 * g * mu, 1.5)); // Henyey-Greenstein
 	float lining = n.y > 0.5 ? 0.0 : hg * 2.5 * (1.0 - rain);

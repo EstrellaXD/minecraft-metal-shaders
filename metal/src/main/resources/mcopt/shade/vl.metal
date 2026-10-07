@@ -56,7 +56,8 @@ struct VlParams {
 	float4 temporal;  // 144 x history weight, y reset (1 = drop history), z frame index, w time (s, wraps)
 	float4 camDelta;  // 160 xyz camera position now - last frame (blocks), w canopy smoothing factor this frame, rising (0..1)
 	float4 gate;      // 176 x open-air layers' (haze, mist) strength, y canopy mist strength, z canopy override (< 0: GPU value), w debug view
-	float4 extra;     // 192 x canopy reset (1 = snap), y canopy mist scale height (blocks), z canopy smoothing factor, falling, w 0
+	float4 extra;     // 192 x canopy reset (1 = snap), y canopy mist scale height (blocks), z canopy smoothing factor, falling,
+	                  //     w canopy mist steps (its own linear march over the first 2.5 ranges; 0 = on the main march)
 	float4 mist;      // 208 x canopy mist range (blocks: density e^(-t/range) from the camera), y its top above the eye (blocks),
 	                  //     z scene extinction by the canopy mist (0/1), w its extinction relative to its scattering (art: < 1
 	                  //     keeps the veil light while the shafts stay bright)
@@ -244,6 +245,10 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float mist = p.medium.y;
 		// canopy mist: the humid air under trees and overhangs, around the camera's height (not the sea's)
 		float local = p.light.w * canopy;
+		int nNear = int(p.extra.w);
+		// the canopy mist (density e^(-t/R) from the camera) gets its own linear march over its first 2.5 R (~92 % of it):
+		// the main march's quadratic spacing put only ~5 of its samples there, too few to resolve the leaf gaps into beams
+		float localMain = nNear > 0 ? 0.0 : local;
 		float sumOpen = 0.0, sumOpenLit = 0.0, sumLocal = 0.0, sumLocalAll = 0.0, trans = 1.0, prevB = 0.0;
 		float invN = 1.0 / float(n);
 		for (int i = 0; i < n; i++) {
@@ -252,7 +257,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			prevB = b1;
 			float y = dir.y * t;
 			float sOpen = p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w);
-			float sLocal = local * vlMistDensity(t, y, p);
+			float sLocal = localMain * vlMistDensity(t, y, p);
 			float sigma = sOpen + sLocal;
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
 			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far, split by layer
@@ -262,6 +267,19 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			sumLocal += v * sLocal * seg;
 			sumLocalAll += sLocal * seg;
 			trans *= exp(-(sOpen + sLocal * p.mist.w) * dt);
+		}
+		if (nNear > 0 && local > 1e-7) {
+			float Dn = min(D, 2.5 * p.mist.x), dtn = Dn / float(nNear), tl = 1.0;
+			float xn = fract(xi + 0.5);
+			for (int j = 0; j < nNear; j++) {
+				float t = (float(j) + xn) * dtn;
+				float sLocal = local * vlMistDensity(t, dir.y * t, p);
+				float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
+				float seg = tl * (1.0 - exp(-sLocal * dtn)) / max(sLocal, 1e-9);
+				sumLocal += v * sLocal * seg;
+				sumLocalAll += sLocal * seg;
+				tl *= exp(-sLocal * p.mist.w * dtn);
+			}
 		}
 		// The open-air haze's sun glow is already in the sky and M1's aerial haze: keep only what the shadows carve out of
 		// it (the lit part above a share of its unshadowed value) so shafts read as structure, not as a milky veil. The
@@ -321,13 +339,22 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		open /= max(wsum, 1e-4);
 		float ang = saturate(mu);
 		float fall = pow(ang, p.crep.w);
-		// in front of near geometry too (a trunk against the low sun gets streaks across it), fading in over the first blocks
-		// open sky itself gets less (the sky model has its own glow around the sun; the streaks are the point)
-		float reach = d <= 0.0 ? 0.8 : saturate((dist + 6.0) / 48.0);
-		scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * reach);
+		if (d <= 0.0) {
+			// the sky: the sky model already has the sun's glow; the streaks there are the shadows of the clouds and hills
+			// between the sun and the air (Photon's dark rays across the aureole). Negative light: the final pass subtracts it
+			// (floored at a share of the pixel), so open sky keeps its colour
+			if (VL_HDR) scatter -= p.light.rgb * ((1.0 - open) * fall * p.crep.x * p.crep.z * 1.5);
+			else scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * 0.8);
+		} else {
+			// in front of near geometry (a trunk against the low sun gets streaks across it), fading in over the first blocks:
+			// only light coming through gaps (above the typical openness), not a uniform glow
+			float reach = saturate((dist + 6.0) / 48.0);
+			float gaps = VL_HDR ? saturate((open - 0.25) / 0.75) : open;
+			scatter += p.light.rgb * (gaps * fall * p.crep.x * p.crep.z * reach);
+		}
 	}
 	VlMarchOut o;
-	o.light = half4(half3(min(scatter, 30000.0)), half(dist));
+	o.light = half4(half3(clamp(scatter, -30000.0, 30000.0)), half(dist));
 	o.sky = d <= 0.0 ? 1.0h : 0.0h;
 	return o;
 }
@@ -342,17 +369,16 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	float3 sum = float3(c.rgb) * 2.0;
 	float wsum = 2.0;
 	float3 mn = float3(c.rgb), mx = mn;
-	for (int j = -1; j <= 1; j++) {
-		for (int i = -1; i <= 1; i++) {
-			if (i == 0 && j == 0) continue;
-			half4 s = raw.read(uint2(clamp(px + int2(i, j), int2(0), hi)));
-			float w = exp(-abs(float(s.a) - d) / (0.06 * d + 0.4)) * ((i == 0 || j == 0) ? 1.0 : 0.6);
-			sum += float3(s.rgb) * w;
-			wsum += w;
-			if (w > 0.35) {
-				mn = min(mn, float3(s.rgb));
-				mx = max(mx, float3(s.rgb));
-			}
+	// a plus of 5 taps with a tight depth weight (a 3x3 smoothed the beams away; the history does the denoising)
+	const int2 taps[4] = {int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1)};
+	for (int k = 0; k < 4; k++) {
+		half4 s = raw.read(uint2(clamp(px + taps[k], int2(0), hi)));
+		float w = exp(-abs(float(s.a) - d) / (0.03 * d + 0.3));
+		sum += float3(s.rgb) * w;
+		wsum += w;
+		if (w > 0.35) {
+			mn = min(mn, float3(s.rgb));
+			mx = max(mx, float3(s.rgb));
 		}
 	}
 	float3 cur = sum / wsum;
@@ -375,7 +401,7 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	bool valid = abs(float(h.a) - dPrev) < 0.08 * dPrev + 0.6;
 	if (!valid) return half4(half3(cur), half(d));
 	// widen the box a little (the march is noisy; a tight box would flicker)
-	float3 mid = 0.5 * (mn + mx), ext = 0.5 * (mx - mn) * 1.25 + 0.002 * (mid + 0.001);
+	float3 mid = 0.5 * (mn + mx), ext = 0.5 * (mx - mn) * 1.35 + 0.002 * (abs(mid) + 0.001);
 	float3 hc = clamp(float3(h.rgb), mid - ext, mid + ext);
 	return half4(half3(mix(cur, hc, p.temporal.x)), half(d));
 }
@@ -472,7 +498,7 @@ static inline half3 vlUpsample(texture2d<half> vl, float2 pos, float dist, const
 // The light added at full-resolution pixel px (pre-exposed: x exposure) and the canopy mist's transmittance T.
 static inline half3 vlCompositeLight(float2 pos, float dist, float2 ndc, float exposure, constant ShadeFrame &f, constant VlParams &p,
                                      constant VlState &st, texture2d<half> vl, thread half &T) {
-	half3 light = vlUpsample(vl, pos, dist, p) * half(exposure);
+	half3 light = max(vlUpsample(vl, pos, dist, p), 0.0h) * half(exposure); // (the sky's negative streaks are for the fold only)
 	// the canopy mist dims what is behind it (full resolution, analytic: crisp at every edge) toward its sky-lit colour;
 	// the sun-lit part of it is in the march
 	T = 1.0h;

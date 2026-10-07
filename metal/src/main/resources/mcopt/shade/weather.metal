@@ -7,15 +7,17 @@
 // limitations under the License.
 //
 // Rain and snow (minecraft:pipeline/weather), applied to the result of vanilla's generated fragment shader (ShadeMsl.weather
-// patches the call in): in the overworld the streaks become grey-white, as bright as the light the terrain gets from the
-// sky (plus a little sun), through the same exposure and tone curve, and a bit more transparent; vanilla's look elsewhere.
+// patches the call in): in the overworld the streaks become grey-white, about as bright as the sky behind them (plus a
+// little sun), through the same exposure and tone curve, and more transparent; vanilla's look elsewhere.
 #ifndef MCOPT_SHADE_WEATHER
 #define MCOPT_SHADE_WEATHER
 static float4 shadeWeather(float4 c, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g) {
 	if (f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a > 0.5) return float4(shadeVanillaOut(c.rgb, L), c.a);
 	float l = shadeLuma(c.rgb);
-	float3 light = f.ambientSky.rgb + f.sunColor.rgb * 0.3;
-	float3 lit = shadeOut(light * (0.35 + 0.45 * l) * float3(0.96, 0.98, 1.0), f, shadeExposure(f, g));
-	return float4(lit, c.a * 0.65);
+	// drops scatter the overcast sky's light toward the eye (and a little sun, forward): at about the sky's own radiance, so
+	// streaks read slightly brighter than the clouds behind them, never as dark bars
+	float3 light = f.ambientSky.rgb * 1.15 + f.sunColor.rgb * 0.35;
+	float3 lit = shadeOut(light * (0.8 + 0.35 * l) * float3(0.97, 0.99, 1.0), f, shadeExposure(f, g));
+	return float4(lit, c.a * 0.55);
 }
 #endif

@@ -197,7 +197,9 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	if (P.v.x > 0.5) {
 		half4 v = shadeVlUpsample(vlT, vlD, in.uv, d > 0.0 ? length(wp) : 1e4, P.v.y, P.v.z > 0.0 ? P.v.zw : float2(1.0));
 		tv = float(v.a);
-		c = c * tv + min(float3(v.rgb) * ex, 30000.0);
+		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
+		float3 lit = c * tv;
+		c = max(lit + clamp(float3(v.rgb) * ex, -30000.0, 30000.0), lit * 0.55);
 	}
 	if (P.p.y > 0.5) {
 		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb + bloom0.sample(shadeLinearClamp, in.uv).rgb * half(P.q.x)) * P.p.x;

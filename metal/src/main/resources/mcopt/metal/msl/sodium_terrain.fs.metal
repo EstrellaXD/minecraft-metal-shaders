@@ -189,13 +189,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef MCOPT_HDR
 #ifdef SHADE_SSR_PREV
         wi.prevExposure = sl.ssr.x > 0.5 ? sg.exposure.z : 0.0; // last frame's finished HDR world (ShadeLook.ssr.x: it was written): SSR colour, rendered sky in the reflections
+        wi.look = &sl;
 #else
         wi.prevExposure = 0.0;
+        wi.look = nullptr;
 #endif
         wi.fog = sf.flags2.y != 0 ? shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6) : float3(0.0); // only read from below
         texture2d<half> prevScene = sr.prevScene;
 #else
         wi.prevExposure = 0.0;
+        wi.look = nullptr;
         wi.fog = sf.flags2.y != 0 ? shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex) : float3(0.0);
         texture2d<half> prevScene = sceneCopy;
 #endif
@@ -226,10 +229,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
             float prevEx = 0.0;
 #endif
-            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, prevEx, sf, wp, skyLut,
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, prevEx, sf, &sl, wp, skyLut,
                                     skyLutSmplr, sceneCopy, depthCopy, sr.prevScene, waterCoarse);
 #else
-            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, 0.0, sf, wp, skyLut, skyLutSmplr,
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, 0.0, sf, nullptr, wp, skyLut, skyLutSmplr,
                                     sceneCopy, depthCopy, sceneCopy, waterCoarse);
 #endif
             radiance = gl.rgb;

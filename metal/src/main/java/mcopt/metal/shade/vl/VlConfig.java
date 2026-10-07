@@ -27,6 +27,8 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.scale}: march resolution relative to the render target (P 0.25, B 0.33, Q 0.5, U 0.5; at the
  * native 3024x1964 Retina target 0.25 is 756x491, VL tools/shade/vlbench.sh prices each).</li>
  * <li>{@code mcopt.shade.vl.steps}: shadow-map samples per ray (P 10, B 12, Q 16, U 24).</li>
+ * <li>{@code mcopt.shade.vl.nearSteps}: canopy-mist samples, linear over the first ~40 blocks (P 6, B 8, Q 10, U 12; 0 = the
+ * canopy mist rides on the main march, as before M2's review).</li>
  * <li>{@code mcopt.shade.vl.ssTaps}: screen-space crepuscular taps toward the sun (P 6, B 8, Q 10, U 12); 0 = off.</li>
  * <li>{@code mcopt.shade.vl.dist}: march distance in blocks (P 160, B 160, Q 224, U 224).</li>
  * <li>{@code mcopt.shade.vl.strength} (1): overall brightness of the shafts.</li>
@@ -52,6 +54,8 @@ public final class VlConfig {
 	private static final int TIER = Shade.TIER;
 	public static final float SCALE = clamp(floatProperty("mcopt.shade.vl.scale", new float[] {0.25f, 0.33f, 0.5f, 0.5f}[TIER]), 0.125f, 1f);
 	public static final int STEPS = Math.max(4, Math.min(64, Integer.getInteger("mcopt.shade.vl.steps", new int[] {10, 12, 16, 24}[TIER])));
+	/** Canopy-mist samples (its own linear march over the first ~40 blocks, where the shafts under trees are): P 6, B 8, Q 10, U 12. */
+	public static final int NEAR_STEPS = Math.max(0, Math.min(32, Integer.getInteger("mcopt.shade.vl.nearSteps", new int[] {6, 8, 10, 12}[TIER])));
 	public static final int SS_TAPS = Math.max(0, Math.min(32, Integer.getInteger("mcopt.shade.vl.ssTaps", new int[] {6, 8, 10, 12}[TIER])));
 	public static final float DIST = clamp(floatProperty("mcopt.shade.vl.dist", TIER >= 2 ? 224f : 160f), 16f, 512f);
 	public static final float STRENGTH = Math.max(0f, floatProperty("mcopt.shade.vl.strength", 1f));
@@ -91,7 +95,7 @@ public final class VlConfig {
 	}
 
 	static String describe() {
-		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
+		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + NEAR_STEPS + " near + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
 			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? "" : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
 }

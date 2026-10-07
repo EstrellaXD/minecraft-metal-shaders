@@ -167,6 +167,8 @@ void mc_shade_lut_render(Enc *enc, ShadeState *s) {
 		r.label = @"mcopt shade: sky LUT";
 		[r setRenderPipelineState:s->lutPipeline];
 		[r setFragmentBuffer:frameBuffer offset:frameOffset atIndex:16];
+		// ShadeLook (the golden-hour sky gain); the ring slot always holds a packed one (defaults before the first frame)
+		[r setFragmentBuffer:lookBuffer ? lookBuffer : frameBuffer offset:lookBuffer ? lookOffset : frameOffset + 1024 atIndex:17];
 		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 		[r endEncoding];
 	}

@@ -38,7 +38,7 @@ public final class ShadeLook {
 	public static final int VIEW_PROJ = 0, PREV_VIEW_PROJ = 64, CELESTIAL = 128, CLOUD_SHADOW_VP = 192, SUN_GEOM = 256, SUN_ART = 272, AMBIENT_ART = 288,
 		BOUNCE = 304, GRADE0 = 320, GRADE1 = 336, GRADE2 = 352, GRADE3 = 368, TONEMAP = 384, OUTPUT = 400, BLOOM = 416, FOG_R = 432, FOG_M = 448,
 		FOG_MISC = 464, VL = 480, WET = 496, WIND = 512, CLOUDS0 = 528, CLOUDS1 = 544, CLOUDS2 = 560, WATER = 576, WATER_ABS = 592, HELD_LIGHT = 608,
-		EYE = 624, BIOME_A = 640, BIOME_B = 656, NIGHT = 672, SSR = 688, TAA = 704, RENDER_SCALE = 720, EXPOSURE_CFG = 736, DIM_TINT = 752, FLASH = 768,
+		EYE = 624, SKY_GOLD_H = 640, SKY_GOLD_Z = 656, NIGHT = 672, SSR = 688, TAA = 704, RENDER_SCALE = 720, EXPOSURE_CFG = 736, DIM_TINT = 752, FLASH = 768,
 		DT = 784, TIER = 800, GRADE_IN = 816, GRADE_OUT = 864, GRADE_IN_INV = 912, GRADE_OUT_INV = 960, EXPOSURE_REF = 1008;
 
 	/** ShadeLook.tier.y bits (SHADE_FEATURE_* in shade_look.metal). */
@@ -52,18 +52,29 @@ public final class ShadeLook {
 		{-15, 1.00f, 1.00f, 0.80f, 0.88f, 1.16f, 0.74f, 1.30f, 0.130f, 0.30f, 1.5f, -20},
 		{-9, 1.00f, 1.00f, 0.84f, 0.86f, 1.20f, 0.82f, 1.32f, 0.120f, 0.15f, 2.0f, -25},
 		{-4, 1.00f, 1.00f, 0.86f, 0.84f, 1.22f, 1.10f, 1.34f, 0.110f, 0.05f, 2.5f, -30},
-		{0, 1.60f, 0.85f, 1.04f, 0.93f, 1.05f, 1.22f, 1.36f, 0.100f, 1.00f, 5.0f, 40},
-		{5, 1.40f, 1.00f, 1.00f, 0.95f, 1.05f, 1.18f, 1.38f, 0.090f, 0.85f, 4.0f, 30},
-		{12, 1.18f, 1.00f, 0.98f, 0.98f, 1.04f, 1.12f, 1.40f, 0.085f, 0.55f, 2.5f, 18},
-		{25, 1.05f, 1.00f, 0.96f, 1.00f, 1.06f, 1.04f, 1.40f, 0.080f, 0.32f, 1.2f, 5},
+		{0, 1.30f, 0.85f, 1.04f, 0.93f, 1.03f, 1.20f, 1.36f, 0.100f, 1.00f, 5.0f, 40},
+		{5, 1.22f, 1.00f, 1.02f, 0.95f, 1.00f, 1.18f, 1.38f, 0.090f, 0.85f, 4.0f, 42},
+		{12, 1.12f, 1.00f, 1.01f, 0.97f, 0.99f, 1.14f, 1.40f, 0.085f, 0.55f, 2.5f, 32},
+		{25, 1.04f, 1.00f, 0.98f, 0.99f, 1.03f, 1.08f, 1.40f, 0.080f, 0.32f, 1.2f, 15},
 		{45, 1.00f, 1.00f, 0.95f, 1.00f, 1.08f, 1.02f, 1.40f, 0.075f, 0.22f, 0.6f, 0},
 		{65, 1.00f, 1.00f, 0.95f, 1.00f, 1.10f, 1.00f, 1.42f, 0.075f, 0.18f, 0.5f, -5},
 	};
+	// golden-hour sky gain (sky LUT): elevation, horizon rgb, zenith rgb; linear between rows, 1 outside
+	private static final float[][] SKY_GOLD = {
+		{-6, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f},
+		{-2, 1.10f, 0.94f, 0.96f, 1.08f, 0.93f, 1.02f},
+		{2, 1.16f, 0.97f, 0.84f, 1.12f, 0.94f, 0.98f},
+		{8, 1.13f, 0.99f, 0.87f, 1.08f, 0.97f, 0.98f},
+		{16, 1.08f, 1.00f, 0.92f, 1.04f, 0.99f, 0.99f},
+		{28, 1.03f, 1.00f, 0.97f, 1.01f, 1.00f, 1.00f},
+		{40, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f},
+	};
+	public final float[] skyGold = {1f, 1f, 1f, 1f, 1f, 1f};
 	private static final int K_GAMMA = 1, K_LIGHT = 2, K_AMB = 3, K_SAT = 6, K_CONTRAST = 7, K_BLOOM = 8, K_VL = 9, K_MIST = 10, K_WB = 11;
 
 	// ---- look presets (bible §3.6): epic, storybook, natural -------------------------------------------------------------
 	private static final float[] PRESET_GAMMA = {1.0f, 1.15f, 0.9f}, PRESET_SAT = {0.08f, 0.14f, 0.02f}, PRESET_CONTRAST = {1.05f, 0.97f, 0.95f},
-		PRESET_BLOOM = {1.0f, 1.25f, 0.8f}, PRESET_LAMBDA = {0.55f, 0.40f, 0.70f}, PRESET_INSET = {0.14f, 0.10f, 0.20f}, PRESET_VL = {1.0f, 1.25f, 0.8f},
+		PRESET_BLOOM = {1.0f, 1.25f, 0.8f}, PRESET_LAMBDA = {0.55f, 0.40f, 0.70f}, PRESET_INSET = {0.20f, 0.16f, 0.24f}, PRESET_VL = {1.0f, 1.25f, 0.8f},
 		PRESET_SPECTRUM = {0.6f, 0.9f, 0.3f};
 
 	// ---- tuning knobs ----------------------------------------------------------------------------------------------------
@@ -127,9 +138,21 @@ public final class ShadeLook {
 			this.saturation -= 0.04f * lowSun;
 		} else {
 			this.mistSigma *= 1f - 0.1f * lowSun;
-			this.whiteBalance += 12f * lowSun;
-			this.saturation += 0.05f * lowSun;
+			this.whiteBalance += 8f * lowSun;
 		}
+		// golden-hour sky gain (mornings a little less warm), none in rain
+		float[] sg = SKY_GOLD[SKY_GOLD.length - 1];
+		if (this.elevation <= SKY_GOLD[0][0]) sg = SKY_GOLD[0];
+		for (int i = 0; i + 1 < SKY_GOLD.length; i++) {
+			if (this.elevation >= SKY_GOLD[i][0] && this.elevation < SKY_GOLD[i + 1][0]) {
+				float t = (this.elevation - SKY_GOLD[i][0]) / (SKY_GOLD[i + 1][0] - SKY_GOLD[i][0]);
+				sg = new float[7];
+				for (int c = 1; c < 7; c++) sg[c] = SKY_GOLD[i][c] + (SKY_GOLD[i + 1][c] - SKY_GOLD[i][c]) * t;
+				break;
+			}
+		}
+		float goldK = (this.rising > 0f ? 0.7f : 1f) * (1f - rain);
+		for (int c = 0; c < 6; c++) this.skyGold[c] = 1f + (sg[c + 1] - 1f) * goldK;
 		// night: the keyframes' desaturation would grey the torch-lit pools too; the dim parts get the Purkinje shift (final
 		// pass, luminance-gated) instead, so the grade keeps colour where there is light
 		float night = 1f - smooth(-10f, -2f, this.elevation);
@@ -217,6 +240,8 @@ public final class ShadeLook {
 		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, 0.6f * (1f - f.rain));
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
+		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], 0f);
+		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], 0f);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
 		put4(b, RENDER_SCALE, f.renderScale, (float) (Math.log(f.mipScale) / Math.log(2)), f.width, f.height);
 		// at night the meter may brighten less (night stays night: the reference is already lifted for it)

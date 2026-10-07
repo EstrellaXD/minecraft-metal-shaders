@@ -113,7 +113,7 @@ public final class ShadeMsl {
 
 	/** The sky-view LUT pass (compiled natively by mcshade.m). */
 	public static String lut() {
-		return resource("shade_common.metal") + "\n" + resource("sky_lut.metal");
+		return resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("sky_lut.metal");
 	}
 
 	private static final String WEATHER_SIGNATURE = "fragment main0_out main0(main0_in in [[stage_in]]";

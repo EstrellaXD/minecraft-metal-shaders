@@ -23,8 +23,8 @@ entry is needed. New files are Apache-2.0.
 | Flag | Default | |
 |---|---|---|
 | `mcopt.shade.vl` | true (with `mcopt.shade=true`) | god rays on. With `mcopt.shade=false` nothing of this module loads (mixin plugin) |
-| `mcopt.shade.preset` | balanced | performance / balanced / quality / ultra: steps 12 / 14 / 20 / 28, screen taps 8 / 8 / 12 / 16, distance 160 / 160 / 224 / 224 |
-| `mcopt.shade.vl.scale` | 0.5 | march resolution relative to the main target (0.25 = quarter res) |
+| `mcopt.shade.preset` | balanced | performance / balanced / quality / ultra: VL scale 0.25 / 0.33 / 0.5 / 0.5, steps 10 / 12 / 16 / 24, screen taps 6 / 8 / 10 / 12, distance 160 / 160 / 224 / 224 (m2's base defaults the same property to performance) |
+| `mcopt.shade.vl.scale` | preset | march resolution relative to the main target |
 | `mcopt.shade.vl.steps`, `.ssTaps`, `.dist` | preset | override the preset |
 | `mcopt.shade.vl.strength` | 1 | overall brightness |
 | `mcopt.shade.vl.mist` | 1 | density of the canopy mist (what shows the shafts under trees / overhangs) |
@@ -36,6 +36,7 @@ entry is needed. New files are Apache-2.0.
 | `mcopt.shade.vl.lossy` | false | lossy-compressed VL targets |
 | `mcopt.shade.vl.debug` | 0 | 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance |
 | `mcopt.shade.vl.log` | false | a line every 2 s: canopy (smoothed, raw shadowed fraction), haze, mist, canopy mist, strength, g, humidity, sun elevation |
+| `mcopt.shade.vl.gpuTimer` | false | timestamp counters around march / temporal / composite; their average ms in the log (turns the log on) |
 
 ## 3. Frame (m1)
 
@@ -44,47 +45,87 @@ render3dHud INVOKE (VlGameRendererMixin -> ShadeVl.beforeHand), on the frame's c
   vl_canopy    compute, 1 threadgroup x 64   far cascade at 4 rings x 16 points (r 3/7/11/15, eye+1.5/+5): shadowed
                                               fraction -> smoothstep(0.12, 0.5) -> smoothed (rise 1.5 s, fall 4 s)
                                               into a 16-byte state buffer (GPU only, no readback)
-  vl_march     VL res (0.5 x main)            per pixel: shadow-map march of the medium to the scene depth (t = D((i+xi)/N)^2,
-                                              IGN + R1 dither), near cascade (alpha-tested leaves) where it covers, else far;
-                                              + screen-space march toward the sun on the depth buffer (crepuscular streaks);
-                                              under water: caustic-patterned shafts through the water column instead.
-                                              rgb = in-scattered radiance (linear, pre-exposure), a = marched distance
+  vl_march     VL res (preset x main)         per pixel: shadow-map march of the medium to the scene depth (t = D((i+xi)/N)^2;
+                                              xi = per-frame R1 offset + a quarter-step IGN spread: coherent rays keep the
+                                              shadow fetches in cache, 2-3x cheaper than full per-pixel jitter), near
+                                              cascade (alpha-tested leaves) where it covers, else far; + screen-space march
+                                              toward the sun over last frame's R8 sky mask (crepuscular streaks); under
+                                              water: caustic-patterned shafts through the water column instead.
+                                              out 0 (RGBA16F): rgb = in-scattered radiance (linear, pre-exposure), a = marched
+                                              distance; out 1 (R8): sky mask for the next frame's streaks (ping-pong)
   vl_temporal  VL res                         3x3 depth-aware filter + reprojection (ShadeFrame.prevViewProj, camera delta),
                                               neighbourhood clamp, distance-mismatch rejection; history ping-pong (0.9)
   vl_composite full res, onto main RGBA8      depth-aware 2x2 bilateral upsample (thin foliage against the sky: nearest
                (programmable blending)        depth sample scaled by the marched length -> no halos); canopy mist
                                               transmittance T analytic at full res; result added BEFORE M1's output curve:
                                               e = curve^-1(dst); out = dst + curve(e*T + light) - curve(e)  (no light and
-                                              T = 1 -> the exact same pixel); +-1 LSB triangular dither
+                                              T = 1 -> the exact same pixel; curve = M1's hue-preserving part, half
+                                              precision); +-1 LSB triangular dither. Pixels getting < 1/1024 are untouched.
+  (no pass at all when nothing would be drawn: deep in caves, no light and no canopy mist)
 ```
 
 ### The look (what makes it pretty)
 
 - **Medium** (1/block, camera-relative heights): thin haze everywhere (sea + 16, H 48), sea-level ground mist (thick at
   dawn, lighter at dusk), and the **canopy mist**: a camera-local layer `s * e^(-t/16) * e^(-max(y-4,0)/8)` scaled by the
-  canopy factor, `s` 0.008 (noon) .. 0.03 (golden hour) x humidity x rain. The open-air layers are gated to 0.5, the
-  canopy mist to 1.25: shafts are strong under trees, overhangs and cave mouths, subtle over open plains (Complementary's
-  "scene-aware" behaviour, our own measure).
+  canopy factor, `s` 0.008 (noon) .. 0.03 (golden hour) x humidity x rain x eye sky light. The open-air layers are
+  gated to 0.7 and keep only what the shadows carve out of their glow (`max(lit - 0.5 x unshadowed, 0)`: the sky model
+  and M1's haze already have the uniform glow, so the sky doesn't go milky), the canopy mist counts fully, gated to 1.6:
+  shafts are strong under trees, overhangs and cave mouths, subtle over open plains (Complementary's "scene-aware"
+  behaviour, our own measure).
 - The canopy mist also **dims the scene behind it** toward its sky-lit colour (0.2 x ambient sky + a little warm sun),
   with half its scattering coefficient (art: a light veil, bright shafts). Analytic, full resolution: crisp edges.
-- **Phase**: HG forward lobe (g 0.5 at noon .. 0.72 at golden hour) + 6% back lobe + 20% isotropic (shafts stay visible
+- **Phase**: HG forward lobe (g 0.5 at noon .. 0.72 at golden hour) + 5% back lobe + 35% isotropic (shafts stay visible
   from the side).
 - **Light colour**: ShadeFrame's sun colour, saturated x(1 + 0.55 golden) toward the low sun (sunset orange shafts);
   moonlight at night x2 x `vl.moon` of the (dim) moon colour; fades through the sun/moon handover.
 - **Golden hour** = sun elevation below ~30 degrees (`1 - smoothstep(0.05, 0.55, sunY)`; the default 30-degree sun-path
   tilt caps noon at sunY 0.87).
-- **Crepuscular streaks**: 8 taps toward the sun's screen position count open sky (depth 0) with decaying weights;
-  `pow(saturate(mu), 6)`, 0.1 + 0.15 golden, faded by how far the sun is off screen and by the eye's sky light. Clouds
-  write depth, so rays fan out of cloud gaps at sunset too.
-- **Under water**: extinction (0.34, 0.075, 0.058)/block, scattering 0.045; light reaches each sample through the water
-  above it, patterned by two-scale procedural caustics (broad ~13-block cells x a ~5-block web, mean 1, gaps 0.1) that
-  develop with depth (none right under the surface) -> curtains converging toward the sun; N + 4 steps, D <= 48.
+- **Crepuscular streaks**: 6-12 taps toward the sun's screen position count open sky (last frame's sky mask) with
+  decaying weights; `pow(saturate(mu), 6)`, 0.12 + 0.2 golden, x0.8 over open sky, faded by how far the sun is off
+  screen and by the eye's sky light. Clouds write depth, so rays fan out of cloud gaps at sunset too.
+- **Under water**: extinction (0.40, 0.11, 0.06)/block, scattering 0.022 (blue, the scene stays readable); light reaches
+  each sample through the water above it, patterned by two-scale procedural caustics (broad ~13-block cells x a ~5-block
+  web, mean 1, gaps 0.1; half precision) that develop with depth (none right under the surface) -> curtains converging
+  toward the sun; N + 2 steps, D <= 48. (The pattern is evaluated at camera block mod 256: one pop when crossing a
+  256-block line.)
 - **No leaks**: below the far cascade's depth range = shadowed (underground); caves get no sun anyway (strength x eye
   sky light); the game's own fogs (lava, powder snow, blindness, darkness) switch VL off; Nether/End: off.
 
 ## 4. Measurements (MacBook Pro 14" M4, 10-core GPU, 3024x1964 fullscreen, harness `mcopt DEV`, Sodium)
 
-See section 7 (filled from the A/B runs in this branch's last commit).
+In-game GPU time per pass (`-Dmcopt.shade.vl.gpuTimer=true`, fragment start..end timestamps, ~300-frame averages;
+bench-results 20261006-213735-vl11, vlp11-*):
+
+| Scene (balanced, VL 998x648) | march | temporal | composite | total |
+|---|---|---|---|---|
+| noon overview (open) | 0.44 | 0.11 | 0.80 | 1.35 ms |
+| sunset over water | 0.47 | 0.12 | 0.84 | 1.43 ms |
+| golden forest (morning / side / edge) | 0.38-0.59 | 0.12-0.13 | 0.94-1.01 | 1.45-1.73 ms |
+| overhang, low sun | 0.52 | 0.12 | 0.98 | 1.64 ms |
+| under water | 0.75 | 0.12 | 0.84 | 1.71 ms |
+| perf route (spin+flight), balanced | 0.51-0.53 | 0.12 | 0.86 | 1.50 ms |
+| perf route, performance (756x491) | 0.37-0.42 | 0.07 | 0.86 | 1.30 ms |
+| perf route, quality (1512x982, before the jitter change) | 1.6-2.0 | 0.26 | 0.85 | 2.7-3.1 ms |
+
+Whole frame (same session, harness `--scenes perf --seconds 15`): VL off 235 / 212 fps (GPU 4.25 / 4.73 ms per frame,
+spin / flight); balanced 173 / 158 fps (5.79 / 6.33 ms); performance 179 / 162 fps (5.58 / 6.18 ms). So the
+Performance preset stays well above 120 fps at native Retina with god rays on.
+
+- The composite (~0.85 ms) is the floor on m1: a full-resolution read-modify-write of the RGBA8 main target plus its
+  depth (0.41 ms of pure bandwidth in vlbench), the bilateral upsample (0.19), the curve difference (0.3, half
+  precision) and, under trees, the mist (0.14). It also ends the backend's main pass (the hand pass reloads it).
+- On m2 the composite is a blend into the HDR target without curves: 0.60 ms at native in vlbench, and with TAAU it
+  runs at the internal resolution (0.67x -> ~0.27 ms). Estimated m2 cost at balanced with TAAU 0.67: march ~0.3,
+  temporal ~0.05, composite ~0.27 = ~0.6 ms (bible E07 budget 0.40-0.55).
+- `tools/shade/vlbench.sh [w h scale steps taps]` prices each pass outside the game (synthetic golden-hour forest,
+  blocky 2048^2 shadow map). Run it while no game is running (other agents' bench games load the GPU).
+
+Development history of the look and cost (screenshots in bench-results `*-vl3` .. `*-vl11`, Complementary reference of
+the same poses in `20261006-181431-vlref-iris`, VL off in `20261006-192528-vl6off`): v2 nearly invisible (physical
+haze densities, memAddress bug) -> v4 canopy mist with extinction (visible shafts, grey veil at dusk) -> v6 separate gates,
+lighter veil -> v7 flatter phase (side shafts) -> v8 open-glow subtraction (no milky sky), bluer water -> v9-v11
+optimisation (2.7 -> 1.5 ms in game, same look).
 
 ## 5. Moving to the HDR pipeline (m2)
 
@@ -138,3 +179,18 @@ looking out into the low sun), `vl_shelter` (inside a village house looking out 
 `vl_underwater` (7 blocks down looking up toward the sun, 2600).
 
 `tools/shade/validate.sh` (needs a built metal module) checks every VL pipeline (`vlcheck`).
+
+## 7. Known issues and follow-ups
+
+- **Clouds don't cast shafts** in the march (M1 has no cloud shadow map); crepuscular streaks do fan out of cloud gaps
+  because clouds write depth. With E05's `cloudShadow` (M2 clouds), multiply `v` in the march by it and add the bible's
+  sparse far steps beyond the shadow range.
+- **No coloured shafts through stained glass / water surfaces seen from above** (needs the M3 tint map); rays end at the
+  water surface (translucents write depth).
+- The canopy factor reads the far cascade (leaves opaque there): a lone tree counts like a forest edge; good enough for
+  the look, smoothed over 1.5-4 s.
+- `vl_forest_morning` / `vl_forest_evening` poses (mcbench) aim into dense leaves; the most dramatic default-world views
+  are `vl_forest_side`, `vl_overhang` and `sunset_water`. No village door faces east/west near the spot, so `vl_shelter`
+  is skipped in the default world.
+- The m1 composite costs ~0.85 ms at native (see 4); on m2 it becomes a ~0.27-0.6 ms HDR blend.
+- Under water the caustic pattern pops once when the camera crosses a 256-block line (float precision guard).

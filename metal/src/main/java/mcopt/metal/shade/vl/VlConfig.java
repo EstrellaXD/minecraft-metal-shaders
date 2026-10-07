@@ -30,12 +30,14 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.ssTaps}: screen-space crepuscular taps toward the sun (P 8, B 8, Q 12, U 16); 0 = off.</li>
  * <li>{@code mcopt.shade.vl.dist}: march distance in blocks (P 160, B 160, Q 224, U 224).</li>
  * <li>{@code mcopt.shade.vl.strength} (1): overall brightness of the shafts.</li>
+ * <li>{@code mcopt.shade.vl.mist} (1): density of the canopy mist (the air under trees and overhangs that shows the shafts).</li>
+ * <li>{@code mcopt.shade.vl.extinction} (true): the canopy mist also dims what is behind it (off: light is only added).</li>
  * <li>{@code mcopt.shade.vl.moon} (1): moon shafts relative to sun shafts (they're dim anyway).</li>
  * <li>{@code mcopt.shade.vl.underwater} (true): caustic shafts under water.</li>
  * <li>{@code mcopt.shade.vl.temporal} (true): temporal accumulation (off: raw noisy march, for comparisons).</li>
  * <li>{@code mcopt.shade.vl.canopy} (-1): force the canopy factor 0..1 (debug); negative = measured on the GPU.</li>
  * <li>{@code mcopt.shade.vl.lossy} (false): lossy-compressed VL targets.</li>
- * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance.</li>
+ * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
  * </ul>
  */
@@ -53,6 +55,8 @@ public final class VlConfig {
 	public static final int SS_TAPS = Math.max(0, Math.min(32, Integer.getInteger("mcopt.shade.vl.ssTaps", new int[] {8, 8, 12, 16}[TIER])));
 	public static final float DIST = clamp(floatProperty("mcopt.shade.vl.dist", TIER >= 2 ? 224f : 160f), 16f, 512f);
 	public static final float STRENGTH = Math.max(0f, floatProperty("mcopt.shade.vl.strength", 1f));
+	public static final float MIST = Math.max(0f, floatProperty("mcopt.shade.vl.mist", 1f));
+	public static final boolean EXTINCTION = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.extinction", "true"));
 	public static final float MOON = Math.max(0f, floatProperty("mcopt.shade.vl.moon", 1f));
 	public static final boolean UNDERWATER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.underwater", "true"));
 	public static final boolean TEMPORAL = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.temporal", "true"));

@@ -11,7 +11,7 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 METAL="$HERE/../../metal"
-OUT="${TMPDIR:-/tmp}/mcopt-shade-validate"
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/mcopt-shade-validate.XXXXXX")" # private: parallel runs (other worktrees) must not share it
 JAVA_BIN="${JAVA_HOME:+$JAVA_HOME/bin/}"
 rm -rf "$OUT" && mkdir -p "$OUT/classes"
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/pipecheck.m" -o "$OUT/pipecheck"

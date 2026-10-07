@@ -28,10 +28,11 @@
 //                 back to exposed radiance through the inverse of shadeOutput's curve, the light (x exposure) is added, and
 //                 the difference of the two forward curves is added to the pixel (so no light = the exact same pixel);
 //                 programmable blending ([[color(0)]]) on the game's RGBA8 main target, blue-noise-ish dither against banding.
-//               - HDR (M2, VL_HDR = true): returns the light x exposure for additive blending (One, One) into the
-//                 pre-exposed RGBA16F scene target, before the tonemap. See VL.md "Integration".
+//               - HDR (M2, VL_HDR = true): returns the light x exposure and the canopy mist's transmittance T for blending
+//                 (One, SourceAlpha: scene * T + light) into the pre-exposed RGBA16F scene target, before the tonemap.
+//                 See VL.md "Integration".
 // Bindings: ShadeFrame at buffer(16), shadow map texture(16) + compare sampler(12) (mc_shade_bind_*), VlParams at buffer(0),
-// the canopy state at buffer(1); pass inputs at texture(0..1).
+// the canopy state at buffer(1); pass inputs at texture(0..1); HDR composite only: ShadeGpu (M2) at buffer(18).
 
 #ifndef MCOPT_SHADE_VL
 #define MCOPT_SHADE_VL
@@ -44,17 +45,19 @@ struct VlParams {
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
 	float4 medium;    //  32 x haze sigma_s at its base (1/block), y mist sigma_s at its base, z mist base y (camera-relative), w mist scale height
 	float4 haze;      //  48 x haze base y (camera-relative), y haze scale height, z isotropic share, w back-lobe share
-	float4 light;     //  64 rgb light colour (linear irradiance / pi, art-graded, pre-exposure), w canopy boost of the mist
+	float4 light;     //  64 rgb light colour (linear irradiance / pi, art-graded, pre-exposure), w canopy mist sigma_s at canopy 1 (1/block)
 	float4 crep;      //  80 x screen-space ray strength (0 = off), y taps, z on-screen weight of the light, w angular falloff
 	float4 sunPx;     //  96 xy the light's position in full-res target pixels (Metal rows), zw 0
 	float4 water;     // 112 rgb extinction under water (1/block), w scattering (1/block)
 	float4 water2;    // 128 x surface y (camera-relative), y underwater (0/1), z max distance under water, w caustic strength
 	float4 temporal;  // 144 x history weight, y reset (1 = drop history), z frame index, w time (s, wraps)
-	float4 camDelta;  // 160 xyz camera position now - last frame (blocks), w canopy smoothing factor this frame (0..1)
-	float4 gate;      // 176 x open-air strength (canopy 0), y canopy strength (canopy 1), z canopy override (< 0: GPU value), w debug view
-	float4 extra;     // 192 x canopy reset (1 = snap), y extinction scale (LDR composite), z 0, w 0
-	float4 pad0;      // 208
-	float4 pad1;      // 224
+	float4 camDelta;  // 160 xyz camera position now - last frame (blocks), w canopy smoothing factor this frame, rising (0..1)
+	float4 gate;      // 176 x open-air layers' (haze, mist) strength, y canopy mist strength, z canopy override (< 0: GPU value), w debug view
+	float4 extra;     // 192 x canopy reset (1 = snap), y canopy mist scale height (blocks), z canopy smoothing factor, falling, w 0
+	float4 mist;      // 208 x canopy mist range (blocks: density e^(-t/range) from the camera), y its top above the eye (blocks),
+	                  //     z scene extinction by the canopy mist (0/1), w its extinction relative to its scattering (art: < 1
+	                  //     keeps the veil light while the shafts stay bright)
+	float4 mistAmb;   // 224 rgb ambient (sky) light of the shadowed canopy mist (irradiance / pi, pre-exposure), w 0
 	float4 pad2;      // 240
 };
 
@@ -104,15 +107,21 @@ static inline float vlShadow(depth2d_array<float> map, sampler cmp, float3 c0, f
 	return map.sample_compare(cmp, shadeShadowUV(c1), 1u, c1.z);
 }
 
-// Procedural caustics on the water surface plane (original): a domain-warped sum of three sines whose zero set forms the
-// bright web; sharp ridges, mean about 1. q in blocks, t in seconds.
-static inline float vlCaustic(float2 q, float t) {
-	float2 p = q * 0.42;
+// Procedural caustics on the water surface plane (original): a domain-warped sum of three sines whose zero set forms a
+// bright web with sharp ridges (r^4: mean about 0.21, 17% of the plane above 0.5). Two scales multiplied: broad cells
+// (about 13 blocks) shape the shafts seen from afar, a finer web (about 5 blocks) breaks them into curtains; mean about 1,
+// dark gaps about 0.1. q in blocks, t in seconds.
+static inline float vlCausticWeb(float2 p, float t) {
 	p += 0.55 * float2(sin(p.y * 1.31 + t * 0.83), sin(p.x * 1.17 - t * 0.71));
 	float a = sin(p.x * 1.9 + t * 0.9) + sin(p.y * 2.1 - t * 1.05) + sin((p.x - p.y) * 1.45 + t * 0.6);
 	float r = saturate(1.0 - abs(a) * 0.55);
 	r *= r;
-	return 0.3 + 2.4 * r * r;
+	return r * r;
+}
+static inline float vlCaustic(float2 q, float t) {
+	float broad = 0.25 + 3.6 * vlCausticWeb(q * 0.22, t);
+	float fine = 0.5 + 2.4 * vlCausticWeb(q * 0.55 + 37.0, t * 1.3);
+	return broad * fine;
 }
 
 static inline float vlNoise(float2 px, float frame) {
@@ -127,10 +136,12 @@ kernel void vl_canopy(uint tid [[thread_index_in_threadgroup]], uint lane [[thre
                       constant ShadeFrame &f [[buffer(16)]], depth2d_array<float> map [[texture(16)]],
                       constant VlParams &p [[buffer(0)]], device VlState *state [[buffer(1)]]) {
 	threadgroup float partial[2];
-	// 64 points: two rings (radius 6 and 14 blocks), alternating 3 and 10 blocks above the eye, in the far cascade.
-	float ring = tid < 32u ? 6.0 : 14.0;
-	float h = (tid & 1u) != 0u ? 10.0 : 3.0;
-	float a = float(tid & 31u) * (6.2831853 / 32.0) + (tid < 32u ? 0.0 : 0.098);
+	// 64 points: four rings of 16 (radius 3, 7, 11 and 15 blocks), alternating 1.5 and 5 blocks above the eye (below a
+	// tree canopy, in the air the shafts would cross), in the far cascade.
+	uint ringIdx = tid >> 4u;
+	float ring = 3.0 + 4.0 * float(ringIdx);
+	float h = (tid & 1u) != 0u ? 5.0 : 1.5;
+	float a = float(tid & 15u) * (6.2831853 / 16.0) + float(ringIdx) * 0.39;
 	float3 pt = float3(cos(a) * ring, h, sin(a) * ring);
 	float shadowed = 0.0;
 	if (f.flags.z != 0) {
@@ -150,11 +161,30 @@ kernel void vl_canopy(uint tid [[thread_index_in_threadgroup]], uint lane [[thre
 	threadgroup_barrier(mem_flags::mem_threadgroup);
 	if (tid == 0u) {
 		float frac = (partial[0] + partial[1]) / 64.0;
-		float target = smoothstep(0.15, 0.6, frac);
+		float target = smoothstep(0.12, 0.5, frac);
 		float old = state->canopy.x;
-		float k = p.extra.x > 0.5 ? 1.0 : p.camDelta.w;
+		// rise quickly (stepping under trees), fade slowly (leaving them)
+		float k = p.extra.x > 0.5 ? 1.0 : (target > old ? p.camDelta.w : p.extra.z);
 		state->canopy = float4(mix(old, target, k), frac, 0.0, 0.0);
 	}
+}
+
+// Canopy mist: the humid air under trees and overhangs, around the camera, scaled by the canopy factor. Density
+// sigma(t) = s * e^(-t / R) * e^(-max(y - top, 0) / H) along a ray (y = dir.y * t, camera-relative): it fades with the
+// distance from the camera (the mist is where the trees are) and above the canopy. Optical depth over [0, D], closed form
+// (the march samples the same density, the composite takes the scene's extinction from this, at full resolution).
+static inline float vlMistDensity(float t, float y, constant VlParams &p) {
+	return exp(-t / p.mist.x - max(y - p.mist.y, 0.0) / p.extra.y);
+}
+static inline float vlMistDepth(float3 dir, float D, constant VlParams &p) {
+	float R = p.mist.x, H = p.extra.y;
+	float t1 = dir.y > 1e-4 ? min(p.mist.y / dir.y, D) : D; // below the top of the layer up to t1
+	float od = R * (1.0 - exp(-t1 / R));
+	if (D > t1) {
+		float k = 1.0 / R + dir.y / H;
+		od += exp(-t1 / R) * (1.0 - exp(-(D - t1) * k)) / k;
+	}
+	return od;
 }
 
 // ---- march ----------------------------------------------------------------------------------------------------------------
@@ -182,7 +212,9 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 
 	if (!underwater) {
 		float D = min(dist, p.shape.y);
-		float mist = p.medium.y * (1.0 + p.light.w * canopy);
+		float mist = p.medium.y;
+		// canopy mist: the humid air under trees and overhangs, around the camera's height (not the sea's)
+		float local = p.light.w * canopy;
 		float sum = 0.0, od = 0.0, prevB = 0.0;
 		float invN = 1.0 / float(n);
 		for (int i = 0; i < n; i++) {
@@ -190,15 +222,18 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
 			prevB = b1;
 			float y = dir.y * t;
-			float sigma = p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w);
+			float sOpen = p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w);
+			float sLocal = local * vlMistDensity(t, y, p);
+			float sigma = sOpen + sLocal;
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
+			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far; each layer's
+			// share weighted by its art gate (the open-air haze is kept subtle, the canopy mist carries the shafts)
 			float sdt = sigma * dt;
-			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far
-			sum += v * exp(-od) * (1.0 - exp(-sdt));
-			od += sdt;
+			float w = (sOpen * p.gate.x + sLocal * p.gate.y) / max(sigma, 1e-9);
+			sum += v * exp(-od) * (1.0 - exp(-sdt)) * w;
+			od += (sOpen + sLocal * p.mist.w) * dt;
 		}
-		float strength = mix(p.gate.x, p.gate.y, canopy) * p.shape.x;
-		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * sum * strength);
+		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * sum * p.shape.x);
 	} else {
 		// Under water: the medium is the water; sunlight reaches each point through the water above it (extinction along the
 		// refracted-ish path to the surface) and arrives patterned by the surface's caustics, which stay constant along the
@@ -206,9 +241,10 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 		float D = min(dist, p.water2.z);
 		float3 ext = p.water.rgb;
 		float3 sum = float3(0.0);
-		float prevB = 0.0, invN = 1.0 / float(n);
+		int nw = n + 4;
+		float prevB = 0.0, invN = 1.0 / float(nw);
 		float ly = max(L.y, 0.12);
-		for (int i = 0; i < n; i++) {
+		for (int i = 0; i < nw; i++) {
 			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
 			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
 			prevB = b1;
@@ -216,7 +252,8 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 			float below = max(p.water2.x - pt.y, 0.0);
 			float path = below / ly;
 			float2 q = pt.xz + L.xz * path + f.cameraFract.xz + fmod(f.cameraBlock.xz, 256.0);
-			float c = mix(1.0, vlCaustic(q, p.temporal.w), p.water2.w * exp(-below * 0.06));
+			// the waves focus the light over a few blocks (no pattern right under the surface), then it spreads out again
+			float c = mix(1.0, vlCaustic(q, p.temporal.w), p.water2.w * (1.0 - exp(-below * 0.4)) * exp(-below * 0.05));
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
 			sum += exp(-ext * (path + t)) * (v * c * dt);
 		}
@@ -239,7 +276,8 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 		open /= max(wsum, 1e-4);
 		float ang = saturate(mu);
 		float fall = pow(ang, p.crep.w);
-		scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * min(dist, p.shape.y) / p.shape.y);
+		// in front of near geometry too (a trunk against the low sun gets streaks across it), fading in over the first blocks
+		scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * saturate((dist + 6.0) / 48.0));
 	}
 	return half4(half3(min(scatter, 30000.0)), half(dist));
 }
@@ -343,17 +381,31 @@ static inline float3 vlUpsample(texture2d<half> vl, float2 pos, float dist, cons
 }
 
 fragment float4 vl_composite(VlOut in [[stage_in]], float4 dst [[color(0)]], constant ShadeFrame &f [[buffer(16)]],
-                             constant VlParams &p [[buffer(0)]], texture2d<half> vl [[texture(0)]], depth2d<float> depth [[texture(1)]]) {
+                             constant VlParams &p [[buffer(0)]], constant VlState &st [[buffer(1)]], texture2d<half> vl [[texture(0)]],
+                             depth2d<float> depth [[texture(1)]],
+                             constant float4 *gpu [[buffer(18), function_constant(VL_HDR)]]) {
 	uint2 px = uint2(in.position.xy);
 	float2 ndc = in.position.xy / p.size.zw * 2.0 - 1.0;
 	float dist = vlDistance(ndc, depth.read(px), f);
-	float3 light = vlUpsample(vl, in.position.xy, dist, p) * f.time.z;
+	// the exposure: M1 = ShadeFrame.time.z; M2 = the GPU's auto-exposure, ShadeGpu.exposure.x (buffer 18, byte 176)
+	float exposure = VL_HDR ? gpu[11].x : f.time.z;
+	float3 light = vlUpsample(vl, in.position.xy, dist, p) * exposure;
+	// the canopy mist dims what is behind it (full resolution, analytic: crisp at every edge) toward its sky-lit colour;
+	// the sun-lit part of it is in the march
+	float T = 1.0;
+	if (p.mist.z > 0.0 && p.water2.y < 0.5) {
+		float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
+		float od = p.light.w * canopy * p.mist.w * vlMistDepth(vlDirection(ndc, f), min(dist, p.shape.y), p);
+		T = exp(-od);
+		light += p.mistAmb.rgb * (exposure * (1.0 - T));
+	}
 	if (p.gate.w == 1.0) return float4(vlForward(light), 1.0);           // debug: the light alone
 	if (p.gate.w == 2.0) return float4(float3(saturate(dist / p.shape.y)), 1.0); // debug: marched distance
-	if (VL_HDR) return float4(light, 0.0);                                  // M2: additive into the pre-exposed HDR scene
-	if (max(light.r, max(light.g, light.b)) < 1.0 / 2048.0) return dst;
+	if (p.gate.w == 3.0) return float4(float3(T), 1.0);                  // debug: canopy mist transmittance
+	if (VL_HDR) return float4(light, T);                                    // M2: scene * T + light (blend One, SourceAlpha)
+	if (max(light.r, max(light.g, light.b)) < 1.0 / 2048.0 && T > 0.999) return dst;
 	float3 e = vlInverse(dst.rgb);
-	float3 o = dst.rgb + (vlForward(e + light) - vlForward(e));
+	float3 o = dst.rgb + (vlForward(e * T + light) - vlForward(e));
 	// dither (triangular, +-1 LSB) so smooth shafts don't band in 8 bits
 	float n0 = vlNoise(in.position.xy, p.temporal.z), n1 = vlNoise(in.position.xy + 17.0, p.temporal.z + 3.0);
 	o += (n0 + n1 - 1.0) / 255.0;

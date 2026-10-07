@@ -2,7 +2,7 @@
 // Dev tool: compiles the volumetric light MSL (shade_common.metal + vl.metal, as ShadeVl.source() assembles it) like
 // mcvl.m does (MSL 3.0, fast math) and builds every pipeline mcvl.m builds: march and temporal (RGBA16Float), composite for
 // the LDR main target (RGBA8Unorm, VL_HDR false, programmable blending) and the HDR scene target (RGBA16Float, VL_HDR true,
-// additive), and the canopy kernel. Usage: vlcheck <file.metal>
+// One, SourceAlpha blending), and the canopy kernel. Usage: vlcheck <file.metal>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
@@ -19,7 +19,7 @@ static int build(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFo
 	if (hdr) {
 		pd.colorAttachments[0].blendingEnabled = YES;
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
-		pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOne;
+		pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorSourceAlpha;
 	}
 	MTLAutoreleasedRenderPipelineReflection refl = nil;
 	id<MTLRenderPipelineState> p = [dev newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionBindingInfo reflection:&refl error:&e];

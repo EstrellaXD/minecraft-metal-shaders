@@ -42,7 +42,7 @@ import org.lwjgl.system.MemoryUtil;
  * the strength, the water surface above the camera, and packs VlParams (vl.metal). Render thread only.
  *
  * <p>On the HDR pipeline (M2) the same passes run with the composite's function constant VL_HDR (flag 4 of mc_vl_render):
- * additive into the pre-exposed scene target before the tonemap. See VL.md.
+ * scene x T + light (blend One, SourceAlpha) into the pre-exposed scene target before the tonemap. See VL.md.
  */
 public final class ShadeVl {
 	private static final int PARAM_BYTES = 256;
@@ -121,7 +121,7 @@ public final class ShadeVl {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, ERR, 1);
 			int r = VlNative.render(MetalBridge.enc(encoder), state, MetalBridge.textureHandle(color), MetalBridge.textureHandle(depth),
-				MemoryUtil.memAddress(PARAMS), PARAM_BYTES, vw, vh, flags, err, ERR);
+				MemoryUtil.memAddress0(PARAMS), PARAM_BYTES, vw, vh, flags, err, ERR);
 			if (r != 0) throw new IllegalStateException("volumetric light: " + MemoryUtil.memUTF8(err));
 		}
 		resetCanopy = false;
@@ -133,9 +133,9 @@ public final class ShadeVl {
 		if (VlConfig.LOG && now - lastLog > 2_000_000_000L) {
 			lastLog = now;
 			VlNative.canopy(state, CANOPY_OUT);
-			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: vl canopy %.2f (shadowed %.2f) haze %.5f mist %.5f strength %.2f humidity %.2f underwater %b",
-				MemoryUtil.memGetFloat(CANOPY_OUT), MemoryUtil.memGetFloat(CANOPY_OUT + 4), PARAMS.getFloat(32), PARAMS.getFloat(36), PARAMS.getFloat(16), humidity,
-				f.underwater));
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: vl canopy %.2f (shadowed %.2f) haze %.5f mist %.5f canopy mist %.5f strength %.2f g %.2f humidity %.2f underwater %b sunY %.3f",
+				MemoryUtil.memGetFloat(CANOPY_OUT), MemoryUtil.memGetFloat(CANOPY_OUT + 4), PARAMS.getFloat(32), PARAMS.getFloat(36), PARAMS.getFloat(76),
+				PARAMS.getFloat(16), PARAMS.getFloat(28), humidity, f.underwater, f.sunDir.y));
 		}
 	}
 
@@ -201,7 +201,9 @@ public final class ShadeVl {
 		boolean morning = f.dayTime > 0.5f; // dayTime: 0 noon, 0.25 sunset, 0.5 midnight, 0.75 sunrise
 		float rain = f.rain;
 		float hum = humidity(level, BlockPos.containing(f.cameraX, f.cameraY, f.cameraZ), dt);
-		float golden = sunLight ? 1f - smoothstep(0.06f, 0.42f, sunY) : 0f;
+		// golden hour: the sun below ~30 degrees (sunY 0.5), full below ~6 (with the default 30-degree sun path tilt the sun
+		// never climbs above sunY 0.87)
+		float golden = sunLight ? 1f - smoothstep(0.05f, 0.55f, sunY) : 0f;
 		float day = smoothstep(-0.05f, 0.25f, sunY);
 
 		// medium (1/block): a thin haze everywhere plus ground mist, thick at dawn, lighter at dusk, faint at noon
@@ -211,10 +213,16 @@ public final class ShadeVl {
 		mist *= 0.6f + 0.8f * hum;
 		mist *= 1f + 3f * rain;
 		haze *= 1f + 2f * rain;
+		// canopy mist (vl.metal: around the camera's height, scaled by the canopy factor): what makes the shafts under
+		// trees and overhangs; densest in the golden hours, humid biomes and rain
+		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST;
+		// its sky-lit colour in the shade (the canopy hides most of the sky): what it dims the scene behind it toward
+		float[] amb = f.sky.ambientSky;
+		float ambK = 0.2f * (f.underwater ? 0f : eyeLight(f));
 		float camY = (float) f.cameraY;
 
 		// strength: rain flattens the light; caves have no sun; the sun -> moon handover fades through ~0
-		float eye = smoothstep(2.5f / 15f, 9.5f / 15f, f.eyeSkyLight / 15f);
+		float eye = eyeLight(f);
 		float lightUp = smoothstep(0.0f, 0.08f, sunLight ? sunY : f.moonDir.y);
 		float strength = VlConfig.STRENGTH * (1f - 0.6f * rain) * (f.underwater ? 1f : eye) * lightUp * (sunLight ? 1f : 2.0f * VlConfig.MOON);
 
@@ -225,7 +233,7 @@ public final class ShadeVl {
 		float lr = Math.max(lum + (c[0] - lum) * sat, 0f), lg = Math.max(lum + (c[1] - lum) * sat, 0f), lb = Math.max(lum + (c[2] - lum) * sat, 0f);
 
 		// forward scattering: sharper toward the low sun
-		float g = sunLight ? mix(0.55f, 0.76f, golden) : 0.6f;
+		float g = sunLight ? mix(0.5f, 0.72f, golden) : 0.6f;
 
 		// the light on screen (crepuscular streaks)
 		float[] l = f.sky.lightDir;
@@ -243,25 +251,31 @@ public final class ShadeVl {
 		float surface = f.underwater ? waterSurface(level, f) : Float.NaN;
 		float surfaceRel = Float.isNaN(surface) ? 4f : (float) (surface - f.cameraY);
 
-		float canopyK = 1f - (float) Math.exp(-dt / 4f);
+		float canopyUp = 1f - (float) Math.exp(-dt / 1.5f), canopyDown = 1f - (float) Math.exp(-dt / 4f);
 
 		b.clear();
 		put(b, vw, vh, width, height);                                                   // size
 		put(b, strength, VlConfig.DIST, VlConfig.STEPS, g);                              // shape
 		put(b, haze, mist, SEA + 2f - camY, 12f);                                        // medium
-		put(b, SEA + 16f - camY, 48f, 0.16f, 0.08f);                                     // haze
-		put(b, lr, lg, lb, 0.8f);                                                        // light
-		put(b, VlConfig.SS_TAPS > 0 ? 0.11f : 0f, VlConfig.SS_TAPS, onScreen, 6f);       // crep
+		put(b, SEA + 16f - camY, 48f, 0.2f, 0.06f);                                      // haze
+		put(b, lr, lg, lb, canopyMist);                                                  // light
+		put(b, VlConfig.SS_TAPS > 0 ? 0.1f + 0.15f * golden : 0f, VlConfig.SS_TAPS, onScreen, 6f); // crep
 		put(b, sx, sy, 0f, 0f);                                                          // sunPx
 		put(b, 0.34f, 0.075f, 0.058f, 0.045f);                                           // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		put(b, VlConfig.TEMPORAL ? 0.9f : 0f, reset ? 1f : 0f, frame & 1023, f.gameTimeSeconds); // temporal
-		put(b, (float) dx, (float) dy, (float) dz, canopyK);                             // camDelta
-		put(b, 0.42f, 1.45f, VlConfig.CANOPY, VlConfig.DEBUG);                           // gate: open, canopy, override, debug
-		put(b, resetCanopy ? 1f : 0f, 0f, 0f, 0f);                                       // extra
+		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
+		put(b, 0.5f, 1.25f, VlConfig.CANOPY, VlConfig.DEBUG);                            // gate: open air, canopy mist, override, debug
+		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, 0f);                               // extra
+		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, 0.5f);                            // mist: range, top, extinction on, its scale
+		float sunK = 0.05f * ambK / 0.2f; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
+		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, 0f); // mistAmb
 		put(b, 0f, 0f, 0f, 0f);
-		put(b, 0f, 0f, 0f, 0f);
-		put(b, 0f, 0f, 0f, 0f);
+	}
+
+	/** How much sky the camera sees, 0 (cave) .. 1 (outdoors), from the sky light at the eye. */
+	private static float eyeLight(ShadeFrame f) {
+		return smoothstep(2.5f / 15f, 9.5f / 15f, f.eyeSkyLight / 15f);
 	}
 
 	private static void put(ByteBuffer b, float x, float y, float z, float w) {

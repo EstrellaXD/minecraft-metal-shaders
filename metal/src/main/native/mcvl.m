@@ -46,9 +46,9 @@ static id<MTLRenderPipelineState> pso(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 	pd.fragmentFunction = [fs autorelease];
 	pd.colorAttachments[0].pixelFormat = format;
 	if (hdr && [fragment isEqualToString:@"vl_composite"]) {
-		pd.colorAttachments[0].blendingEnabled = YES;  // M2: additive into the pre-exposed HDR scene
+		pd.colorAttachments[0].blendingEnabled = YES;  // M2: scene * T (source alpha) + light, into the pre-exposed HDR scene
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
-		pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOne;
+		pd.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorSourceAlpha;
 		pd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorZero;
 		pd.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOne;
 	}
@@ -138,7 +138,7 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, MTLLoadAction load
 
 // One frame of volumetric light onto color (the game's main colour, read and written in place) from depth (its depth).
 // params: VlParams (vl.metal), paramBytes of it; vlWidth x vlHeight the march resolution. flags: 1 canopy pass,
-// 2 drop the history, 4 HDR composite (additive; M2). Returns 0, or -1 when the composite pipeline can't be built (err).
+// 2 drop the history, 4 HDR composite (scene * T + light; M2). Returns 0, or -1 when the composite pipeline can't be built (err).
 int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> depth, const void *params, int paramBytes, int vlWidth,
 	int vlHeight, int flags, char *err, int errCap) {
 	@autoreleasepool {
@@ -182,7 +182,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 		int next = 1 - s->cur;
 		pass(cb, s->raw, MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, nil);
 		pass(cb, s->hist[next], MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw, s->hist[s->cur]);
-		pass(cb, color, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, nil, s->hist[next], depth);
+		pass(cb, color, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth);
 		s->cur = next;
 		return 0;
 	}

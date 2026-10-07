@@ -202,18 +202,14 @@ public final class ShadeVl {
 		}
 
 		boolean fold = look != null && VlConfig.FOLD;
-		// under TAAU the fold is blended into this frame's jittered world before the resolve, not by the final pass after it
-		// (that one only has the jittered depth of one frame for an image accumulated over many: leaf edges flickered)
-		boolean pre = fold && VlConfig.PRE_RESOLVE && ShadePost.taaDrives();
-		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (look != null ? 4 : 0) | (VlConfig.GPU_TIMER ? 8 : 0) | (fold ? 16 : 0)
-			| (pre ? 32 : 0);
+		int flags = (VlConfig.CANOPY < 0 ? 1 : 0) | (reset ? 2 : 0) | (look != null ? 4 : 0) | (VlConfig.GPU_TIMER ? 8 : 0) | (fold ? 16 : 0);
 		if (MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'VL canopy/march/temporal/composite' (" + vw + "x" + vh + ")");
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, ERR, 1);
 			int r = VlNative.render(enc, state, color, depth, MemoryUtil.memAddress0(PARAMS), PARAM_BYTES, vw, vh, lw, lh, flags, err, ERR);
 			if (r != 0) throw new IllegalStateException("volumetric light: " + MemoryUtil.memUTF8(err));
 		}
-		if (fold && !pre && !FOLD_SKIP) {
+		if (fold && !FOLD_SKIP) {
 			VlNative.outputs(state, OUTPUTS_OUT);
 			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), VlConfig.DIST, (float) lw / vw,
 				(float) lh / vh);

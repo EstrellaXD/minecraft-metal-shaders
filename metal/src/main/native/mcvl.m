@@ -21,8 +21,7 @@ int mc_shade_bind_compute(id<MTLComputeCommandEncoder> c);
 typedef struct {
 	id<MTLLibrary> lib;
 	id<MTLRenderPipelineState> march, temporal, composite, temporalFold; // temporalFold: M2 fold (flag 16), MRT history + lightT
-	id<MTLRenderPipelineState> pre; // M2 fold under TAAU (flag 32): lightT blended into the world before the resolve
-	MTLPixelFormat compositeFormat, preFormat;
+	MTLPixelFormat compositeFormat;
 	int compositeHdr;
 	id<MTLComputePipelineState> canopy;
 	id<MTLTexture> raw, hist[2], sky[2]; // sky: R8 sky masks (march output, read by the next frame's crepuscular taps)
@@ -126,7 +125,6 @@ void mc_vl_free(VlState *s) {
 	[s->march release];
 	[s->temporal release];
 	[s->composite release];
-	[s->pre release];
 	[s->temporalFold release];
 	[s->canopy release];
 	[s->raw release];
@@ -205,7 +203,7 @@ static id<MTLTexture> target(id<MTLDevice> dev, MTLPixelFormat format, int w, in
 
 static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out1, MTLLoadAction load, id<MTLRenderPipelineState> p,
 	NSString *label, const void *params, int paramBytes, id<MTLBuffer> state, id<MTLTexture> t0, id<MTLTexture> t1,
-	id<MTLCounterSampleBuffer> times, int sample, int liveW, int liveH, id<MTLTexture> t2) {
+	id<MTLCounterSampleBuffer> times, int sample, int liveW, int liveH) {
 	MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
 	if (times) {
 		rp.sampleBufferAttachments[0].sampleBuffer = times;
@@ -234,7 +232,6 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out
 	if (state) [r setFragmentBuffer:state offset:0 atIndex:1];
 	if (t0) [r setFragmentTexture:t0 atIndex:0];
 	if (t1) [r setFragmentTexture:t1 atIndex:1];
-	if (t2) [r setFragmentTexture:t2 atIndex:2];
 	[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 	[r endEncoding];
 }
@@ -242,22 +239,14 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out
 // One frame of volumetric light onto color (the game's main colour, read and written in place) from depth (its depth).
 // params: VlParams (vl.metal), paramBytes of it; vlWidth x vlHeight the march resolution. flags: 1 canopy pass,
 // 2 drop the history, 4 HDR composite (scene * T + light; M2), 8 GPU timer (mc_vl_times), 16 fold (M2, needs a state made
-// with HDR: no composite pass, the temporal pass also writes lightT for ShadePost's final pass, see mc_vl_outputs), 32 with 16:
-// the fold blended into color before the TAAU resolve (vl_composite_pre) instead of by the final pass. Returns 0, or -1 when
-// the composite pipeline can't be built (err).
+// with HDR: no composite pass, the temporal pass also writes lightT for ShadePost's final pass, see mc_vl_outputs). Returns 0, or -1 when the composite pipeline can't be built (err).
 // liveW x liveH: the part of the vlWidth x vlHeight targets the march and temporal passes cover (VlParams.size.xy; the
 // targets keep their size while the render scale moves); 0 = all of it.
 int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> depth, const void *params, int paramBytes, int vlWidth,
 	int vlHeight, int liveW, int liveH, int flags, char *err, int errCap) {
 	@autoreleasepool {
 		id<MTLDevice> dev = enc->ctx->device;
-		int hdr = (flags & 4) != 0, fold = (flags & 16) != 0 && s->temporalFold, pre = fold && (flags & 32) != 0;
-		if (pre && (!s->pre || s->preFormat != color.pixelFormat)) {
-			[s->pre release];
-			s->pre = pso(dev, s->lib, @"vl_composite_pre", color.pixelFormat, hdr, err, errCap);
-			s->preFormat = color.pixelFormat;
-			if (!s->pre) return -1;
-		}
+		int hdr = (flags & 4) != 0, fold = (flags & 16) != 0 && s->temporalFold;
 		if (!fold && (!s->composite || s->compositeFormat != color.pixelFormat || s->compositeHdr != hdr)) {
 			[s->composite release];
 			s->composite = pso(dev, s->lib, hdr ? @"vl_composite_hdr" : @"vl_composite", color.pixelFormat, hdr, err, errCap);
@@ -315,22 +304,16 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 		}
 		// the march writes this frame's sky mask and reads last frame's (the crepuscular streaks' occluders)
 		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur],
-			times, base, liveW, liveH, nil);
+			times, base, liveW, liveH);
 		if (fold) {
 			// M2 fold: no full-resolution pass here; ShadePost's final pass upsamples lightT (mc_vl_outputs)
 			pass(cb, s->hist[next], s->lightT, MTLLoadActionDontCare, s->temporalFold, @"mcopt shade: VL temporal", params, paramBytes, s->state,
-				s->raw, s->hist[s->cur], times, base + 2, liveW, liveH, nil);
-			if (pre) {
-				// under TAAU: blend it into this frame's jittered world before the resolve (vl.metal vl_composite_pre), over
-				// the live full-resolution sub-rect (VlParams.size.zw)
-				pass(cb, color, nil, MTLLoadActionLoad, s->pre, @"mcopt shade: VL composite (before TAAU)", params, paramBytes, nil, s->lightT,
-					depth, times, base + 4, (int) local[2], (int) local[3], s->hist[next]);
-			}
+				s->raw, s->hist[s->cur], times, base + 2, liveW, liveH);
 		} else {
 			pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw,
-				s->hist[s->cur], times, base + 2, liveW, liveH, nil);
+				s->hist[s->cur], times, base + 2, liveW, liveH);
 			pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth,
-				times, base + 4, 0, 0, nil);
+				times, base + 4, 0, 0);
 		}
 		s->cur = next;
 		return 0;

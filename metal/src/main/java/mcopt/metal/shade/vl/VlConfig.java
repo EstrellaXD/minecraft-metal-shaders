@@ -42,9 +42,6 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.fold} (true): on the HDR pipeline (M2), the light is upsampled and blended in the post chain's
  * final pass (saves a full-resolution read-modify-write of the HDR target; bloom and the exposure meter don't see it);
  * false: a composite pass into the HDR target before bloom. The debug views always use the composite.</li>
- * <li>{@code mcopt.shade.vl.preResolve} (true, M2.2): with the fold and TAAU, the light is blended into this frame's jittered
- * world right before the TAAU resolve (vl_composite_pre, same maths as the final pass), so the resolve accumulates it with the
- * depth it was drawn with; false: in the final pass after the resolve (M2/M2.1: flickered at leaf edges).</li>
  * <li>{@code mcopt.shade.vl.still} (0.6, M2.2): while the view is still, the history may leave this frame's neighbourhood box by
  * this share of its mean (the march's coherent jitter moves the whole neighbourhood at once, so the plain box clamped the
  * history onto each frame's noise: flickering shafts); 0 = the plain box (M2.1).</li>
@@ -81,8 +78,6 @@ public final class VlConfig {
 	public static final float STILL = clamp(floatProperty("mcopt.shade.vl.still", 0.6f), 0f, 4f);
 	/** M2.2: the history clamp box over the 3x3 neighbourhood (M2 before its review); false = the filter's plus (M2/M2.1). */
 	public static final boolean BOX3 = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.box3", "true"));
-	/** M2.2: under TAAU the fold is blended into the jittered world before the resolve (vl_composite_pre), not in the final pass. */
-	public static final boolean PRE_RESOLVE = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.preResolve", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
@@ -110,6 +105,6 @@ public final class VlConfig {
 
 	static String describe() {
 		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + NEAR_STEPS + " near + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
-			+ (FOLD ? (PRE_RESOLVE ? "" : ", fold after TAAU") : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
+			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
 }

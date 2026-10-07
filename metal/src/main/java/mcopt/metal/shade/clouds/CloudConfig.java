@@ -80,7 +80,7 @@ public final class CloudConfig {
 	/** Blocks of world per 1 km of the sky model's air for the light the layer gets (sunset light lingers on the clouds). */
 	public static final float ALTITUDE_SCALE = clamp(floatProperty("mcopt.shade.clouds.altitudeScale", 4f), 0f, 50f);
 	/** Most visits a history pixel averages (its march samples are jittered): fewer with a larger checkerboard (slower visits). */
-	public static final int MAX_AGE = clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", CHECKER >= 3 ? 6 : 8), 1, 63);
+	public static final int MAX_AGE = clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", CHECKER >= 3 ? 10 : 12), 1, 63);
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.clouds.debug", 0);
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");

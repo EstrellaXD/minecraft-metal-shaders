@@ -75,7 +75,7 @@ int main(int argc, const char **argv) {
 		NSData *frame = [NSData dataWithContentsOfFile:[dir stringByAppendingFormat:@"/%@.frame", name]];
 		NSData *look = [NSData dataWithContentsOfFile:[dir stringByAppendingFormat:@"/%@.look", name]];
 		NSData *params = [NSData dataWithContentsOfFile:[dir stringByAppendingFormat:@"/%@.params", name]];
-		const int PB = 432;
+		const int PB = 448;
 		int frames = (int) (params.length / PB);
 		frameBuf = [dev newBufferWithLength:2048 options:MTLResourceStorageModeShared];
 		memcpy(frameBuf.contents, frame.bytes, frame.length);
@@ -90,7 +90,7 @@ int main(int argc, const char **argv) {
 		pass(q, pso(ll, @"shade_lut_vs", @"shade_lut_fs", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid), lut, nil, NULL, 0, @[], YES);
 		// bakes
 		MTLTextureDescriptor *td = [MTLTextureDescriptor new];
-		td.textureType = MTLTextureType3D; td.pixelFormat = MTLPixelFormatRGBA8Unorm; td.width = td.height = td.depth = 64;
+		td.textureType = MTLTextureType3D; td.pixelFormat = MTLPixelFormatRGBA8Unorm; td.width = td.height = td.depth = 64; td.mipmapLevelCount = 7;
 		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite; td.storageMode = MTLStorageModePrivate;
 		id<MTLTexture> noise = [dev newTextureWithDescriptor:td];
 		MTLTextureDescriptor *wd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:512 height:512 mipmapped:NO];
@@ -106,7 +106,9 @@ int main(int argc, const char **argv) {
 			[c dispatchThreads:MTLSizeMake(64, 64, 64) threadsPerThreadgroup:MTLSizeMake(4, 4, 4)];
 			[c setComputePipelineState:bw]; [c setTexture:weather atIndex:0];
 			[c dispatchThreads:MTLSizeMake(512, 512, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
-			[c endEncoding]; [cb commit]; [cb waitUntilCompleted];
+			[c endEncoding];
+			id<MTLBlitCommandEncoder> bl = [cb blitCommandEncoder]; [bl generateMipmapsForTexture:noise]; [bl endEncoding];
+			[cb commit]; [cb waitUntilCompleted];
 			printf("bakes %.2f ms\n", (cb.GPUEndTime - cb.GPUStartTime) * 1000.0);
 		}
 		if (strcmp(argv[7], "stats") == 0) {

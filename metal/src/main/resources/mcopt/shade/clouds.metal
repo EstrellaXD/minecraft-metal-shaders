@@ -33,7 +33,7 @@
 #ifndef MCOPT_SHADE_CLOUDS_PASSES
 #define MCOPT_SHADE_CLOUDS_PASSES
 
-// Per-frame parameters (mcopt.metal.shade.clouds.CloudParams packs exactly this layout: 2 matrices + 19 float4 = 432 bytes).
+// Per-frame parameters (mcopt.metal.shade.clouds.CloudParams packs exactly this layout: 2 matrices + 20 float4 = 448 bytes).
 struct CloudParams {
 	float4x4 invViewProj;  //   0 this frame's clip -> camera-relative world, without the TAA jitter
 	float4x4 prevViewProj; //  64 last frame's camera-relative world (re-based on this camera) -> clip, without jitter
@@ -54,12 +54,15 @@ struct CloudParams {
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
 	float4 dome;           // 352 xy dome size (px), z blend of the new march, w primary steps of the dome march
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
-	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3), w 0
+	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3),
+	                       //     w radians a march sample covers (history pixel angle x N; the noise mip by distance)
 	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
 	                       //     extinction factor, w style (0 volumetric, 1 blocky: vanilla-style 12-block cells, ray-traced)
+	float4 shear;          // 432 xy horizontal offset of the 2D shape over the layer's height (blocks; wind shear: tops lean
+	                       //     downwind, and columns stop lining up into streaks toward the zenith), zw 0
 };
-static_assert(sizeof(CloudParams) == 432, "CloudParams layout (CloudParams.java)");
+static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)");
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
 constexpr sampler cloudClamp(filter::linear, address::clamp_to_edge);
@@ -205,7 +208,8 @@ kernel void cloud_bake_weather(texture2d<half, access::write> out [[texture(0)]]
 // ---- the layer -----------------------------------------------------------------------------------------------------------
 #define CLOUD_WEATHER_TILE 4096.0
 #define CLOUD_NOISE_SCALE (1.0 / 120.0)
-#define CLOUD_DETAIL_SCALE (1.0 / 30.0)
+#define CLOUD_DETAIL_SCALE (1.0 / 60.0)
+#define CLOUD_NOISE_TEXEL (120.0 / 64.0) // blocks per texel of the billow noise
 
 struct CloudRay {
 	float a, b, y0; // altitude above the curved ground along the ray: y0 + b t + a t^2
@@ -270,12 +274,15 @@ static inline bool cloudBlockCell(float2 xz, constant CloudParams &c, texture2d<
 	return float(w.g) > 1.0 - cov;
 }
 
-static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise) {
+// lod: mip level of the 3D noise (log2 of the sample's footprint in billow texels): far samples read blurred noise
+// instead of aliasing it into grain.
+static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
+                          float detail = 1.0, float lod = 0.0) {
 	if (c.art.w > 0.5) return y >= c.layer.x && y <= c.layer.y && cloudBlockCell(c.origin.xy + p.xz, c, weather) ? 1.0 : 0.0;
 	float h = (y - c.layer.x) / (c.layer.y - c.layer.x);
 	if (h <= 0.0 || h >= 1.0) return 0.0;
 	float2 xz = c.origin.xy + p.xz;
-	half4 w = weather.sample(cloudRep, xz * (1.0 / CLOUD_WEATHER_TILE), level(0.0));
+	half4 w = weather.sample(cloudRep, (xz - c.shear.xy * h) * (1.0 / CLOUD_WEATHER_TILE), level(0.0));
 	// coverage varies by region (the weather map's r), the cells (g) say where the cumulus stand
 	float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
 	float cell = float(w.g);
@@ -289,7 +296,7 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	if (d <= 0.0) return 0.0;
 	if (q == 0) return saturate(d * 0.85);
 	float3 n3 = float3(xz.x + c.origin.z - c.origin.x, y, xz.y + c.origin.w - c.origin.y);
-	half4 n = noise.sample(cloudRep, n3 * CLOUD_NOISE_SCALE, level(0.0));
+	half4 n = noise.sample(cloudRep, n3 * CLOUD_NOISE_SCALE, level(lod));
 	// billows (after Photon's detail erosion): Worley distance squared eats into the shape between the cells, more where
 	// the cloud is thin (dampen(1 - d)), so the edges and the tops break into round lobes; the Perlin-Worley adds variety
 	float wd = 1.0 - (float(n.g) * 0.75 + float(n.r) * 0.25);
@@ -297,11 +304,11 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	thin = thin * (2.0 - thin);
 	d -= c.shape.w * 0.42 * wd * wd * thin;
 	if (q >= 2 && d > 0.0) {
-		half4 m = noise.sample(cloudRep, n3 * CLOUD_DETAIL_SCALE, level(0.0));
-		float wd2 = 1.0 - (float(m.b) * 0.7 + float(m.a) * 0.3);
+		half4 m = noise.sample(cloudRep, n3 * CLOUD_DETAIL_SCALE, level(lod + 1.0));
+		float wd2 = 1.0 - (float(m.g) * 0.6 + float(m.b) * 0.4);
 		// fine detail: strongest on the sides and lower half, little on the domes' crowns
 		float fade = 0.6 + 0.2 * smoothstep(0.85, 1.0, 1.0 - h) - 0.35 * smoothstep(0.05, 0.5, h);
-		d -= 0.45 * c.misc.w * wd2 * wd2 * thin * fade;
+		d -= 0.45 * c.misc.w * detail * wd2 * wd2 * thin * fade;
 	}
 	d = saturate(d);
 	// edges sharpen with height: crisp cauliflower tops, softer ragged bases
@@ -310,7 +317,8 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 }
 
 // Optical depth toward the light from p (blocks x density x extinction): steps double from 6 blocks, jittered.
-static float cloudLightDepth(float3 p, float y, float jitter, int steps, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise) {
+static float cloudLightDepth(float3 p, float y, float jitter, int steps, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
+                             float lod) {
 	float3 L = c.lightDir.xyz;
 	// steps of 4, 8, 16, 32... blocks: the first two see the billows (3D noise: shadowed creases between the lobes), the
 	// rest only the cloud's large shape
@@ -318,7 +326,7 @@ static float cloudLightDepth(float3 p, float y, float jitter, int steps, constan
 	for (int i = 0; i < steps; i++) {
 		float m = s + step * (0.5 + 0.5 * (jitter - 0.5));
 		float3 q = p + L * m;
-		tau += cloudDensity(q, y + L.y * m, i < 2 ? 1 : 0, c, weather, noise) * step;
+		tau += cloudDensity(q, y + L.y * m, i < 2 ? 1 : 0, c, weather, noise, 1.0, lod + float(i)) * step;
 		s += step;
 		step *= 2.0;
 	}
@@ -358,8 +366,11 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	if (t0 < 1.0) t1 = min(t1, 1500.0);
 	float len = t1 - t0;
 	// fewer, longer steps where the stretch is short (straight up) and the far horizon (thin on screen)
-	int n = clamp(int(float(steps) * saturate(len / 900.0) + 0.999), max(steps / 3, 4), steps);
+	int n = clamp(int(float(steps) * saturate(len / 600.0) + 0.999), max(steps / 2, 4), steps);
 	float dt = len / float(n);
+	// the fine detail (a ~30-block tile) fades out where the steps get too coarse to resolve it (it aliases into grain)
+	float detail = saturate((26.0 - dt) / 14.0);
+	if (detail <= 0.0) q = min(q, 1);
 	float sigma = c.shape.z;
 	float albedo = c.ambTop.w;
 	float3 L = c.lightDir.xyz;
@@ -373,7 +384,7 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	bool fine = false;
 	int miss = 0;
 	float t = t0 + jitter * dt;
-	for (int i = 0; i < 2 * n + 4 && t < t1; i++) {
+	for (int i = 0; i < 3 * n + 4 && t < t1; i++) {
 		float3 p = dir * t;
 		float y = cloudAltitude(r, t);
 		if (!fine) {
@@ -386,7 +397,9 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 			t = max(t - dt, t0 + jitter * dt);
 			continue;
 		}
-		float d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise);
+		// mip of the noise for this sample's footprint (pixel angle x distance)
+		float lod = max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0);
+		float d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
 		if (d <= 0.002) {
 			if (++miss >= 4) fine = false;
 			t += dt;
@@ -394,9 +407,12 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		}
 		miss = 0;
 		float st = d * sigma;
-		float stepT = exp(-st * dt);
+		// in dense cloud a whole step would jump from lit to opaque: at most ~1 optical depth per sample (down to a quarter
+		// step), so where the ray starts in the cloud (the jitter) stops mattering
+		float ds = clamp(1.0 / max(st, 1e-4), dt * 0.25, dt);
+		float stepT = exp(-st * ds);
 		float h = saturate((y - c.layer.x) / thick);
-		float tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise);
+		float tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod);
 		// skylight from above through what is left above this point (one cheap sample), bounce from below
 		float above = c.layer.y - y;
 		float dUp = cloudDensity(p + float3(0.0, above * 0.4, 0.0), y + above * 0.4, 0, c, weather, noise);
@@ -425,7 +441,7 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		wsum += wseg;
 		T *= stepT;
 		if (T < 0.02) break;
-		t += dt;
+		t += ds;
 	}
 	o.S = Sacc;
 	o.T = saturate((T - 0.02) / 0.98);
@@ -719,7 +735,7 @@ fragment half cloud_shadow(CloudVsOut in [[stage_in]], constant CloudParams &c [
 	for (int i = 0; i < N; i++) {
 		float s = sa + (float(i) + 0.5) * ds;
 		float3 p = base + float3(L.x, ly, L.z) * s;
-		tau += cloudDensity(p, yRef + ly * s, 1, c, weather, noise) * ds;
+		tau += cloudDensity(p, yRef + ly * s, 1, c, weather, noise, 1.0, 1.1) * ds;
 	}
 	return half(exp(-tau * c.shape.z * 0.8));
 }

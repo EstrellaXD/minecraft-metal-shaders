@@ -165,6 +165,7 @@ CloudState *mc_clouds_new(Ctx *ctx, const char *source, char *err, int errCap) {
 		td.textureType = MTLTextureType3D;
 		td.pixelFormat = MTLPixelFormatRGBA8Unorm;
 		td.width = td.height = td.depth = 64;
+		td.mipmapLevelCount = 7;  // far samples read blurred noise (clouds.metal: cloudDensity's lod)
 		td.storageMode = MTLStorageModePrivate;
 		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
 		s->noise = [dev newTextureWithDescriptor:td];
@@ -185,6 +186,9 @@ CloudState *mc_clouds_new(Ctx *ctx, const char *source, char *err, int errCap) {
 		[c setTexture:s->weather atIndex:0];
 		[c dispatchThreads:MTLSizeMake(512, 512, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
 		[c endEncoding];
+		id<MTLBlitCommandEncoder> bl = [cb blitCommandEncoder];
+		[bl generateMipmapsForTexture:s->noise];
+		[bl endEncoding];
 		[cb commit];
 		[cb waitUntilCompleted];
 		if (cb.status != MTLCommandBufferStatusCompleted) {

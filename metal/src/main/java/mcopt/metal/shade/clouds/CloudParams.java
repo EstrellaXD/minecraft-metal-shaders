@@ -28,7 +28,7 @@ import org.joml.Matrix4f;
  * ShadeFrame and CloudWeather, no game types: the offline preview packs it too.
  */
 public final class CloudParams {
-	public static final int SIZE = 432;
+	public static final int SIZE = 448;
 	/** Art knobs: multiple-scattering octave weight and extinction factors, sky-light extinction (diffuse) factor. */
 	static final float OCTAVE_WEIGHT = CloudConfig.floatProperty("mcopt.shade.clouds.octaveWeight", 0.68f),
 		OCTAVE_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.octaveExtinction", 0.48f),
@@ -136,11 +136,16 @@ public final class CloudParams {
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
 		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.3f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
-		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, 0f);
+		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard
+		float fovY = (float) (2.0 * Math.atan(1.0 / Math.max(Math.abs(f.proj.m11()), 1e-3f)));
+		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, fovY / Math.max(this.histH, 1) * n);
 		put4(b, 400, sl[0], ly, sl[2], 0f);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
 		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
 		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, CloudConfig.BLOCKY ? 1f : 0f);
+		// wind shear: the tops lean downwind by ~40 blocks over the layer (more on windy days)
+		float shear = CloudConfig.BLOCKY ? 0f : 25f + 3f * w.windSpeed;
+		put4(b, 432, w.windX * shear, w.windZ * shear, 0f, 0f);
 		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, sl[1]) * this.opacity : 0f;
 
 		// ---- ShadeLook ----

@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import mcopt.metal.MetalShaderRegistry;
+import mcopt.metal.shade.water.ShadeWater;
 
 /**
  * The shaded MSL, assembled from resources/mcopt/shade the same way for the game and for validation tools (mslcheck):
@@ -88,10 +89,22 @@ public final class ShadeMsl {
 		return prelude() + resource("shade_post.metal");
 	}
 
-	/** A Sodium terrain stage (the source MetalPipeline would compile: built-in MSL, with its defines) with shading. */
+	/**
+	 * A Sodium terrain stage (the source MetalPipeline would compile: built-in MSL, with its defines) with shading. The
+	 * translucent fragment (the only stage with "#define ALPHA_CUTOUT 0.01" and a fragment entry) also gets the water
+	 * module (ShadeWater.prelude: SHADE_WATER and water.metal) unless mcopt.shade.water=false.
+	 */
 	public static String terrain(String source) {
+		return terrain(source, ShadeWater.MODULE);
+	}
+
+	/** terrain(source) with the water module forced on or off (validation tools build both). */
+	public static String terrain(String source, boolean water) {
+		if (water && source.startsWith(TRANSLUCENT_DEFINE) && source.contains("fragment main0_out main0(")) return prelude() + ShadeWater.prelude() + source;
 		return prelude() + source;
 	}
+
+	private static final String TRANSLUCENT_DEFINE = "#define ALPHA_CUTOUT 0.01";
 
 	/** One of the sky pipelines' replacement stages (the vanilla uniform blocks come with them). */
 	public static String skyStage(String file) {

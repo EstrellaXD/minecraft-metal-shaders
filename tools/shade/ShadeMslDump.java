@@ -27,6 +27,13 @@ public class ShadeMslDump {
 			// M2 HDR variants (what MetalPipeline.variant builds through ShadeMsl's format adapter)
 			Files.writeString(out.resolve("hdr_" + e.getKey() + ".vs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(vs));
 			Files.writeString(out.resolve("hdr_" + e.getKey() + ".fs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			if (e.getKey().equals("translucent")) {
+				// the translucent fragment without the water module (mcopt.shade.water=false: M1's water)
+				Files.writeString(out.resolve("shade_translucentnowater.vs.metal"), slotsT + ShadeMsl.terrain(vs));
+				Files.writeString(out.resolve("shade_translucentnowater.fs.metal"), slotsT + ShadeMsl.terrain(e.getValue() + fs, false));
+				Files.writeString(out.resolve("hdr_translucentnowater.vs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(vs));
+				Files.writeString(out.resolve("hdr_translucentnowater.fs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs, false));
+			}
 			if (!e.getKey().equals("translucent")) {
 				Files.writeString(out.resolve("up_" + e.getKey() + ".pulled.vs.metal"), "#define PULLED\n" + vs);
 				Files.writeString(out.resolve("shade_" + e.getKey() + ".pulled.vs.metal"), slotsT + ShadeMsl.terrain("#define PULLED\n" + vs));

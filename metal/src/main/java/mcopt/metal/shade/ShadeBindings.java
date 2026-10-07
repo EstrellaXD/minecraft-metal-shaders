@@ -17,6 +17,7 @@ package mcopt.metal.shade;
 
 import java.nio.ByteBuffer;
 import mcopt.metal.MetalBridge;
+import mcopt.metal.shade.water.ShadeWater;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -49,6 +50,7 @@ public final class ShadeBindings {
 	public static void bind(long ctx, long enc) {
 		if (state == 0 && !init(ctx)) return;
 		ShadeNative.bind(enc);
+		if (ShadeWater.ON) ShadeWater.bind(ctx, enc);
 	}
 
 	static boolean ready() {
@@ -153,7 +155,9 @@ public final class ShadeBindings {
 
 	/** The rebinding entry for code holding only a native Enc* (the shadow pass after its own encoders). */
 	public static void rebind(long enc) {
-		if (state != 0) ShadeNative.bind(enc);
+		if (state == 0) return;
+		ShadeNative.bind(enc);
+		if (ShadeWater.ON) ShadeWater.bind(ctx, enc);
 	}
 
 	/**

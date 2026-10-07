@@ -12,6 +12,10 @@
 // haze and fog into the sky behind it; then exposure (pre-exposed radiance into the HDR world target with MCOPT_HDR, M1's
 // tone curve into RGBA8 without). Outside the overworld it is vanilla's lightmapped colour and fog (converted to
 // scene-linear in the HDR target). Debug views (mcopt.shade.debug): 1 shadow/cascades, 2 normals, 3 lighting only.
+// With SHADE_WATER also defined (the translucent pass; mcopt.shade.water, the loader prepends mcopt/shade/water.metal)
+// water is recognized by its atlas sprites and shaded by shadeWaterSurface: waves, reflections (screen space over the
+// sky), refraction, absorption, caustics, foam, the surface from below; it composites what is behind it from the scene
+// copy taken at the switch to this pass (pre-exposed HDR radiance with MCOPT_HDR) and is drawn opaque.
 #include <metal_stdlib>
 using namespace metal;
 
@@ -61,6 +65,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
                          , constant ShadeFrame& sf [[buffer(16)]], constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]],
                          depth2d_array<float> shadowMap [[texture(16)]], sampler shadowCompare [[sampler(12)]],
                          texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]], float4 fragCoord [[position]]
+#ifdef SHADE_WATER
+                         , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
+#ifdef MCOPT_HDR
+                         , constant ShadeResources& sr [[buffer(19)]]
+#endif
+#endif
 #endif
                          )
 {
@@ -69,7 +79,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     float2 du = dfdx(uv);
     float2 dv = dfdy(uv);
 #ifdef MCOPT_SHADE
-    float3 nf = cross(dfdx(in.v_Pos), dfdy(in.v_Pos)); // before any discard: the whole 2x2 quad takes part
+    float3 dpx = dfdx(in.v_Pos), dpy = dfdy(in.v_Pos);
+    float3 nf = cross(dpx, dpy); // before any discard: the whole 2x2 quad takes part
+#ifdef SHADE_WATER
+    float waterFootprint = max(length(dpx), length(dpy));
+    float2 waterFlow = shadeWaterFlowDir(dpx, dpy, du, dv);
+#endif
 #endif
     float2 texelScreenSize = sqrt(du * du + dv * dv);
     float4 color = sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
@@ -131,10 +146,51 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half3 tint = in.v_Color.rgb;
     bool water = ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0
         && !shadeDev(sf, SHADE_DEV_NO_WATER);
+#ifdef SHADE_WATER
+    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
+    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
+    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together
+    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
+    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
+    if (waterSprite == 0) water = false;
+#endif
 #else
     bool water = false;
 #endif
     float3 radiance;
+#ifdef SHADE_WATER
+    if (waterFull) {
+        half3 up = half3(0.0h, 1.0h, 0.0h);
+        ShadeWaterIn wi;
+        wi.p = p;
+        wi.nFace = float3(n);
+        wi.footprint = waterFootprint;
+        wi.flowDir = waterSprite == 2 && n.y > 0.5h ? waterFlow : float2(0.0);
+        wi.pixel = fragCoord.xy;
+        wi.depth = fragCoord.z;
+        wi.tint = tint;
+        wi.sky = in.v_Light.y;
+        wi.shadow = shadow;
+        wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
+        wi.exposure = ex;
+#ifdef MCOPT_HDR
+#ifdef SHADE_SSR_PREV
+        wi.prevExposure = sg.exposure.z; // last frame's finished HDR world: SSR colour, rendered sky in the reflections
+#else
+        wi.prevExposure = 0.0;
+#endif
+        wi.fog = shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6);
+        texture2d<half> prevScene = sr.prevScene;
+#else
+        wi.prevExposure = 0.0;
+        wi.fog = shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex);
+        texture2d<half> prevScene = sceneCopy;
+#endif
+        radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy, prevScene);
+        alpha = 1.0; // the water composited what is behind it from the scene copy
+        if (debug == 7) radiance = float3(saturate(wi.footprint * 4.0), float(waterSprite == 2), saturate(length(p) / 128.0)) / max(ex, 1e-3);
+    } else
+#endif
     if (water) {
 #ifdef ALPHA_CUTOUT
         float3 lit = shadeLit2(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
@@ -148,6 +204,25 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
         half tl = shadeLumaH(half3(texel.rgb));
         if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12) radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * 2.2;
+#if defined(SHADE_WATER) && defined(SHADE_GLOSSY)
+        // the water module's glossy translucents (stained glass, ice, slime, honey): mirror reflection over the lit colour
+        if (!thin && !shadeDev(sf, SHADE_DEV_NO_WATER)) {
+#ifdef MCOPT_HDR
+#ifdef SHADE_SSR_PREV
+            float prevEx = sg.exposure.z;
+#else
+            float prevEx = 0.0;
+#endif
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, prevEx, sf, wp, skyLut,
+                                    skyLutSmplr, sceneCopy, depthCopy, sr.prevScene);
+#else
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, 0.0, sf, wp, skyLut, skyLutSmplr,
+                                    sceneCopy, depthCopy, sceneCopy);
+#endif
+            radiance = gl.rgb;
+            alpha = gl.a;
+        }
+#endif
     }
     radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl);
     float3 rgb = shadeFinish2(radiance, fogValue, sf, sl, ex);

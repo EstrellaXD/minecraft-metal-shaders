@@ -223,6 +223,9 @@ public final class ShadeFrameUpdater {
 		ShadeShadows.beforePack(camera, f);
 		LOOK.update(f, moonPhaseIndex, dt); // grades f.sky.light: before f.pack
 
+		if (mcopt.metal.shade.water.ShadeWater.ON) {
+			mcopt.metal.shade.water.WaterFrame.update(ShadeBindings.ctx(), level, x, y, z, f.underwater, f.rain);
+		}
 		f.pack(ShadeBindings.nextSlot());
 		LOOK.pack(ShadeBindings.currentLook(), f);
 		ShadeBindings.publish();

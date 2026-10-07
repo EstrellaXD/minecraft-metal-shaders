@@ -1,0 +1,615 @@
+// Copyright 2026 mcopt-shade contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
+// License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable
+// law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
+// OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// mcopt native shading: the water and reflections module (shader bible E14, E15 basics, E26 surface). Original code; the
+// techniques are public (Schlick 1994, Walter et al. 2007 GGX, Beer-Lambert, McGuire & Mara 2014 screen-space ray
+// marching, Tessendorf 2001 deep-water dispersion, caustics as the inverse Jacobian of the refracted light field).
+//
+// Assembled by ShadeMsl after shade_common.metal (mcopt.metal.shade.water.ShadeWater.prelude puts the SHADE_* defines in
+// front) for the translucent terrain fragment; written as a self-contained include so other water renderers (far terrain,
+// Distant Horizons' transparent pass) can call the same functions.
+//
+// UNITS AND SPACES: shade_common.metal's. Positions are camera-relative world (blocks), +y up. Colours are linear radiance
+// BEFORE exposure (what shadeLit returns); the caller applies air fog and the output transform (M1: shadeFogAir +
+// shadeFinish; M2 HDR: pre-exposure and the post tonemap). Depth is reversed-Z in [0, 1] (1 near, 0 = sky/clear).
+//
+// INPUTS (bound by mcwater.m on every shaded encoder, fragment stage):
+//   texture(18) sceneCopy  the main pass's colour attachment 0, copied at the switch to translucent terrain: the opaque
+//                          scene (sky, terrain, entities) without the translucents. M1: tone-mapped sRGB in RGBA8 (read
+//                          back to radiance by shadeWaterSceneRadiance); M2 HDR: pre-exposed linear radiance (MCOPT_HDR or
+//                          SHADE_HDR).
+//   texture(19) depthCopy  the depth attachment at the same moment (Depth32Float, reversed-Z).
+//   buffer(23)  ShadeWaterParams (below). state.x == 1 only after this frame's copy: otherwise callers must not read the
+//                          copies (they are 1x1 dummies or last frame's).
+//   prev                   (M2 HDR, optional) last frame's finished HDR world (ShadeResources.prevScene: everything incl.
+//                          clouds, translucents, Distant Horizons, pre-exposed with ShadeGpu.exposure.z). Where the caller
+//                          gives it (ShadeWaterIn.prevExposure > 0), SSR hits take their colour from it (reprojected with
+//                          prevViewProj) and the sky reflection reads the rendered sky on screen in the reflected direction
+//                          (clouds, sun disc, stars, far LODs) instead of only the atmosphere LUT.
+#ifndef MCOPT_SHADE_WATER
+#define MCOPT_SHADE_WATER
+
+#ifndef SHADE_SSR_STEPS
+#define SHADE_SSR_STEPS 16
+#endif
+
+// Mirrors mcwater.m's WaterParams (64 bytes, written by ShadeWater.frame).
+struct ShadeWaterParams {
+	float4 still;  // atlas uv rectangle (u0, v0, u1, v1) of minecraft:block/water_still (all 0: unknown)
+	float4 flow;   // the same for minecraft:block/water_flow
+	float4 state;  // x 1 when the copies hold this frame's opaque scene, y water surface height above the eye (under water),
+	               // z wetness 0..1, w 0
+	float4 tune;   // x wave strength (mcopt.shade.waterWaves), y SSR max distance (blocks), z reflection strength, w caustics 0/1
+};
+
+constexpr sampler shadeWaterLinear(filter::linear, address::clamp_to_edge, coord::normalized);
+
+// 1 still water, 2 flowing water, 0 another translucent sprite, -1 the sprites are unknown (resource reload).
+static inline int shadeWaterSprite(float2 uv, constant ShadeWaterParams &wp) {
+	if (wp.still.z <= 0.0) return -1;
+	if (all(uv >= wp.still.xy) && all(uv <= wp.still.zw)) return 1;
+	if (all(uv >= wp.flow.xy) && all(uv <= wp.flow.zw)) return 2;
+	return 0;
+}
+
+// ---- reading the copies --------------------------------------------------------------------------------------------------
+// Linear view depth (the clip w, blocks along the view axis) of a reversed-Z depth value. Renderpearl's projection keeps
+// clip w = -z_view, so z_ndc = -A + B / w with A = proj[2][2], B = proj[3][2] (column-major: [column][row]).
+static inline float shadeLinearW(float z, constant ShadeFrame &f) {
+	return f.proj[3][2] / max(z + f.proj[2][2], 1e-7);
+}
+
+// The scene's linear view depth (clip w: blocks along the view axis) at pixel px of the rendered rect behind the
+// translucents, SHADE_WATER_SKY_W where nothing was drawn (sky). The ONE place the module reads the depth copy: with far
+// terrain (Distant Horizons, whose depth has its own projection) this becomes a read of the merged scene-distance image
+// (far-terrain-plan section 3.2-2; convert if that image holds radial distance), and SSR, refraction, absorption and foam
+// all see the LODs.
+#define SHADE_WATER_SKY_W 1e6
+static inline float shadeWaterSceneW(depth2d<float> depth, uint2 px, constant ShadeFrame &f) {
+	float z = depth.read(px);
+	return z > 0.0 ? shadeLinearW(z, f) : SHADE_WATER_SKY_W;
+}
+
+// A display-referred colour (M1's tone-mapped sRGB) back to linear radiance before exposure: undo the sRGB curve, then
+// the hue-preserving tone curve on the brightest channel (shadeOutput keeps the channel ratios below its white blend),
+// then the exposure. Clipped highlights come back as ~5.6 / exposure.
+static inline float3 shadeWaterDisplayRadiance(half3 stored, float exposure) {
+	float3 o = float3(shadeToLinear(stored));
+	float mo = max(max(o.r, o.g), max(o.b, 1e-5));
+	float tm = min(mo, 0.9985);
+	float y = (tm + sqrt(tm * tm + 0.024144 * tm)) * (1.0 / 2.012);    // undo the toe: 1.006 y^2 - tm y - 0.006 tm = 0
+	float m = -log2(max(1.0 - y, 1e-4)) * (0.69314718 / 1.1);          // undo 1 - e^-1.1x
+	return o * (m / mo) / max(exposure, 1e-6);
+}
+
+// The scene copy's value back to linear radiance before exposure. M1 (RGBA8 target): the display transform undone. HDR
+// target (MCOPT_HDR, the M2 base, or SHADE_HDR): the copy already holds pre-exposed linear radiance, so only the
+// exposure the frame was drawn with (ShadeWaterIn.exposure: sf.time.z in M1, ShadeGpu.exposure.x in M2) is divided out.
+static inline float3 shadeWaterSceneRadiance(half3 stored, float exposure) {
+#if defined(MCOPT_HDR) || defined(SHADE_HDR)
+	return float3(stored) / max(exposure, 1e-6);
+#else
+	return shadeWaterDisplayRadiance(stored, exposure);
+#endif
+}
+
+// Under dynamic resolution (TAAU) the world draws into the sub-rect (0, 0, render size) of fixed-size targets, and so
+// do the copies: NDC maps to that sub-rect, not to the whole texture. SHADE_WATER_SUBRECT (define it with the TAAU merge,
+// where ShadeFrame.screen.xy is the live render size) switches to it; otherwise the render size is the copy's size.
+static inline float2 shadeWaterRenderSize(constant ShadeFrame &f, float2 textureSize) {
+#ifdef SHADE_WATER_SUBRECT
+	return min(f.screen.xy, textureSize);
+#else
+	return textureSize;
+#endif
+}
+
+// ---- waves ------------------------------------------------------------------------------------------------------------------
+// The surface is a sum of directional waves with sharpened crests, h_i = a_i * e^(sin(theta_i) - 1), travelling with deep-water
+// dispersion (omega = sqrt(g k), slowed for a calm, Minecraft-scale look), each one pulling the next ones' sample point
+// toward its crests (a little choppiness, no visible tiling). Slopes and the Laplacian (for caustics) are analytic; waves
+// shorter than a few pixels' footprint fade out instead of aliasing (no TAA in M1). Directions, wavelengths, amplitudes:
+// our own set, roughly along the wind toward +x+z.
+#define SHADE_WAVE_COUNT 7
+constant float4 SHADE_WAVES[SHADE_WAVE_COUNT] = {
+	//   dir x,  dir z, wavelength, amplitude (blocks)
+	float4( 0.920,  0.392, 8.70, 0.060),
+	float4( 0.616,  0.788, 5.90, 0.040),
+	float4( 0.993, -0.118, 3.70, 0.024),
+	float4( 0.309,  0.951, 2.45, 0.015),
+	float4( 0.809, -0.588, 1.55, 0.009),
+	float4(-0.182,  0.983, 1.00, 0.0055),
+	float4( 0.707,  0.707, 0.62, 0.0032),
+};
+constant float SHADE_WAVE_PHASE[SHADE_WAVE_COUNT] = {0.0, 1.7, 4.1, 2.3, 5.2, 0.6, 3.4};
+
+// Absolute world xz for camera-relative xz, wrapped every 2048 blocks (float precision; the pattern jumps once per 2048
+// blocks travelled, at a wrap of the camera's block position).
+static inline float2 shadeWaterXZ(float2 rel, constant ShadeFrame &f) {
+	return rel + f.cameraFract.xz + fmod(f.cameraBlock.xz, 2048.0);
+}
+
+// Slope (dh/dx, dh/dz) of the surface at absolute xz; lap = the height's Laplacian, height = h. strength scales the
+// amplitudes; footprint: blocks per pixel (wave LOD), 0 for none.
+static float2 shadeWaves(float2 x, float t, float strength, float footprint, thread float &lap, thread float &height) {
+	float2 g = 0.0;
+	lap = 0.0;
+	height = 0.0;
+	for (int i = 0; i < SHADE_WAVE_COUNT; i++) {
+		float4 w = SHADE_WAVES[i];
+		float lod = saturate(w.z / max(footprint * 3.0, 1e-4) - 1.0);
+		float k = 6.2831853 / w.z;
+		float a = w.w * strength * lod;
+		if (a * k < 2e-4) continue; // its slope would not show (far away: the strength fades with distance)
+		// short-crested: the 3 longest waves' amplitude swells and fades along their crests (crests ~5 wavelengths long,
+		// drifting slowly), so they don't interfere into a regular lattice in the distance (the glitter road), where the
+		// shorter waves have faded out (LOD) anyway
+		if (i < 3) a *= 0.55 + 0.45 * sin(k * 0.21 * dot(float2(-w.y, w.x), x) + SHADE_WAVE_PHASE[i] * 2.3 + t * 0.13);
+		float omega = sqrt(9.81 * k) * 0.62;
+		float th = k * dot(w.xy, x) + omega * t + SHADE_WAVE_PHASE[i];
+		float c;
+		float s = sincos(th, c);
+		float e = exp(s - 1.0);
+		float dh = a * k * c * e;            // slope along the wave's direction
+		g += w.xy * dh;
+		lap += a * k * k * (c * c - s) * e;
+		height += a * e;
+		x -= w.xy * (c * e * a * 1.6);       // pull the next waves toward this one's crests
+	}
+	return g;
+}
+
+// ---- screen-space reflections -----------------------------------------------------------------------------------------------
+// March a world-space ray (from p0 along unit r, at most maxDist blocks) in screen space against the depth copy: clip-space
+// end points (the far one pulled in front of the camera), the segment clipped to the screen, steps spaced denser near the
+// start (contact reflections matter most), then 4 bisection steps on the first crossing behind the depth buffer and a
+// thickness test in linear depth, so thin things in front of a far background don't smear into long streaks. A crossing
+// that fails the thickness test keeps marching (the ray passed behind something). The march costs no more for a longer
+// ray: it is in screen space, so distant shores mirror in open water as cheaply as the trees next to it.
+//
+// Quad-shared (SHADE_SSR_QUAD, the default): the 4 pixels of a 2x2 quad trace ONE ray (their average origin and
+// direction) together, each lane marching its own quarter of the segment with a quarter of the steps; the nearest hit
+// among the lanes wins and all four take it (quad shuffles). Half-resolution SSR at a quarter of the cost, without a
+// separate pass or target; at Retina density, and under the waves' wobble, the 2x2 blocks don't show. Callers must reach it
+// in quad-uniform control flow (the water branch is: one triangle per quad, the sprite test is made quad-uniform).
+
+// The setup shared by both variants: screen-space start s0 and extent ds (NDC xy, depth z), false when there is nothing to
+// march (the ray starts behind the camera or leaves the screen at once). screenEnd: the segment ends at a screen edge.
+static inline bool shadeSsrSegment(float3 p0, float3 r, float maxDist, constant ShadeFrame &f, thread float3 &s0, thread float3 &ds,
+                                   thread bool &screenEnd) {
+	float4 c0 = f.viewProj * float4(p0, 1.0);
+	float4 dc = f.viewProj * float4(r, 0.0);
+	float len = maxDist;
+	if (dc.w < 0.0) len = min(len, (c0.w - 0.1) / -dc.w * 0.95);
+	if (len <= 0.05 || c0.w <= 0.05) return false;
+	float4 c1 = c0 + dc * len;
+	s0 = c0.xyz / c0.w;
+	float3 s1 = c1.xyz / c1.w;
+	float2 d = s1.xy - s0.xy;
+	float tx = d.x > 1e-6 ? (1.0 - s0.x) / d.x : d.x < -1e-6 ? (-1.0 - s0.x) / d.x : 1e6;
+	float ty = d.y > 1e-6 ? (1.0 - s0.y) / d.y : d.y < -1e-6 ? (-1.0 - s0.y) / d.y : 1e6;
+	float tEnd = min(1.0, min(tx, ty));
+	if (tEnd <= 0.0) return false;
+	screenEnd = tEnd < 1.0;
+	ds = (s1 - s0) * tEnd;
+	return true;
+}
+
+// Marches chunk `chunk` of `chunks` equal parts of the step sequence (n steps in it; jitter in [0, 1) shifts them) and
+// returns the first hit in it: (uv over the rendered rect, fade, segment parameter), or w < 0 for none.
+static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int chunks, int n, float jitter, constant ShadeFrame &f,
+                            depth2d<float> depth) {
+	float2 size = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
+	float A = f.proj[2][2], B = f.proj[3][2];
+	float inv = 1.0 / float(n * chunks);
+	float u0 = max(float(chunk * n) - jitter, 0.0) * inv;
+	float tPrev = u0 * (0.35 + 0.65 * u0);
+	for (int i = 1; i <= n; i++) {
+		float u = (float(chunk * n + i) - jitter) * inv;
+		float t = u * (0.35 + 0.65 * u);
+		float3 s = s0 + ds * t;
+		// NDC depth is affine in 1/w along the screen segment, so the ray's view depth at any step is B / (z + A)
+		float ws = shadeWaterSceneW(depth, uint2(clamp((s.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+		if (B / max(s.z + A, 1e-7) >= ws) { // the ray went behind what the depth copy holds there
+			float lo = tPrev, hi = t;
+			for (int j = 0; j < 4; j++) {
+				float m = 0.5 * (lo + hi);
+				float3 sm = s0 + ds * m;
+				float wm = shadeWaterSceneW(depth, uint2(clamp((sm.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+				if (B / max(sm.z + A, 1e-7) >= wm) hi = m; else lo = m;
+			}
+			float3 sh = s0 + ds * hi;
+			float2 uv = sh.xy * 0.5 + 0.5;
+			float wh = shadeWaterSceneW(depth, uint2(clamp(uv * size, float2(0.0), size - 1.0)), f);
+			float wr = B / max(sh.z + A, 1e-7);
+			float wp = B / max(s0.z + ds.z * tPrev + A, 1e-7);
+			float thick = 0.3 + 0.02 * wh + abs(wr - wp);
+			if (wh < SHADE_WATER_SKY_W && wr - wh < thick) {
+				float2 edge = smoothstep(0.0, 0.07, min(uv, 1.0 - uv));
+				float fade = edge.x * edge.y;
+				if (!screenEnd) fade *= 1.0 - smoothstep(0.75, 1.0, hi);
+				return float4(uv, fade, hi);
+			}
+		}
+		tPrev = t;
+	}
+	return float4(0.0, 0.0, 0.0, -1.0);
+}
+
+// Quad reductions by xor shuffles (independent of how the hardware numbers the lanes).
+static inline float shadeQuadSum(float v) { v += quad_shuffle_xor(v, 1); return v + quad_shuffle_xor(v, 2); }
+static inline float3 shadeQuadSum(float3 v) { v += quad_shuffle_xor(v, 1); return v + quad_shuffle_xor(v, 2); }
+static inline float shadeQuadMin(float v) { v = min(v, quad_shuffle_xor(v, 1)); return min(v, quad_shuffle_xor(v, 2)); }
+static inline float shadeQuadMax(float v) { v = max(v, quad_shuffle_xor(v, 1)); return max(v, quad_shuffle_xor(v, 2)); }
+
+// The colour (radiance before exposure) at uv over the rendered rect of the copies: from last frame's finished HDR world
+// when the caller gives one (prevExposure > 0; reprojected through the depth copy's point with prevViewProj, so it holds
+// clouds, translucents and post-VL light too), else from this frame's opaque scene copy.
+static float3 shadeWaterHitColor(float2 uv, float exposure, float prevExposure, constant ShadeFrame &f, texture2d<half> scene,
+                                 depth2d<float> depth, texture2d<half> prev) {
+	float2 tex = float2(depth.get_width(), depth.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
+	if (prevExposure > 0.0) {
+		float z = depth.read(uint2(clamp(uv * size, float2(0.0), size - 1.0)));
+		float4 wp = f.invViewProj * float4(uv * 2.0 - 1.0, z, 1.0);
+		float4 pc = f.prevViewProj * float4(wp.xyz / wp.w, 1.0);
+		float2 uvp = pc.xy / pc.w * 0.5 + 0.5;
+		if (pc.w > 0.0 && all(uvp > 0.0) && all(uvp < 1.0)) return float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure;
+	}
+	return shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure);
+}
+
+// The sky in the reflected direction r: the atmosphere LUT, or (prevExposure > 0) the rendered sky where r points on
+// screen and nothing was drawn there (depth copy = sky): with M2 that is the sky pass, the sun disc and aureole, stars and
+// Milky Way, clouds, rain and Distant Horizons' LODs (which the depth copy doesn't hold), so open water mirrors the
+// clouds at sunset and the far mountains. Faded into the LUT toward the screen edges.
+static float3 shadeWaterSkyRefl(float3 r, float prevExposure, constant ShadeFrame &f, texture2d<half> lut, sampler lutS,
+                                depth2d<float> depth, texture2d<half> prev) {
+	float3 sky = shadeSkyLookup(r, lut, lutS, f);
+	if (prevExposure > 0.0) {
+		float4 c = f.viewProj * float4(r, 0.0); // a direction: the point at infinity
+		if (c.w > 1e-4) {
+			float2 uv = c.xy / c.w * 0.5 + 0.5;
+			float2 edge = saturate(min(uv, 1.0 - uv) * 12.0);
+			float wgt = edge.x * edge.y;
+			if (wgt > 0.0) {
+				float2 size = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
+				if (depth.read(uint2(clamp(uv * size, float2(0.0), size - 1.0))) <= 0.0) {
+					float4 pc = f.prevViewProj * float4(r, 0.0);
+					float2 uvp = pc.xy / max(pc.w, 1e-4) * 0.5 + 0.5;
+					float3 s = float3(prev.sample(shadeWaterLinear, saturate(uvp)).rgb) / prevExposure;
+					sky = mix(sky, s, wgt);
+				}
+			}
+		}
+	}
+	return sky;
+}
+
+// Radiance (before exposure) where the ray hits and a weight: 0 miss, fading to 0 toward the screen edges and the ray's far
+// end, so callers blend it over their sky reflection. pixel: the fragment position (quad lane order and jitter).
+static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float exposure, float prevExposure, constant ShadeFrame &f,
+                       texture2d<half> scene, depth2d<float> depth, texture2d<half> prev) {
+	float2 tex = float2(depth.get_width(), depth.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
+	float3 s0 = 0.0, ds = 0.0;
+	bool screenEnd = false;
+#ifdef SHADE_SSR_QUAD
+	p0 = shadeQuadSum(p0) * 0.25;
+	r = normalize(shadeQuadSum(r));
+	bool ok = shadeSsrSegment(p0, r, maxDist, f, s0, ds, screenEnd); // quad-uniform: same ray in all four lanes
+	if (!ok) return 0.0;
+	uint2 q = uint2(pixel);
+	int chunk = int(q.x & 1u) + 2 * int(q.y & 1u);
+	float jitter = shadeNoise(floor(pixel * 0.5), 0);
+	float4 hit = shadeSsrMarch(s0, ds, screenEnd, chunk, 4, max(SHADE_SSR_STEPS / 4, 2), jitter, f, depth);
+	float key = hit.w >= 0.0 ? float(chunk) : 4.0;
+	float best = shadeQuadMin(key);
+	if (best > 3.5) return 0.0;
+	float3 mine = key == best ? hit.xyz : float3(0.0); // exactly one lane holds the nearest hit
+	float3 h = shadeQuadSum(mine);
+	return float4(shadeWaterHitColor(h.xy, exposure, prevExposure, f, scene, depth, prev), h.z);
+#else
+	if (!shadeSsrSegment(p0, r, maxDist, f, s0, ds, screenEnd)) return 0.0;
+	float4 hit = shadeSsrMarch(s0, ds, screenEnd, 0, 1, SHADE_SSR_STEPS, shadeNoise(pixel, 0), f, depth);
+	if (hit.w < 0.0) return 0.0;
+	return float4(shadeWaterHitColor(hit.xy, exposure, prevExposure, f, scene, depth, prev), hit.z);
+#endif
+}
+
+// ---- optics -------------------------------------------------------------------------------------------------------------------
+// Schlick's Fresnel for water (n = 1.333, f0 = 0.0204), cosine on the air side.
+static inline float shadeWaterFresnel(float cosT) {
+	float m = 1.0 - saturate(cosT);
+	float m2 = m * m;
+	return 0.0204 + 0.9796 * m2 * m2 * m;
+}
+
+// GGX (Trowbridge-Reitz) specular of the sun or moon off a surface with normal n, viewed along v (camera to point),
+// light from unit l; alpha = roughness^2. Radiance per unit sunColor (irradiance / pi), Smith-correlated visibility.
+static inline float shadeGgxSpec(float3 n, float3 v, float3 l, float alpha) {
+	float3 h = normalize(l - v);
+	float nh = saturate(dot(n, h)), nl = saturate(dot(n, l)), nv = max(dot(n, -v), 1e-3);
+	float a2 = alpha * alpha;
+	float dd = nh * nh * (a2 - 1.0) + 1.0;
+	float D = a2 / (3.14159265 * dd * dd);
+	float gv = nl * sqrt(nv * nv * (1.0 - a2) + a2), gl = nv * sqrt(nl * nl * (1.0 - a2) + a2);
+	float vis = 0.5 / max(gv + gl, 1e-5);
+	return 3.14159265 * D * vis * nl * shadeWaterFresnel(dot(h, -v));
+}
+
+// Absorption (1/block) from the biome's water colour (the vertex tint, linear): pure water's red-first absorption plus the
+// tint's own darkness per channel (vanilla's default blue gives clear teal shallows and deep blue; swamp water turns green
+// and murky; warm oceans stay clear cyan).
+static inline float3 shadeWaterSigmaA(half3 tint) {
+	float3 t = max(float3(shadeToLinear(tint)), float3(0.004));
+	return float3(0.26, 0.07, 0.035) + 0.09 * -log(t);
+}
+#define SHADE_WATER_SIGMA_S 0.022 // scattering (1/block), grey: the blue of deep water comes from absorbing red and green
+
+// ---- the surface ------------------------------------------------------------------------------------------------------------
+struct ShadeWaterIn {
+	float3 p;        // camera-relative position of the surface fragment
+	float3 nFace;    // geometric face normal, turned toward the camera
+	float footprint; // blocks per pixel on the surface (wave LOD)
+	float2 flowDir;  // world xz direction of the current (flowing water's top faces), 0 for still water
+	float2 pixel;    // fragment position (pixels, = memory row order of the copies)
+	float depth;     // the fragment's depth (reversed-Z)
+	half3 tint;      // vertex colour: biome water colour x vanilla AO
+	half sky;        // sky light 0..1
+	half shadow;     // sun/moon visibility at the surface (shadow map)
+	float3 lit;      // light on an upward white surface (shadeLit(1, up, ...)): sun, sky and block light, radiance
+	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
+	float prevExposure; // M2 HDR: the exposure `prev` was drawn with (ShadeGpu.exposure.z); 0 = no prev (M1, first frame)
+	float3 fog;      // the game's fog colour as radiance before exposure (the water seen from below, the TIR fallback)
+};
+
+// The wave normal at camera-relative p (+y up), and the height there.
+static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, thread float &height) {
+	float t = f.time.y;
+	float2 x = shadeWaterXZ(w.p.xz, f) - w.flowDir * (t * 1.4); // flowing water carries its waves downstream
+	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + 0.6 * length(w.flowDir)) * exp(-length(w.p) * (1.0 / 90.0));
+	float lap;
+	float2 g = shadeWaves(x, t, strength, w.footprint, lap, height);
+	return normalize(float3(-g.x, 1.0, -g.y));
+}
+
+// Caustic focusing (1 = none) on a bottom at camera-relative pf, depth dy under the surface. The sun's rays that reach pf
+// crossed the surface up-sun of it; there the waves' curvature bends them together or apart, and the light per area is the
+// inverse Jacobian of the refraction mapping x -> x + dy (1 - 1/n) grad h: 1 / |det(I + k Hessian(h))|. Where the
+// determinant crosses zero (focal curves) the light bunches into the bright cell network of real caustics. Evaluated on
+// a set of short waves of their own (well spread directions, so cells and not a lattice), each warping the next.
+#define SHADE_CAUSTIC_COUNT 6
+constant float4 SHADE_CAUSTIC_WAVES[SHADE_CAUSTIC_COUNT] = {
+	//   dir x,  dir z, wavelength, amplitude
+	float4( 0.940,  0.342, 2.60, 0.018),
+	float4(-0.276,  0.961, 2.10, 0.015),
+	float4( 0.454, -0.891, 1.70, 0.012),
+	float4(-0.866, -0.500, 1.37, 0.0095),
+	float4( 0.643,  0.766, 1.11, 0.0075),
+	float4(-0.985,  0.174, 0.89, 0.006),
+};
+
+static float shadeWaterCaustics(float3 pf, float dy, constant ShadeFrame &f, constant ShadeWaterParams &wp) {
+	float3 l = f.lightDirWorld.xyz;
+	float2 x = shadeWaterXZ(pf.xz + l.xz / max(l.y, 0.25) * dy, f);
+	float t = f.time.y;
+	float3 hs = 0.0; // Hessian: xx, zz, xz
+	for (int i = 0; i < SHADE_CAUSTIC_COUNT; i++) {
+		float4 w = SHADE_CAUSTIC_WAVES[i];
+		float k = 6.2831853 / w.z;
+		float th = k * dot(w.xy, x) + sqrt(9.81 * k) * 0.55 * t + float(i) * 1.9;
+		float c;
+		float s = sincos(th, c);
+		float e = exp(s - 1.0);
+		float q = w.w * k * k * (c * c - s) * e;
+		hs += q * float3(w.x * w.x, w.y * w.y, w.x * w.y);
+		x -= w.xy * (c * e * w.w * 14.0); // strong mutual warping: irregular cells
+	}
+	float kk = min(dy, 5.0) * 0.25 * 3.2 * wp.tune.x * (1.0 + 0.8 * wp.state.z);
+	float det = (1.0 + kk * hs.x) * (1.0 + kk * hs.y) - kk * kk * hs.z * hs.z;
+	return min(1.0 / max(abs(det), 0.18), 4.0);
+}
+
+// Water seen from above (or a side face): reflection (SSR over the sky, sun glint), refraction of the bottom, absorption and
+// in-scattering along the path through the water, caustics on the bottom, shoreline foam. Composites what is behind the
+// water itself (draw with alpha 1). Radiance before exposure, without air fog between the camera and the surface.
+static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
+                              texture2d<half> scene, depth2d<float> depth, texture2d<half> prev) {
+	float dist = length(w.p);
+	float3 v = w.p / max(dist, 1e-4);
+	bool top = w.nFace.y > 0.5;
+	float height = 0.0;
+	float3 n = w.nFace;
+	if (top) {
+		n = shadeWaterNormal(w, f, wp, height);
+		// grazing angles: normals average out across a pixel and the far water calms into a mirror
+		float graze = 1.0 - saturate(-v.y);
+		n = normalize(mix(n, float3(0.0, 1.0, 0.0), 0.8 * graze * graze * graze * graze));
+	}
+	float cosV = max(dot(-v, n), 0.02);
+	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
+
+	// --- what is behind the surface: refraction, absorption, in-scattering, caustics
+	float2 tex = float2(scene.get_width(), scene.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
+	float2 uv = w.pixel / size; // over the rendered rect
+	float wSurf = shadeLinearW(w.depth, f);
+	float w0 = shadeWaterSceneW(depth, uint2(min(w.pixel, size - 1.0)), f);
+	float dw0 = w0 < SHADE_WATER_SKY_W ? w0 - wSurf : 64.0;
+	// only the waves' tilt shifts the bottom (a flat surface doesn't), more for deeper water, in view space
+	float3 tilt = (f.view * float4(n - w.nFace, 0.0)).xyz;
+	float2 shift = tilt.xy * (0.4 * min(max(dw0, 0.0), 6.0));
+	float2 uvR = uv + float2(f.proj[0][0] * shift.x, f.proj[1][1] * shift.y) * (0.5 / max(wSurf, 0.5));
+	uvR = clamp(uvR, 0.5 / size, 1.0 - 0.5 / size);
+	float wR = shadeWaterSceneW(depth, uint2(uvR * size), f);
+	if (wR < wSurf) { // the shifted sample is in front of the water: no refraction there
+		uvR = uv;
+		wR = w0;
+	}
+	bool hasFloor = wR < SHADE_WATER_SKY_W; // something behind the water (else the sky: deep water to the horizon)
+	float lView = hasFloor ? max(wR - wSurf, 0.0) * dist / max(wSurf, 1e-3) : 1e4;
+	float dy = top ? lView * saturate(-v.y) : lView * 0.5;
+	float3 sigmaA = shadeWaterSigmaA(w.tint);
+	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
+	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure);
+#ifdef SHADE_CAUSTICS
+	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0 && f.lightDirWorld.w > 0.5) {
+		float light = smoothstep(0.1, 0.8, float(w.shadow)) * saturate(f.lightDirWorld.y * 4.0) * smoothstep(0.55, 0.9, float(w.sky));
+		float fade = light * exp(-dy * 0.2) * saturate(dy * 3.0) * (1.0 - smoothstep(0.04, 0.12, w.footprint)); // fine lines alias far away
+		if (fade > 0.02) { // deep, shaded or far bottoms: not worth the waves
+			float c = shadeWaterCaustics(w.p + v * lView, dy, f, wp);
+			bottom *= mix(1.0, c * 0.8, 0.75 * fade); // ~energy neutral: the focus averages a bit over 1
+		}
+	}
+#endif
+	float3 tBottom = exp(-sigmaT * (lView + dy)); // down to the bottom along the view, and the light's way down to it
+	float3 tView = exp(-sigmaT * min(lView, 512.0));
+	// light scattered toward the eye inside the water: what reaches a mean depth of ~2 blocks, single-scattering albedo
+	float3 inScatter = w.lit * exp(-sigmaT * 2.0) * (SHADE_WATER_SIGMA_S / sigmaT) * 0.8;
+	float3 body = bottom * tBottom + inScatter * (1.0 - tView);
+
+	// --- reflection: the sky (only as open as the sky light says), SSR over it, the sun's glint
+	float open = float(shadeSkyCurve(w.sky));
+	float3 r = reflect(v, n);
+	float3 rs = float3(r.x, abs(r.y), r.z);
+	float3 refl = shadeWaterSkyRefl(rs, w.prevExposure, f, lut, lutS, depth, prev) * open;
+	float hitWeight = 0.0;
+#ifdef SHADE_SSR
+	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
+	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together)
+	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
+	if (fq > 0.022) {
+		// reflected images stay readable: the ray follows a calmer normal than the shading (ripples wobble, don't shred)
+		float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+		rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
+		float4 hit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, scene, depth, prev);
+		hitWeight = hit.a * smoothstep(0.022, 0.03, fq);
+		refl = mix(refl, hit.rgb, hitWeight);
+	}
+#endif
+	// the sun's (or moon's) glint: rougher with distance (normals average out: long glitter roads) and in rain; it carries
+	// its own Fresnel, hidden where SSR found something in front of the sky
+	float alpha = 0.035 + 0.10 * saturate(dist / 110.0) + 0.06 * wp.state.z;
+	float spec = shadeGgxSpec(n, v, f.lightDirWorld.xyz, alpha);
+	float soft = smoothstep(0.15, 0.85, float(w.shadow));
+	float3 glint = f.sunColor.rgb * min(spec, 60.0) * soft * open * (1.0 - hitWeight);
+
+	float3 color = mix(body, refl, fres) + glint * wp.tune.z;
+	if (f.flags.w == 5) return float3(hitWeight, fres, 0.0) / max(w.exposure, 1e-3);                               // debug: SSR hits, Fresnel
+	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), hasFloor ? 0.0 : 1.0) / max(w.exposure, 1e-3); // debug: path, depth
+
+#ifdef SHADE_FOAM
+	if (top && hasFloor) {
+		// where the bottom comes up to the surface; broken up by the wave height so it doesn't draw contour lines
+		float shore = min(dy, lView * 0.7);
+		float edge = 0.12 + 0.22 * saturate(height * 9.0);
+		float foam = (1.0 - smoothstep(0.0, edge, shore)) * 0.55 * smoothstep(0.0, 0.03, shore + 0.02);
+		color = mix(color, w.lit * 0.85, foam);
+	}
+#endif
+	return color;
+}
+
+// The surface seen from below (the camera under water): inside Snell's window (48.6 degrees around the normal) the world
+// above, refracted (the scene copy, or the sky where the copy has none); outside it total internal reflection mirrors the
+// water below (SSR into the underwater scene, else the water's own colour). The vanilla underwater fog then applies
+// between the camera and the surface (shadeFinish).
+static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
+                              texture2d<half> scene, depth2d<float> depth, texture2d<half> prev) {
+	float dist = length(w.p);
+	float3 v = w.p / max(dist, 1e-4);
+	float height;
+	float3 up = shadeWaterNormal(w, f, wp, height);
+	up = normalize(float3(up.x * 1.8, up.y, up.z * 1.8)); // from below the ripples bend the light more visibly
+	float3 n = -up; // toward the camera
+	float3 t = refract(v, n, 1.333);
+	bool tir = dot(t, t) < 1e-6;
+	float fres = tir ? 1.0 : shadeWaterFresnel(dot(t, up));
+	float2 tex = float2(scene.get_width(), scene.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
+	float2 uv = w.pixel / size;
+	// the world above through the window: the copy behind the surface, shifted by the waves' tilt
+	float3 above = 0.0;
+	if (!tir) {
+		float3 tilt = (f.view * float4(up - float3(0.0, 1.0, 0.0), 0.0)).xyz;
+		float wSurf = shadeLinearW(w.depth, f);
+		float2 uvR = clamp(uv + float2(f.proj[0][0] * tilt.x, f.proj[1][1] * tilt.y) * (1.2 / max(wSurf, 0.5)), 0.5 / size, 1.0 - 0.5 / size);
+		float wR = shadeWaterSceneW(depth, uint2(uvR * size), f);
+		float3 sky = shadeSkyLookup(t, lut, lutS, f);
+		// the sun seen through the rippled window: a small hot core and a soft glare around the refracted direction, so
+		// the ripples break it into dancing sparkles
+		float ct = dot(t, f.lightDirWorld.xyz);
+		if (f.lightDirWorld.w > 0.5) sky += f.sunColor.rgb * (exp((ct - 1.0) * 6000.0) * 30.0 + exp((ct - 1.0) * 90.0) * 0.6) * float(w.shadow);
+		above = wR < SHADE_WATER_SKY_W ? shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure) : sky;
+		above *= float(shadeSkyCurve(w.sky)) * 0.6 + 0.4;
+	}
+	// the water below, mirrored
+	float3 below = w.fog * (0.65 + 0.5 * saturate(height * 7.0 + 0.3)); // the mirror ripples
+#ifdef SHADE_SSR
+	if (shadeQuadMax(fres) > 0.05) { // quad-uniform (SSR's lanes work together)
+		float4 hit = shadeSsr(w.p + n * 0.02, reflect(v, n), w.pixel, min(wp.tune.y, 48.0), w.exposure, 0.0, f, scene, depth, prev);
+		below = mix(below, hit.rgb, hit.a);
+	}
+#endif
+	return mix(above, below, fres);
+}
+
+// Entry point for the translucent terrain fragment: picks the side the camera is on.
+static float3 shadeWaterSurface(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
+                                texture2d<half> scene, depth2d<float> depth, texture2d<half> prev) {
+	if (f.flags2.y != 0 && w.nFace.y < -0.5) return shadeWaterBelow(w, f, wp, lut, lutS, scene, depth, prev);
+	return shadeWaterAbove(w, f, wp, lut, lutS, scene, depth, prev);
+}
+
+// ---- glossy translucents (bible E15 basics) ------------------------------------------------------------------------------
+// Stained glass, ice, slime, honey: smooth dielectric faces (n = 1.5, f0 = 0.04) get a mirror reflection on top of their
+// own lit, alpha-blended colour: the sky (as open as the sky light says), SSR where the ray finds something on screen, and
+// the sun's highlight. The surface's transmittance (1 - alpha) is kept and the reflected light is added in front of it
+// (out alpha = alpha + (1 - alpha) F, colour = what makes src alpha blending give lit alpha (1 - F) + reflection F + glint),
+// so clear panes turn mirror-like at grazing angles like real windows. radiance/alpha: the face's lit colour and alpha.
+static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, float2 pixel, half sky, half shadow, float exposure,
+                          float prevExposure, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
+                          texture2d<half> scene, depth2d<float> depth, texture2d<half> prev) {
+	float dist = length(p);
+	float3 v = p / max(dist, 1e-4);
+	float cosV = saturate(dot(-v, n));
+	float m = 1.0 - cosV;
+	float m2 = m * m;
+	float fres = (0.04 + 0.96 * m2 * m2 * m) * wp.tune.z;
+	float open = float(shadeSkyCurve(sky));
+	float3 r = reflect(v, n);
+	float3 refl = shadeWaterSkyRefl(float3(r.x, abs(r.y), r.z), prevExposure, f, lut, lutS, depth, prev) * open;
+	float hitWeight = 0.0;
+#ifdef SHADE_SSR
+	if (wp.state.x > 0.5 && shadeQuadMax(fres) > 0.03) { // quad-uniform (SSR's lanes work together)
+		float4 hit = shadeSsr(p + n * 0.02, r, pixel, min(wp.tune.y, 128.0), exposure, prevExposure, f, scene, depth, prev);
+		hitWeight = hit.a;
+		refl = mix(refl, hit.rgb, hit.a);
+	}
+#endif
+	float3 glint = f.sunColor.rgb * min(shadeGgxSpec(n, v, f.lightDirWorld.xyz, 0.03), 40.0) * smoothstep(0.15, 0.85, float(shadow)) * open
+		* (1.0 - hitWeight) * (f.lightDirWorld.w > 0.5 ? 1.0 : 0.3);
+	// shadeGgxSpec carries water's Fresnel (f0 0.02): glass reflects about twice as much at normal incidence
+	float3 front = radiance * alpha * (1.0 - fres) + refl * fres + glint * 2.0 * wp.tune.z;
+	float outA = alpha + (1.0 - alpha) * fres;
+	return float4(front / max(outA, 1e-3), outA);
+}
+
+// World xz direction in which the atlas v coordinate grows across this face (the flowing water sprite is laid along the
+// current), from the screen derivatives of position and uv; 0 where it isn't defined.
+static inline float2 shadeWaterFlowDir(float3 dpx, float3 dpy, float2 duvx, float2 duvy) {
+	float2 a = dpx.xz, b = dpy.xz;
+	float det = a.x * b.y - a.y * b.x;
+	if (abs(det) < 1e-12) return 0.0;
+	float2 g = float2(duvx.y * b.y - duvy.y * a.y, -duvx.y * b.x + duvy.y * a.x) / det;
+	float l = length(g);
+	return l > 1e-6 ? g / l : float2(0.0);
+}
+
+#endif

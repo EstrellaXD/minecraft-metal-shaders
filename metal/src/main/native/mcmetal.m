@@ -899,6 +899,13 @@ id<MTLComputeCommandEncoder> mc_render_suspend(Enc *enc) {
 void mc_render_resume(Enc *enc, id<MTLComputeCommandEncoder> compute) {
 	[compute endEncoding];
 	[compute release];
+	mc_render_reopen(enc);
+}
+
+// Reopens the render pass whose encoder mc_frame_cmd (or mc_render_suspend) ended, on the same attachments with their
+// contents loaded back (native shading's scene copy at the translucent switch, mcwater.m). Like mc_render_resume, the new
+// encoder has no state but the viewport and winding: the caller rebinds the rest.
+void mc_render_reopen(Enc *enc) {
 	@autoreleasepool {
 		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
 		for (int i = 0; i < enc->colorCount; i++) {

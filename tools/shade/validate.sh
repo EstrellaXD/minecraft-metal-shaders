@@ -17,13 +17,15 @@ rm -rf "$OUT" && mkdir -p "$OUT/classes"
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/pipecheck.m" -o "$OUT/pipecheck"
 CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$(find ~/.gradle/caches -name 'jspecify-*.jar' | grep -v sources | head -1)"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/ShadeMslDump.java"
-"${JAVA_BIN}java" -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"
+"${JAVA_BIN}java" -Dmcopt.shade.glossy=true -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"  # opt-in features on: the widest variant
 cp "$HERE"/gen_*.fs.metal "$OUT/"
 cd "$OUT"
 fail=0
 for f in variants/*.metal; do
 	./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f"; fail=1; }
 done
+./pipecheck sodium variants/shade_translucentnowater.vs.metal variants/shade_translucentnowater.fs.metal || fail=1
+./pipecheck sodium variants/hdr_translucentnowater.vs.metal variants/hdr_translucentnowater.fs.metal || fail=1
 for k in solid cutout translucent; do
 	for p in up shade hdr; do
 		./pipecheck sodium variants/${p}_$k.vs.metal variants/${p}_$k.fs.metal || fail=1

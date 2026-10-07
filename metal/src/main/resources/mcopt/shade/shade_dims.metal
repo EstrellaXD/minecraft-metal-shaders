@@ -124,9 +124,9 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float r2 = shadeDimsNoise(mw, float2(az * 160.0, t * 0.035 + 3.0));
 	float beam = pow(saturate(1.0 - abs(2.0 * r1 - 1.0)), 12.0);
 	float fil = pow(saturate(1.0 - abs(2.0 * r2 - 1.0)), 24.0);
-	float rise = smoothstep(-0.3, -0.04, e) * exp(-max(e + 0.04, 0.0) / (0.10 + 0.12 * r1));
+	float rise = smoothstep(-0.3, -0.04, e) * exp(-max(e + 0.04, 0.0) / (0.08 + 0.10 * r1)) * (1.0 - smoothstep(0.1, 0.4, e));
 	float calm = 1.0 + 1.5 * flash;
-	sky += (f.horizon[4].rgb * beam * 0.55 + f.horizon[5].rgb * fil * 0.4) * (rise * calm);
+	sky += (f.horizon[4].rgb * beam * 0.3 + f.horizon[5].rgb * fil * 0.2) * (rise * calm);
 	if (flash > 0.0) {
 		float c = saturate(dot(dir, L.flash.xyz));
 		sky += float3(0.55, 0.7, 1.0) * (flash * (pow(c, 96.0) * 14.0 + pow(c, 6.0) * 0.5)) * length(f.horizon[4].rgb);

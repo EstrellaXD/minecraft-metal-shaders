@@ -42,7 +42,7 @@ public final class ShadeXdr {
 	private static @Nullable MethodHandle enable, supported, headroom, frame, pso2, pass2;
 	private static boolean decided, on;
 	private static long layer;
-	private static float peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
+	private static float loggedHeadroom = -1f, peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
 	/** The scene luminance (pre-tonemap, exposed) where highlights start to use the headroom, and how many octaves above it they reach the peak. */
 	static final float KNEE = 3.0f, RANGE = 4.0f;
 
@@ -102,6 +102,10 @@ public final class ShadeXdr {
 				headroomNow = 1f;
 			}
 			target = Math.max(1f, Math.min(headroomNow, DimsConfig.XDR_PEAK));
+			if (Math.abs(headroomNow - loggedHeadroom) > 0.1f) {
+				loggedHeadroom = headroomNow;
+				System.out.println("[mcopt] shade: XDR headroom " + headroomNow + " (potential " + potential + "), highlight peak " + target);
+			}
 		}
 		peak += (target - peak) * (1f - (float) Math.exp(-dt / 0.5f));
 	}

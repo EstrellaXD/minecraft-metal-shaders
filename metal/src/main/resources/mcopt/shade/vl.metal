@@ -55,7 +55,7 @@ struct VlParams {
 	                  //     box over the 3x3 neighbourhood (else the filter's plus), 2 the history fetched from the texels at
 	                  //     this point's distance (else one bilinear sample), 4 the crepuscular taps offset per texel over a
 	                  //     bilinear sky mask (else one offset per frame, point reads), 8 the canopy mist's own steps offset
-	                  //     per texel (else the march's per-frame offset)
+	                  //     per texel (else the march's per-frame offset), 16 the same for the march under water
 	float4 water;     // 112 rgb extinction under water (1/block), w scattering (1/block)
 	float4 water2;    // 128 x surface y (camera-relative), y underwater (0/1), z max distance under water, w caustic strength
 	float4 temporal;  // 144 x history weight, y reset (1 = drop history), z frame index, w time (s, wraps)
@@ -312,8 +312,11 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		half ta4, tb4;
 		vlCausticPhases(p.temporal.w, ta, ta4, tb, tb4);
 		float ly = max(L.y, 0.12);
+		// M2.2 (sunPx.w bit 16): each texel's own offset, like the canopy mist's steps (the curtains flickered under the
+		// shared per-frame offset)
+		float xw = (int(p.sunPx.w) & 16) != 0 ? vlNoise(in.position.xy + 13.0, p.temporal.z) : xi;
 		for (int i = 0; i < nw; i++) {
-			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
+			float u1 = float(i + 1) * invN, u = (float(i) + xw) * invN;
 			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
 			prevB = b1;
 			float3 pt = dir * t;

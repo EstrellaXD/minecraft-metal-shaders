@@ -56,6 +56,7 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.nearDither} (true, M2.2): the canopy mist's own steps get each texel's own offset; false: the march's
  * per-frame offset shared by every texel (M2/M2.1: the beams under trees and the veil over the sky between the leaves
  * flickered).</li>
+ * <li>{@code mcopt.shade.vl.waterDither} (true, M2.2): the same for the march under water (the caustic curtains).</li>
  * <li>{@code mcopt.shade.vl.edge} (true, M2.2; read by ShadePost): under TAAU the final pass blends the light of a depth
  * edge's near and far surface by their coverage of the 2x2 depth footprint; false: this frame's jittered depth alone (M2/M2.1).</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
@@ -95,6 +96,8 @@ public final class VlConfig {
 	public static final boolean CREP_SMOOTH = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.crepSmooth", "true"));
 	/** M2.2: the canopy mist's own steps offset per texel; false = the march's per-frame offset (M2/M2.1). */
 	public static final boolean NEAR_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.nearDither", "true"));
+	/** M2.2: the march under water offset per texel; false = the march's per-frame offset (M2/M2.1). */
+	public static final boolean WATER_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.waterDither", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
@@ -122,6 +125,6 @@ public final class VlConfig {
 
 	static String describe() {
 		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + NEAR_STEPS + " near + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
-			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") + (HIST_DEPTH ? "" : ", bilinear history") + (CREP_SMOOTH ? "" : ", frame-jittered taps") + (NEAR_DITHER ? "" : ", frame-jittered mist steps") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
+			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") + (HIST_DEPTH ? "" : ", bilinear history") + (CREP_SMOOTH ? "" : ", frame-jittered taps") + (NEAR_DITHER ? "" : ", frame-jittered mist steps") + (WATER_DITHER ? "" : ", frame-jittered water steps") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
 }

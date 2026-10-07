@@ -257,19 +257,19 @@ public final class ShadeVl {
 		put(b, vw, vh, width, height);                                                   // size
 		put(b, strength, VlConfig.DIST, VlConfig.STEPS, g);                              // shape
 		put(b, haze, mist, SEA + 2f - camY, 12f);                                        // medium
-		put(b, SEA + 16f - camY, 48f, 0.2f, 0.06f);                                      // haze
+		put(b, SEA + 16f - camY, 48f, 0.35f, 0.05f);                                     // haze
 		put(b, lr, lg, lb, canopyMist);                                                  // light
-		put(b, VlConfig.SS_TAPS > 0 ? 0.1f + 0.15f * golden : 0f, VlConfig.SS_TAPS, onScreen, 6f); // crep
+		put(b, VlConfig.SS_TAPS > 0 ? 0.12f + 0.2f * golden : 0f, VlConfig.SS_TAPS, onScreen, 6f); // crep
 		put(b, sx, sy, 0f, 0f);                                                          // sunPx
-		put(b, 0.34f, 0.075f, 0.058f, 0.045f);                                           // water: extinction rgb, scattering
+		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		put(b, VlConfig.TEMPORAL ? 0.9f : 0f, reset ? 1f : 0f, frame & 1023, f.gameTimeSeconds); // temporal
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
-		put(b, 0.5f, 1.25f, VlConfig.CANOPY, VlConfig.DEBUG);                            // gate: open air, canopy mist, override, debug
+		put(b, 0.7f, 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                             // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, 0f);                               // extra
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.05f * ambK / 0.2f; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
-		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, 0f); // mistAmb
+		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, 0.5f); // mistAmb, open glow left out
 		put(b, 0f, 0f, 0f, 0f);
 	}
 

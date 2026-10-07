@@ -24,7 +24,7 @@ typedef struct {
 	MTLPixelFormat compositeFormat;
 	int compositeHdr;
 	id<MTLComputePipelineState> canopy;
-	id<MTLTexture> raw, hist[2];
+	id<MTLTexture> raw, hist[2], sky[2]; // sky: R8 sky masks (march output, read by the next frame's crepuscular taps)
 	int width, height, cur, lossy;
 	id<MTLBuffer> state;  // VlState: the canopy factor (GPU-written, read by the march)
 } VlState;
@@ -45,6 +45,7 @@ static id<MTLRenderPipelineState> pso(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 	pd.vertexFunction = [[lib newFunctionWithName:@"vl_vs"] autorelease];
 	pd.fragmentFunction = [fs autorelease];
 	pd.colorAttachments[0].pixelFormat = format;
+	if ([fragment isEqualToString:@"vl_march"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm;
 	if (hdr && [fragment isEqualToString:@"vl_composite"]) {
 		pd.colorAttachments[0].blendingEnabled = YES;  // M2: scene * T (source alpha) + light, into the pre-exposed HDR scene
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
@@ -102,12 +103,14 @@ void mc_vl_free(VlState *s) {
 	[s->raw release];
 	[s->hist[0] release];
 	[s->hist[1] release];
+	[s->sky[0] release];
+	[s->sky[1] release];
 	[s->state release];
 	free(s);
 }
 
-static id<MTLTexture> target(id<MTLDevice> dev, int w, int h, int lossy, NSString *label) {
-	MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:w height:h mipmapped:NO];
+static id<MTLTexture> target(id<MTLDevice> dev, MTLPixelFormat format, int w, int h, int lossy, NSString *label) {
+	MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:w height:h mipmapped:NO];
 	td.storageMode = MTLStorageModePrivate;
 	td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
 	if (lossy) {
@@ -118,12 +121,17 @@ static id<MTLTexture> target(id<MTLDevice> dev, int w, int h, int lossy, NSStrin
 	return t;
 }
 
-static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, MTLLoadAction load, id<MTLRenderPipelineState> p, NSString *label,
-	const void *params, int paramBytes, id<MTLBuffer> state, id<MTLTexture> t0, id<MTLTexture> t1) {
+static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out1, MTLLoadAction load, id<MTLRenderPipelineState> p,
+	NSString *label, const void *params, int paramBytes, id<MTLBuffer> state, id<MTLTexture> t0, id<MTLTexture> t1) {
 	MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
 	rp.colorAttachments[0].texture = out;
 	rp.colorAttachments[0].loadAction = load;
 	rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+	if (out1) {
+		rp.colorAttachments[1].texture = out1;
+		rp.colorAttachments[1].loadAction = MTLLoadActionDontCare;
+		rp.colorAttachments[1].storeAction = MTLStoreActionStore;
+	}
 	id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 	r.label = label;
 	[r setRenderPipelineState:p];
@@ -156,9 +164,13 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[s->raw release];
 			[s->hist[0] release];
 			[s->hist[1] release];
-			s->raw = target(dev, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL march");
-			s->hist[0] = target(dev, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history A");
-			s->hist[1] = target(dev, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history B");
+			[s->sky[0] release];
+			[s->sky[1] release];
+			s->raw = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL march");
+			s->hist[0] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history A");
+			s->hist[1] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history B");
+			s->sky[0] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask A");
+			s->sky[1] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask B");
 			s->width = vlWidth;
 			s->height = vlHeight;
 			reset = 1;
@@ -180,9 +192,10 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[c endEncoding];
 		}
 		int next = 1 - s->cur;
-		pass(cb, s->raw, MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, nil);
-		pass(cb, s->hist[next], MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw, s->hist[s->cur]);
-		pass(cb, color, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth);
+		// the march writes this frame's sky mask and reads last frame's (the crepuscular streaks' occluders)
+		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur]);
+		pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw, s->hist[s->cur]);
+		pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth);
 		s->cur = next;
 		return 0;
 	}

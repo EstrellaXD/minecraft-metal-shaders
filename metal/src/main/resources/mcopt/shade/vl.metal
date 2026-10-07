@@ -57,7 +57,8 @@ struct VlParams {
 	float4 mist;      // 208 x canopy mist range (blocks: density e^(-t/range) from the camera), y its top above the eye (blocks),
 	                  //     z scene extinction by the canopy mist (0/1), w its extinction relative to its scattering (art: < 1
 	                  //     keeps the veil light while the shafts stay bright)
-	float4 mistAmb;   // 224 rgb ambient (sky) light of the shadowed canopy mist (irradiance / pi, pre-exposure), w 0
+	float4 mistAmb;   // 224 rgb ambient (sky) light of the shadowed canopy mist (irradiance / pi, pre-exposure), w share of the
+	                  //     open-air haze's unshadowed glow left out (the sky and M1's haze have it already)
 	float4 pad2;      // 240
 };
 
@@ -188,8 +189,13 @@ static inline float vlMistDepth(float3 dir, float D, constant VlParams &p) {
 }
 
 // ---- march ----------------------------------------------------------------------------------------------------------------
-fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
-                        constant VlState &st [[buffer(1)]], depth2d<float> depth [[texture(0)]],
+struct VlMarchOut {
+	half4 light [[color(0)]]; // rgb in-scattered radiance, a marched distance
+	half sky [[color(1)]];    // 1 where the pixel is sky (R8Unorm): next frame's crepuscular taps read this
+};
+
+fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
+                        constant VlState &st [[buffer(1)]], depth2d<float> depth [[texture(0)]], texture2d<half> prevSky [[texture(1)]],
                         depth2d_array<float> map [[texture(16)]], sampler cmp [[sampler(12)]]) {
 	float2 scale = p.size.zw / p.size.xy;
 	// the full-res pixel this VL pixel stands for (the same one the upsample assumes)
@@ -215,7 +221,7 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 		float mist = p.medium.y;
 		// canopy mist: the humid air under trees and overhangs, around the camera's height (not the sea's)
 		float local = p.light.w * canopy;
-		float sum = 0.0, od = 0.0, prevB = 0.0;
+		float sumOpen = 0.0, sumOpenLit = 0.0, sumLocal = 0.0, trans = 1.0, prevB = 0.0;
 		float invN = 1.0 / float(n);
 		for (int i = 0; i < n; i++) {
 			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
@@ -226,14 +232,18 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 			float sLocal = local * vlMistDensity(t, y, p);
 			float sigma = sOpen + sLocal;
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
-			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far; each layer's
-			// share weighted by its art gate (the open-air haze is kept subtle, the canopy mist carries the shafts)
-			float sdt = sigma * dt;
-			float w = (sOpen * p.gate.x + sLocal * p.gate.y) / max(sigma, 1e-9);
-			sum += v * exp(-od) * (1.0 - exp(-sdt)) * w;
-			od += (sOpen + sLocal * p.mist.w) * dt;
+			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far, split by layer
+			float seg = trans * (1.0 - exp(-sigma * dt)) / max(sigma, 1e-9);
+			sumOpen += sOpen * seg;
+			sumOpenLit += v * sOpen * seg;
+			sumLocal += v * sLocal * seg;
+			trans *= exp(-(sOpen + sLocal * p.mist.w) * dt);
 		}
-		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * sum * p.shape.x);
+		// The open-air haze's sun glow is already in the sky and M1's aerial haze: keep only what the shadows carve out of
+		// it (the lit part above a share of its unshadowed value) so shafts read as structure, not as a milky veil. The
+		// canopy mist (ours alone) counts fully. Each layer has its art gate.
+		float openPart = max(sumOpenLit - p.mistAmb.w * sumOpen, 0.0);
+		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * (openPart * p.gate.x + sumLocal * p.gate.y) * p.shape.x);
 	} else {
 		// Under water: the medium is the water; sunlight reaches each point through the water above it (extinction along the
 		// refracted-ish path to the surface) and arrives patterned by the surface's caustics, which stay constant along the
@@ -261,15 +271,16 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 		scatter = p.light.rgb * sum * (p.water.w * 3.14159265 * phase * p.shape.x) * float(L.y > 0.0);
 	}
 
-	// Crepuscular streaks: march toward the light on the depth buffer; sky seen along the way lets light through.
-	if (p.crep.x > 0.0 && p.crep.z > 0.0 && !underwater) {
-		float2 to = p.sunPx.xy - fpos;
+	// Crepuscular streaks: march toward the light over last frame's sky mask (VL resolution, one byte per texel: a sixteenth
+	// of the bytes of the full-res depth, cache-friendly); sky seen along the way lets light through. Skipped on a reset.
+	if (p.crep.x > 0.0 && p.crep.z > 0.0 && !underwater && p.temporal.y < 0.5) {
+		float2 toV = (p.sunPx.xy - fpos) / scale, fv = in.position.xy;
 		int taps = int(p.crep.y);
 		float open = 0.0, wsum = 0.0, w = 1.0;
 		for (int k = 0; k < taps; k++) {
 			float s = (float(k) + xi) / float(taps);
-			float2 q = fpos + to * (s * s);
-			if (all(q >= 0.0) && all(q < p.size.zw)) open += (depth.read(uint2(q)) <= 0.0 ? 1.0 : 0.0) * w;
+			float2 q = fv + toV * (s * s);
+			if (all(q >= 0.0) && all(q < p.size.xy)) open += float(prevSky.read(uint2(q)).r) * w;
 			wsum += w;
 			w *= 0.92;
 		}
@@ -277,9 +288,14 @@ fragment half4 vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(1
 		float ang = saturate(mu);
 		float fall = pow(ang, p.crep.w);
 		// in front of near geometry too (a trunk against the low sun gets streaks across it), fading in over the first blocks
-		scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * saturate((dist + 6.0) / 48.0));
+		// open sky itself gets half (the sky model has its own glow around the sun; the streaks are the point)
+		float reach = d <= 0.0 ? 0.5 : saturate((dist + 6.0) / 48.0);
+		scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * reach);
 	}
-	return half4(half3(min(scatter, 30000.0)), half(dist));
+	VlMarchOut o;
+	o.light = half4(half3(min(scatter, 30000.0)), half(dist));
+	o.sky = d <= 0.0 ? 1.0h : 0.0h;
+	return o;
 }
 
 // ---- temporal -------------------------------------------------------------------------------------------------------------
@@ -329,58 +345,64 @@ fragment half4 vl_temporal(VlOut in [[stage_in]], constant ShadeFrame &f [[buffe
 }
 
 // ---- composite ------------------------------------------------------------------------------------------------------------
-// Exposed radiance -> sRGB, M1's output curve without the night shift (shade_common.metal shadeOutput).
-static inline float3 vlForward(float3 c) {
-	float m = max(max(c.r, c.g), max(c.b, 1e-6));
-	float tm = shadeCurve(m);
-	float3 o = c * (tm / m);
-	if (tm > 0.6) o = mix(o, shadeCurve3(c), smoothstep(0.6, 1.0, tm) * 0.6);
-	return float3(shadeToSrgb(half3(saturate(o))));
+// Full resolution, so everything here is half precision (twice the ALU rate on Apple GPUs) and transcendental-light.
+// Exposed radiance -> sRGB: the hue-preserving part of M1's output curve (shade_common.metal shadeOutput, without the night
+// shift and without its per-channel blend toward white above 0.6: the composite only adds the *difference* of two of these,
+// so the pixel keeps M1's exact value and only the added light is shaped by this simpler curve; 0.2 ms less at native).
+static inline half3 vlForward(half3 c) {
+	half m = max(max(c.r, c.g), max(c.b, 1e-4h));
+	half y = 1.0h - exp2(-1.5869637h * m);
+	half tm = y * y * 1.006h / (y + 0.006h);
+	return shadeToSrgb(saturate(c * (tm / m)));
 }
 
 // sRGB -> exposed radiance: the inverse of the hue-preserving part of vlForward (the brightest channel through the inverse
-// curve, the others keep their ratio). Approximate near white, where the per-channel blend starts.
-static inline float3 vlInverse(float3 s) {
-	float3 lin = float3(shadeToLinear(half3(s)));
-	float m = max(max(lin.r, lin.g), max(lin.b, 1e-6));
+// curve, the others keep their ratio). Approximate near white, where the per-channel blend starts; the composite only uses
+// it through a difference of two forward curves, which cancels the error where little light is added.
+static inline half3 vlInverse(half3 s) {
+	half3 lin = shadeToLinear(s);
+	half m = max(max(lin.r, lin.g), max(lin.b, 1e-4h));
 	// y^2 * 1.006 / (y + 0.006) = m  ->  y = (m + sqrt(m^2 + 4 * 1.006 * 0.006 m)) / (2 * 1.006)
-	float y = min((m + sqrt(m * m + 0.024144 * m)) / 2.012, 0.996);
-	float x = -log2(1.0 - y) / 1.5869637;
+	half y = min((m + sqrt(m * m + 0.024144h * m)) * 0.4970179h, 0.996h);
+	half x = -log2(1.0h - y) * 0.6301338h;
 	return lin * (x / m);
 }
 
-// Depth-aware upsample of the VL history to full-res pixel px (distance dist).
-static inline float3 vlUpsample(texture2d<half> vl, float2 pos, float dist, constant VlParams &p) {
+// Depth-aware upsample of the VL history to full-res pixel pos (distance dist): bilinear x depth similarity (a cheap
+// rational falloff instead of exp).
+static inline half3 vlUpsample(texture2d<half> vl, float2 pos, float dist, constant VlParams &p) {
 	float2 lp = pos * (p.size.xy / p.size.zw) - 0.5;
-	float2 fl = floor(lp), fr = lp - fl;
+	float2 fl = floor(lp);
+	half2 fr = half2(lp - fl);
 	int2 base = int2(fl), hi = int2(p.size.xy) - 1;
-	float3 sum = float3(0.0);
-	float wsum = 0.0, best = 1e9;
-	float3 bestC = float3(0.0);
-	float bestD = 1.0;
+	half invTol = half(1.0 / (0.04 * dist + 0.15));
+	half hd = half(min(dist, 3e4));
+	half3 sum = 0.0h, bestC = 0.0h;
+	half wsum = 0.0h, best = 6e4h, bestD = 1.0h;
 	for (int j = 0; j <= 1; j++) {
 		for (int i = 0; i <= 1; i++) {
 			half4 s = vl.read(uint2(clamp(base + int2(i, j), int2(0), hi)));
-			float sd = float(s.a);
-			float bw = (i == 0 ? 1.0 - fr.x : fr.x) * (j == 0 ? 1.0 - fr.y : fr.y) + 1e-3;
-			float diff = abs(sd - dist);
-			float w = bw * exp(-diff / (0.04 * dist + 0.15));
-			sum += float3(s.rgb) * w;
+			half bw = (i == 0 ? 1.0h - fr.x : fr.x) * (j == 0 ? 1.0h - fr.y : fr.y) + 1e-3h;
+			half diff = abs(s.a - hd);
+			half x = diff * invTol;
+			half w = bw / (1.0h + x * x * (1.0h + x)); // ~ e^-x near 0, falls faster beyond
+			sum += s.rgb * w;
 			wsum += w;
 			if (diff < best) {
 				best = diff;
-				bestC = float3(s.rgb);
-				bestD = sd;
+				bestC = s.rgb;
+				bestD = s.a;
 			}
 		}
 	}
-	if (wsum > 0.02) return sum / wsum;
+	if (wsum > 0.02h) return sum / wsum;
 	// no low-res sample at this depth (a thin leaf against the sky): the closest one, scaled by how much air this pixel's
 	// ray actually crosses (in-scattering grows with the marched length) so foliage edges get no halo
-	return bestC * saturate((min(dist, p.shape.y) + 0.5) / (min(bestD, p.shape.y) + 0.5));
+	half maxD = half(p.shape.y);
+	return bestC * saturate((min(hd, maxD) + 0.5h) / (min(bestD, maxD) + 0.5h));
 }
 
-fragment float4 vl_composite(VlOut in [[stage_in]], float4 dst [[color(0)]], constant ShadeFrame &f [[buffer(16)]],
+fragment half4 vl_composite(VlOut in [[stage_in]], half4 dst [[color(0)]], constant ShadeFrame &f [[buffer(16)]],
                              constant VlParams &p [[buffer(0)]], constant VlState &st [[buffer(1)]], texture2d<half> vl [[texture(0)]],
                              depth2d<float> depth [[texture(1)]],
                              constant float4 *gpu [[buffer(18), function_constant(VL_HDR)]]) {
@@ -389,27 +411,27 @@ fragment float4 vl_composite(VlOut in [[stage_in]], float4 dst [[color(0)]], con
 	float dist = vlDistance(ndc, depth.read(px), f);
 	// the exposure: M1 = ShadeFrame.time.z; M2 = the GPU's auto-exposure, ShadeGpu.exposure.x (buffer 18, byte 176)
 	float exposure = VL_HDR ? gpu[11].x : f.time.z;
-	float3 light = vlUpsample(vl, in.position.xy, dist, p) * exposure;
+	half3 light = vlUpsample(vl, in.position.xy, dist, p) * half(exposure);
 	// the canopy mist dims what is behind it (full resolution, analytic: crisp at every edge) toward its sky-lit colour;
 	// the sun-lit part of it is in the march
-	float T = 1.0;
-	if (p.mist.z > 0.0 && p.water2.y < 0.5) {
-		float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
-		float od = p.light.w * canopy * p.mist.w * vlMistDepth(vlDirection(ndc, f), min(dist, p.shape.y), p);
-		T = exp(-od);
-		light += p.mistAmb.rgb * (exposure * (1.0 - T));
+	half T = 1.0h;
+	float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
+	float mistK = p.light.w * canopy * p.mist.w * p.mist.z;
+	if (mistK > 1e-5 && p.water2.y < 0.5) {
+		T = half(exp2(-1.442695 * mistK * vlMistDepth(vlDirection(ndc, f), min(dist, p.shape.y), p)));
+		light += half3(p.mistAmb.rgb * exposure) * (1.0h - T);
 	}
-	if (p.gate.w == 1.0) return float4(vlForward(light), 1.0);           // debug: the light alone
-	if (p.gate.w == 2.0) return float4(float3(saturate(dist / p.shape.y)), 1.0); // debug: marched distance
-	if (p.gate.w == 3.0) return float4(float3(T), 1.0);                  // debug: canopy mist transmittance
-	if (VL_HDR) return float4(light, T);                                    // M2: scene * T + light (blend One, SourceAlpha)
-	if (max(light.r, max(light.g, light.b)) < 1.0 / 2048.0 && T > 0.999) return dst;
-	float3 e = vlInverse(dst.rgb);
-	float3 o = dst.rgb + (vlForward(e * T + light) - vlForward(e));
+	if (p.gate.w == 1.0) return half4(vlForward(light), 1.0h);   // debug: the light alone
+	if (p.gate.w == 2.0) return half4(half3(saturate(dist / p.shape.y)), 1.0h); // debug: marched distance
+	if (p.gate.w == 3.0) return half4(half3(T), 1.0h);                 // debug: canopy mist transmittance
+	if (VL_HDR) return half4(light, T);                    // M2: scene * T + light (blend One, SourceAlpha)
+	if (max(light.r, max(light.g, light.b)) < half(1.0 / 2048.0) && T > 0.999h) return dst;
+	half3 e = vlInverse(dst.rgb);
+	half3 o = dst.rgb + (vlForward(e * T + light) - vlForward(e));
 	// dither (triangular, +-1 LSB) so smooth shafts don't band in 8 bits
 	float n0 = vlNoise(in.position.xy, p.temporal.z), n1 = vlNoise(in.position.xy + 17.0, p.temporal.z + 3.0);
-	o += (n0 + n1 - 1.0) / 255.0;
-	return float4(saturate(o), dst.a);
+	o += half(n0 + n1 - 1.0) * (1.0h / 255.0h);
+	return half4(saturate(o), dst.a);
 }
 
 #endif

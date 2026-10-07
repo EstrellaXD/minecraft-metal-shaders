@@ -16,6 +16,7 @@ static int build(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFo
 	pd.vertexFunction = [lib newFunctionWithName:@"vl_vs"];
 	pd.fragmentFunction = f;
 	pd.colorAttachments[0].pixelFormat = fmt;
+	if ([fs isEqualToString:@"vl_march"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm;
 	if (hdr) {
 		pd.colorAttachments[0].blendingEnabled = YES;
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;

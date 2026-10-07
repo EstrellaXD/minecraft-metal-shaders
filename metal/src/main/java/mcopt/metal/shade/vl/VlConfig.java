@@ -24,10 +24,10 @@ import mcopt.metal.shade.Shade;
  * <ul>
  * <li>{@code mcopt.shade.vl} (true with mcopt.shade): god rays on.</li>
  * <li>{@code mcopt.shade.preset} (balanced): performance | balanced | quality | ultra picks the defaults below.</li>
- * <li>{@code mcopt.shade.vl.scale}: march resolution relative to the render target (P 0.5, B 0.5, Q 0.5, U 0.5;
- * 0.25 = quarter resolution, cheapest).</li>
- * <li>{@code mcopt.shade.vl.steps}: shadow-map samples per ray (P 12, B 14, Q 20, U 28).</li>
- * <li>{@code mcopt.shade.vl.ssTaps}: screen-space crepuscular taps toward the sun (P 8, B 8, Q 12, U 16); 0 = off.</li>
+ * <li>{@code mcopt.shade.vl.scale}: march resolution relative to the render target (P 0.25, B 0.33, Q 0.5, U 0.5; at the
+ * native 3024x1964 Retina target 0.25 is 756x491, VL tools/shade/vlbench.sh prices each).</li>
+ * <li>{@code mcopt.shade.vl.steps}: shadow-map samples per ray (P 10, B 12, Q 16, U 24).</li>
+ * <li>{@code mcopt.shade.vl.ssTaps}: screen-space crepuscular taps toward the sun (P 6, B 8, Q 10, U 12); 0 = off.</li>
  * <li>{@code mcopt.shade.vl.dist}: march distance in blocks (P 160, B 160, Q 224, U 224).</li>
  * <li>{@code mcopt.shade.vl.strength} (1): overall brightness of the shafts.</li>
  * <li>{@code mcopt.shade.vl.mist} (1): density of the canopy mist (the air under trees and overhangs that shows the shafts).</li>
@@ -50,9 +50,9 @@ public final class VlConfig {
 		case "ultra", "u" -> 3;
 		default -> 1;
 	};
-	public static final float SCALE = clamp(floatProperty("mcopt.shade.vl.scale", 0.5f), 0.125f, 1f);
-	public static final int STEPS = Math.max(4, Math.min(64, Integer.getInteger("mcopt.shade.vl.steps", new int[] {12, 14, 20, 28}[TIER])));
-	public static final int SS_TAPS = Math.max(0, Math.min(32, Integer.getInteger("mcopt.shade.vl.ssTaps", new int[] {8, 8, 12, 16}[TIER])));
+	public static final float SCALE = clamp(floatProperty("mcopt.shade.vl.scale", new float[] {0.25f, 0.33f, 0.5f, 0.5f}[TIER]), 0.125f, 1f);
+	public static final int STEPS = Math.max(4, Math.min(64, Integer.getInteger("mcopt.shade.vl.steps", new int[] {10, 12, 16, 24}[TIER])));
+	public static final int SS_TAPS = Math.max(0, Math.min(32, Integer.getInteger("mcopt.shade.vl.ssTaps", new int[] {6, 8, 10, 12}[TIER])));
 	public static final float DIST = clamp(floatProperty("mcopt.shade.vl.dist", TIER >= 2 ? 224f : 160f), 16f, 512f);
 	public static final float STRENGTH = Math.max(0f, floatProperty("mcopt.shade.vl.strength", 1f));
 	public static final float MIST = Math.max(0f, floatProperty("mcopt.shade.vl.mist", 1f));

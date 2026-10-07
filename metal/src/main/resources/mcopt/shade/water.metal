@@ -209,7 +209,7 @@ static inline float shadeGgxSpec(float3 n, float3 v, float3 l, float alpha) {
 // and murky; warm oceans stay clear cyan).
 static inline float3 shadeWaterSigmaA(half3 tint) {
 	float3 t = max(float3(shadeToLinear(tint)), float3(0.004));
-	return float3(0.20, 0.055, 0.028) + 0.085 * -log(t);
+	return float3(0.26, 0.07, 0.035) + 0.09 * -log(t);
 }
 #define SHADE_WATER_SIGMA_S 0.022 // scattering (1/block), grey: the blue of deep water comes from absorbing red and green
 
@@ -231,23 +231,47 @@ struct ShadeWaterIn {
 static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, thread float &height) {
 	float t = f.time.y;
 	float2 x = shadeWaterXZ(w.p.xz, f) - w.flowDir * (t * 1.4); // flowing water carries its waves downstream
-	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + 0.6 * length(w.flowDir));
+	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + 0.6 * length(w.flowDir)) * exp(-length(w.p) * (1.0 / 90.0));
 	float lap;
 	float2 g = shadeWaves(x, t, strength, w.footprint, lap, height);
 	return normalize(float3(-g.x, 1.0, -g.y));
 }
 
-// Caustic focusing (1 = none) on a bottom at camera-relative pf, depth dy under the surface: the sun's rays that reach pf
-// crossed the surface up-sun of it; there the curvature of the waves bends them together or apart, and the light per area
-// is the inverse Jacobian of that mapping, 1 / (1 + dy (1 - 1/n) lap h) for small slopes, sharpened and clamped.
+// Caustic focusing (1 = none) on a bottom at camera-relative pf, depth dy under the surface. The sun's rays that reach pf
+// crossed the surface up-sun of it; there the waves' curvature bends them together or apart, and the light per area is the
+// inverse Jacobian of the refraction mapping x -> x + dy (1 - 1/n) grad h: 1 / |det(I + k Hessian(h))|. Where the
+// determinant crosses zero (focal curves) the light bunches into the bright cell network of real caustics. Evaluated on
+// a set of short waves of their own (well spread directions, so cells and not a lattice), each warping the next.
+#define SHADE_CAUSTIC_COUNT 6
+constant float4 SHADE_CAUSTIC_WAVES[SHADE_CAUSTIC_COUNT] = {
+	//   dir x,  dir z, wavelength, amplitude
+	float4( 0.940,  0.342, 2.60, 0.018),
+	float4(-0.276,  0.961, 2.10, 0.015),
+	float4( 0.454, -0.891, 1.70, 0.012),
+	float4(-0.866, -0.500, 1.37, 0.0095),
+	float4( 0.643,  0.766, 1.11, 0.0075),
+	float4(-0.985,  0.174, 0.89, 0.006),
+};
+
 static float shadeWaterCaustics(float3 pf, float dy, constant ShadeFrame &f, constant ShadeWaterParams &wp) {
 	float3 l = f.lightDirWorld.xyz;
-	float2 at = pf.xz + l.xz / max(l.y, 0.25) * dy;
-	float lap, h;
-	shadeWaves(shadeWaterXZ(at, f), f.time.y, wp.tune.x * (1.0 + 1.6 * wp.state.z), 0.0, lap, h);
-	float j = 1.0 + dy * 0.25 * lap * 3.0;
-	float focus = 1.0 / max(abs(j), 0.22);
-	return mix(1.0, focus * focus, 0.55); // sharper, brighter lines; stays positive
+	float2 x = shadeWaterXZ(pf.xz + l.xz / max(l.y, 0.25) * dy, f);
+	float t = f.time.y;
+	float3 hs = 0.0; // Hessian: xx, zz, xz
+	for (int i = 0; i < SHADE_CAUSTIC_COUNT; i++) {
+		float4 w = SHADE_CAUSTIC_WAVES[i];
+		float k = 6.2831853 / w.z;
+		float th = k * dot(w.xy, x) + sqrt(9.81 * k) * 0.55 * t + float(i) * 1.9;
+		float c;
+		float s = sincos(th, c);
+		float e = exp(s - 1.0);
+		float q = w.w * k * k * (c * c - s) * e;
+		hs += q * float3(w.x * w.x, w.y * w.y, w.x * w.y);
+		x -= w.xy * (c * e * w.w * 14.0); // strong mutual warping: irregular cells
+	}
+	float kk = min(dy, 5.0) * 0.25 * 3.2 * wp.tune.x * (1.0 + 0.8 * wp.state.z);
+	float det = (1.0 + kk * hs.x) * (1.0 + kk * hs.y) - kk * kk * hs.z * hs.z;
+	return min(1.0 / max(abs(det), 0.18), 4.0);
 }
 
 // Water seen from above (or a side face): reflection (SSR over the sky, sun glint), refraction of the bottom, absorption and
@@ -264,7 +288,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		n = shadeWaterNormal(w, f, wp, height);
 		// grazing angles: normals average out across a pixel and the far water calms into a mirror
 		float graze = 1.0 - saturate(-v.y);
-		n = normalize(mix(n, float3(0.0, 1.0, 0.0), 0.65 * graze * graze * graze * graze));
+		n = normalize(mix(n, float3(0.0, 1.0, 0.0), 0.8 * graze * graze * graze * graze));
 	}
 	float cosV = max(dot(-v, n), 0.02);
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
@@ -295,7 +319,8 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		float3 pf = w.p + v * lView;
 		float light = smoothstep(0.1, 0.8, float(w.shadow)) * saturate(f.lightDirWorld.y * 4.0) * smoothstep(0.55, 0.9, float(w.sky));
 		float c = shadeWaterCaustics(pf, dy, f, wp);
-		bottom *= mix(1.0, c, light * exp(-dy * 0.16) * saturate(dy * 3.0));
+		float fade = light * exp(-dy * 0.2) * saturate(dy * 3.0) * (1.0 - smoothstep(0.04, 0.12, w.footprint)); // fine lines alias far away
+		bottom *= mix(1.0, c * 0.8, 0.75 * fade); // ~energy neutral: the focus averages a bit over 1
 	}
 #endif
 	float3 tBottom = exp(-sigmaT * (lView + dy)); // down to the bottom along the view, and the light's way down to it
@@ -313,7 +338,9 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #ifdef SHADE_SSR
 	{
 		float jitter = shadeNoise(w.pixel, 0);
-		float3 rr = normalize(float3(r.x, max(r.y, 0.02), r.z));
+		// reflected images stay readable: the ray follows a calmer normal than the shading (ripples wobble, don't shred)
+		float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+		rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
 		float4 hit = shadeSsr(w.p + n * 0.02, rr, jitter, wp.tune.y, f, scene, depth);
 		hitWeight = hit.a;
 		refl = mix(refl, hit.rgb, hit.a);
@@ -327,6 +354,8 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 glint = f.sunColor.rgb * min(spec, 60.0) * soft * open * (1.0 - hitWeight);
 
 	float3 color = mix(body, refl, fres) + glint * wp.tune.z;
+	if (f.flags.w == 5) return float3(hitWeight, fres, 0.0) / max(f.time.z, 1e-3);                               // debug: SSR hits, Fresnel
+	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), zR > 0.0 ? 0.0 : 1.0) / max(f.time.z, 1e-3); // debug: path, depth
 
 #ifdef SHADE_FOAM
 	if (top && zR > 0.0) {
@@ -350,6 +379,7 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 v = w.p / max(dist, 1e-4);
 	float height;
 	float3 up = shadeWaterNormal(w, f, wp, height);
+	up = normalize(float3(up.x * 1.8, up.y, up.z * 1.8)); // from below the ripples bend the light more visibly
 	float3 n = -up; // toward the camera
 	float3 t = refract(v, n, 1.333);
 	bool tir = dot(t, t) < 1e-6;

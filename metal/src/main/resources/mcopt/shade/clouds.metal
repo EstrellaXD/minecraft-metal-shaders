@@ -708,6 +708,20 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 	if (valid) {
 		h = cloudCatmullRom(hist, puv, c.size.xy);
 		age = float(histAge.sample(cloudClamp, puv).r) * 64.0;
+		// the block's one march distance reprojects all N x N of its pixels: where the distances jump (a near cloud's edge
+		// against far sky or cloud: wind and camera parallax differ there) the history can come from the wrong surface, so
+		// keep it inside the range of this frame's march around it (fringes of stray pixels on near clouds otherwise)
+		int2 mi = int2(mp), ms = int2(c.size.zw) - 1;
+		int2 ax = int2(min(mi.x + 1, ms.x), mi.y), bx = int2(max(mi.x - 1, 0), mi.y);
+		int2 ay = int2(mi.x, min(mi.y + 1, ms.y)), by = int2(mi.x, max(mi.y - 1, 0));
+		float d1 = curDist.read(uint2(ax)).r, d2 = curDist.read(uint2(bx)).r, d3 = curDist.read(uint2(ay)).r, d4 = curDist.read(uint2(by)).r;
+		float dMin = min(min(min(d1, d2), min(d3, d4)), dNow), dMax = max(max(max(d1, d2), max(d3, d4)), dNow);
+		if (dMax > dMin * 1.3 + 4.0) {
+			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
+			half4 lo = min(min(min(c1, c2), min(c3, c4)), now), hi = max(max(max(c1, c2), max(c3, c4)), now);
+			half4 pad = (hi - lo) * 0.15h;
+			h = clamp(h, lo - pad, hi + pad);
+		}
 	}
 	CloudResolveOut o;
 	if (mine) {

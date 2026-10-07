@@ -141,7 +141,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef SHADE_WATER
     // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
     // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
-    int waterSprite = shadeWaterSprite(uv, wp);
+    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together
+    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
     bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
     if (waterSprite == 0) water = false;
 #endif

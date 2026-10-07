@@ -41,7 +41,10 @@ import org.lwjgl.system.MemoryUtil;
  * <ul>
  * <li>{@code mcopt.shade.water} (true): the module. False = M1's still-water stand-in, byte-identical shaders.</li>
  * <li>{@code mcopt.shade.ssr} (true): screen-space reflections (false: sky and sun reflections only).</li>
- * <li>{@code mcopt.shade.ssrSteps} (16): SSR march steps (4-64), plus 4 binary refinement steps.</li>
+ * <li>{@code mcopt.shade.ssrSteps} (24): SSR march steps (4-64), plus 4 binary refinement steps. With quad SSR the four
+ * pixels of a quad share them (6 each).</li>
+ * <li>{@code mcopt.shade.ssrQuad} (true): the 2x2 pixels of a quad trace one reflection ray together (half-resolution SSR
+ * at a quarter of the cost; false: one ray per pixel).</li>
  * <li>{@code mcopt.shade.ssrDist} (512): SSR maximum ray length in blocks (the march is in screen space, so a long ray costs
  * no more steps; it lets distant hills and shores mirror in open water at sunset).</li>
  * <li>{@code mcopt.shade.waterWaves} (1.0): wave strength (0 = flat mirror).</li>
@@ -60,7 +63,8 @@ public final class ShadeWater {
 	/** The module is live: shading on and the flag on. The backend's hooks test this static final. */
 	public static final boolean ON = Shade.ENABLED && MODULE;
 	public static final boolean SSR = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssr", "true"));
-	public static final int SSR_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.ssrSteps", 16), 4, 64);
+	public static final boolean SSR_QUAD = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrQuad", "true"));
+	public static final int SSR_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.ssrSteps", 24), 4, 64);
 	public static final float SSR_DIST = Math.clamp(floatProperty("mcopt.shade.ssrDist", 512f), 8f, 1024f);
 	public static final float WAVES = Math.clamp(floatProperty("mcopt.shade.waterWaves", 1f), 0f, 4f);
 	public static final boolean CAUSTICS = Boolean.parseBoolean(System.getProperty("mcopt.shade.caustics", "true"));
@@ -90,6 +94,7 @@ public final class ShadeWater {
 	public static String prelude() {
 		StringBuilder b = new StringBuilder("#define SHADE_WATER 1\n");
 		if (SSR) b.append("#define SHADE_SSR 1\n");
+		if (SSR_QUAD) b.append("#define SHADE_SSR_QUAD 1\n");
 		b.append("#define SHADE_SSR_STEPS ").append(SSR_STEPS).append('\n');
 		if (CAUSTICS) b.append("#define SHADE_CAUSTICS 1\n");
 		if (FOAM) b.append("#define SHADE_FOAM 1\n");
@@ -103,7 +108,7 @@ public final class ShadeWater {
 		if (failed || ctx == 0) return false;
 		try {
 			state = WaterNative.create(ctx);
-			System.out.println("[mcopt] shade: water on (ssr " + SSR + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
+			System.out.println("[mcopt] shade: water on (ssr " + SSR + (SSR_QUAD ? " quad" : "") + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
 				+ ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ")");
 		} catch (Throwable e) {
 			failed = true;

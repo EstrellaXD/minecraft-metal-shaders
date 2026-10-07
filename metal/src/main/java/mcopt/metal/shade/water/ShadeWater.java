@@ -75,6 +75,8 @@ public final class ShadeWater {
 	 * M2 HDR: reflections read last frame's finished HDR world (ShadeResources.prevScene): SSR hit colours (clouds,
 	 * translucents, far LODs included) and the rendered sky in the reflected direction where it is on screen.
 	 */
+	/** The waves baked once per frame into a mipmapped texture (false: 7 analytic waves per pixel, as on m2-water). */
+	public static final boolean BAKE = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterBake", "true"));
 	public static final boolean SSR_PREV = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrPrev", "true"));
 	/** The pipeline whose first use in a main pass triggers the scene copy. */
 	public static final String TRANSLUCENT = "sodium:pipeline/translucent_terrain";
@@ -105,6 +107,7 @@ public final class ShadeWater {
 		if (FOAM) b.append("#define SHADE_FOAM 1\n");
 		if (GLOSSY) b.append("#define SHADE_GLOSSY 1\n");
 		if (SSR_PREV) b.append("#define SHADE_SSR_PREV 1\n");
+		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n");
 		return b.append(ShadeMsl.resource("water.metal")).append('\n').toString();
 	}
 
@@ -114,13 +117,50 @@ public final class ShadeWater {
 		if (failed || ctx == 0) return false;
 		try {
 			state = WaterNative.create(ctx);
+			if (SSR) {
+				try {
+					WaterNative.setHz(state, mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_hz_fs", mcopt.metal.shade.ShadeRender.R32F,
+						mcopt.metal.shade.ShadeRender.BLEND_NONE));
+				} catch (Throwable e) {
+					System.out.println("[mcopt] shade: water coarse depth failed, SSR finds nothing: " + e);
+				}
+			}
 			System.out.println("[mcopt] shade: water on (ssr " + SSR + (SSR_QUAD ? " quad" : "") + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
-				+ ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ")");
+				+ ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ")");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: water setup failed, M1 water from now on: " + e);
 		}
 		return state != 0;
+	}
+
+	private static long bakePso, library;
+	private static boolean bakeFailed;
+
+	/** The module's own passes (wave bake, coarse depth): prelude + post (shade_fs_vs) + this prelude. */
+	private static long library() {
+		if (library == 0) library = mcopt.metal.shade.ShadeRender.library(mcopt.metal.shade.ShadeRender.prelude() + mcopt.metal.shade.ShadeRender.postSource() + prelude());
+		return library;
+	}
+
+	/**
+	 * Renders this frame's wave field (water.metal shade_water_bake_fs, 1024^2 RGBA16F over a 64-block tile) and its mips,
+	 * before the world passes (ShadeFrameUpdater, after the sky LUT). Without it the shaders evaluate the waves per pixel.
+	 */
+	public static void bake(long ctx, long enc) {
+		if (!BAKE || bakeFailed || enc == 0 || !ready(ctx)) return;
+		try {
+			if (bakePso == 0) {
+				bakePso = mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_bake_fs", mcopt.metal.shade.ShadeRender.RGBA16F,
+					mcopt.metal.shade.ShadeRender.BLEND_NONE);
+			}
+			long tex = WaterNative.waves(ctx, state);
+			mcopt.metal.shade.ShadeRender.pass(enc, bakePso, tex, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: wave bake");
+			WaterNative.wavesDone(enc, state);
+		} catch (Throwable e) {
+			bakeFailed = true;
+			System.out.println("[mcopt] shade: water wave bake failed, per-pixel waves from now on: " + e);
+		}
 	}
 
 	/** Binds the copies and this frame's parameters into enc's open render encoder (fragment stage). */

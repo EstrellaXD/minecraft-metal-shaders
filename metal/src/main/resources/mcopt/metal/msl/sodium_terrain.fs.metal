@@ -67,6 +67,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
                          texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]], float4 fragCoord [[position]]
 #ifdef SHADE_WATER
                          , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
+                         , texture2d<half> waterWaves [[texture(20)]], texture2d<float> waterCoarse [[texture(21)]]
 #ifdef MCOPT_HDR
                          , constant ShadeResources& sr [[buffer(19)]]
 #endif
@@ -171,6 +172,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.tint = tint;
         wi.sky = in.v_Light.y;
         wi.shadow = shadow;
+        wi.dxz = float4(dpx.xz, dpy.xz);
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
         wi.exposure = ex;
 #ifdef MCOPT_HDR
@@ -179,14 +181,14 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
         wi.prevExposure = 0.0;
 #endif
-        wi.fog = shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6);
+        wi.fog = sf.flags2.y != 0 ? shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6) : float3(0.0); // only read from below
         texture2d<half> prevScene = sr.prevScene;
 #else
         wi.prevExposure = 0.0;
-        wi.fog = shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex);
+        wi.fog = sf.flags2.y != 0 ? shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex) : float3(0.0);
         texture2d<half> prevScene = sceneCopy;
 #endif
-        radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy, prevScene);
+        radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy, prevScene, waterWaves, waterCoarse);
         alpha = 1.0; // the water composited what is behind it from the scene copy
         if (debug == 7) radiance = float3(saturate(wi.footprint * 4.0), float(waterSprite == 2), saturate(length(p) / 128.0)) / max(ex, 1e-3);
     } else
@@ -214,10 +216,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
             float prevEx = 0.0;
 #endif
             float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, prevEx, sf, wp, skyLut,
-                                    skyLutSmplr, sceneCopy, depthCopy, sr.prevScene);
+                                    skyLutSmplr, sceneCopy, depthCopy, sr.prevScene, waterCoarse);
 #else
             float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, 0.0, sf, wp, skyLut, skyLutSmplr,
-                                    sceneCopy, depthCopy, sceneCopy);
+                                    sceneCopy, depthCopy, sceneCopy, waterCoarse);
 #endif
             radiance = gl.rgb;
             alpha = gl.a;

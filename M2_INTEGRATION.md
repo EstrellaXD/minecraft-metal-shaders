@@ -58,21 +58,41 @@ Useful MSL in the prelude (`ShadeMsl.prelude()` = shade_look + shade_common + sh
 coefficients `L.fogR`, `L.fogM` so shafts and haze agree**), `shadeLit2`, `shadeShadow2` (PCSS-lite), `shadeHG`,
 `shadeSkyLookup`, `shadeNoise` (IGN), `shadeHash*`.
 
-## 3. Water (`m2-water`): where water shading runs
+## 3. Water (`m2-water`, merged into m2): where water shading runs
+
+**Merged** (branch `m2`, merge of `m2-water` + HDR wiring; module doc: `WATER.md`). What is wired:
 
 - Water is drawn by `sodium:pipeline/translucent_terrain` inside the redirected world pass, so its fragment writes the HDR
-  target. Compile it the M2 way: the translucent stage gets `#define MCOPT_HDR` in its HDR variant (format adapter); output
-  through `shadeOut`/`shadeFinish2` and use `shadeExposure(sf, sg)` — never `shadeOutput` directly. Declare
-  `constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]]` like sodium_terrain.fs.metal does.
-- The scene copy at the translucent switch (your `MetalRenderPass.setPipeline` hook + `mc_render_reopen`) works unchanged on
-  m2, but **colour attachment 0 is now the RGBA16Float HDR target**: make the copy texture with the attachment's own pixel
-  format (`[attachment pixelFormat]` in native, or `ShadeConfig.HDR_FORMAT`) — a blit between
-  different formats is invalid. Values in it are pre-exposed linear (no sRGB decode).
-- SSR: march your copy (this frame, opaque only) or read `ShadeResources.prevScene` (last frame, everything incl. water,
-  rescale by `exposure.x / exposure.z`, reproject with `prevViewProj`). With TAAU, prefer TAAU's history (output res).
-- The underwater fog colour: `ShadeFrame.fogColor` is display-referred; in HDR convert with `shadeLdrToHdr(c, L)`
-  (shadeFinish2 already does).
-- Keep water shading in a shared include (`water.metal`) callable by a future DH transparent override (FT2).
+  target. Its HDR variant (format adapter: `#define MCOPT_HDR`) assembles `ShadeMsl.prelude()` + `ShadeWater.prelude()`
+  (SHADE_WATER/SSR/... defines + water.metal) + the stage. The water branch fills `ShadeWaterIn` with `shadeLit2(..., sl)`,
+  `exposure = ex` (`ShadeGpu.exposure.x`), `prevExposure = ShadeGpu.exposure.z`, `fog = shadeLdrToHdr(fogColor, sl) / ex`,
+  and the result goes through `shadeFogAir2` + `shadeFinish2` like every other texel (water.metal stays in linear
+  radiance before exposure; it never tonemaps). Bloom, auto-exposure, haze (final pass, from the water's depth) and the
+  tonemap then treat water like any other pixel; the sun glint is clamped at 60x the sun colour, a strong but finite
+  bloom source.
+- Scene copy (bible H6): `MetalRenderPass.setPipeline` at the first translucent terrain pipeline of a main pass ends the
+  encoder, `mc_water_capture` blits colour attachment 0 (the HDR target, in its own format: RG11B10F/RGBA16F,
+  pre-exposed linear) and depth into private ShaderRead copies, `mc_render_reopen` reopens the pass and
+  `restoreAfterReopen` rebinds (pipeline state through `p.state(formats, hasDepth)`, so the HDR variant).
+  Copies: `texture(18)` scene, `texture(19)` depth, `buffer(23)` ShadeWaterParams, bound by `ShadeWater.bind` from
+  `ShadeBindings.bind/rebind`.
+- **Reflections read last frame's finished HDR world** (`ShadeResources.prevScene` via `constant ShadeResources& sr
+  [[buffer(19)]]` in the HDR translucent fragment; `mcopt.shade.ssrPrev`, default on): SSR hits are found in this
+  frame's depth copy, their colour is fetched from `prevScene` at the hit's reprojection (`invViewProj` -> `prevViewProj`,
+  divided by `exposure.z`), so reflections contain clouds, other water/glass, rain and (later) VL; and the sky reflection
+  reads the rendered sky where the reflected direction (calm normal) lands on screen on a pixel the depth copy holds as sky
+  (sun disc and aureole, stars, Milky Way, clouds, Distant Horizons' LODs, which the depth copy doesn't hold), faded into
+  the atmosphere LUT toward the screen edges. `ssrPrev=false` = colour from the opaque scene copy + LUT sky only.
+- Underwater: `ShadeWaterIn.fog` carries the game's fog colour as HDR radiance (TIR fallback); the vanilla underwater fog
+  then applies through `shadeFinish2`.
+- Debug views: `mcopt.shade.debug` 5 = SSR hits (r) / Fresnel (g), 6 = refracted path / depth, **7** = footprint / flow /
+  distance (was 4 on m2-water; 4 is the base's log-luminance view).
+- For TAAU (`m2-taau` merge): define `SHADE_WATER_SUBRECT` in `ShadeWater.prelude()` (ShadeFrame.screen = live render
+  size), copy only the live sub-rect in `mc_water_capture`, pass the frame index into the SSR jitter, and mark water
+  reactive (WATER.md "Integration with TAAU"). `prevScene` is sampled by normalized uv, so a resolver whose history is a
+  different size still works if `ShadeResources.prevScene` points at it (then rescale with its exposure).
+- For FT2 (DH): `shadeWaterSceneW` is the one depth read (merged scene distance goes there); `water.metal` is a plain
+  include for DH's transparent override.
 
 ## 4. Depth-based post (`m2-vl`, GTAO, atmosphere composite): before the tone map
 
@@ -158,7 +178,11 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 | `mcopt.shade.dhBridge` | true | Distant Horizons through the HDR frame |
 | `mcopt.shade.sunTilt` | 30 | sun path tilt (degrees) |
 | `mcopt.shade.log` | 0 | every N s: elevation, exposure ref/gpu, metered log2, grade values |
-| `mcopt.shade.debug` | 0 | 1 shadows, 2 normals, 3 lighting only, 4 log luminance (final pass) |
+| `mcopt.shade.debug` | 0 | 1 shadows, 2 normals, 3 lighting only, 4 log luminance (final pass), 5 water SSR/Fresnel, 6 water path/depth, 7 water footprint/flow |
+| `mcopt.shade.water` | true | water module (false: M1's stand-in water, byte-identical shaders) |
+| `mcopt.shade.ssr` / `.ssrQuad` / `.ssrSteps` / `.ssrDist` | true / true / 24 / 512 | screen-space reflections (quad-shared march) |
+| `mcopt.shade.ssrPrev` | true | reflections read last frame's HDR world (clouds, sky, LODs in reflections) |
+| `mcopt.shade.waterWaves` / `.caustics` / `.waterFoam` / `.waterReflect` / `.glossy` | 1 / true / true / 1 / false | see WATER.md |
 
 ## 9. Merge notes
 

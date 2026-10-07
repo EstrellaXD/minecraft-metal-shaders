@@ -57,6 +57,8 @@ public class ShadeMslDump {
 		Files.writeString(out.resolve("sky_lut.metal"), ShadeMsl.lut());
 		// M2 post chain (one library: bloom, final, bridge, exposure kernels, Milky Way bake)
 		Files.writeString(out.resolve("post.metal"), ShadeMsl.post());
+		// the water module's own passes (wave bake, SSR coarse depth): ShadeWater.library
+		Files.writeString(out.resolve("water_passes.metal"), ShadeMsl.post() + mcopt.metal.shade.water.ShadeWater.prelude());
 		// clouds: own fragment (CloudInfo slot from the defines); vanilla's generated vertex stage comes from a dump if given
 		String s4 = MetalShaderRegistry.slotDefines(List.of("CloudInfo", "Projection", "DynamicTransforms", "Fog"));
 		Files.writeString(out.resolve("clouds.fs.metal"), s4 + ShadeMsl.prelude() + ShadeMsl.resource("clouds.fs.metal"));

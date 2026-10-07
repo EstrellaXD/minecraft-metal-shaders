@@ -31,6 +31,9 @@ final class WaterNative {
 	private static final MethodHandle PARAMS = fn("mc_water_params", true, null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle BIND = fn("mc_water_bind", true, null, JAVA_LONG);
 	private static final MethodHandle CAPTURE = fn("mc_water_capture", false, JAVA_INT, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle WAVES = fn("mc_water_waves", false, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle SET_HZ = fn("mc_water_set_hz", false, null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle WAVES_DONE = fn("mc_water_waves_done", false, null, JAVA_LONG, JAVA_LONG);
 
 	private WaterNative() {
 	}
@@ -52,4 +55,7 @@ final class WaterNative {
 	static void params(long state, long params) { try { PARAMS.invokeExact(state, params); } catch (Throwable t) { throw rethrow(t); } }
 	static void bind(long enc) { try { BIND.invokeExact(enc); } catch (Throwable t) { throw rethrow(t); } }
 	static int capture(long enc, long state) { try { return (int) CAPTURE.invokeExact(enc, state); } catch (Throwable t) { throw rethrow(t); } }
+	static long waves(long ctx, long state) { try { return (long) WAVES.invokeExact(ctx, state); } catch (Throwable t) { throw rethrow(t); } }
+	static void setHz(long state, long pso) { try { SET_HZ.invokeExact(state, pso); } catch (Throwable t) { throw rethrow(t); } }
+	static void wavesDone(long enc, long state) { try { WAVES_DONE.invokeExact(enc, state); } catch (Throwable t) { throw rethrow(t); } }
 }

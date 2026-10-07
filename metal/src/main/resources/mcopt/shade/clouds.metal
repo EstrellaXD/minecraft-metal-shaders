@@ -322,15 +322,17 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 static float cloudLightDepth(float3 p, float y, float jitter, int steps, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
                              float lod) {
 	float3 L = c.lightDir.xyz;
-	// steps of 4, 8, 16, 32... blocks: the first two see the billows (3D noise: shadowed creases between the lobes), the
+	// steps of 4, 8, 16, 32... blocks (faster growth with fewer steps): the first two see the billows (3D noise: shadowed creases between the lobes), the
 	// rest only the cloud's large shape
 	float tau = 0.0, s = 0.0, step = c.misc.y > 0.0 ? c.misc.y : 4.0;
+	// fewer steps grow faster, so the march still reaches ~90-110 blocks (deep shadow inside big clouds)
+	float grow = steps <= 3 ? 3.5 : steps == 4 ? 2.6 : 2.0;
 	for (int i = 0; i < steps; i++) {
 		float m = s + step * (0.5 + 0.5 * (jitter - 0.5));
 		float3 q = p + L * m;
 		tau += cloudDensity(q, y + L.y * m, i < 2 ? 1 : 0, c, weather, noise, 1.0, lod + float(i)) * step;
 		s += step;
-		step *= 2.0;
+		step *= grow;
 	}
 	return tau * c.shape.z;
 }

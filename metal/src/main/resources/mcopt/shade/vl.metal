@@ -24,15 +24,18 @@
 //   vl_temporal (VL resolution) 3x3 depth-aware filter of the noisy march + reprojected history (ShadeFrame.prevViewProj),
 //               clamped to the 3x3 neighbourhood's range and rejected on distance mismatch. Writes the new history.
 //   vl_composite (full resolution) depth-aware bilateral upsample of the history; then
-//               - LDR (M1, VL_HDR = false): adds the light *before* M1's output curve: the target's sRGB value is mapped
+//               - vl_composite (M1 / mcopt.shade.hdr=false): adds the light *before* M1's output curve: the target's sRGB value is mapped
 //                 back to exposed radiance through the inverse of shadeOutput's curve, the light (x exposure) is added, and
 //                 the difference of the two forward curves is added to the pixel (so no light = the exact same pixel);
 //                 programmable blending ([[color(0)]]) on the game's RGBA8 main target, blue-noise-ish dither against banding.
-//               - HDR (M2, VL_HDR = true): returns the light x exposure and the canopy mist's transmittance T for blending
-//                 (One, SourceAlpha: scene * T + light) into the pre-exposed RGBA16F scene target, before the tonemap.
-//                 See VL.md "Integration".
+//               - vl_composite_hdr (M2 with mcopt.shade.vl.fold=false or a debug view): returns the light x exposure and
+//                 the canopy mist's transmittance T for blending (One, SourceAlpha: scene * T + light) into the
+//                 pre-exposed HDR world target (RG11B10F / RGBA16F), before bloom and the tone map.
+//   M2 default ("fold"): no composite pass; vl_temporal_fold also writes lightT (light + T at VL resolution) and the post
+//   chain's final pass (shade_post.metal shadeVlUpsample, ShadePost.setVolumetric) upsamples and blends it. VL_HDR
+//   (function constant 0) = built for M2: the canopy kernel also writes ShadeGpu.scene.y. See VL.md section 5.
 // Bindings: ShadeFrame at buffer(16), shadow map texture(16) + compare sampler(12) (mc_shade_bind_*), VlParams at buffer(0),
-// the canopy state at buffer(1); pass inputs at texture(0..1); HDR composite only: ShadeGpu (M2) at buffer(18).
+// the canopy state at buffer(1); pass inputs at texture(0..1); M2: ShadeGpu at buffer(18) (HDR composite, canopy kernel).
 
 #ifndef MCOPT_SHADE_VL
 #define MCOPT_SHADE_VL

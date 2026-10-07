@@ -21,8 +21,8 @@ import java.util.Locale;
  * M2 flags, read once at startup from system properties (config/mcopt.properties becomes system properties first, see
  * Profile). Everything is off unless mcopt.shade=true; each M2 feature then has its own switch:
  * <ul>
- * <li>{@code mcopt.shade.hdr} (true): the world renders into an HDR target (mcopt.shade.hdrFormat: rgba16f, or rg11b10f to
- * halve its bandwidth) and is tone-mapped ("Shade Filmic") into the game's main target before the hand and the GUI. false:
+ * <li>{@code mcopt.shade.hdr} (true): the world renders into an HDR target (mcopt.shade.hdrFormat: auto = rg11b10f for
+ * performance/balanced and rgba16f for quality/ultra, or either explicitly) and is tone-mapped ("Shade Filmic") into the game's main target before the hand and the GUI. false:
  * M1's in-shader tone curve into RGBA8 (bloom and auto-exposure need HDR). Off by itself with mcopt.lod (far terrain draws
  * with its own RGBA8 pipelines).</li>
  * <li>{@code mcopt.shade.bloom} (true): natural bloom + fog glow.</li>
@@ -43,8 +43,12 @@ import java.util.Locale;
 public final class ShadeConfig {
 	public static final boolean LOD = Boolean.parseBoolean(System.getProperty("mcopt.lod", "false"));
 	public static final boolean HDR = Shade.ENABLED && flag("mcopt.shade.hdr", true) && !LOD;
-	/** MTLPixelFormat of the HDR world target: RGBA16Float (115) or RG11B10Float (92). */
-	public static final int HDR_FORMAT = "rg11b10f".equalsIgnoreCase(System.getProperty("mcopt.shade.hdrFormat", "rgba16f").trim()) ? 92 : 115;
+	/**
+	 * MTLPixelFormat of the HDR world target: RG11B10Float (92, half the bandwidth: -0.2..0.45 ms at native Retina, no visible
+	 * banding in A/B screenshots) or RGBA16Float (115). mcopt.shade.hdrFormat: auto (default: rg11b10f for the performance and
+	 * balanced presets, rgba16f for quality and ultra), rg11b10f or rgba16f.
+	 */
+	public static final int HDR_FORMAT = hdrFormat();
 	public static final boolean BLOOM = HDR && flag("mcopt.shade.bloom", true);
 	public static final boolean AUTO_EXPOSURE = HDR && !"fixed".equalsIgnoreCase(System.getProperty("mcopt.shade.exposure", "auto").trim());
 	public static final boolean PCSS = flag("mcopt.shade.pcss", true);
@@ -68,6 +72,14 @@ public final class ShadeConfig {
 	public static final int BLOOM_LEVELS = TIER >= 2 ? 7 : 6;
 
 	private ShadeConfig() {
+	}
+
+	private static int hdrFormat() {
+		String v = System.getProperty("mcopt.shade.hdrFormat", "auto").trim().toLowerCase(Locale.ROOT);
+		if (v.equals("rg11b10f")) return 92;
+		if (v.equals("rgba16f")) return 115;
+		String preset = System.getProperty("mcopt.shade.preset", "performance").trim().toLowerCase(Locale.ROOT); // (TIER is initialized later)
+		return preset.equals("quality") || preset.equals("ultra") ? 115 : 92;
 	}
 
 	static boolean flag(String key, boolean fallback) {

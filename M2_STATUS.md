@@ -38,6 +38,8 @@ GPU ms/frame from gputimes (union of command-buffer intervals / frames). Noise b
 | **M2 base, shade on (default)** | 170-176 | 5.68-5.89 | 150-155 | 6.45-6.67 | m2b6-on, m2b6-tr, m2b7-on, m2b9-onb |
 | M2, hdrFormat=rg11b10f | 176 | 5.67 | 161 | 6.22 | m2b7-rg11 |
 | M2, exposure=fixed | 170 | 5.87 | 150 | 6.69 | m2b7-fixed (histogram cost ≈ 0) |
+| M2, hdrFormat=rg11b10f (second run) | 174 | 5.73 | 160 | 6.23 | m2b9-rg11 |
+| M2 + Distant Horizons (DEV-DH, DH default config) | 61.5 | 16.3 | 56.1 | 17.8 | m2b9-dh (FT0 measured DH alone, no shade: 98 / 87 fps, 10.2 / 11.5 ms; the lean DH config, FT0_NOTES, is the recommendation) |
 
 M2 over M1 ≈ **+1.4-1.7 ms** at native Retina (all of M2a + polish). The bible budgets M2a at 1.1 ms at 0.67x internal
 (≈ 1.6-2 ms at native for the full-screen passes), so this is inside the M2a budget; at native Retina M2 base runs
@@ -79,5 +81,5 @@ overcast. DH: LOD terrain visible and part of the bloom/tone map (sunset mountai
 - Bloom/TAAU order: with a resolver, bloom is built from the resolved (output-res) image; the bible's internal-res L0 is
   cheaper — revisit when TAAU lands.
 - Translucent surfaces that don't write depth get the haze of what is behind them (final-pass haze).
-- `mcopt.shade.hdrFormat=rg11b10f` is faster; default stays rgba16f until banding in sky gradients is checked on more scenes.
+- The HDR world target defaults to RG11B10Float for the performance/balanced presets (no visible banding at 2.5x contrast in the sunset sky and night gradients, `m2b9-rg11` vs `m2b9-onb`); RGBA16Float for quality/ultra. Modules must not rely on destination alpha in it.
 - Not done from the bible in this milestone: LUT sky (M2b), material atlases (M2c), GTAO, XDR output.

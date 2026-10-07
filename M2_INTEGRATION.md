@@ -37,7 +37,7 @@ color texture (mip 0) draws into `ShadePost.sceneTexture()` instead, keeping the
 | ShadeResources (argument buffer) | `buffer(19)`, `constant ShadeResources&` | 0 milkyWay, 1 **prevScene**, 2 scene, 3 bloom, 4-7 free (dummy 1x1) |
 | shadow map | `texture(16)` + `sampler(12)` | M1 |
 | sky-view LUT | `texture(17)` + `sampler(13)` | M1 |
-| HDR scene (this frame) | `ShadePost.sceneTexture()`, `Context.scene` | read it only outside the world passes (it is their attachment) |
+| HDR scene (this frame) | `ShadePost.sceneTexture()`, `Context.scene` | read it only outside the world passes (it is their attachment); format `ShadeConfig.HDR_FORMAT` (RG11B10F by default in performance/balanced: no alpha, no negatives) |
 | HDR scene (last frame) | `ShadeResources.prevScene`, `Context.prevScene` | pre-exposed with `ShadeGpu.exposure.z`: rescale by `exposure.x / exposure.z`. After VL and every before-tonemap hook, before bloom. **SSR colour source.** |
 | depth | `Context.depth` | the main Depth32Float, reversed Z (near 1, far 0, sky 0), GL row order; world only (the hand clears it later) |
 | matrices | `ShadeFrame.viewProj/invViewProj/prevViewProj`, `ShadeLook.viewProjNoJitter/prevViewProjNoJitter` | camera-relative world; prev re-based on this frame's camera. `*NoJitter` = ShadeFrame's until TAAU fills them (TAAU module: write unjittered there) |
@@ -66,7 +66,7 @@ coefficients `L.fogR`, `L.fogM` so shafts and haze agree**), `shadeLit2`, `shade
   `constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]]` like sodium_terrain.fs.metal does.
 - The scene copy at the translucent switch (your `MetalRenderPass.setPipeline` hook + `mc_render_reopen`) works unchanged on
   m2, but **colour attachment 0 is now the RGBA16Float HDR target**: make the copy texture with the attachment's own pixel
-  format (`[attachment pixelFormat]` in native, or `ShadeRender.RGBA16F` / `ShadeConfig.HDR_FORMAT`) — a blit between
+  format (`[attachment pixelFormat]` in native, or `ShadeConfig.HDR_FORMAT`) — a blit between
   different formats is invalid. Values in it are pre-exposed linear (no sRGB decode).
 - SSR: march your copy (this frame, opaque only) or read `ShadeResources.prevScene` (last frame, everything incl. water,
   rescale by `exposure.x / exposure.z`, reproject with `prevViewProj`). With TAAU, prefer TAAU's history (output res).
@@ -145,7 +145,7 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 |---|---|---|
 | `mcopt.shade` | false | everything below needs it |
 | `mcopt.shade.hdr` | true | HDR world target + post chain (false: M1's in-shader tone curve, no bloom/auto-exposure) |
-| `mcopt.shade.hdrFormat` | rgba16f | `rg11b10f` halves world-target bandwidth (no alpha) |
+| `mcopt.shade.hdrFormat` | auto | auto = `rg11b10f` (half the bandwidth, no alpha) for performance/balanced, `rgba16f` for quality/ultra |
 | `mcopt.shade.bloom` | true | natural bloom + fog glow |
 | `mcopt.shade.exposure` | auto | `fixed` = the time-of-day reference only |
 | `mcopt.shade.ev` | 0 | exposure compensation, EV (-4..4) |

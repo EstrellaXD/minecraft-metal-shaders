@@ -141,6 +141,9 @@ static float2 shadeWaves(float2 x, float t, float strength, float footprint, thr
 		float k = 6.2831853 / w.z;
 		float a = w.w * strength * lod;
 		if (a * k < 2e-4) continue; // its slope would not show (far away: the strength fades with distance)
+		// short-crested: each wave's amplitude swells and fades along its crests (crests ~5 wavelengths long, drifting
+		// slowly), so the longest trains don't interfere into a regular lattice in the distance (the glitter road)
+		a *= 0.55 + 0.45 * sin(k * 0.21 * dot(float2(-w.y, w.x), x) + SHADE_WAVE_PHASE[i] * 2.3 + t * 0.13);
 		float omega = sqrt(9.81 * k) * 0.62;
 		float th = k * dot(w.xy, x) + omega * t + SHADE_WAVE_PHASE[i];
 		float c;

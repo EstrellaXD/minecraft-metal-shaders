@@ -19,7 +19,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * Opt-in dynamic-light screenshots and perf ({@code -Dmcbench.dynLights=true} for all, or a comma list of
- * {@code field,mobs,perf,cave,walk,nether}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
+ * {@code field,mobs,perf,cave,walk,water,nether}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
  * dynamic lights work (branch m3-lights). Everything summoned carries the tag {@code mcbench_dl} and is killed before and
  * after (dropped items near the sites too); nothing is built. The player is in creative mode with a torch in the main hand
  * and a soul lantern in the off hand while these run, the HUD shown so the first-person hand renders (screenshots are read
@@ -35,6 +35,8 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * <li>{@code dl_cave_hand}: the biggest dark cave found under the area (no sky light, no block light), looking along its
  * longest free direction.</li>
  * <li>{@code dl_cave_walk}: walking that way at 3.5 blocks/s, shot after 1.5 s (the light moving with the player).</li>
+ * <li>{@code dl_water}: night, standing on a shore two blocks from open water and looking out over it: the held lights
+ * on the water (diffuse and their glint on the ripples).</li>
  * <li>{@code dl_nether}: in the Nether (a floor near 0, 0 found after arriving), two blazes and a magma cube 4-7 blocks
  * ahead, the hands lit.</li>
  * </ul>
@@ -44,7 +46,7 @@ final class LightShots {
 	static final String SPEC = System.getProperty("mcbench.dynLights", "").trim();
 	static final String TAG = "mcbench_dl";
 	static final Map<String, Object> JSON = new LinkedHashMap<>();
-	static Pose field, cave;
+	static Pose field, cave, shore;
 	static double caveDx, caveDz;
 	static int fieldY;
 
@@ -68,7 +70,7 @@ final class LightShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("field") || on("mobs") || on("perf") || on("cave") || on("walk") || on("nether"))) return;
+		if (!(on("field") || on("mobs") || on("perf") || on("cave") || on("walk") || on("water") || on("nether"))) return;
 		BenchDriver.results.put("dynLights", JSON);
 		steps.add(new BenchDriver.Scene("dl-site", 18000, false, () -> BenchDriver.spot.night));
 		steps.add(new BenchDriver.Settle("dl-site", false, 3, 120));
@@ -111,6 +113,7 @@ final class LightShots {
 			shot(steps, "dl_cave_hand", 18000, () -> cave != null ? cave : field);
 		}
 		if (on("walk")) walk(steps);
+		if (on("water")) shot(steps, "dl_water", 18000, () -> shore != null ? shore : field);
 		if (on("nether")) nether(steps);
 		steps.add(new BenchDriver.Step("dl-cleanup", 0) {
 			@Override
@@ -275,6 +278,30 @@ final class LightShots {
 				}
 			}
 		}
+		// shore: dry land with open water (5+ surface blocks in a row) starting 1-2 blocks away, nearest the spot centre
+		int bestD = Integer.MAX_VALUE;
+		for (int x = cx - 80; x <= cx + 80; x += 2) {
+			for (int z = cz - 80; z <= cz + 80; z += 2) {
+				int y = BenchDriver.landY(l, x, z);
+				if (y == Integer.MIN_VALUE) continue;
+				for (int d = 0; d < 4; d++) {
+					int ux = d == 0 ? 1 : d == 1 ? -1 : 0, uz = d == 2 ? 1 : d == 3 ? -1 : 0;
+					boolean open = true;
+					for (int k = 2; k <= 7 && open; k++) {
+						open = l.getFluidState(m.set(x + ux * k, y - 1, z + uz * k)).is(net.minecraft.tags.FluidTags.WATER)
+							&& l.getBlockState(m.set(x + ux * k, y, z + uz * k)).isAir();
+					}
+					if (!open) continue;
+					int dd = Math.abs(x - cx) + Math.abs(z - cz);
+					if (dd < bestD) {
+						bestD = dd;
+						float yaw = (float) Math.toDegrees(Math.atan2(-ux, uz));
+						shore = new Pose(x + 0.5 - ux * 0.0, y, z + 0.5, yaw, 28f);
+					}
+				}
+			}
+		}
+		if (shore != null) JSON.put("shore", shore.json());
 		if (cave != null) {
 			Map<String, Object> cj = cave.json();
 			cj.put("air", bestAir);
@@ -435,10 +462,16 @@ final class LightShots {
 				for (int y = 32; y < 110; y++) {
 					if (!l.getBlockState(m.set(x, y - 1, z)).isSolidRender() || !l.getBlockState(m.set(x, y, z)).isAir()
 						|| !l.getBlockState(m.set(x, y + 1, z)).isAir() || !l.getBlockState(m.set(x, y + 2, z)).isAir()) continue;
-					int room = 0; // free ground ahead (+z) for the mobs
+					boolean clear = true; // a clear view ahead (+z) at eye height
+					for (int dz = 1; dz <= 8 && clear; dz++) {
+						clear = l.getBlockState(m.set(x, y + 1, z + dz)).isAir() && l.getBlockState(m.set(x, y + 2, z + dz)).isAir();
+					}
+					if (!clear) continue;
+					int room = 0; // free ground ahead for the mobs
 					for (int dz = 2; dz <= 8; dz++) {
 						for (int dx = -3; dx <= 3; dx += 3) {
-							if (l.getBlockState(m.set(x + dx, y, z + dz)).isAir() && l.getBlockState(m.set(x + dx, y + 1, z + dz)).isAir()) room++;
+							if (l.getBlockState(m.set(x + dx, y, z + dz)).isAir() && l.getBlockState(m.set(x + dx, y + 1, z + dz)).isAir()
+								&& l.getBlockState(m.set(x + dx, y - 1, z + dz)).isSolidRender()) room++;
 						}
 					}
 					if (room > bestRoom) {

@@ -43,6 +43,25 @@ struct TaaParams {
 	float4 sharpen;   // 224  x strength (0 off), y current-frame weight floor in motion (full at 0.5 px/frame), zw unused
 };
 
+// M3 per-object motion (bible E18 step 4, original, cheap): the entities that moved since last frame (ShadeMotion, at most
+// TAA_MOVERS), as camera-relative world boxes at this frame's render position plus their render-position change this frame.
+// A pixel whose reconstructed surface lies in a box is reprojected from (world - delta) instead of world: no render target,
+// no change to the world passes; only translation (limb swing and turning stay with the rectification).
+#define TAA_MOVERS 32
+struct TaaMovers {
+	uint4 count;                 // x movers
+	float4 box[TAA_MOVERS * 3];  // per mover: min.xyz, max.xyz, delta.xyz (blocks, now - last frame)
+};
+
+static inline float3 taaMoverDelta(float3 world, constant TaaMovers &mv) {
+	uint n = min(mv.count.x, uint(TAA_MOVERS));
+	for (uint i = 0; i < n; i++) {
+		float3 lo = mv.box[i * 3].xyz, hi = mv.box[i * 3 + 1].xyz;
+		if (all(world >= lo) && all(world <= hi)) return mv.box[i * 3 + 2].xyz;
+	}
+	return float3(0.0);
+}
+
 struct TaaVOut { float4 position [[position]]; };
 
 // One triangle covering the target.
@@ -98,8 +117,8 @@ struct TaaOut {
 
 // The resolve of output pixel centre q; debug (mcopt.shade.taaDebug views) gets the colour to show instead, so the
 // history itself is never polluted by a debug view.
-static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float4 &exposure, texture2d<half> cur, depth2d<float> curDepth,
-                                 texture2d<half> hist, texture2d<half> histDepth, texture2d<half> reactive, thread half3 &debug)
+static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float4 &exposure, constant TaaMovers &movers, texture2d<half> cur,
+                                 depth2d<float> curDepth, texture2d<half> hist, texture2d<half> histDepth, texture2d<half> reactive, thread half3 &debug)
 {
 	// history rescale (exposure now / when the history was made): M2 binds ShadeGpu.exposure here (x now, z last frame's),
 	// M1 and the headless test (misc.x, -, 1, -)
@@ -137,12 +156,13 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	half3 mean = m1 * (1.0h / 9.0h);
 	half3 sigma = sqrt(max(m2 * (1.0h / 9.0h) - mean * mean, 0.0h));
 
-	// Camera motion from depth: this pixel's (nearest) surface in last frame's clip space. Static world only; moving
-	// entities fall back on the rectification (and later per-object motion, see TAAU.md).
+	// Camera motion from depth: this pixel's (nearest) surface in last frame's clip space; on a moving entity (M3 movers)
+	// its surface point moved by that entity's render-position change since last frame.
 	float2 ndc = q * p.output.zw * 2.0 - 1.0;
 	float4 h = p.invCur * float4(ndc, zmax, 1.0);
 	float3 world = h.xyz / h.w;
-	float4 prev = p.prevVP * float4(world, 1.0);
+	float3 moved = movers.count.x > 0u && zmax > 0.0 ? taaMoverDelta(world, movers) : float3(0.0);
+	float4 prev = p.prevVP * float4(world - moved, 1.0);
 	float viewDepth = dot(p.curRowW, float4(world, 1.0));
 	float2 uvPrev = prev.xy / prev.w * 0.5 + 0.5;
 
@@ -190,7 +210,8 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	o.color = half4(half3(max(rgb, 0.0)), newAge);
 	if (!all(isfinite(o.color))) o.color = half4(current, 1.0h);
 	int view = int(p.misc.w);
-	if (view == 1) debug = half3(mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z)));   // history age
+	if (view == 5) debug = half3(saturate(abs(moved) * 4.0));                                                         // M3 movers: per-object motion
+	else if (view == 1) debug = half3(mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z)));   // history age
 	else if (view == 2) debug = half3(saturate(float(outside) - 1.0), float(disocclusion), valid ? 0.0 : 1.0);           // rejection
 	else if (view == 3) debug = half3(taaExpand(float3(current)));                                                       // no history
 	else if (view == 4) debug = half3(taaExpand(float3(mix(history, current, 0.5h))));                                   // reprojection check: unclipped history over current (doubled edges = misaligned)
@@ -199,12 +220,13 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 }
 
 fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(0)]], constant float4 &exposure [[buffer(1)]],
+                        constant TaaMovers &movers [[buffer(2)]],
                         texture2d<half> cur [[texture(0)]], depth2d<float> curDepth [[texture(1)]],
                         texture2d<half> hist [[texture(2)]], texture2d<half> histDepth [[texture(3)]],
                         texture2d<half> reactive [[texture(4)]])
 {
 	half3 debug;
-	return taauResolve(in.position.xy, p, exposure, cur, curDepth, hist, histDepth, reactive, debug);
+	return taauResolve(in.position.xy, p, exposure, movers, cur, curDepth, hist, histDepth, reactive, debug);
 }
 
 // mcopt.shade.taaDebug: the same resolve, plus the debug view straight into the destination (no output pass).
@@ -215,12 +237,13 @@ struct TaaDebugOut {
 };
 
 fragment TaaDebugOut taau_debug_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(0)]], constant float4 &exposure [[buffer(1)]],
+                                   constant TaaMovers &movers [[buffer(2)]],
                                    texture2d<half> cur [[texture(0)]], depth2d<float> curDepth [[texture(1)]],
                                    texture2d<half> hist [[texture(2)]], texture2d<half> histDepth [[texture(3)]],
                                    texture2d<half> reactive [[texture(4)]])
 {
 	half3 debug;
-	TaaOut r = taauResolve(in.position.xy, p, exposure, cur, curDepth, hist, histDepth, reactive, debug);
+	TaaOut r = taauResolve(in.position.xy, p, exposure, movers, cur, curDepth, hist, histDepth, reactive, debug);
 	TaaDebugOut o;
 	o.color = r.color;
 	o.depth = r.depth;

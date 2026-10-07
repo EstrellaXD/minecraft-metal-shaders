@@ -26,6 +26,7 @@ typedef struct {
 	int width, height, cur;     // history size; hist[cur] is the latest
 	bool lossy;                 // history targets use lossy framebuffer compression (Apple8+, guaranteed 2:1)
 	bool hdr;                   // HDR input (M2): the history rescale comes from ShadeGpu.exposure on the GPU
+	uint8_t movers[16 + 32 * 48]; // M3 per-object motion (taa.metal TaaMovers): count + boxes, set by mc_taa_movers; zeroed = none
 } Taa;
 
 id<MTLBuffer> mc_shade_gpu_buffer(void);  // mcshade.m: ShadeGpu (M2), nil without the HDR frame
@@ -201,6 +202,8 @@ void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth
 			float e[4] = {((const float *) params)[52], 0.0f, 1.0f, 0.0f};
 			[r setFragmentBytes:e length:sizeof(e) atIndex:1];
 		}
+		// M3 movers (the whole struct: API validation checks the bound length against the argument's size)
+		[r setFragmentBytes:t->movers length:sizeof t->movers atIndex:2];
 		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 		[r endEncoding];
 		t->cur = next;
@@ -218,6 +221,14 @@ void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth
 			[r endEncoding];
 		}
 	}
+}
+
+// M3: the moving entities for the next resolves (taa.metal TaaMovers: uint4 count, then min / max / delta float4 triples);
+// length bytes are copied (at most the struct), the count is clamped by the shader. length 0 clears them.
+void mc_taa_movers(Taa *t, const void *data, int length) {
+	if (!t) return;
+	memset(t->movers, 0, sizeof t->movers);
+	if (data && length > 0) memcpy(t->movers, data, length < (int) sizeof t->movers ? length : (int) sizeof t->movers);
 }
 
 // The latest resolved history (RGBA16Float, output size, rgb + age): valid after mc_taa_resolve until the next one.

@@ -258,6 +258,17 @@ public final class ShadeTaa {
 		if (this.jittered) new Matrix4f().translation(-2 * this.jitterX / this.width, -2 * this.jitterY / this.height, 0).mul(p, p);
 		p.mul(viewRotation, this.viewProj);
 		this.position = position;
+		if (ShadeMotion.ON) { // M3: moving entities for the resolve's per-object reprojection
+			this.motion.update(position);
+			this.motion.upload(this.taa);
+		}
+	}
+
+	private final ShadeMotion motion = new ShadeMotion();
+
+	/** Movers (entities that moved since last frame) this frame, for logs. */
+	public int movers() {
+		return this.motion.count;
 	}
 
 	/**

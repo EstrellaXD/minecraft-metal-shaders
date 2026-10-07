@@ -30,6 +30,7 @@ final class TaaNative {
 	private static final MethodHandle NEW = fn("mc_taa_new", false, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle RESIZE = fn("mc_taa_resize", false, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 	private static final MethodHandle RESOLVE = fn("mc_taa_resolve", false, null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle MOVERS = fn("mc_taa_movers", false, null, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle HISTORY = fn("mc_taa_history", true, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle HISTORY_DEPTH = fn("mc_taa_history_depth", true, JAVA_LONG, JAVA_LONG);
 
@@ -51,6 +52,7 @@ final class TaaNative {
 	static long create(long ctx, long source, int flags, long err, int errCap) { try { return (long) NEW.invokeExact(ctx, source, flags, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
 	static int resize(long taa, long ctx, int width, int height) { try { return (int) RESIZE.invokeExact(taa, ctx, width, height); } catch (Throwable t) { throw rethrow(t); } }
 	static void resolve(long enc, long taa, long color, long depth, long reactive, long dst, long params, int length) { try { RESOLVE.invokeExact(enc, taa, color, depth, reactive, dst, params, length); } catch (Throwable t) { throw rethrow(t); } }
+	static void movers(long taa, long data, int length) { try { MOVERS.invokeExact(taa, data, length); } catch (Throwable t) { throw rethrow(t); } }
 	static long history(long taa) { try { return (long) HISTORY.invokeExact(taa); } catch (Throwable t) { throw rethrow(t); } }
 	static long historyDepth(long taa) { try { return (long) HISTORY_DEPTH.invokeExact(taa); } catch (Throwable t) { throw rethrow(t); } }
 }

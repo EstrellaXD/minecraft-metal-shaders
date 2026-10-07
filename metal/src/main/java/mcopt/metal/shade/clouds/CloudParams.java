@@ -134,7 +134,7 @@ public final class CloudParams {
 		float relX = (float) (Math.floor(ccx / texel) * texel - f.cameraX), relZ = (float) (Math.floor(ccz / texel) * texel - f.cameraZ);
 		put4(b, 320, extent, yRef, relX, relZ);
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
-		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.3f, CloudConfig.DOME_STEPS);
+		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.4f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
 		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard
 		float fovY = (float) (2.0 * Math.atan(1.0 / Math.max(Math.abs(f.proj.m11()), 1e-3f)));

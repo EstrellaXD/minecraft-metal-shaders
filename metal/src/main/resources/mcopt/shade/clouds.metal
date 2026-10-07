@@ -11,6 +11,8 @@
 // shaping (flat bases, egg-shaped tops), the "powder" brightening of dense cores, the cloud phase function as a mix of a
 // strong forward lobe and a backward one, the octave loop of the multiple-scattering approximation, the aerial perspective
 // blend toward the clear sky by the clouds' apparent distance, and the checkerboard + reprojected-history upscaling.
+// History reprojection with Catmull-Rom sampling after Matt Pettineo (MJP), "Bicubic texture filtering with the Catmull-Rom
+// spline in 9 / 5 taps" (gist TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1), MIT License (5-tap variant, as taa.metal).
 // Everything else (units in blocks, the density model, the slab on a curved world, the weather map, the cirrus layer, the
 // cloud shadow map, the reflection dome, the bakes) is original; techniques after Schneider & Vos (Horizon Zero Dawn
 // volumetric cloudscapes, SIGGRAPH 2015; Nubis 2017/2022) and Wrenninge et al. (multiple-scattering octaves).
@@ -628,6 +630,29 @@ fragment CloudMarchOut cloud_march(CloudVsOut in [[stage_in]], constant ShadeFra
 	return o;
 }
 
+// 5-tap Catmull-Rom of the history (rgb and transmittance): the wind moves the clouds a fraction of a pixel every frame, and
+// bilinear reprojection would blur the history a little more each frame.
+static inline half4 cloudCatmullRom(texture2d<half> tex, float2 uv, float2 size) {
+	float2 pos = uv * size;
+	float2 t1 = floor(pos - 0.5) + 0.5;
+	float2 f = pos - t1;
+	float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+	float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+	float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+	float2 w3 = f * f * (-0.5 + 0.5 * f);
+	float2 w12 = w1 + w2;
+	float2 inv = 1.0 / size;
+	float2 t0 = (t1 - 1.0) * inv, t3 = (t1 + 2.0) * inv, t12 = (t1 + w2 / w12) * inv;
+	float4 c = float4(tex.sample(cloudClamp, float2(t12.x, t0.y))) * (w12.x * w0.y)
+		+ float4(tex.sample(cloudClamp, float2(t0.x, t12.y))) * (w0.x * w12.y)
+		+ float4(tex.sample(cloudClamp, t12)) * (w12.x * w12.y)
+		+ float4(tex.sample(cloudClamp, float2(t3.x, t12.y))) * (w3.x * w12.y)
+		+ float4(tex.sample(cloudClamp, float2(t12.x, t3.y))) * (w12.x * w3.y);
+	float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+	c /= wsum;
+	return half4(half3(max(c.rgb, 0.0)), half(saturate(c.a)));
+}
+
 struct CloudResolveOut {
 	half4 color [[color(0)]]; // rgb scattered light (before exposure), a transmittance
 	half age [[color(1)]];    // R8Unorm: frames this pixel was marched and blended / 64
@@ -656,7 +681,7 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 	half4 h = half4(0.0h, 0.0h, 0.0h, 1.0h);
 	float age = 0.0;
 	if (valid) {
-		h = hist.sample(cloudClamp, puv);
+		h = cloudCatmullRom(hist, puv, c.size.xy);
 		age = float(histAge.sample(cloudClamp, puv).r) * 64.0;
 	}
 	CloudResolveOut o;

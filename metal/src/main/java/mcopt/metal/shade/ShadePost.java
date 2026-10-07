@@ -115,6 +115,9 @@ public final class ShadePost {
 	private static int liveWidth, liveHeight;
 	private static @Nullable GpuTexture worldDepth;
 	/** Bloom's first level: xy the part of its source's uv range that holds the image (the TAAU sub-rect). */
+	/** M2.2: under TAAU the final pass blends the volumetric light of a depth edge's near and far surface by coverage
+	 * (mcopt.shade.vl.edge, default true; false = this pixel's jittered depth only, M2/M2.1: flickered at leaf edges). */
+	private static final boolean VL_EDGE = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.edge", "true"));
 	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
 	private static long vlLight, vlDist;
@@ -438,8 +441,9 @@ public final class ShadePost {
 		boolean vl = vlLight != 0 && vlDist != 0;
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
-		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
-		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(0f).flip();
+		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU), w the
+		// volumetric light's coverage blend at depth edges (TAAU, mcopt.shade.vl.edge)
+		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(vl && taa != null && depth != 0 && VL_EDGE ? 1f : 0f).flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
 		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,

@@ -47,6 +47,8 @@ import mcopt.metal.shade.Shade;
  * history onto each frame's noise: flickering shafts); 0 = the plain box (M2.1).</li>
  * <li>{@code mcopt.shade.vl.box3} (true, M2.2): the history's clamp box spans the 3x3 neighbourhood (as before M2's review);
  * false: the spatial filter's plus of 5 (M2/M2.1: too tight, the shafts flickered).</li>
+ * <li>{@code mcopt.shade.vl.edge} (true, M2.2; read by ShadePost): under TAAU the final pass blends the light of a depth
+ * edge's near and far surface by their coverage of the 2x2 depth footprint; false: this frame's jittered depth alone (M2/M2.1).</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
  * <li>{@code mcopt.shade.vl.gpuTimer} (false): GPU timestamps around each pass; the log line (forced on) gets their

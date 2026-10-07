@@ -66,6 +66,13 @@ public final class ShadeTaa {
 	 * is on (ShadeConfig.HDR); setHdrInput overrides it before the first get().
 	 */
 	private static boolean hdrInput = mcopt.metal.shade.ShadeConfig.HDR;
+	/**
+	 * Distant Horizons loaded: a fixed render scale (the preset's start scale, world targets allocated at exactly that size,
+	 * no sub-rect). DH renders its LODs into its own targets with a full viewport and copies them 1:1 into the main target,
+	 * so a live sub-rect smaller than the allocation would put its frame at the wrong scale (tested on DEV-DH, ti3-dh). DRS
+	 * with DH needs its passes on the sub-rect too (FT2).
+	 */
+	private static final boolean FIXED_FOR_DH = mcopt.metal.DhCompat.loaded();
 	private static final DynamicResolution DRS = new DynamicResolution(TaaConfig.SCALE, TaaConfig.SCALE_MIN, TaaConfig.SCALE_MAX, TaaConfig.DRS_FPS);
 
 	private final Object encoder;
@@ -107,7 +114,8 @@ public final class ShadeTaa {
 			long taa = TaaNative.create(MetalBridge.ctx(encoder), MemoryUtil.memAddress(source), (hdrInput ? 1 : 0) | (TaaConfig.LOSSY ? 2 : 0) | (TaaConfig.DEBUG != 0 ? 4 : 0), err, 4096);
 			if (taa == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			instance = new ShadeTaa(encoder, taa);
-			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe());
+			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe()
+				+ (FIXED_FOR_DH ? "; Distant Horizons loaded: fixed scale " + TaaConfig.SCALE + " (no dynamic resolution)" : ""));
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: TAA setup failed, rendering without it: " + e);
@@ -135,7 +143,7 @@ public final class ShadeTaa {
 	public void jitter(Matrix4f projection) {
 		this.jittered = false;
 		if (this.outWidth == 0) return; // no world target yet: the first resolve starts the history anyway
-		if (TaaConfig.DRS) this.scale = DRS.update();
+		if (TaaConfig.DRS && !FIXED_FOR_DH) this.scale = DRS.update();
 		this.updateSize();
 		int phases = Math.clamp(Math.round(8 / (this.scale * this.scale)), 8, 32); // ~8 samples per output pixel (MetalFX/FSR guidance)
 		this.frame = this.frame % phases + 1;
@@ -168,8 +176,9 @@ public final class ShadeTaa {
 	private void resize(RenderTarget mainTarget) {
 		this.outWidth = mainTarget.width;
 		this.outHeight = mainTarget.height;
-		this.allocWidth = Math.max(1, Math.round(this.outWidth * TaaConfig.SCALE_MAX));
-		this.allocHeight = Math.max(1, Math.round(this.outHeight * TaaConfig.SCALE_MAX));
+		float allocScale = FIXED_FOR_DH ? this.scale : TaaConfig.SCALE_MAX;
+		this.allocWidth = Math.max(1, Math.round(this.outWidth * allocScale));
+		this.allocHeight = Math.max(1, Math.round(this.outHeight * allocScale));
 		this.world.resize(this.allocWidth, this.allocHeight);
 		// Everything the level renderer pairs with the main target (entity outlines, post chains) matches the world target.
 		Minecraft.getInstance().levelRenderer.resize(this.allocWidth, this.allocHeight);

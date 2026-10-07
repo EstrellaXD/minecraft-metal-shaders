@@ -12,15 +12,15 @@ static finals `ShadeBindings.ON` / `ShadeTaa.ON`); `mcopt.shade.taa=false` gives
 **Status (2026-10-06):** working in game on `mcopt DEV` (Metal + Sodium, 3024x1964 fullscreen) at every preset; headless
 correctness/perf test (`tools/shade/taatest`), `tools/shade/validate.sh` green (both `TAA_HDR` variants, debug variant).
 Stills are as crisp as native and anti-aliased (leaf edges, glints, thin lines); rotation is clean; strafing softens
-distant pixel-art texture somewhat (classic TAA, mitigated, see "Motion"). Not yet merged with `m2` (HDR) or tested with
-Distant Horizons (this branch is based on `m1`, which has no DH support; see "Integration into M2").
+distant pixel-art texture somewhat (classic TAA, mitigated, see "Motion"). **2026-10-07: merged into `m2`** (HDR, bloom,
+VL, water, Distant Horizons): see "Integration into M2" here and M2_STATUS.md for the numbers.
 
 ## Flags (system properties or `config/mcopt.properties`)
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `mcopt.shade.taa` | `true` | TAA/TAAU on (with `mcopt.shade=true`). `false` = M1's native render. |
-| `mcopt.shade.preset` | `performance` | `performance` / `balanced` / `quality` / `ultra` (the same flag M2's `ShadeConfig.TIER` reads). |
+| `mcopt.shade.preset` | `balanced` (m2) | `performance` / `balanced` / `quality` / `ultra` (the same flag M2's `ShadeConfig.TIER` reads). |
 | `mcopt.shade.scale` | preset's | Start scale. |
 | `mcopt.shade.scaleMin`, `scaleMax` | preset's | Dynamic-resolution range. Targets are allocated at `scaleMax`. Floor 0.60. |
 | `mcopt.shade.drs` | `true` | Dynamic resolution. `false` = fixed at `scale`. |
@@ -38,7 +38,7 @@ Presets (bible §5; "never default below 0.67x", critique C2):
 |---|---|---|---|---|
 | performance | 0.67 | 0.60–0.75 | 120 fps | responsive |
 | balanced | 0.80 | 0.67–0.90 | 120 fps | stable |
-| quality | 1.00 | 0.85–1.00 | 60 fps | stable |
+| quality | 1.00 | 0.85–1.00 | 80 fps | stable |
 | ultra | 1.00 | 0.90–1.00 | 60 fps | stable (MetalFX option: see "Not done") |
 
 `mcopt.fx.scale` (upstream MetalFX) is ignored while `ShadeTaa.ON` (one owner of the render scale; a log line says so).
@@ -153,42 +153,35 @@ Screenshots (`bench-results/<run>/screenshots`, motion shots via `-Dmcbench.moti
   texture softens (cobblestone, spruce leaves) — repeated sub-pixel history resampling. The motion weight floor reduced
   it; still the main visible TAA cost. Rising smoke particles leave short trails (no reactive mask yet).
 
-## Integration into M2 (branch `m2`: HDR world target, `ShadePost`)
+## Integration into M2 (done: branch `m2`, merge `095ce42`)
 
-`m2` renders the world into an HDR target (format redirect of main-colour passes, `ShadePost.redirect`) and tone-maps
-at `render3dHud` HEAD (`ShadePost.beforeHand`). TAAU slots in like this:
+What the merge did (frame diagram and module rules: M2_INTEGRATION.md section 6):
 
-1. **Keep both TAA mixins and `MetalEncoder.setSubRect`.** `ShadeTaaGameRendererMixin` swaps `mainRenderTarget` before
-   `LevelRenderer.render`, so `ShadePost.beginWorld(main)` sees the world target and sizes its HDR targets to the
-   allocation (`scaleMax` × output) — fixed size, never per frame.
-2. **Sub-rect for redirected passes.** `MetalEncoder` applies the sub-rect only when `redirect == null`. In
-   `ShadePost.redirect`, return `Redirect.formats(..., w, h, ...)` with `w = taa.width(width)`, `h = taa.height(height)`
-   while `ShadeTaa.get().swapped()`: the redirected pass then draws (0,0,w,h) (MetalRenderPass area = redirect size).
-   DH bridge encode/decode passes and every `ShadeRender.pass` that reads the HDR scene must use the same sub-rect
-   (viewport) or sample it with `uv · (w,h)/alloc`.
-3. **Call order at `render3dHud` HEAD:** make `ShadeTaaGameRendererMixin.mcopt$taaResolve` *not* resolve when HDR is
-   on (just put the main target back), and in `ShadePost.beforeHand`:
-   - `ShadeTaa.setHdrInput(true)` once at init (before the first `ShadeTaa.get()`);
-   - hooks before the tone map that work at internal resolution (VL, fog composite) run first, on the sub-rect;
-   - bloom L0 from the internal HDR scene (bible E19: pre-TAAU, saves the full-res read);
-   - `taa.resolveTextures(scene, depth, reactive, 0, 0f)` (dst 0: history only);
-   - the final pass reads `taa.history()` (RGBA16F, output size; rgb = linear pre-exposed HDR, decompressed; a = age)
-     instead of `scene`, at output size, and does the RCAS-style sharpen (strength
-     `TaaConfig.sharpen(taa.scale())`).
-   - SSR (E14) samples `taa.history()` of the previous frame (call `history()` before `resolveTextures`) with the
-     unjittered previous view-projection; `taa.historyDepth()` is the bible's `prevDepth` (linear blocks, output size).
-4. **Exposure:** `taa.setHistoryRescale(exposure.x / exposure.z)` before the resolve (the CPU copy of `ShadeGpu.exposure`,
-   or move `misc.x` to a GPU read of the exposure buffer if exposure is only known on the GPU).
-5. **ShadeLook (slot 17):** `viewProjNoJitter`, `prevViewProjNoJitter`, `renderScale` (xy scale, zw sub-rect size) —
-   `ShadeTaa.viewProj` (unjittered, camera-relative) and `prevViewProj` re-based are exactly these. `cameraBlock.w` (mip
-   scale) moves to `ShadeLook.renderScale` per the shade_common.metal comment.
-6. **Reactive mask:** bind an R8 texture at input resolution (`reactive` argument); particles/rain (E09) and water's
-   animated normals (E14, 0.25) write it; with none bound the shader skips the read.
-7. **Distant Horizons (far-terrain-plan §3.2):** jitter is already in the projection (LODs inherit it; DH's own TAA must be
-   off, R6). FT2's merged scene-distance image should replace `curDepth` in the resolve: reconstruct with
-   `world = normalize(invCur·(ndc,0,1) − camera) · dist` and keep the disocclusion test on linear depth (it already
-   stores linear blocks). DH targets follow the (constant) allocation size, never the sub-rect.
-8. **validate.sh** already compiles both `TAA_HDR` variants and builds the resolve + output PSOs.
+1. Both TAA mixins and `MetalEncoder.setSubRect` stay. `MetalEncoder` now also clips **redirected** passes (M2's HDR
+   format redirect) to the sub-rect when the pass's original attachments are the world target's, so `ShadePost.redirect`
+   is unchanged.
+2. `ShadeTaa` defaults `hdrInput` to `ShadeConfig.HDR` (the first `get()` happens at the camera jitter, before ShadePost
+   exists). New: `resolveHdr(color, depth)` (resolve without an output pass, returns `history()`), `outputTarget()` (the
+   real main target), `allocWidth/allocHeight()`.
+3. `ShadePost.beforeHand` (runs right before render3dHud, i.e. before the TAA mixin's HEAD inject): hooks (VL) on the
+   sub-rect -> `resolveHdr` -> bloom L0 from the **internal** HDR scene (uv scaled to the sub-rect, bible E19) -> exposure
+   -> `shade_final` reads the history at output size, **sharpens it** (the module's contrast-limited cross, moved into the
+   final pass: one full-resolution pass less) and writes the game's real main target. The mixin at render3dHud HEAD then
+   only gives the main target back (`swapped()` is false after `resolveHdr`).
+4. Exposure: the resolve binds `ShadeGpu.exposure` (buffer 1, offset 176) and rescales the history by x / z on the GPU
+   (`mc_shade_gpu_buffer`); M1 / taatest bind (misc.x, 0, 1, 0) instead, so the CPU rescale still works there.
+5. `ShadeLook.viewProjNoJitter/prevViewProjNoJitter` = the jitter translation removed; `renderScale` = (scale, mip bias,
+   live w, live h). `cameraBlock.w` keeps the mip scale for Sodium terrain.
+6. VL: targets sized from the texture (allocation) size, `VlParams.size.zw` = live size (the VL image always covers the
+   live area; the final pass's uv upsample is then exact). The jittered matrices are kept on purpose: positions come from
+   this frame's jittered depth.
+7. Water: `SHADE_WATER_SUBRECT` always defined, `SHADE_WATER_TAA` makes the SSR step jitter change per frame; SSR's
+   colour source (`prevScene`) is the TAA history. The scene/depth copies still copy the whole allocation (simple; the
+   region copy of a depth texture is not worth the risk for ~0.1 ms).
+8. Presets: one parser (`Shade.TIER`, default **balanced**); quality holds 80 fps (was 60).
+
+Still open: reactive mask producers (particles/rain/water), per-object motion vectors, MetalFX as the ultra upscaler,
+FT2's merged scene distance as the resolve's depth for DH pixels.
 
 ## Per-object motion (plan, M3)
 

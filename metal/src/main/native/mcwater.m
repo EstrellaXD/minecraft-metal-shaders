@@ -125,8 +125,20 @@ int mc_water_capture(Enc *enc, WaterState *s) {
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);  // ends the render encoder: every live attachment is stored
 		id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
 		b.label = @"mcopt shade water: scene copy";
-		[b copyFromTexture:color toTexture:s->color];
-		[b copyFromTexture:depth toTexture:s->depth];
+		// only the pass's viewport: under TAAU dynamic resolution the world draws into a sub-rect of fixed-size targets
+		// (the shaders map NDC to that sub-rect, SHADE_WATER_SUBRECT), so the rest is stale and never read
+		NSUInteger cw = enc->width > 0 ? MIN((NSUInteger) enc->width, MIN(color.width, depth.width)) : MIN(color.width, depth.width);
+		NSUInteger ch = enc->height > 0 ? MIN((NSUInteger) enc->height, MIN(color.height, depth.height)) : MIN(color.height, depth.height);
+		bool whole = cw == color.width && ch == color.height && cw == depth.width && ch == depth.height;
+		if (whole) {
+			[b copyFromTexture:color toTexture:s->color];
+			[b copyFromTexture:depth toTexture:s->depth];
+		} else {
+			[b copyFromTexture:color sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+				toTexture:s->color destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+			[b copyFromTexture:depth sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+				toTexture:s->depth destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+		}
 		[b endEncoding];
 		if (s->hzPso) {
 			NSUInteger hw = (depth.width + 1) / 2, hh = (depth.height + 1) / 2;
@@ -144,6 +156,7 @@ int mc_water_capture(Enc *enc, WaterState *s) {
 			rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 			id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 			r.label = @"mcopt shade water: coarse depth";
+			if (!whole) [r setViewport:(MTLViewport) {0, 0, (double) ((cw + 1) / 2), (double) ((ch + 1) / 2), 0, 1}];
 			[r setRenderPipelineState:s->hzPso];
 			[r setFragmentTexture:s->depth atIndex:0];
 			[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];

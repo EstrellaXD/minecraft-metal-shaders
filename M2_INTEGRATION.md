@@ -156,18 +156,45 @@ works at output resolution.
   overwritten by the final pass: debugging only).
 - Border fog (E06) switches itself off when DH moves vanilla's fog away (`fogMisc.z = 0`), so vanilla chunks blend into LODs.
 
-## 6. TAAU / dynamic resolution (`m2-taau`)
+## 6. TAAU / dynamic resolution (`m2-taau`, merged)
 
-- Install a resolver: `ShadePost.setResolver(c -> { ...; return outputHdrTexture; })`. It runs after the before-tonemap
-  hooks, gets the internal-resolution `c.scene()` and `c.depth()`, and returns the output-resolution pre-exposed HDR image
-  (e.g. RGBA16F, your history). Bloom, the exposure meter and the final pass then work on that image (bloom is re-sized to
-  it), and the final pass samples depth by uv (any size), writing the main target (output size).
-- Jitter must stay inside the projection matrix (Distant Horizons copies the game's projection) and fill
-  `ShadeLook.viewProjNoJitter/prevViewProjNoJitter` + `taa` + `renderScale` in `ShadeLook.pack` (or override after it).
-- Fixed-size targets with a viewport sub-rect for DRS (DH reallocates its screen textures on every main-target resize). The
-  HDR world target is allocated at the main render target's size; with a sub-rect, the before-tonemap hooks must restrict
-  themselves to `renderScale.zw` and the resolver outputs the full output image.
-- Rescale history by `exposure.x / exposure.z` (pre-exposure changes every frame).
+**Merged** (merge `095ce42` + follow-ups; module doc `TAAU.md`). The frame with TAAU on (`mcopt.shade.taa`, default true):
+
+```
+Camera.extractRenderState TAIL .... ShadeTaa.jitter: DRS picks the scale, Halton(2,3) jitter into the camera projection
+GameRenderer.render, 1st device call  ShadeTaa.beginWorld: the world target (allocated once at scaleMax x output) stands
+                                    in for mainRenderTarget; MetalBridge.setSubRect -> live sub-rect (0,0,w,h)
+LevelRenderer.render HEAD ......... ShadeFrameUpdater (ShadeFrame.screen = w x h, jitter, mip scale) -> ShadePost.beginWorld
+                                    (HDR targets at the allocation size; prevScene = the TAA history)
+  world passes .................... redirected into the HDR target AND clipped to the sub-rect (MetalEncoder: a redirected
+                                    pass whose original attachments are the sub-rect textures gets the same viewport)
+before render3dHud ................ ShadePost.beforeHand: hooks (VL) on the sub-rect -> ShadeTaa.resolveHdr (HDR world +
+                                    history -> output-size history, exposure-rescaled on the GPU) -> bloom (L0 from the
+                                    internal scene's sub-rect) -> exposure -> FINAL: history -> sharpen -> haze/VL/bloom/
+                                    grade/tonemap -> the game's REAL main target (ShadeTaa.outputTarget)
+render3dHud HEAD .................. ShadeTaaGameRendererMixin gives mainRenderTarget back (no second resolve: swapped()
+                                    is false after resolveHdr); hand, screen effects and GUI at native resolution
+```
+
+Rules for modules under TAAU:
+- **Sizes**: `Context.width/height` = the live render size (sub-rect), `Context.texWidth/texHeight` = the textures'
+  allocated size. Size your own targets from the texture size (they then never reallocate when the DRS moves the
+  scale) and map them onto the live sub-rect (VL: `VlParams.size.zw` = live size, its VL-resolution targets always
+  cover exactly the live area). `ShadePost.liveWidth()/liveHeight()` give the same outside a hook.
+- **Reading the internal scene/depth by uv**: multiply uv by `live / tex` (the bloom first level does this,
+  `shade_bloom_down0` params). Reading by pixel: the live sub-rect is `(0,0)-(w,h)`; `ShadeFrame.screen.xy` = live size.
+- **Matrices**: `ShadeFrame.proj/viewProj/invViewProj/prevViewProj` contain the jitter, which is exactly right for
+  reconstructing positions from this frame's depth (the depth was rasterized with it). `ShadeLook.viewProjNoJitter /
+  prevViewProjNoJitter` (now filled) are for passes that want a stable raster. `ShadeLook.renderScale` = (scale,
+  mip bias log2, live w, live h).
+- **Last frame's image** (`ShadeResources.prevScene`, SSR colour): the TAA history (RGBA16F, output size, whole texture
+  = whole view, pre-exposed with `ShadeGpu.exposure.z`): sample by normalized uv as before.
+- **Per-frame noise**: with TAA, vary noise per frame (`ShadeFrame.flags2.x`): the resolve integrates it (water's SSR
+  step jitter does this under `SHADE_WATER_TAA`).
+- The generic `ShadePost.setResolver` is still there for other upscalers (it is skipped while TAAU drives the frame).
+- **Distant Horizons**: its passes draw into the world target (main to DH) and are clipped to the sub-rect like the game's;
+  its own targets follow the constant allocation size, so a scale change never makes DH reallocate. The DH bridge
+  encode/decode passes cover the whole allocation (correct, a little wasteful). See M2_STATUS for the DEV-DH run.
 
 ## 7. Adding a new full-screen pass
 
@@ -202,13 +229,13 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 | `mcopt.shade.haze` | true | height haze, mist, border fog |
 | `mcopt.shade.light2` | true | lighting model v2 |
 | `mcopt.shade.look` | epic | epic / storybook / natural |
-| `mcopt.shade.preset` | performance | performance / balanced / quality / ultra (bloom levels; modules read `ShadeConfig.TIER`) |
+| `mcopt.shade.preset` | **balanced** | performance / balanced / quality / ultra (`Shade.TIER`, parsed once, read by every module): see the preset table below |
 | `mcopt.shade.dhBridge` | true | Distant Horizons through the HDR frame |
 | `mcopt.shade.sunTilt` | 30 | sun path tilt (degrees) |
 | `mcopt.shade.log` | 0 | every N s: elevation, exposure ref/gpu, metered log2, grade values |
 | `mcopt.shade.debug` | 0 | 1 shadows, 2 normals, 3 lighting only, 4 log luminance (final pass), 5 water SSR/Fresnel, 6 water path/depth, 7 water footprint/flow |
 | `mcopt.shade.water` | true | water module (false: M1's stand-in water, byte-identical shaders) |
-| `mcopt.shade.ssr` / `.ssrQuad` / `.ssrSteps` / `.ssrDist` | true / true / 24 / 512 | screen-space reflections (quad-shared march) |
+| `mcopt.shade.ssr` / `.ssrQuad` / `.ssrSteps` / `.ssrDist` | true / preset / preset / 512 | screen-space reflections (quad-shared march except ultra; steps 16/24/24/32) |
 | `mcopt.shade.ssrPrev` | true | reflections read last frame's HDR world (clouds, sky, LODs in reflections) |
 | `mcopt.shade.waterBake` | true | waves baked once per frame into a mipmapped texture (false: analytic per pixel) |
 | `mcopt.shade.waterWaves` / `.caustics` / `.waterFoam` / `.waterReflect` / `.glossy` | 1 / true / true / 1 / false | see WATER.md |
@@ -217,6 +244,20 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 | `mcopt.shade.vl.scale` / `.steps` / `.ssTaps` / `.dist` | preset | P 0.25/10/6/160, B 0.33/12/8/160, Q 0.5/16/10/224, U 0.5/24/12/224 |
 | `mcopt.shade.vl.strength` / `.mist` / `.moon` / `.extinction` / `.underwater` | 1 / 1 / 1 / true / true | see VL.md |
 | `mcopt.shade.vl.debug` / `.log` / `.gpuTimer` | 0 / false / false | 1 light, 2 distance, 3 mist T; log line every 2 s; per-pass GPU ms |
+| `mcopt.shade.taa` | true | TAA / TAAU + dynamic resolution (false: native, unjittered, as before the merge) |
+| `mcopt.shade.scale` / `.scaleMin` / `.scaleMax` | preset | render scale start / DRS range (world targets allocated at scaleMax; floor 0.60) |
+| `mcopt.shade.drs` / `.drsFps` / `.drsLog` | true / preset / false | dynamic resolution, the frame rate it holds, a log line per change |
+| `mcopt.shade.taaMode` / `.sharpen` / `.mipBias` / `.taaLossy` / `.taaDebug` | preset / by scale / true / false / 0 | see TAAU.md |
+| `mcopt.shade.shadowRes` | preset | 2048 (3072 on ultra) |
+
+Presets (`mcopt.shade.preset`; any flag above still overrides its part):
+
+| Preset | Render scale (DRS range, holds) | HDR target | Bloom | VL (scale of the world target, steps, screen taps) | SSR | Shadows |
+|---|---|---|---|---|---|---|
+| performance | 0.67 (0.60-0.75, 120 fps) | RG11B10F | 6 levels | 0.25, 10, 6 | quad, 16 steps | 2048 |
+| **balanced** (default) | 0.80 (0.67-0.90, 120 fps) | RG11B10F | 6 levels | 0.33, 12, 8 | quad, 24 steps | 2048 |
+| quality | 1.00 (0.85-1.00, 80 fps) | RGBA16F | 7 levels | 0.5, 16, 10 (224 blocks) | quad, 24 steps | 2048 |
+| ultra | 1.00 (0.90-1.00, 60 fps) | RGBA16F | 7 levels | 0.5, 24, 12 (224 blocks) | per pixel, 32 steps | 3072 |
 
 ## 9. Merge notes
 

@@ -101,10 +101,12 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	float ex = max(g.exposure.x, 1e-6);
 	if (P.p.y > 0.5) {
 		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb) * P.p.x;
-		float d = depth.read(px);
+		// depth may be smaller than the image (a resolver's output-resolution image over the internal-resolution world)
+		uint2 dpx = min(uint2(in.uv * float2(depth.get_width(), depth.get_height())), uint2(depth.get_width() - 1, depth.get_height() - 1));
+		float d = depth.read(dpx);
 		float m = L.bloom.x;
 		if (d > 0.0) {
-			float3 wp = shadeWorldFromDepth((float2(px) + 0.5) / float2(scene.get_width(), scene.get_height()), d, f);
+			float3 wp = shadeWorldFromDepth(in.uv, d, f);
 			float3 T = shadeHazeTransmittance(wp, f, L);
 			m += L.bloom.z * (1.0 - shadeLuma(T));
 		} else {

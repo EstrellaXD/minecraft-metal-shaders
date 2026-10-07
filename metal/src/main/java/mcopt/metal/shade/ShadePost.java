@@ -63,6 +63,22 @@ public final class ShadePost {
 		ShadeLook look) {
 	}
 
+	/**
+	 * Replaces the image the post chain works on (TAAU: resolves this frame's internal-resolution scene, plus its history,
+	 * into an output-resolution HDR image). Returns that texture (pre-exposed linear, any size; bloom, the exposure meter and
+	 * the tone map read it), or 0 to keep c.scene(). Runs after the before-tonemap hooks.
+	 */
+	public interface Resolver {
+		long resolve(Context c);
+	}
+
+	private static volatile @Nullable Resolver resolver;
+
+	/** Installs the resolver (one at a time; null removes it). */
+	public static void setResolver(@Nullable Resolver r) {
+		resolver = r;
+	}
+
 	private record Ordered(int order, Hook hook) {
 	}
 
@@ -79,7 +95,7 @@ public final class ShadePost {
 	private static long library, psoDown0, psoDown, psoUp, psoFinal, psoEncode, psoDecode, psoHistogram, psoExposure, milkyWay;
 	private static final long[] hdr = new long[2];
 	private static long[] bloomLevels = new long[0], bloomAccum = new long[0];
-	private static int width, height, frame;
+	private static int width, height, frame, bloomWidth, bloomHeight;
 	/** World passes are being redirected (between LevelRenderer.render HEAD and the tone map). */
 	private static boolean world;
 	private static boolean bridgeOpen, bridgeUsed;
@@ -109,9 +125,9 @@ public final class ShadePost {
 		if (failed || !ShadeConfig.HDR) return false;
 		try {
 			library = ShadeRender.library(ShadeMsl.post());
-			psoDown0 = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down0", ShadeRender.RG11B10F, 0);
-			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RG11B10F, 0);
-			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RG11B10F, 0);
+			psoDown0 = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down0", ShadeRender.RGBA16F, 0);
+			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RGBA16F, 0);
+			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RGBA16F, 0);
 			psoFinal = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final", ShadeRender.RGBA8, 0);
 			psoEncode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_encode", ShadeRender.RGBA8, 0);
 			psoDecode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_decode", ShadeConfig.HDR_FORMAT, 0);
@@ -163,12 +179,22 @@ public final class ShadePost {
 
 	private static void resize(int w, int h) {
 		for (long t : hdr) retire(t);
-		for (long t : bloomLevels) retire(t);
-		for (long t : bloomAccum) retire(t);
 		width = w;
 		height = h;
 		hdr[0] = ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world A");
 		hdr[1] = ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world B");
+		sizeBloom(w, h);
+		ShadeFrameUpdater.LOOK.snapExposure();
+		System.out.println("[mcopt] shade: HDR targets " + w + "x" + h + ", bloom " + bloomLevels.length + " levels");
+	}
+
+	/** The bloom pyramid for a w x h source (the HDR world, or the resolver's image); kept while the size stays. */
+	private static void sizeBloom(int w, int h) {
+		if (w == bloomWidth && h == bloomHeight) return;
+		for (long t : bloomLevels) retire(t);
+		for (long t : bloomAccum) retire(t);
+		bloomWidth = w;
+		bloomHeight = h;
 		int n = ShadeConfig.BLOOM ? ShadeConfig.BLOOM_LEVELS : 0;
 		bloomLevels = new long[n];
 		bloomAccum = new long[n];
@@ -176,12 +202,10 @@ public final class ShadePost {
 		for (int i = 0; i < n; i++) {
 			lw = Math.max(1, (lw + 1) / 2);
 			lh = Math.max(1, (lh + 1) / 2);
-			bloomLevels[i] = ShadeRender.texture(ShadeRender.RG11B10F, lw, lh, true, "mcopt shade: bloom L" + i);
-			bloomAccum[i] = ShadeRender.texture(ShadeRender.RG11B10F, lw, lh, true, "mcopt shade: bloom U" + i);
+			bloomLevels[i] = ShadeRender.texture(ShadeRender.RGBA16F, lw, lh, true, "mcopt shade: bloom L" + i);
+			bloomAccum[i] = ShadeRender.texture(ShadeRender.RGBA16F, lw, lh, true, "mcopt shade: bloom U" + i);
 		}
 		ShadeRender.resource(3, n > 0 ? bloomAccum[0] : 0);
-		ShadeFrameUpdater.LOOK.snapExposure();
-		System.out.println("[mcopt] shade: HDR targets " + w + "x" + h + ", bloom " + n + " levels");
 	}
 
 	private static void retire(long t) {
@@ -270,6 +294,17 @@ public final class ShadePost {
 				}
 			}
 		}
+		Resolver r = resolver;
+		if (r != null) {
+			try {
+				long resolved = r.resolve(new Context(enc, encoder, scene, prev, depth, width, height, ShadeConfig.HDR_FORMAT, f, look));
+				if (resolved != 0) scene = resolved;
+			} catch (RuntimeException e) {
+				System.out.println("[mcopt] shade: resolver failed: " + e);
+			}
+		}
+		if (scene != hdr[frame & 1]) sizeBloom(ShadeRender.width(scene), ShadeRender.height(scene));
+		else sizeBloom(width, height);
 		float bloomNorm = 0f;
 		int n = bloomLevels.length;
 		if (n > 0) {

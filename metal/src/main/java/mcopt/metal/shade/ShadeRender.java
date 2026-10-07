@@ -90,7 +90,10 @@ public final class ShadeRender {
 		}
 	}
 
-	/** A private render-target + sampled texture (compressible); lossy for blurry intermediates. */
+	/**
+	 * A private render-target + sampled texture (compressible); lossy for blurry intermediates (RGBA16F/RGBA8/R16F/RG16F/R8;
+	 * RG11B10F can't be lossy and silently stays lossless).
+	 */
 	public static long texture(int format, int width, int height, boolean lossy, String label) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long t = ShadeNative.texture(ShadeBindings.ctx(), format, Math.max(1, width), Math.max(1, height), lossy ? 1 : 0, MemoryUtil.memAddress(stack.UTF8(label)));

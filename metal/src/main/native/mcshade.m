@@ -291,13 +291,14 @@ id<MTLComputePipelineState> mc_shade_cpso(Ctx *ctx, id<MTLLibrary> lib, const ch
 }
 
 // A private 2D texture usable as a render target and sampled (compressible: no ShaderWrite); lossy: the lossy compression
-// apple-gpu measured as ~2x cheaper for blurry intermediates (bloom).
+// apple-gpu measured as ~2x cheaper for blurry intermediates (bloom). Packed float formats (RG11B10Float, RGB9E5Float) don't
+// support lossy compression (texture descriptor validation aborts): they get the default lossless compression instead.
 id<MTLTexture> mc_shade_texture(Ctx *ctx, int format, int width, int height, int lossy, const char *label) {
 	@autoreleasepool {
 		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format width:width height:height mipmapped:NO];
 		td.storageMode = MTLStorageModePrivate;
 		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-		if (lossy) td.compressionType = MTLTextureCompressionTypeLossy;
+		if (lossy && format != MTLPixelFormatRG11B10Float && format != MTLPixelFormatRGB9E5Float) td.compressionType = MTLTextureCompressionTypeLossy;
 		id<MTLTexture> t = [ctx->device newTextureWithDescriptor:td];
 		if (t && label) t.label = [NSString stringWithUTF8String:label];
 		return t;

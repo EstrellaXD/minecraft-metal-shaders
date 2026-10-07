@@ -39,7 +39,7 @@ struct TaaParams {
 	float4 output;    // 160  xy output size (px), zw 1 / output size
 	float4 jitter;    // 176  xy this frame's jitter (input px), zw input px per output px (input.xy / output.xy)
 	float4 blend;     // 192  x minimum blend weight of the current frame, y clip box size (sigmas), z history age cap, w 1 = no history
-	float4 misc;      // 208  x history rescale (exposure now / then), y unused (HDR input: function constant TAA_HDR), z reactive strength, w debug view
+	float4 misc;      // 208  x history rescale (exposure now / then), y unused (HDR input: function constant TAA_HDR), z reactive strength, w debug view (taau_debug_fs)
 	float4 sharpen;   // 224  x strength (0 off), y current-frame weight floor in motion (> 1.5 px/frame), zw unused
 };
 
@@ -96,13 +96,12 @@ struct TaaOut {
 	half depth [[color(1)]];
 };
 
-fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(0)]],
-                        texture2d<half> cur [[texture(0)]], depth2d<float> curDepth [[texture(1)]],
-                        texture2d<half> hist [[texture(2)]], texture2d<half> histDepth [[texture(3)]],
-                        texture2d<half> reactive [[texture(4)]])
+// The resolve of output pixel centre q; debug (mcopt.shade.taaDebug views) gets the colour to show instead, so the
+// history itself is never polluted by a debug view.
+static inline TaaOut taauResolve(float2 q, constant TaaParams &p, texture2d<half> cur, depth2d<float> curDepth, texture2d<half> hist,
+                                 texture2d<half> histDepth, texture2d<half> reactive, thread half3 &debug)
 {
 	constexpr sampler linear(filter::linear, address::clamp_to_edge);
-	float2 q = in.position.xy;                         // output pixel centre
 	float2 pin = q * p.jitter.zw + p.jitter.xy;        // that scene point in the jittered input raster (pixel units)
 	int2 base = int2(floor(pin));
 	int2 last = int2(p.input.xy) - 1;
@@ -182,14 +181,43 @@ fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(
 	half3 resolved = mix(clipped, current, saturate(alpha));
 	float3 rgb = taaExpand(float3(resolved));
 	half newAge = min(age + 1.0h, half(p.blend.z));
-	int debug = int(p.misc.w);
-	if (debug != 0) {
-		if (debug == 1) rgb = mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z));   // history age
-		else if (debug == 2) rgb = float3(saturate(float(outside) - 1.0), float(disocclusion), valid ? 0.0 : 1.0);    // rejection
-		else if (debug == 3) rgb = taaExpand(float3(current)), newAge = 1.0h;                                         // no history
-	}
 	o.color = half4(half3(max(rgb, 0.0)), newAge);
 	if (!all(isfinite(o.color))) o.color = half4(current, 1.0h);
+	int view = int(p.misc.w);
+	if (view == 1) debug = half3(mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z)));   // history age
+	else if (view == 2) debug = half3(saturate(float(outside) - 1.0), float(disocclusion), valid ? 0.0 : 1.0);           // rejection
+	else if (view == 3) debug = half3(taaExpand(float3(current)));                                                       // no history
+	else debug = o.color.rgb;
+	return o;
+}
+
+fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(0)]],
+                        texture2d<half> cur [[texture(0)]], depth2d<float> curDepth [[texture(1)]],
+                        texture2d<half> hist [[texture(2)]], texture2d<half> histDepth [[texture(3)]],
+                        texture2d<half> reactive [[texture(4)]])
+{
+	half3 debug;
+	return taauResolve(in.position.xy, p, cur, curDepth, hist, histDepth, reactive, debug);
+}
+
+// mcopt.shade.taaDebug: the same resolve, plus the debug view straight into the destination (no output pass).
+struct TaaDebugOut {
+	half4 color [[color(0)]];
+	half depth [[color(1)]];
+	half4 view [[color(2)]];
+};
+
+fragment TaaDebugOut taau_debug_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(0)]],
+                                   texture2d<half> cur [[texture(0)]], depth2d<float> curDepth [[texture(1)]],
+                                   texture2d<half> hist [[texture(2)]], texture2d<half> histDepth [[texture(3)]],
+                                   texture2d<half> reactive [[texture(4)]])
+{
+	half3 debug;
+	TaaOut r = taauResolve(in.position.xy, p, cur, curDepth, hist, histDepth, reactive, debug);
+	TaaDebugOut o;
+	o.color = r.color;
+	o.depth = r.depth;
+	o.view = half4(debug, 1.0h);
 	return o;
 }
 

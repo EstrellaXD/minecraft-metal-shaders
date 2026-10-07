@@ -299,8 +299,9 @@ int main(int argc, const char **argv) {
 		printf("OK   taa.metal compiled, pipelines built on %s\n", name);
 
 		if (strcmp(argv[2], "compile") == 0) { // validate.sh: both TAA_HDR variants, a resolve into each destination format
-			for (int hdr = 0; hdr < 2; hdr++) {
-				Taa *t = mc_taa_new(ctx, src.UTF8String, hdr, err, sizeof err);
+			for (int v = 0; v < 4; v++) { // TAA_HDR 0/1, each also with the debug view (flags bit 2)
+				int hdr = v & 1, dbg = v >> 1;
+				Taa *t = mc_taa_new(ctx, src.UTF8String, hdr | (dbg ? 4 : 0), err, sizeof err);
 				if (!t) { printf("FAIL compile taa.metal (hdr %d): %s\n", hdr, err); return 1; }
 				mc_taa_resize(t, ctx, 64, 64);
 				id<MTLTexture> c = tex(MTLPixelFormatRGBA8Unorm, 48, 48, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead);
@@ -316,7 +317,7 @@ int main(int argc, const char **argv) {
 					[cb waitUntilCompleted];
 					if (cb.error) { printf("FAIL taa resolve (hdr %d, format %lu): %s\n", hdr, (unsigned long) formats[k], cb.error.description.UTF8String); return 1; }
 				}
-				printf("OK   taa.metal: TAAU resolve (TAA_HDR %d) + output to RGBA8Unorm and RGBA16Float\n", hdr);
+				printf("OK   taa.metal: TAAU %s (TAA_HDR %d) to RGBA8Unorm and RGBA16Float\n", dbg ? "debug resolve" : "resolve + output", hdr);
 			}
 			return 0;
 		}

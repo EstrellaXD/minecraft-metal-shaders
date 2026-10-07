@@ -19,7 +19,8 @@
 typedef struct {
 	id<MTLRenderPipelineState> resolve;
 	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *output;  // taa_output_fs per destination pixel format
-	id<MTLFunction> vs, outputFs;
+	id<MTLFunction> vs, outputFs, debugFs;  // debugFs: taau_debug_fs (flags bit 2), else nil
+	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *debug;  // taau_debug_fs per destination pixel format
 	id<MTLTexture> hist[2], depth[2];
 	id<MTLTexture> noReactive;  // 1x1 R8 zero: bound when no reactive mask is given
 	int width, height, cur;     // history size; hist[cur] is the latest
@@ -37,7 +38,8 @@ static id<MTLTexture> taaTarget(id<MTLDevice> device, MTLPixelFormat format, int
 }
 
 // Compiles taa.metal. flags: bit 0 = the input is linear HDR (function constant TAA_HDR), else display-encoded LDR (M1's
-// RGBA8); bit 1 = lossy-compressed history (only where the GPU supports it, Apple8+). NULL with the compiler's message in err.
+// RGBA8); bit 1 = lossy-compressed history (only where the GPU supports it, Apple8+); bit 2 = debug view (taau_debug_fs
+// writes the view into the destination, no output pass). NULL with the compiler's message in err.
 Taa *mc_taa_new(Ctx *ctx, const char *source, int flags, char *err, int errCap) {
 	int hdr = flags & 1;
 	@autoreleasepool {
@@ -76,6 +78,8 @@ Taa *mc_taa_new(Ctx *ctx, const char *source, int flags, char *err, int errCap) 
 		t->output = [NSMutableDictionary new];
 		t->vs = [lib newFunctionWithName:@"taa_vs"];
 		t->outputFs = [lib newFunctionWithName:@"taa_output_fs"];
+		t->debug = [NSMutableDictionary new];
+		if (flags & 4) t->debugFs = [lib newFunctionWithName:@"taau_debug_fs" constantValues:fc error:&e];
 		[lib release];
 		MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:1 height:1 mipmapped:NO];
 		d.storageMode = MTLStorageModeShared;
@@ -110,6 +114,31 @@ static id<MTLRenderPipelineState> outputPipeline(Ctx *ctx, Taa *t, MTLPixelForma
 	}
 }
 
+// The debug resolve for a destination format (made on first use).
+static id<MTLRenderPipelineState> debugPipeline(Ctx *ctx, Taa *t, MTLPixelFormat format) {
+	NSNumber *key = @(format);
+	id<MTLRenderPipelineState> pso = t->debug[key];
+	if (pso) return pso;
+	@autoreleasepool {
+		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
+		pd.vertexFunction = t->vs;
+		pd.fragmentFunction = t->debugFs;
+		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+		pd.colorAttachments[1].pixelFormat = MTLPixelFormatR16Float;
+		pd.colorAttachments[2].pixelFormat = format;
+		pd.label = @"mcopt shade: TAAU debug";
+		NSError *e = nil;
+		pso = [ctx->device newRenderPipelineStateWithDescriptor:pd error:&e];
+		if (!pso) {
+			NSLog(@"mcopt shade: TAAU debug pipeline for format %lu: %@", (unsigned long) format, e);
+			return nil;
+		}
+		t->debug[key] = pso;
+		[pso release];
+		return pso;
+	}
+}
+
 // (Re)allocates the history at the output size. Returns 1 when it changed (the caller resets the history), 0 otherwise.
 int mc_taa_resize(Taa *t, Ctx *ctx, int width, int height) {
 	if (t->width == width && t->height == height && t->hist[0]) return 0;
@@ -133,7 +162,8 @@ int mc_taa_resize(Taa *t, Ctx *ctx, int width, int height) {
 void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth, id<MTLTexture> reactive, id<MTLTexture> dst,
 	const void *params, int paramsLength) {
 	if (!t->hist[0]) return;
-	id<MTLRenderPipelineState> out = dst ? outputPipeline(enc->ctx, t, dst.pixelFormat) : nil;
+	id<MTLRenderPipelineState> dbg = dst && t->debugFs ? debugPipeline(enc->ctx, t, dst.pixelFormat) : nil;
+	id<MTLRenderPipelineState> out = dst && !dbg ? outputPipeline(enc->ctx, t, dst.pixelFormat) : nil;
 	@autoreleasepool {
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
 		int next = 1 - t->cur;
@@ -144,9 +174,14 @@ void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth
 		rp.colorAttachments[1].texture = t->depth[next];
 		rp.colorAttachments[1].loadAction = MTLLoadActionDontCare;
 		rp.colorAttachments[1].storeAction = MTLStoreActionStore;
+		if (dbg) {
+			rp.colorAttachments[2].texture = dst;
+			rp.colorAttachments[2].loadAction = MTLLoadActionDontCare;
+			rp.colorAttachments[2].storeAction = MTLStoreActionStore;
+		}
 		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shade: TAAU";
-		[r setRenderPipelineState:t->resolve];
+		[r setRenderPipelineState:dbg ? dbg : t->resolve];
 		[r setFragmentBytes:params length:paramsLength atIndex:0];
 		[r setFragmentTexture:color atIndex:0];
 		[r setFragmentTexture:depth atIndex:1];
@@ -184,6 +219,8 @@ void mc_taa_free(Taa *t) {
 	[t->output release];
 	[t->vs release];
 	[t->outputFs release];
+	[t->debugFs release];
+	[t->debug release];
 	for (int i = 0; i < 2; i++) {
 		[t->hist[i] release];
 		[t->depth[i] release];

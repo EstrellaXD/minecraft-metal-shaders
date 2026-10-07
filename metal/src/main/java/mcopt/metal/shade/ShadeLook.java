@@ -72,10 +72,12 @@ public final class ShadeLook {
 	/** Auto-exposure metering key (the metered mean luminance maps to this, pre-exposed) and bounds around the reference. */
 	static final float METER_KEY = 0.30f, EV_DOWN = 1.75f, EV_UP = 1.75f, TAU_UP = 0.6f, TAU_DOWN = 2.2f;
 	/** Haze (Rayleigh-like) extinction at its base, per block, and scale height; base height above sea level. */
-	static final float[] HAZE_SIGMA = {0.22e-3f * 0.65f, 0.48e-3f * 0.65f, 1.0e-3f * 0.65f};
+	static final float[] HAZE_SIGMA = {0.22e-3f * 0.40f, 0.48e-3f * 0.40f, 1.0e-3f * 0.40f};
+	/** The keyframes' mist sigma column (x 1e-3 / block) is scaled by this: at full strength a low sun drowns the near field. */
+	static final float MIST_SCALE = 0.35f;
 	static final float HAZE_H = 48f, HAZE_BASE = 16f, MIST_H = 10f, MIST_BASE = 4f, MIST_ALBEDO = 0.9f, SEA = 63f;
 	/** Sun and moon disc angular radius (radians). */
-	static final float SUN_RADIUS = (float) Math.toRadians(0.5), MOON_RADIUS = (float) Math.toRadians(0.65);
+	static final float SUN_RADIUS = (float) Math.toRadians(0.75), MOON_RADIUS = (float) Math.toRadians(0.65);
 
 	// ---- per-frame values (read by tools and the debug log) --------------------------------------------------------------
 	public float elevation, rising, chromaGamma, lightMul, saturation, contrast, bloomMix, vlStrength, mistSigma, whiteBalance;
@@ -202,10 +204,10 @@ public final class ShadeLook {
 		put4(b, TONEMAP, this.contrast, SHOULDER, this.toneB, this.toneBeta);
 		float inverseMax = Math.min(0.80f, 0.95f / (this.toneB * SHOULDER));
 		put4(b, OUTPUT, 1f, 1f, 1f, inverseMax);
-		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeConfig.LOOK], 0.12f * (1f + f.rain), 0f);
+		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeConfig.LOOK], 0.06f * (1f + f.rain), 0f);
 		float haze = 1f + 1.5f * f.rain;
 		put4(b, FOG_R, HAZE_SIGMA[0] * haze, HAZE_SIGMA[1] * haze, HAZE_SIGMA[2] * haze, HAZE_H);
-		put4(b, FOG_M, this.mistSigma * 1e-3f, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, f.rain > 0.5f ? 0.6f : MIST_ALBEDO);
+		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, f.rain > 0.5f ? 0.6f : MIST_ALBEDO);
 		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, 0.6f * (1f - f.rain));
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);

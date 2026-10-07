@@ -31,3 +31,10 @@ Sodium (https://github.com/CaffeineMC/sodium)
     metal/src/main/java/mcopt/metal/cpu/CullReuse.java
     metal/src/main/native/mcprobe.m
     metal/src/main/native/mcterrain.m
+
+Native shading M2 (metal/src/main/resources/mcopt/shade/shade_post.metal): the bloom composite (an energy-conserving lerp
+toward the blurred image with octave weights i^s and a fog-weighted extra, instead of an additive threshold) follows SE
+Natural Bloom & Dirty Lens, Copyright (c) 2019 sonicether, MIT License
+(https://github.com/sonicether/SE-Natural-Bloom-Dirty-Lens); the code is an original Metal implementation. The 13-tap
+downsample / tent upsample pyramid follows Jimenez 2014 (public talk); the tone curve follows Lottes 2016 (public talk);
+the integer hash is Chris Wellons' lowbias32 (public domain).

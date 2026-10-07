@@ -230,9 +230,9 @@ public final class ShadeFrameUpdater {
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());
 		if (LOG_EVERY > 0 && now - lastLog > LOG_EVERY * 1_000_000_000L) {
 			lastLog = now;
-			System.out.printf("[mcopt] shade: e %.1f deg, exposure ref %.3f gpu %.3f, metered log2 %.2f, sat %.2f, contrast %.2f, bloom %.3f, mist %.2f, wb %.0f%n",
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: e %.1f deg, exposure ref %.3f gpu %.3f, metered log2 %.2f, sat %.2f, contrast %.2f, bloom %.3f, mist %.2f, wb %.0f",
 				LOOK.elevation, LOOK.exposureRef, ShadeBindings.gpuExposure(), ShadeBindings.gpuMeteredLog2(), LOOK.saturation, LOOK.contrast,
-				LOOK.bloomMix, LOOK.mistSigma, LOOK.whiteBalance);
+				LOOK.bloomMix, LOOK.mistSigma, LOOK.whiteBalance));
 		}
 	}
 

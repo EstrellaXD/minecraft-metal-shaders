@@ -106,7 +106,7 @@ coefficients `L.fogR`, `L.fogM` so shafts and haze agree**), `shadeLit2`, `shade
   Today, with DH on, far LODs already appear in water reflections through the rendered-sky path (they are sky in the
   depth copy, visible in `prevScene`).
 
-## 4. Depth-based post (`m2-vl`, GTAO, atmosphere composite): before the tone map
+## 4. Depth-based post (`m2-vl` merged; GTAO, atmosphere composite): before the tone map
 
 Register once (e.g. from your module's init after `ShadePost.active()`):
 
@@ -118,13 +118,29 @@ ShadePost.addBeforeTonemap(100, c -> {               // lower order first; VL = 
 });
 ```
 
-- This replaces `VlGameRendererMixin` (render3dHud wrap) on m2: the hook runs at the same point (render3dHud, world depth
-  intact), but inside ShadePost so it is ordered with bloom/tone map. The composite adds **pre-exposed radiance** into the
-  HDR scene (multiply your in-scattering by `ShadeGpu.exposure.x`), additive blend (`BLEND_ADD`) or programmable blending.
-  Bloom and the fog glow then pick the shafts up automatically.
-- Without HDR (`mcopt.shade.hdr=false`) the hooks don't run; keep your old path for that case if you want M1-style output.
+- The hook runs at render3dHud (world depth intact) inside ShadePost.beforeHand, ordered with bloom/tone map. A composite
+  adds **pre-exposed radiance** into the HDR scene (multiply your in-scattering by `ShadeGpu.exposure.x`), fixed-function
+  blend (`BLEND_ADD`, or One/SourceAlpha for scene*T + light; the RG11B10F target has no destination alpha). Bloom and the
+  fog glow then pick it up.
+- **Cheaper: fold into the final pass** (what VL does): `ShadePost.setVolumetric(lightT, dist, maxDist)` from the hook, with
+  `lightT` = rgb light before exposure + a = transmittance, `dist` = same size, a = distance per texel (blocks, 1e4 sky),
+  any resolution. `shade_final` upsamples it depth-aware and applies `c = (c*T_haze + S_haze)*a + rgb*exposure` before
+  bloom's mix (and adds 1 − a to the fog glow). No full-resolution read-modify-write of the HDR target (VL: −0.4 ms at
+  native); bloom, the exposure meter and `prevScene` don't see that light. One volumetric source per frame (reset in
+  beginWorld); a second module would have to combine into the same textures.
+- Without HDR (`mcopt.shade.hdr=false`) the hooks don't run; VL keeps its M1 path (render3dHud mixin, LDR composite).
 - Sky pixels: depth == 0. Distant Horizons pixels are not in the main depth (they look like sky there) until FT2 adds a
   merged scene-distance input; treat depth 0 as "far" and cap the march by `L.vl.y`.
+
+**Volumetric light as merged** (VL.md for the module itself): `ShadeVl` registers `addBeforeTonemap(100)` on its first
+render3dHud with `ShadePost.active()`; per frame `mc_vl_render(c.enc(), state, c.scene(), c.depth(), ..., flags 1|4|16)`
+encodes canopy (compute; with VL_HDR it writes `ShadeGpu.scene.y` = canopy factor 0..1, smoothed) → march (VL res, MRT
+light+dist and R8 sky mask) → `vl_temporal_fold` (MRT history + lightT), then `mc_vl_outputs` → `ShadePost.setVolumetric`.
+`mcopt.shade.vl.fold=false` (or any `vl.debug` view) uses `vl_composite_hdr` instead (blend One/SourceAlpha into the HDR
+target). Its open-air medium reads the base's E06 numbers through `ShadeLook.hazeSigmaLuma/mistSigmaBlock/mistHeight` and
+`SEA/HAZE_BASE/HAZE_H/MIST_BASE` (now public), its strength `ShadeLook.vlFactor()`. TAAU (`m2-taau`) still to do on VL:
+NoJitter matrices in `vlDirection`/`vl_temporal`, VL size from `renderScale.zw`, and the fold samples by uv so it already
+works at output resolution.
 
 ## 5. Distant Horizons (FT0) under the HDR frame
 
@@ -196,6 +212,11 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 | `mcopt.shade.ssrPrev` | true | reflections read last frame's HDR world (clouds, sky, LODs in reflections) |
 | `mcopt.shade.waterBake` | true | waves baked once per frame into a mipmapped texture (false: analytic per pixel) |
 | `mcopt.shade.waterWaves` / `.caustics` / `.waterFoam` / `.waterReflect` / `.glossy` | 1 / true / true / 1 / false | see WATER.md |
+| `mcopt.shade.vl` | true | volumetric light (god rays, canopy mist, crepuscular streaks, underwater shafts) |
+| `mcopt.shade.vl.fold` | true | blend VL in the final pass (false: composite pass before bloom) |
+| `mcopt.shade.vl.scale` / `.steps` / `.ssTaps` / `.dist` | preset | P 0.25/10/6/160, B 0.33/12/8/160, Q 0.5/16/10/224, U 0.5/24/12/224 |
+| `mcopt.shade.vl.strength` / `.mist` / `.moon` / `.extinction` / `.underwater` | 1 / 1 / 1 / true / true | see VL.md |
+| `mcopt.shade.vl.debug` / `.log` / `.gpuTimer` | 0 / false / false | 1 light, 2 distance, 3 mist T; log line every 2 s; per-pass GPU ms |
 
 ## 9. Merge notes
 

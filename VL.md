@@ -23,7 +23,7 @@ entry is needed. New files are Apache-2.0.
 | Flag | Default | |
 |---|---|---|
 | `mcopt.shade.vl` | true (with `mcopt.shade=true`) | god rays on. With `mcopt.shade=false` nothing of this module loads (mixin plugin) |
-| `mcopt.shade.preset` | balanced | performance / balanced / quality / ultra: VL scale 0.25 / 0.33 / 0.5 / 0.5, steps 10 / 12 / 16 / 24, screen taps 6 / 8 / 10 / 12, distance 160 / 160 / 224 / 224 (m2's base defaults the same property to performance) |
+| `mcopt.shade.preset` | performance (balanced on m1) | performance / balanced / quality / ultra: VL scale 0.25 / 0.33 / 0.5 / 0.5, steps 10 / 12 / 16 / 24, screen taps 6 / 8 / 10 / 12, distance 160 / 160 / 224 / 224 (m2's base defaults the same property to performance) |
 | `mcopt.shade.vl.scale` | preset | march resolution relative to the main target |
 | `mcopt.shade.vl.steps`, `.ssTaps`, `.dist` | preset | override the preset |
 | `mcopt.shade.vl.strength` | 1 | overall brightness |
@@ -34,6 +34,7 @@ entry is needed. New files are Apache-2.0.
 | `mcopt.shade.vl.temporal` | true | temporal accumulation (false: raw march, for comparisons) |
 | `mcopt.shade.vl.canopy` | -1 | force the canopy factor 0..1 (debug; negative = measured on the GPU) |
 | `mcopt.shade.vl.lossy` | false | lossy-compressed VL targets |
+| `mcopt.shade.vl.fold` | true | m2: blend in the post chain's final pass (false: `vl_composite_hdr` pass) |
 | `mcopt.shade.vl.debug` | 0 | 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance |
 | `mcopt.shade.vl.log` | false | a line every 2 s: canopy (smoothed, raw shadowed fraction), haze, mist, canopy mist, strength, g, humidity, sun elevation |
 | `mcopt.shade.vl.gpuTimer` | false | timestamp counters around march / temporal / composite; their average ms in the log (turns the log on) |
@@ -127,7 +128,33 @@ haze densities, memAddress bug) -> v4 canopy mist with extinction (visible shaft
 lighter veil -> v7 flatter phase (side shafts) -> v8 open-glow subtraction (no milky sky), bluer water -> v9-v11
 optimisation (2.7 -> 1.5 ms in game, same look).
 
-## 5. Moving to the HDR pipeline (m2)
+## 5. On the HDR pipeline (m2, merged)
+
+Done on branch `m2` (see M2_STATUS.md "Volumetric light" for numbers and screenshots, M2_INTEGRATION.md section 4 for the
+interfaces):
+
+1. **Hook**: `ShadePost.addBeforeTonemap(100, ShadeVl::beforeTonemap)`, registered by the render3dHud mixin's first call
+   with `ShadePost.active()`; the mixin's M1 path (LDR composite) stays for `mcopt.shade.hdr=false`. Native state made
+   with flag 2 (HDR): canopy kernel with VL_HDR, `vl_temporal_fold`.
+2. **Bindings**: `mc_shade_bind_render` binds 16-19 (ShadeFrame, ShadeLook, ShadeGpu, ShadeResources), `mc_shade_bind_compute`
+   16-18; source = `ShadeMsl.prelude()` + vl.metal (`VlConfig.source`).
+3. **Fold** (default): `vl_temporal_fold` also writes `lightT` (light + canopy-mist veil before exposure, a = T at VL res);
+   `ShadePost.setVolumetric(lightT, history, dist)`; `shade_final` upsamples (gather fast path) and blends it after the
+   haze. `mcopt.shade.vl.fold=false` / debug views: `vl_composite_hdr` (no target read; blend One/SourceAlpha into the
+   RG11B10F/RGBA16F HDR target).
+4. **Haze agreement**: open-air medium from ShadeLook (E06 haze luma ×4.6, mist ×4.2 × humidity, base heights and scale
+   heights, rain), strength × `ShadeLook.vlFactor()` (keyframe VL column × look preset, softened).
+5. **Canopy factor** → `ShadeGpu.scene.y`.
+6. **HDR look constants** (ShadeVl `HDR_*`): air ×0.6, water ×0.45, veil 0.1, extinction 0.35, open glow cut 0.7, carve
+   0.4 (canopy mist) / 0.55 (caustic shafts; `VlParams.carve`).
+7. **Still to do**: TAAU (NoJitter matrices in `vlDirection`/`vl_temporal`, VL size from `renderScale.zw`), Distant
+   Horizons merged distance for the march and the sky mask (FT2), cloud shadows (M3).
+
+Measured at native 3024x1964 (performance): VL ≈ +0.52 ms GPU per frame (march 0.32, temporal 0.08, final-pass share
+≈ 0.13); balanced ≈ +0.68 ms.
+
+### M1 notes for reference (how the m1 → m2 move was planned)
+
 
 The passes are the same; only the hook point, the exposure source and the blend change. `vl.metal` already contains the
 HDR composite (`VL_HDR = true`): it returns `float4(light, T)` and reads the exposure from `ShadeGpu.exposure.x`

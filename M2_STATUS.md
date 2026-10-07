@@ -122,6 +122,61 @@ are mirrored only through `prevScene` where something opaque is behind them); th
 colour unless SSR hits; DH's own water (LOD oceans) is unshaded (FT2); glossy glass/ice is opt-in and unchecked in game;
 the copy runs every frame with translucent terrain even when no water is visible.
 
+## Volumetric light / god rays (merged from `m2-vl`, 2026-10-07 night)
+
+**Merged** (`79f6fc3` merge + follow-ups; module doc `VL.md`, wiring in M2_INTEGRATION.md section 4). What changed on m2:
+
+- **Hook**: VL runs as ShadePost's before-tonemap hook (order 100) whenever the HDR post chain is live; the m1 render3dHud
+  mixin only registers it then (it keeps the M1 LDR composite for `mcopt.shade.hdr=false`). Source = `ShadeMsl.prelude` +
+  vl.metal; `mc_shade_bind_render/compute` bind slots 16-19; the canopy kernel publishes its factor to `ShadeGpu.scene.y`.
+- **Folded into the final pass** (`mcopt.shade.vl.fold`, default on): the temporal pass writes an extra VL-resolution
+  RGBA16F target (light before exposure + the canopy mist's transmittance T) and `ShadePost.setVolumetric` hands it to
+  `shade_final`, which upsamples it depth-aware (one `gather` of the history's distances; one bilinear sample where all
+  four agree, the 4-tap bilateral only at depth edges) and applies `c = (c*T_haze + S_haze)*T_vl + L_vl*exposure` before
+  bloom's mix; the fog glow also uses T_vl. This replaces a full-resolution read-modify-write of the HDR target
+  (vl_composite_hdr, 0.47-0.55 ms at native, kept for `fold=false` and the debug views) with ≈ 0.13 ms in the final pass.
+  Trade-off: bloom and the exposure meter don't see the shafts (they are soft, low-frequency light), and `prevScene`
+  (SSR) has no shafts.
+- **HDR look**: in HDR nothing compresses the in-scattering the way M1's output curve did, so the first HDR build was a
+  milky veil. Tuned in game (vi1..vi7): strength ×0.6 in air and ×0.45 under water, lighter canopy-mist veil (0.1 sky
+  colour) and extinction (0.35), 70 % of the open air's unshadowed glow left to the base haze, and a **carve** (new
+  `VlParams.carve`): the canopy mist keeps max(lit − 0.4·unshadowed, 0)/0.6 and the caustic water shafts max(lit −
+  0.55·uncaustic, 0)/0.45, so rays that cross shadows darken and the beams read as structure. The open-air medium now
+  follows the base's E06 haze/mist (`ShadeLook` heights, keyframes, morning/evening asymmetry, rain) ×4.6/×4.2, and the
+  strength follows the ShadeLook VL keyframe and look preset (softened to 0.66 at noon .. 1.2 storybook golden hour).
+- VL preset default now follows the base (`mcopt.shade.preset`, performance: VL 756x491 at native, 10 steps, 6 taps).
+
+| Config (3024x1964, bay "spin" view + flight, same-session interleaved A/B) | spin fps | spin GPU ms | flight fps | flight GPU ms | runs |
+|---|---|---|---|---|---|
+| M2 + water, `mcopt.shade.vl=false` | 109-111 | 9.03-9.18 | 116-118 | 8.51-8.62 | vi7-off, vi7-off2 (vi3-off/off2 8.71-9.16 / 8.41-8.56) |
+| **M2 + water + VL, performance (default, fold)** | 104 | 9.60-9.66 | 109-111 | 9.03-9.20 | vi7-on, vi7-on2 → **VL ≈ +0.52 ms / +0.55 ms** |
+| VL balanced (998x648, 12 steps, 8 taps) | 102 | 9.81 | 108 | 9.22 | vi7-bal → ≈ +0.70 / +0.66 ms |
+| VL with a composite pass (`fold=false`, first build) | 99 | 10.07 | 105 | 9.55 | vi2-nofold (vi2-fold same session: 9.84 / 9.07) |
+| passes only (`foldSkip`, measurement) | 108-111 | 8.99-9.27 | 112-117 | 8.55-8.94 | vi4-skip, vi4-skip2 |
+| DEV-DH (DH default config) + water + VL | 50.9 | 19.65 | 49.7 | 20.13 | vi7-dh (wi7-dh without VL: 19.4 / 19.9) |
+| `mcopt.shade=false` | 544 | 1.71 | 409 | 2.17 | vi7-noshade (no shade/VL line in the log; machine shared, ±0.1 ms) |
+
+In-game GPU timer (`-Dmcopt.shade.vl.gpuTimer=true`, ~18 two-second windows): performance march 0.32 + temporal 0.08 ms,
+balanced 0.48 + 0.13 ms; the final pass's share ≈ 0.13 ms. Performance VL ≈ 0.5 ms total at native Retina = the top of the
+bible's E07 budget (0.40-0.55); with TAAU 0.67x the march/temporal shrink to ≈ 0.2 ms (the fold stays at output res).
+The frame is still below 120 fps in this water-heavy view because of the water module (≈ +3.3 ms at native) until TAAU.
+
+Stress (`vi7-stress`: reload, fullscreen→windowed 3024x1684→fullscreen, Nether and back) passed; VL targets follow the
+resize, no errors. The `vl_overhang` Complementary reference doesn't exist (Iris run skipped it) and its
+`vl_forest_morning` shot has a stray inventory screen (keyboard input during that older run).
+
+Screenshots (`work/release/M2-vl-screenshots/`): `vl-off-vs-on-vs-complementary.jpg` (god-ray poses: VL off, on, Iris +
+Complementary), `vl-morning-evening-crops.jpg` (full-resolution crops: golden beams through the canopy, evening shafts by
+the birch), `vl-underwater-carve-before-after.jpg` (caustic shaft curtain after the carve), `vl-standard-off-vs-on.jpg`
+(sunset over water, noon, forest, rain, night: no regressions; VL subtle in the open), `vl-dh.jpg` (DEV-DH). Full PNGs:
+`bench-results/*-vi7-look/screenshots` (god-ray poses), `*-vi6-look/screenshots` (all), `*-vi7-dh/screenshots`.
+
+VL known issues: DH pixels are depth 0 (sky) for VL: at sunset LOD silhouettes toward the sun get the full 160-block
+in-scattering and the crepuscular sky mask counts them as open sky (streaks cross LOD hills) until FT2's merged distance;
+clouds cast no shafts (no cloud shadow map yet); no tinted shafts through water seen from above or stained glass (M3 tint
+map); `vl_forest_side` / `vl_forest_evening` stay subtle (sun behind dense leaves); TAAU integration must switch
+`vlDirection`/`vl_temporal` to the NoJitter matrices and size VL from `renderScale.zw`.
+
 ## Known issues / next
 
 - Sunset horizon reads a bit lemon-yellow (M1 was more orange): tune golden-hour WB/saturation and the sky's golden grade.
@@ -129,7 +184,8 @@ the copy runs every frame with translucent terrain even when no water is visible
 - Stars show through the semi-transparent vanilla clouds at night (clouds alpha); fixed by the M3 cloud system or by
   dimming stars by cloud coverage.
 - DH LODs keep DH's own lighting/fog (bridge); FT2 should redirect `distantHorizons:TerrainRenderer` into HDR with a shade
-  override and provide a merged scene-distance input (haze/VL currently treat DH pixels as sky: depth 0).
+  override and provide a merged scene-distance input (haze/VL currently treat DH pixels as sky: depth 0; VL's march and
+  crepuscular sky mask need it too, see the VL section).
 - Bloom/TAAU order: with a resolver, bloom is built from the resolved (output-res) image; the bible's internal-res L0 is
   cheaper — revisit when TAAU lands.
 - Translucent surfaces that don't write depth get the haze of what is behind them (final-pass haze).

@@ -163,6 +163,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.sky = in.v_Light.y;
         wi.shadow = shadow;
         wi.lit = shadeLit(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf);
+        wi.exposure = sf.time.z;
         radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy);
         alpha = 1.0; // the water composited what is behind it from the scene copy
         if (debug == 4) radiance = float3(saturate(wi.footprint * 4.0), float(waterSprite == 2), saturate(length(p) / 128.0)) / max(sf.time.z, 1e-3);

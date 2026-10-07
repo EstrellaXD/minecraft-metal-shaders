@@ -21,7 +21,7 @@
 // INPUTS (bound by mcwater.m on every shaded encoder, fragment stage):
 //   texture(18) sceneCopy  the main pass's colour attachment 0, copied at the switch to translucent terrain: the opaque
 //                          scene (sky, terrain, entities) without the translucents. M1: tone-mapped sRGB in RGBA8 (read
-//                          back to radiance by shadeWaterSceneRadiance); M2 HDR: pre-exposed linear radiance (define
+//                          back to radiance by shadeWaterSceneRadiance); M2 HDR: pre-exposed linear radiance (MCOPT_HDR or
 //                          SHADE_HDR).
 //   texture(19) depthCopy  the depth attachment at the same moment (Depth32Float, reversed-Z).
 //   buffer(23)  ShadeWaterParams (below). state.x == 1 only after this frame's copy: otherwise callers must not read the
@@ -59,19 +59,37 @@ static inline float shadeLinearW(float z, constant ShadeFrame &f) {
 	return f.proj[3][2] / max(z + f.proj[2][2], 1e-7);
 }
 
-// The scene copy's value back to linear radiance before exposure. M1 stores tone-mapped sRGB: undo the sRGB curve, then
+// A display-referred colour (M1's tone-mapped sRGB) back to linear radiance before exposure: undo the sRGB curve, then
 // the hue-preserving tone curve on the brightest channel (shadeOutput keeps the channel ratios below its white blend),
 // then the exposure. Clipped highlights come back as ~5.6 / exposure.
-static inline float3 shadeWaterSceneRadiance(half3 stored, constant ShadeFrame &f) {
-#ifdef SHADE_HDR
-	return float3(stored) / max(f.time.z, 1e-6); // HDR target: pre-exposed linear radiance (M2: use ShadeGpu's exposure)
-#else
+static inline float3 shadeWaterDisplayRadiance(half3 stored, float exposure) {
 	float3 o = float3(shadeToLinear(stored));
 	float mo = max(max(o.r, o.g), max(o.b, 1e-5));
 	float tm = min(mo, 0.9985);
 	float y = (tm + sqrt(tm * tm + 0.024144 * tm)) * (1.0 / 2.012);    // undo the toe: 1.006 y^2 - tm y - 0.006 tm = 0
 	float m = -log2(max(1.0 - y, 1e-4)) * (0.69314718 / 1.1);          // undo 1 - e^-1.1x
-	return o * (m / mo) / max(f.time.z, 1e-6);
+	return o * (m / mo) / max(exposure, 1e-6);
+}
+
+// The scene copy's value back to linear radiance before exposure. M1 (RGBA8 target): the display transform undone. HDR
+// target (MCOPT_HDR, the M2 base, or SHADE_HDR): the copy already holds pre-exposed linear radiance, so only the
+// exposure the frame was drawn with (ShadeWaterIn.exposure: sf.time.z in M1, ShadeGpu.exposure.x in M2) is divided out.
+static inline float3 shadeWaterSceneRadiance(half3 stored, float exposure) {
+#if defined(MCOPT_HDR) || defined(SHADE_HDR)
+	return float3(stored) / max(exposure, 1e-6);
+#else
+	return shadeWaterDisplayRadiance(stored, exposure);
+#endif
+}
+
+// Under dynamic resolution (TAAU) the world draws into the sub-rect (0, 0, render size) of fixed-size targets, and so
+// do the copies: NDC maps to that sub-rect, not to the whole texture. SHADE_WATER_SUBRECT (define it with the TAAU merge,
+// where ShadeFrame.screen.xy is the live render size) switches to it; otherwise the render size is the copy's size.
+static inline float2 shadeWaterRenderSize(constant ShadeFrame &f, float2 textureSize) {
+#ifdef SHADE_WATER_SUBRECT
+	return min(f.screen.xy, textureSize);
+#else
+	return textureSize;
 #endif
 }
 
@@ -134,7 +152,8 @@ static float2 shadeWaves(float2 x, float t, float strength, float footprint, thr
 // A crossing that fails the thickness test keeps marching (the ray passed behind something). jitter in [0, 1) offsets the
 // steps per pixel. Returns radiance (before exposure) and a weight: 0 miss, fading to 0 toward the screen edges and the
 // ray's far end, so callers blend it over their sky reflection.
-static float4 shadeSsr(float3 p0, float3 r, float jitter, float maxDist, constant ShadeFrame &f, texture2d<half> scene, depth2d<float> depth) {
+static float4 shadeSsr(float3 p0, float3 r, float jitter, float maxDist, float exposure, constant ShadeFrame &f, texture2d<half> scene,
+                       depth2d<float> depth) {
 	float4 c0 = f.viewProj * float4(p0, 1.0);
 	float4 dc = f.viewProj * float4(r, 0.0);
 	float len = maxDist;
@@ -149,7 +168,8 @@ static float4 shadeSsr(float3 p0, float3 r, float jitter, float maxDist, constan
 	if (tEnd <= 0.0) return 0.0;
 	bool screenEnd = tEnd < 1.0;
 	float3 ds = (s1 - s0) * tEnd;
-	float2 size = float2(depth.get_width(), depth.get_height());
+	float2 tex = float2(depth.get_width(), depth.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
 	float A = f.proj[2][2], B = f.proj[3][2];
 	float tPrev = 0.0;
 	for (int i = 1; i <= SHADE_SSR_STEPS; i++) {
@@ -175,7 +195,7 @@ static float4 shadeSsr(float3 p0, float3 r, float jitter, float maxDist, constan
 				float2 edge = smoothstep(0.0, 0.07, min(uv, 1.0 - uv));
 				float fade = edge.x * edge.y;
 				if (!screenEnd) fade *= 1.0 - smoothstep(0.75, 1.0, hi);
-				return float4(shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv).rgb, f), fade);
+				return float4(shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure), fade);
 			}
 		}
 		tPrev = t;
@@ -225,6 +245,7 @@ struct ShadeWaterIn {
 	half sky;        // sky light 0..1
 	half shadow;     // sun/moon visibility at the surface (shadow map)
 	float3 lit;      // light on an upward white surface (shadeLit(1, up, ...)): sun, sky and block light, radiance
+	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
 };
 
 // The wave normal at camera-relative p (+y up), and the height there.
@@ -294,8 +315,9 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
 
 	// --- what is behind the surface: refraction, absorption, in-scattering, caustics
-	float2 size = float2(scene.get_width(), scene.get_height());
-	float2 uv = w.pixel / size;
+	float2 tex = float2(scene.get_width(), scene.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
+	float2 uv = w.pixel / size; // over the rendered rect
 	float wSurf = shadeLinearW(w.depth, f);
 	float z0 = depth.read(uint2(min(w.pixel, size - 1.0)));
 	float dw0 = z0 > 0.0 ? shadeLinearW(z0, f) - wSurf : 64.0;
@@ -313,7 +335,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float dy = top ? lView * saturate(-v.y) : lView * 0.5;
 	float3 sigmaA = shadeWaterSigmaA(w.tint);
 	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
-	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR).rgb, f);
+	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure);
 #ifdef SHADE_CAUSTICS
 	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 24.0 && f.lightDirWorld.w > 0.5) {
 		float3 pf = w.p + v * lView;
@@ -341,7 +363,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		// reflected images stay readable: the ray follows a calmer normal than the shading (ripples wobble, don't shred)
 		float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
 		rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
-		float4 hit = shadeSsr(w.p + n * 0.02, rr, jitter, wp.tune.y, f, scene, depth);
+		float4 hit = shadeSsr(w.p + n * 0.02, rr, jitter, wp.tune.y, w.exposure, f, scene, depth);
 		hitWeight = hit.a;
 		refl = mix(refl, hit.rgb, hit.a);
 	}
@@ -354,8 +376,8 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 glint = f.sunColor.rgb * min(spec, 60.0) * soft * open * (1.0 - hitWeight);
 
 	float3 color = mix(body, refl, fres) + glint * wp.tune.z;
-	if (f.flags.w == 5) return float3(hitWeight, fres, 0.0) / max(f.time.z, 1e-3);                               // debug: SSR hits, Fresnel
-	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), zR > 0.0 ? 0.0 : 1.0) / max(f.time.z, 1e-3); // debug: path, depth
+	if (f.flags.w == 5) return float3(hitWeight, fres, 0.0) / max(w.exposure, 1e-3);                               // debug: SSR hits, Fresnel
+	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), zR > 0.0 ? 0.0 : 1.0) / max(w.exposure, 1e-3); // debug: path, depth
 
 #ifdef SHADE_FOAM
 	if (top && zR > 0.0) {
@@ -384,7 +406,8 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 t = refract(v, n, 1.333);
 	bool tir = dot(t, t) < 1e-6;
 	float fres = tir ? 1.0 : shadeWaterFresnel(dot(t, up));
-	float2 size = float2(scene.get_width(), scene.get_height());
+	float2 tex = float2(scene.get_width(), scene.get_height());
+	float2 size = shadeWaterRenderSize(f, tex);
 	float2 uv = w.pixel / size;
 	// the world above through the window: the copy behind the surface, shifted by the waves' tilt
 	float3 above = 0.0;
@@ -395,14 +418,14 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		float zR = depth.read(uint2(uvR * size));
 		float3 sky = shadeSkyLookup(t, lut, lutS, f);
 		if (f.lightDirWorld.w > 0.5) sky += f.sunColor.rgb * min(shadeGgxSpec(up, -t, f.lightDirWorld.xyz, 0.06) * 3.0, 40.0) * float(w.shadow);
-		above = zR > 0.0 ? shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR).rgb, f) : sky;
+		above = zR > 0.0 ? shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure) : sky;
 		above *= float(shadeSkyCurve(w.sky)) * 0.6 + 0.4;
 	}
 	// the water below, mirrored
-	float3 below = shadeWaterSceneRadiance(half3(f.fogColor.rgb), f) * (0.65 + 0.5 * saturate(height * 7.0 + 0.3)); // the mirror ripples
+	float3 below = shadeWaterDisplayRadiance(half3(f.fogColor.rgb), w.exposure) * (0.65 + 0.5 * saturate(height * 7.0 + 0.3)); // the mirror ripples
 #ifdef SHADE_SSR
 	if (fres > 0.05) {
-		float4 hit = shadeSsr(w.p + n * 0.02, reflect(v, n), shadeNoise(w.pixel, 0), min(wp.tune.y, 48.0), f, scene, depth);
+		float4 hit = shadeSsr(w.p + n * 0.02, reflect(v, n), shadeNoise(w.pixel, 0), min(wp.tune.y, 48.0), w.exposure, f, scene, depth);
 		below = mix(below, hit.rgb, hit.a);
 	}
 #endif

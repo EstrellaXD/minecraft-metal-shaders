@@ -326,7 +326,10 @@ static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, texture2
 	half4 t = tint.sample(shadeWxLinear, shadeShadowUV(c.xyz), level(0.0));
 	float zBlocks = 1.0 / max(length(float3(f.shadowViewProj[0][0][2], f.shadowViewProj[0][1][2], f.shadowViewProj[0][2][2])), 1e-6);
 	float gate = saturate(((float(t.a) - c.z) * zBlocks - 0.25) * 4.0) * (1.0 - smoothstep(0.85, 1.0, m));
-	return mix(half3(1.0h), t.rgb, half(gate));
+	// coloured light keeps part of its brightness (a red pane lights the floor red, not dark brown): luminance pulled halfway
+	// back toward white light, at most x2.2 per channel
+	half3 T = t.rgb * min(rsqrt(max(dot(t.rgb, half3(0.2126h, 0.7152h, 0.0722h)), 0.05h)), 2.2h);
+	return mix(half3(1.0h), T, half(gate));
 }
 
 // The direct light's share of shadeLit2 that the tint changes (the same sun term: wrap, gate, shadow), times (tint - 1):

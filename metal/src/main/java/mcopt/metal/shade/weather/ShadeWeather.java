@@ -54,6 +54,7 @@ import mcopt.metal.shade.ShadeMsl;
  * through stained glass, ice and water (near cascade).</li>
  * <li>{@code mcopt.shade.weatherTime} (1): time scale of wetting and drying (the bench uses 10).</li>
  * <li>{@code mcopt.shade.wetness} (-1 = from the weather): force wetness and puddles to this value (look development).</li>
+ * <li>{@code mcopt.shade.snowAmount} (-1 = from the weather): force the snow cover to this value (look development).</li>
  * </ul>
  */
 public final class ShadeWeather {
@@ -72,6 +73,7 @@ public final class ShadeWeather {
 	public static final int COLOR_SHADOW_RES = Integer.getInteger("mcopt.shade.colorShadowRes", Shade.TIER >= 3 ? 2048 : 1024) >= 2048 ? 2048 : 1024;
 	public static final float TIME_SCALE = Math.clamp(floatFlag("mcopt.shade.weatherTime", 1f), 0.1f, 100f);
 	public static final float FORCE_WET = floatFlag("mcopt.shade.wetness", -1f);
+	public static final float FORCE_SNOW = floatFlag("mcopt.shade.snowAmount", -1f);
 
 	/** ShadeResources entries (shade_look.metal): last frame's linear view depth (TAA history), the coloured-shadow map. */
 	public static final int RES_PREV_DEPTH = 5, RES_SHADOW_TINT = 6;
@@ -128,6 +130,7 @@ public final class ShadeWeather {
 			wetness = Math.min(FORCE_WET, 1f);
 			puddles = Math.min(FORCE_WET, 1f);
 		}
+		if (FORCE_SNOW >= 0f) snow = Math.min(FORCE_SNOW, 1f);
 		// wind: a direction per day that wanders slowly; storms lean the rain more and gust
 		double h = Math.sin(dayIndex * 12.9898 + 78.233) * 43758.5453;
 		windAngle = (float) ((h - Math.floor(h)) * Math.PI * 2 + 0.35 * Math.sin(seconds / 97.0));

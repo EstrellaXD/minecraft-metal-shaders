@@ -248,6 +248,7 @@ public final class BenchDriver {
 			GodRayShots.plan(steps); // opt-in -Dmcbench.godRays=true
 			WaterShots.plan(steps); // opt-in -Dmcbench.water=true
 			MotionShots.plan(steps); // opt-in -Dmcbench.motionShots=forest;overview;...
+			CloudShots.plan(steps); // opt-in -Dmcbench.clouds=all|noon_south,sunset_west,... (sky and cloud scenes)
 			EntityShots.plan(steps); // opt-in -Dmcbench.entities=true|noon,evening,night,hand,motion (M3 entities)
 			WeatherShots.plan(steps); // opt-in -Dmcbench.weather=true|rain,sunset,night,water,storm,glass
 			LightShots.plan(steps); // opt-in -Dmcbench.dynLights=true|field,mobs,perf,cave,walk,nether (M3 dynamic lights)

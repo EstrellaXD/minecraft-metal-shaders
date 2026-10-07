@@ -137,9 +137,20 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
     bool foliage = false;
 #endif
-    // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4)
-    half shadow = in.v_Light.y > 0.3h ? shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, in.v_Light.y)
-        : half(1.0);
+#ifdef SHADE_WATER
+    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
+    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
+    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together
+    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
+    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
+#else
+    bool waterFull = false;
+#endif
+    // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4); the water
+    // module only gates its glint and caustics with it: M1's 4-tap tent there instead of PCSS
+    half shadow = in.v_Light.y <= 0.3h ? half(1.0)
+        : waterFull ? shadeShadow(shadowMap, shadowCompare, sf, p, n, false)
+        : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, in.v_Light.y);
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
@@ -148,11 +159,6 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     bool water = ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0
         && !shadeDev(sf, SHADE_DEV_NO_WATER);
 #ifdef SHADE_WATER
-    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
-    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
-    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together
-    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
-    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
     if (waterSprite == 0) water = false;
 #endif
 #else

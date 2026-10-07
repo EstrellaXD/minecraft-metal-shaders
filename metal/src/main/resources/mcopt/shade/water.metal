@@ -162,6 +162,12 @@ constant int2 SHADE_WAVE_LATTICE[SHADE_WAVE_COUNT] = { // wave vector = 2 pi / t
 	int2(7, 3), int2(7, 9), int2(17, -2), int2(8, 25), int2(33, -24), int2(-12, 63), int2(73, 73),
 };
 constant int2 SHADE_WAVE_CREST_LATTICE[3] = { int2(-1, 1), int2(-2, 1), int2(0, 4) }; // the crest modulation, on the lattice too
+// The bake can afford more waves than the per-pixel path: 7 more, off the main directions and between the main
+// wavelengths, so the long crossing trains don't read as a regular diamond lattice in the glitter road.
+#define SHADE_WAVE_EXTRA 7
+constant int3 SHADE_WAVE_EXTRA_LATTICE[SHADE_WAVE_EXTRA] = { // lattice x, z, amplitude in 1/10000 blocks
+	int3(5, -1, 330), int3(-3, 8, 260), int3(10, -10, 180), int3(4, 13, 150), int3(19, 11, 110), int3(-20, 25, 75), int3(45, 20, 50),
+};
 
 static float2 shadeWavesTiled(float2 x, float t, thread float &lap, thread float &height) {
 	float2 g = 0.0;
@@ -172,7 +178,7 @@ static float2 shadeWavesTiled(float2 x, float t, thread float &lap, thread float
 		float2 kv = float2(SHADE_WAVE_LATTICE[i]) * base;
 		float k = length(kv);
 		float2 dir = kv / k;
-		float a = SHADE_WAVES[i].w;
+		float a = SHADE_WAVES[i].w * (i == 0 ? 0.75 : i == 1 ? 0.8 : 1.0); // the two longest trains share their energy with the extras
 		if (i < 3) a *= 0.55 + 0.45 * sin(dot(float2(SHADE_WAVE_CREST_LATTICE[i]) * base, x) + SHADE_WAVE_PHASE[i] * 2.3 + t * 0.13);
 		float omega = sqrt(9.81 * k) * 0.62;
 		float th = dot(kv, x) + omega * t + SHADE_WAVE_PHASE[i];
@@ -183,6 +189,19 @@ static float2 shadeWavesTiled(float2 x, float t, thread float &lap, thread float
 		lap += a * k * k * (c * c - s) * e;
 		height += a * e;
 		x -= dir * (c * e * a * 1.6);
+	}
+	for (int i = 0; i < SHADE_WAVE_EXTRA; i++) {
+		int3 l = SHADE_WAVE_EXTRA_LATTICE[i];
+		float2 kv = float2(l.xy) * base;
+		float k = length(kv);
+		float a = float(l.z) * 1e-4;
+		float th = dot(kv, x) + sqrt(9.81 * k) * 0.62 * t + float(i) * 2.17;
+		float c;
+		float s = sincos(th, c);
+		float e = exp(s - 1.0);
+		g += kv * (a * c * e);
+		lap += a * k * k * (c * c - s) * e;
+		height += a * e;
 	}
 	return g;
 }
@@ -305,7 +324,7 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		float thick = 0.3 + 0.02 * wh + abs(wr - wp);
 		if (wh < SHADE_WATER_SKY_W && wr - wh < thick) {
 			float2 edge = smoothstep(0.0, 0.07, min(uv, 1.0 - uv));
-			float fade = edge.x * edge.y;
+			float fade = edge.x * edge.y * (1.0 - smoothstep(0.6, 1.0, (wr - wh) / thick)); // grazing passes fade, not pop
 			if (!screenEnd) fade *= 1.0 - smoothstep(0.75, 1.0, hi);
 			return float4(uv, fade, hi);
 		}
@@ -352,8 +371,12 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 			float2 edge = saturate(min(uv, 1.0 - uv) * 12.0);
 			float wgt = edge.x * edge.y;
 			if (wgt > 0.0) {
+				// what is on screen in that direction counts where it is the sky (or terrain at the edge of the render
+				// distance, which mirrors like the sky); anything nearer isn't what the water sees in that direction
+				// (a tree on a hill would ghost into the reflection where SSR missed the hill): the LUT there
 				float2 size = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
-				if (depth.read(uint2(clamp(uv * size, float2(0.0), size - 1.0))) <= 0.0) {
+				wgt *= smoothstep(160.0, 320.0, shadeWaterSceneW(depth, uint2(clamp(uv * size, float2(0.0), size - 1.0)), f));
+				if (wgt > 0.0) {
 					float4 pc = f.prevViewProj * float4(rs, 0.0);
 					float2 uvp = pc.xy / max(pc.w, 1e-4) * 0.5 + 0.5;
 					float3 s = float3(prev.sample(shadeWaterLinear, saturate(uvp)).rgb) / prevExposure;

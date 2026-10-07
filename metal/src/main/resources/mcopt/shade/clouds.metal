@@ -371,7 +371,8 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	float t0, t1;
 	if (!cloudSegment(r, c.layer.x, c.layer.y, c.misc.z, c.march.z, t0, t1)) return o;
 	// inside the layer: the fog around the camera matters, the far stretch is hidden by it (and by aerial perspective)
-	if (t0 < 1.0) t1 = min(t1, 1500.0);
+	bool inside = t0 < 1.0;
+	if (inside) t1 = min(t1, 1500.0);
 	float len = t1 - t0;
 	// fewer, longer steps where the stretch is short (straight up) and the far horizon (thin on screen)
 	int n = clamp(int(float(steps) * saturate(len / 600.0) + 0.999), max(steps / 2, 4), steps);
@@ -393,18 +394,22 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	// a hit steps back and walks on with single full-quality steps until 4 misses in a row
 	bool fine = false;
 	int miss = 0;
-	float t = t0 + jitter * dt;
-	for (int i = 0; i < 3 * n + 4 && t < t1; i++) {
+	// inside the layer the steps start short and grow with distance (the cloud around the camera is close: uniform 60-block
+	// steps made it a noisy guess that showed the checkerboard)
+	float dtl = inside ? dt * 0.08 : dt;
+	float t = t0 + jitter * dtl;
+	for (int i = 0; i < 3 * n + 4 + (inside ? 24 : 0) && t < t1; i++) {
+		if (inside) dtl = dt * clamp((t + 24.0) / 400.0, 0.08, 1.0);
 		float3 p = dir * t;
 		float y = cloudAltitude(r, t);
 		if (!fine) {
 			if (cloudDensity(p, y, 0, c, weather, noise) <= 0.0) {
-				t += 2.0 * dt;
+				t += 2.0 * dtl;
 				continue;
 			}
 			fine = true;
 			miss = 0;
-			t = max(t - dt, t0 + jitter * dt);
+			t = max(t - dtl, t0 + jitter * dtl);
 			continue;
 		}
 		// mip of the noise for this sample's footprint (pixel angle x distance)
@@ -412,14 +417,14 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		float d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
 		if (d <= 0.002) {
 			if (++miss >= 4) fine = false;
-			t += dt;
+			t += dtl;
 			continue;
 		}
 		miss = 0;
 		float st = d * sigma;
 		// in dense cloud a whole step would jump from lit to opaque: at most shear.z optical depths per sample (down to
 		// shear.w of a step), so where the ray starts in the cloud (the jitter) matters less
-		float ds = clamp(c.shear.z / max(st, 1e-4), dt * c.shear.w, dt);
+		float ds = clamp(c.shear.z / max(st, 1e-4), dtl * c.shear.w, dtl);
 		float stepT = exp(-st * ds);
 		float h = saturate((y - c.layer.x) / thick);
 		float tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod);

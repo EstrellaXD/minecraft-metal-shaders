@@ -155,9 +155,9 @@ public final class ShadeClouds {
 			p.domeValid = CloudConfig.DOME && domeFrames > 0;
 			p.opacity = 1f;
 			p.pack(PACKED, f, WEATHER);
-			// the shadow map and the dome change slowly: the shadow map every other frame, the dome every fourth, never in the
-			// same frame (both after a reset)
-			boolean even = (p.frame & 1) == 0, dome = (p.frame & 3) == 1;
+			// the shadow map and the dome change slowly (the wind moves the shadows ~1/25 of a map texel in 4 frames): each every
+			// fourth frame, never in the same frame (both after a reset)
+			boolean even = (p.frame & 3) == 3, dome = (p.frame & 3) == 1;
 			int flags = 2 | (CloudConfig.SHADOWS && (even || p.reset) ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)
 				| (CloudConfig.GPU_TIMER ? 8 : 0);
 			CloudNative.render(enc, state, MemoryUtil.memAddress(PACKED), CloudParams.SIZE, flags);

@@ -62,13 +62,13 @@ public final class ShadeLook {
 	private static final int K_GAMMA = 1, K_LIGHT = 2, K_AMB = 3, K_SAT = 6, K_CONTRAST = 7, K_BLOOM = 8, K_VL = 9, K_MIST = 10, K_WB = 11;
 
 	// ---- look presets (bible §3.6): epic, storybook, natural -------------------------------------------------------------
-	private static final float[] PRESET_GAMMA = {1.0f, 1.15f, 0.9f}, PRESET_SAT = {0.02f, 0.10f, 0.0f}, PRESET_CONTRAST = {1.0f, 0.93f, 0.93f},
-		PRESET_BLOOM = {1.0f, 1.25f, 0.8f}, PRESET_LAMBDA = {0.55f, 0.40f, 0.70f}, PRESET_INSET = {0.20f, 0.12f, 0.24f}, PRESET_VL = {1.0f, 1.25f, 0.8f},
+	private static final float[] PRESET_GAMMA = {1.0f, 1.15f, 0.9f}, PRESET_SAT = {0.08f, 0.14f, 0.02f}, PRESET_CONTRAST = {1.05f, 0.97f, 0.95f},
+		PRESET_BLOOM = {1.0f, 1.25f, 0.8f}, PRESET_LAMBDA = {0.55f, 0.40f, 0.70f}, PRESET_INSET = {0.14f, 0.10f, 0.20f}, PRESET_VL = {1.0f, 1.25f, 0.8f},
 		PRESET_SPECTRUM = {0.6f, 0.9f, 0.3f};
 
 	// ---- tuning knobs ----------------------------------------------------------------------------------------------------
 	/** Tone curve anchors: mid-grey in -> out, white point (scene) -> peak (display). */
-	static final float MID_IN = 0.18f, MID_OUT = 0.20f, WHITE = 16f, SHOULDER = 0.92f;
+	static final float MID_IN = 0.18f, MID_OUT = 0.20f, WHITE = 12f, SHOULDER = 0.92f;
 	/** Auto-exposure metering key (the metered mean luminance maps to this, pre-exposed) and bounds around the reference. */
 	static final float METER_KEY = 0.30f, EV_DOWN = 1.75f, EV_UP = 1.75f, EV_UP_NIGHT = 0.6f, TAU_UP = 0.6f, TAU_DOWN = 2.2f;
 	/** Haze (Rayleigh-like) extinction at its base, per block, and scale height; base height above sea level. */
@@ -130,6 +130,10 @@ public final class ShadeLook {
 			this.whiteBalance += 12f * lowSun;
 			this.saturation += 0.05f * lowSun;
 		}
+		// night: the keyframes' desaturation would grey the torch-lit pools too; the dim parts get the Purkinje shift (final
+		// pass, luminance-gated) instead, so the grade keeps colour where there is light
+		float night = 1f - smooth(-10f, -2f, this.elevation);
+		this.saturation += (Math.max(this.saturation, 1f) - this.saturation) * night;
 		// weather
 		this.saturation *= 1f - 0.25f * rain;
 		this.contrast -= 0.08f * rain;

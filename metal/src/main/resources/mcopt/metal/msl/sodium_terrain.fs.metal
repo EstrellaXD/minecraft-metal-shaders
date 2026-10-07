@@ -226,8 +226,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         alpha = w.a;
 #endif
     } else {
-        radiance = dims ? shadeLitDims(albedo, n, in.v_Light.x, shadow, thin, foliage, p, sf, sl)
-            : shadeLit2(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
+        // Nether/End (dims module): shadeLit2 without sky light and sun, plus the dimension's own light (shadeLitDimsExtra)
+        radiance = shadeLit2(albedo, n, dims ? half(0.0) : in.v_Light.y, in.v_Light.x, dims ? half(0.0) : shadow, thin, foliage, sf, sl);
+        if (dims) radiance += shadeLitDimsExtra(albedo, n, shadow, thin, foliage, p, sf, sl);
         // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block (stronger in the Nether).
         half tl = shadeLumaH(half3(texel.rgb));

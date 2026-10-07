@@ -65,12 +65,13 @@ static inline float shadeDimsNoise(texture2d<half> mw, float2 p) {
 }
 
 // ---- lighting in the Nether and the End (E24, E25) ---------------------------------------------------------------------------
-// shadeLit2 with no sky light gives the block light, the cave floor (and anything later modules add there); on top: the
-// dimension ambient (up / down / sides), the Nether's lava up-light (warm light from below, strongest near the lava sea, a
-// slow flicker), the End's key light (shadowed) and its flash. p: camera-relative position.
-static float3 shadeLitDims(half3 albedo, half3 n, half block, half shadow, bool thin, bool foliage, float3 p, constant ShadeFrame &f,
-                           constant ShadeLook &L) {
-	float3 base = shadeLit2(albedo, n, half(0.0), block, half(0.0), thin, foliage, f, L);
+// shadeLit2 with no sky light and no sun gives the block light, the cave floor (and anything later modules add there);
+// shadeLitDimsExtra is what the dimension adds on top: its ambient (up / down / sides), the Nether's lava up-light (warm
+// light from below, strongest near the lava sea, a slow flicker), the End's key light (shadowed) and its flash.
+// p: camera-relative position. The terrain shader calls shadeLit2 once for every dimension (sky light and shadow 0 here)
+// and adds this term, so shadeLit2 is inlined once (code size / registers of the overworld path unchanged).
+static float3 shadeLitDimsExtra(half3 albedo, half3 n, half shadow, bool thin, bool foliage, float3 p, constant ShadeFrame &f,
+                                constant ShadeLook &L) {
 	float3 nn = float3(n);
 	float3 side = 0.5 * (f.ambientToward.rgb + f.ambientAway.rgb);
 	float3 light = nn.y >= 0.0 ? mix(side, f.ambientSky.rgb, nn.y) : mix(side, f.ambientGround.rgb, -nn.y);
@@ -91,7 +92,13 @@ static float3 shadeLitDims(half3 albedo, half3 n, half block, half shadow, bool 
 		if (L.flash.w > 0.0) light += float3(0.55, 0.75, 1.0) * (L.flash.w * 1.4 * saturate(dot(nn, L.flash.xyz) * 0.6 + 0.4));
 	}
 	float face = 1.0 - 0.06 * abs(nn.x) * (1.0 - abs(nn.y));
-	return base + float3(albedo) * light * face;
+	return float3(albedo) * light * face;
+}
+
+// The whole Nether/End lighting of a surface (for callers that don't share a shadeLit2 call with the overworld path).
+static float3 shadeLitDims(half3 albedo, half3 n, half block, half shadow, bool thin, bool foliage, float3 p, constant ShadeFrame &f,
+                           constant ShadeLook &L) {
+	return shadeLit2(albedo, n, half(0.0), block, half(0.0), thin, foliage, f, L) + shadeLitDimsExtra(albedo, n, shadow, thin, foliage, p, f, L);
 }
 
 // Stars for the End (no atmosphere: no twinkle, no extinction): the overworld's cube-map cells (shadeStars), but only the

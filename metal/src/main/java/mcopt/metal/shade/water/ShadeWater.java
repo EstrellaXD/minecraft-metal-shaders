@@ -93,6 +93,11 @@ public final class ShadeWater {
 	 * (1/16-block cells, smooth in time), calmer long waves and a smaller refraction shift (false: M2's surface).
 	 */
 	public static final boolean DETAIL = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterDetail", "true"));
+	/** The fine-ripple layer's bake size (256 or 512) and whether it bakes the 7 extra waves too (dev knobs for pricing). */
+	public static final int DETAIL_SIZE = Integer.getInteger("mcopt.shade.waterDetailSize", 256) >= 512 ? 512 : 256;
+	private static final boolean DETAIL_EXTRAS = Boolean.getBoolean("mcopt.shade.waterDetailExtras");
+	/** Distance (blocks) beyond which the fine ripples are not sampled (faded from 0.6x of it). */
+	private static final int DETAIL_FAR = Math.clamp(Integer.getInteger("mcopt.shade.waterDetailFar", 140), 32, 512);
 	/**
 	 * M2.1: SSR reaches the left and right screen edges: rays that leave through a side keep marching on the edge column,
 	 * no side fade on hits, and the far-end fade goes by distance instead of screen length (false: M2's SSR edges).
@@ -129,7 +134,11 @@ public final class ShadeWater {
 		if (FOAM) b.append("#define SHADE_FOAM 1\n");
 		if (GLOSSY) b.append("#define SHADE_GLOSSY 1\n");
 		if (SSR_PREV) b.append("#define SHADE_SSR_PREV 1\n");
-		if (DETAIL) b.append("#define SHADE_WATER_DETAIL 1\n");
+		if (DETAIL) {
+			b.append("#define SHADE_WATER_DETAIL 1\n#define SHADE_WATER_DETAIL_SIZE ").append(DETAIL_SIZE).append("\n#define SHADE_WATER_DETAIL_FAR ")
+				.append(DETAIL_FAR).append(".0\n");
+			if (DETAIL_EXTRAS) b.append("#define SHADE_WATER_DETAIL_EXTRAS 1\n");
+		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
 		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n#define SHADE_WAVE_BAKE_SIZE ").append(BAKE_SIZE).append('\n');
 		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
@@ -198,7 +207,7 @@ public final class ShadeWater {
 					bakeDetailPso = mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_bake_detail_fs",
 						mcopt.metal.shade.ShadeRender.RGBA16F, mcopt.metal.shade.ShadeRender.BLEND_NONE);
 				}
-				long det = WaterNative.wavesDetail(ctx, state, BAKE_SIZE);
+				long det = WaterNative.wavesDetail(ctx, state, DETAIL_SIZE);
 				mcopt.metal.shade.ShadeRender.pass(enc, bakeDetailPso, det, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: ripple bake");
 			}
 			WaterNative.wavesDone(enc, state);

@@ -192,7 +192,7 @@ constant int3 SHADE_WAVE_EXTRA_LATTICE[SHADE_WAVE_EXTRA] = { // lattice x, z, am
 // speed: the time scale of the whole set (1 for the long waves; the detail layer runs faster, see
 // shade_water_bake_detail_fs), phase: added to every wave's phase. Every angular speed is rounded by shadeWaterOmega
 // (seamless clock wrap).
-static float2 shadeWavesTiled(float2 x, float t, float speed, float phase, thread float &lap, thread float &height) {
+static float2 shadeWavesTiled(float2 x, float t, float speed, float phase, thread float &lap, thread float &height, bool extras = true) {
 	float2 g = 0.0;
 	lap = 0.0;
 	height = 0.0;
@@ -213,7 +213,7 @@ static float2 shadeWavesTiled(float2 x, float t, float speed, float phase, threa
 		height += a * e;
 		x -= dir * (c * e * a * 1.6);
 	}
-	for (int i = 0; i < SHADE_WAVE_EXTRA; i++) {
+	for (int i = 0; i < (extras ? SHADE_WAVE_EXTRA : 0); i++) {
 		int3 l = SHADE_WAVE_EXTRA_LATTICE[i];
 		float2 kv = float2(l.xy) * base;
 		float k = length(kv);
@@ -242,12 +242,22 @@ fragment half4 shade_water_bake_fs(float4 pos [[position]], constant ShadeFrame 
 // M2.1 (SHADE_WATER_DETAIL): the fine-ripple layer, the same set baked into its own texture (texture(22)) with the time
 // running SHADE_WATER_DETAIL_SPEED times faster. It is sampled SHADE_WATER_DETAIL_SCALE times smaller, and deep-water
 // ripples that are s times shorter move sqrt(s) times faster (omega = sqrt(g k)): sampled from the long waves' texture they
-// crawled in slow motion (read as gel). A phase offset decorrelates it from the long layer.
+// crawled in slow motion (read as gel). A phase offset decorrelates it from the long layer. Cheaper than the long layer
+// (it is baked every frame too): SHADE_WATER_DETAIL_SIZE^2 (256: 13 texels per block once scaled, more than the 1/16-block
+// pixel grid needs) and only the 7 main waves (the extras break up the long trains' lattice far away, where the detail
+// has faded out).
 #define SHADE_WATER_DETAIL_SPEED 1.82
+#ifndef SHADE_WATER_DETAIL_SIZE
+#define SHADE_WATER_DETAIL_SIZE 256
+#endif
 fragment half4 shade_water_bake_detail_fs(float4 pos [[position]], constant ShadeFrame &f [[buffer(16)]]) {
-	float2 x = pos.xy * (SHADE_WAVE_TILE / float(SHADE_WAVE_BAKE_SIZE));
+	float2 x = pos.xy * (SHADE_WAVE_TILE / float(SHADE_WATER_DETAIL_SIZE));
 	float lap, height;
-	float2 g = shadeWavesTiled(x, shadeWaterTime(f), SHADE_WATER_DETAIL_SPEED, 2.4, lap, height);
+#ifdef SHADE_WATER_DETAIL_EXTRAS
+	float2 g = shadeWavesTiled(x, shadeWaterTime(f), SHADE_WATER_DETAIL_SPEED, 2.4, lap, height, true);
+#else
+	float2 g = shadeWavesTiled(x, shadeWaterTime(f), SHADE_WATER_DETAIL_SPEED, 2.4, lap, height, false);
+#endif
 	return half4(half2(g), half(height), half(lap));
 }
 constexpr sampler shadeWaveSampler(filter::linear, mip_filter::linear, address::repeat, max_anisotropy(8));
@@ -581,7 +591,9 @@ static inline float3 shadeWaterViewPoint(depth2d<float> depth, uint2 q, float2 s
 static inline float2 shadeWaterRot(float2 v) { return float2(0.6 * v.x - 0.8 * v.y, 0.8 * v.x + 0.6 * v.y); }
 static inline float2 shadeWaterRotT(float2 v) { return float2(0.6 * v.x + 0.8 * v.y, -0.8 * v.x + 0.6 * v.y); }
 // (no drift of its own: its layer, texture(22), is baked SHADE_WATER_DETAIL_SPEED times faster)
-#define SHADE_WATER_DETAIL_FAR 170.0  // no detail sample beyond this (faded out from 110 blocks; the wave strength is ~0.15 there)
+#ifndef SHADE_WATER_DETAIL_FAR
+#define SHADE_WATER_DETAIL_FAR 140.0  // no detail sample beyond this (faded out from 0.6x of it; the wave strength is ~0.2 there)
+#endif
 static inline float2 shadeWaterDetailXZ(float2 x) {
 	return shadeWaterRot(x) * SHADE_WATER_DETAIL_SCALE + float2(23.7, 41.3);
 }
@@ -627,7 +639,7 @@ struct ShadeWaterIn {
 constexpr sampler shadeWaveDetailSampler(filter::linear, mip_filter::linear, address::repeat);
 static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, texture2d<half> waves) {
 	const float s = SHADE_WATER_DETAIL_SCALE;
-	float far = 1.0 - smoothstep(110.0, SHADE_WATER_DETAIL_FAR, length(w.p));
+	float far = 1.0 - smoothstep(0.6 * SHADE_WATER_DETAIL_FAR, SHADE_WATER_DETAIL_FAR, length(w.p));
 	if (far <= 0.0) return float4(0.0);
 	float t = shadeWaterTime(f);
 	float2 xa = shadeWaterXZ(w.p.xz, f);

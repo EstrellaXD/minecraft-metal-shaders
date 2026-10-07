@@ -148,8 +148,10 @@ static float3 shadeDynamicLightsVol(constant ShadeDynLights &D, texture3d<half> 
 // of its grid cell as shadeDlOne computes it at the voxel centre without the N.L term (that waits for the surface normal),
 // its visibility read exactly from the light's slab; rgb into irr, the luminance-weighted mean direction into dirs.
 #ifdef SHADE_DL_KERNELS
-kernel void shade_dl_irr(uint3 t [[thread_position_in_grid]], constant ShadeDynLights &D [[buffer(0)]], texture3d<half> vis [[texture(0)]],
-                         texture3d<half, access::write> irr [[texture(1)]], texture3d<half, access::write> dirs [[texture(2)]]) {
+kernel void shade_dl_irr(uint3 t0 [[thread_position_in_grid]], constant ShadeDynLights &D [[buffer(0)]], constant uint4 &box [[buffer(1)]],
+                         texture3d<half> vis [[texture(0)]], texture3d<half, access::write> irr [[texture(1)]],
+                         texture3d<half, access::write> dirs [[texture(2)]]) {
+	uint3 t = t0 + box.xyz; // only the box the lights can reach (and last frame's, to clear it) is dispatched
 	if (any(t >= uint3(SHADE_DL_IRR_X, SHADE_DL_IRR_Y, SHADE_DL_IRR_Z))) return;
 	float3 c = D.irr.xyz + float3(t) + 0.5;
 	uint2 m = shadeDlMask(D, c);

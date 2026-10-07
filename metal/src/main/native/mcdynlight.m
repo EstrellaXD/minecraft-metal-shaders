@@ -153,9 +153,11 @@ void mc_dl_vis(Enc *enc, DlState *s, const void *params, int length, int volumes
 	}
 }
 
-// The irradiance volume from this frame's lights (ring slot s->slot) and the visibility slabs, after mc_dl_vis.
-void mc_dl_irr(Enc *enc, DlState *s) {
-	if (!s) return;
+// The irradiance volume from this frame's lights (ring slot s->slot) and the visibility slabs, after mc_dl_vis: only the
+// box of voxels (x0, y0, z0) + (w, h, d) is rewritten (the lights' reach, united with last frame's box by the caller so what
+// was lit there is cleared; everything outside stays 0).
+void mc_dl_irr(Enc *enc, DlState *s, int x0, int y0, int z0, int w, int h, int d) {
+	if (!s || w <= 0 || h <= 0 || d <= 0) return;
 	@autoreleasepool {
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
 		id<MTLComputeCommandEncoder> c = [cb computeCommandEncoder];
@@ -165,7 +167,9 @@ void mc_dl_irr(Enc *enc, DlState *s) {
 		[c setTexture:s->vis atIndex:0];
 		[c setTexture:s->irr atIndex:1];
 		[c setTexture:s->dir atIndex:2];
-		[c dispatchThreads:MTLSizeMake(s->irr.width, s->irr.height, s->irr.depth) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
+		uint32_t box[4] = {(uint32_t) x0, (uint32_t) y0, (uint32_t) z0, 0};
+		[c setBytes:box length:sizeof(box) atIndex:1];
+		[c dispatchThreads:MTLSizeMake(w, h, d) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
 		[c endEncoding];
 	}
 }

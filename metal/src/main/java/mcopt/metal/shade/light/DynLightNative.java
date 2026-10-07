@@ -28,7 +28,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 final class DynLightNative {
 	private static final Linker LINKER = Linker.nativeLinker();
 	private static final MethodHandle NEW = fn("mc_dl_new", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
-	private static final MethodHandle IRR = fn("mc_dl_irr", null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle IRR = fn("mc_dl_irr", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
 	private static final MethodHandle CONTENTS = fn("mc_dl_contents", JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle SLOT = fn("mc_dl_slot", null, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle BIND = fn("mc_dl_bind", null, JAVA_LONG);
@@ -81,9 +81,9 @@ final class DynLightNative {
 		}
 	}
 
-	static void irr(long enc, long state) {
+	static void irr(long enc, long state, int x0, int y0, int z0, int w, int h, int d) {
 		try {
-			IRR.invokeExact(enc, state);
+			IRR.invokeExact(enc, state, x0, y0, z0, w, h, d);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

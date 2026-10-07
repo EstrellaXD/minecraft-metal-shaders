@@ -83,6 +83,12 @@ public final class DynLights {
 	private static final ByteBuffer[] ring = new ByteBuffer[RING];
 	private static int slot;
 	private static Occupancy occupancy;
+	/**
+	 * The voxels of the irradiance volume that may hold light (texture coordinates, min xyz then max xyz; empty: min > max).
+	 * Starts as the whole volume: the first dispatch clears whatever a new texture holds.
+	 */
+	private static final int[] irrBox = {0, 0, 0, IRR_X - 1, IRR_Y - 1, IRR_Z - 1};
+	private static int irrVoxels;
 	private static long visParams;
 	private static final Map<Long, Src> SOURCES = new HashMap<>();
 	private static final ArrayList<Src> ACTIVE = new ArrayList<>();
@@ -293,12 +299,29 @@ public final class DynLights {
 		b.position(0);
 		// lights that fall off the list keep the cells' bits clear; unused light slots are never named by a cell
 		if (dirty > 0) DynLightNative.vis(enc, state, visParams, VIS_PARAMS, dirty);
-		if (count > 0) DynLightNative.irr(enc, state); // the terrain's irradiance volume from these lights and slabs
+		if (count > 0) { // the terrain's irradiance volume from these lights and slabs, only where they reach (+ last frame's box)
+			int bx0 = IRR_X, by0 = IRR_Y, bz0 = IRR_Z, bx1 = -1, by1 = -1, bz1 = -1;
+			for (int i = 0; i < count; i++) {
+				Src s = ACTIVE.get(i);
+				double rr = s.reach - CUT + 1.0, lx = s.x - ix0 - 0.5, ly = s.y - iy0 - 0.5, lz = s.z - iz0 - 0.5;
+				if (rr <= 0) continue;
+				int ax = Math.max(0, (int) Math.floor(lx - rr)), ay = Math.max(0, (int) Math.floor(ly - rr)), az = Math.max(0, (int) Math.floor(lz - rr));
+				int cx = Math.min(IRR_X - 1, (int) Math.ceil(lx + rr)), cy = Math.min(IRR_Y - 1, (int) Math.ceil(ly + rr)), cz = Math.min(IRR_Z - 1, (int) Math.ceil(lz + rr));
+				if (ax > cx || ay > cy || az > cz) continue;
+				bx0 = Math.min(bx0, ax); by0 = Math.min(by0, ay); bz0 = Math.min(bz0, az);
+				bx1 = Math.max(bx1, cx); by1 = Math.max(by1, cy); bz1 = Math.max(bz1, cz);
+			}
+			int ux0 = Math.min(bx0, irrBox[0]), uy0 = Math.min(by0, irrBox[1]), uz0 = Math.min(bz0, irrBox[2]);
+			int ux1 = Math.max(bx1, irrBox[3]), uy1 = Math.max(by1, irrBox[4]), uz1 = Math.max(bz1, irrBox[5]);
+			if (ux1 >= ux0 && uy1 >= uy0 && uz1 >= uz0) DynLightNative.irr(enc, state, ux0, uy0, uz0, ux1 - ux0 + 1, uy1 - uy0 + 1, uz1 - uz0 + 1);
+			irrBox[0] = bx0; irrBox[1] = by0; irrBox[2] = bz0; irrBox[3] = bx1; irrBox[4] = by1; irrBox[5] = bz1;
+			irrVoxels = ux1 >= ux0 ? (ux1 - ux0 + 1) * (uy1 - uy0 + 1) * (uz1 - uz0 + 1) : 0;
+		}
 		cpuNanos = System.nanoTime() - t0;
 		if (DynLightConfig.LOG && t0 - lastLog > 2_000_000_000L) {
 			lastLog = t0;
-			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: dynamic lights %d (of %d sources), %d volumes (%d computed), cpu %.3f ms (occupancy %.3f ms, %d sections filled, %d waiting)",
-				count, SOURCES.size(), volumes, volumesComputed, cpuNanos / 1e6, occupancy == null ? 0 : occupancy.nanosLastFrame / 1e6, occupancy == null ? 0 : occupancy.filledLastFrame,
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: dynamic lights %d (of %d sources), %d volumes (%d computed), %d irradiance voxels, cpu %.3f ms (occupancy %.3f ms, %d sections filled, %d waiting)",
+				count, SOURCES.size(), volumes, volumesComputed, irrVoxels, cpuNanos / 1e6, occupancy == null ? 0 : occupancy.nanosLastFrame / 1e6, occupancy == null ? 0 : occupancy.filledLastFrame,
 				occupancy == null ? 0 : occupancy.pending));
 		}
 	}
@@ -450,8 +473,30 @@ public final class DynLights {
 		double h = e.getBbHeight(), w = Math.max(0.3, e.getBbWidth());
 		double side = w * 0.62, fwd = w * 0.45, y = p.y + h * (e.isBaby() ? 0.45 : 0.5);
 		double mainSide = e.getMainArm() == HumanoidArm.RIGHT ? 1 : -1;
-		if (dm.level() > 0) set(source(key(e, KIND_MAIN)), p.x + rx * side * mainSide + fx * fwd, y, p.z + rz * side * mainSide + fz * fwd, dm, 1f);
-		if (doff.level() > 0) set(source(key(e, KIND_OFF)), p.x - rx * side * mainSide + fx * fwd, y, p.z - rz * side * mainSide + fz * fwd, doff, 1f);
+		if (dm.level() > 0) setInAir(source(key(e, KIND_MAIN)), p.x, y, p.z, p.x + rx * side * mainSide + fx * fwd, y, p.z + rz * side * mainSide + fz * fwd, dm);
+		if (doff.level() > 0) setInAir(source(key(e, KIND_OFF)), p.x, y, p.z, p.x - rx * side * mainSide + fx * fwd, y, p.z - rz * side * mainSide + fz * fwd, doff);
+	}
+
+	/**
+	 * A held light at (x, y, z), pulled back toward its holder's centre (ax, ay, az) when it sits inside an opaque block or a
+	 * block stands between them: hugging a wall, the hand (0.6 block from the eye) would otherwise be inside the wall and
+	 * light the room behind it (the visibility walk starts at the light's own cell).
+	 */
+	private static void setInAir(Src s, double ax, double ay, double az, double x, double y, double z, DynLightTable.Def d) {
+		if (occupancy != null && DynLightConfig.OCCLUSION) {
+			for (int k = 0; k < 4; k++) {
+				if (!occupancy.solid((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z)) && !occupancy.blocked(ax, ay, az, x, y, z)) break;
+				x = ax + (x - ax) * 0.5;
+				y = ay + (y - ay) * 0.5;
+				z = az + (z - az) * 0.5;
+				if (k == 3) {
+					x = ax;
+					y = ay;
+					z = az;
+				}
+			}
+		}
+		set(s, x, y, z, d, 1f);
 	}
 
 	/**
@@ -476,11 +521,11 @@ public final class DynLights {
 		double cx = fp.pos.x, cy = fp.pos.y, cz = fp.pos.z;
 		if (dm.level() > 0) {
 			double s = 0.42 * mainSide;
-			set(source(key(player, KIND_MAIN)), cx + fx * 0.45 + rx * s - ux * 0.32, cy + fy * 0.45 - uy * 0.32, cz + fz * 0.45 + rz * s - uz * 0.32, dm, 1f);
+			setInAir(source(key(player, KIND_MAIN)), cx, cy, cz, cx + fx * 0.45 + rx * s - ux * 0.32, cy + fy * 0.45 - uy * 0.32, cz + fz * 0.45 + rz * s - uz * 0.32, dm);
 		}
 		if (doff.level() > 0) {
 			double s = -0.42 * mainSide;
-			set(source(key(player, KIND_OFF)), cx + fx * 0.45 + rx * s - ux * 0.32, cy + fy * 0.45 - uy * 0.32, cz + fz * 0.45 + rz * s - uz * 0.32, doff, 1f);
+			setInAir(source(key(player, KIND_OFF)), cx, cy, cz, cx + fx * 0.45 + rx * s - ux * 0.32, cy + fy * 0.45 - uy * 0.32, cz + fz * 0.45 + rz * s - uz * 0.32, doff);
 		}
 		markHands(player);
 	}

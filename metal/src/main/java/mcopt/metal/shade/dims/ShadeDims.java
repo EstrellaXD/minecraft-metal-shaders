@@ -58,9 +58,9 @@ public final class ShadeDims {
 		{0x3A0610, 0x8A1E2A, 0xFFB060}, // crimson forest
 		{0x0A2A2E, 0x1E6E6A, 0x5A2A7A}, // warped forest
 		{0x0E2A33, 0x2E7A8A, 0x3FE0FF}, // soul sand valley
-		{0x3A3A40, 0x6A6A72, 0xCFCFD6}, // basalt deltas
+		{0x2E2C33, 0x6A6A72, 0xCFCFD6}, // basalt deltas (fog a little darker than the bible's #3A3A40: ash, not mist)
 	};
-	private static final float[] NETHER_DENSITY = {1.0f, 1.15f, 1.05f, 1.2f, 1.6f};
+	private static final float[] NETHER_DENSITY = {1.0f, 1.15f, 1.05f, 1.2f, 1.3f};
 	/** Lava up-light at the lava sea (luminance, irradiance / pi) per biome: soul sand valley and warped have little lava. */
 	private static final float[] NETHER_LAVA = {1.0f, 0.8f, 0.45f, 0.35f, 0.7f};
 
@@ -177,6 +177,7 @@ public final class ShadeDims {
 
 	private static void end(ShadeFrame f, SkyRenderState sky, float k) {
 		float[] key = srgbLin(0xC7B8FF);
+		for (int c = 0; c < 3; c++) key[c] = 0.6f * key[c] / Math.max(luma(key), 1e-6f) + 0.4f; // half way to white: End stone keeps its tint
 		setLuma(key, END_KEY / E_REF);
 		copy3(key, f.sky.light);
 		f.sky.sunLight = true;

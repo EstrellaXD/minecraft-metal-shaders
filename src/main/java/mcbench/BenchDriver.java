@@ -247,6 +247,7 @@ public final class BenchDriver {
 			WaterShots.plan(steps); // opt-in -Dmcbench.water=true
 			MotionShots.plan(steps); // opt-in -Dmcbench.motionShots=forest;overview;...
 			EntityShots.plan(steps); // opt-in -Dmcbench.entities=true|noon,evening,night,hand,motion (M3 entities)
+			WeatherShots.plan(steps); // opt-in -Dmcbench.weather=true|rain,sunset,night,water,storm,glass
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)

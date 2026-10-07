@@ -57,9 +57,6 @@ import mcopt.metal.shade.Shade;
  * per-frame offset shared by every texel (M2/M2.1: the beams under trees and the veil over the sky between the leaves
  * flickered).</li>
  * <li>{@code mcopt.shade.vl.waterDither} (true, M2.2): the same for the march under water (the caustic curtains).</li>
- * <li>{@code mcopt.shade.vl.edge} (false, M2.2 option; read by ShadePost): under TAAU the final pass blends the light of a
- * depth edge's near and far surface by their coverage of the 2x2 depth footprint. Full resolution: +0.1 ms spinning and
- * +0.4 ms flying over forests, and no measurable gain in flicker, so off.</li>
  * <li>{@code mcopt.shade.vl.unjitter} (true, M2.2; read by ShadePost): under TAAU the final pass reads depth and the light where
  * this frame's jittered raster shows the pixel's scene point; false: at the output uv (M2/M2.1: they moved by the jitter
  * against the steady resolved image).</li>

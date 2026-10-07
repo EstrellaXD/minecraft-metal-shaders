@@ -97,8 +97,7 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 // VL textures (uv scale);
 // r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
 // output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w bits (TAAU,
-// M2.2; 0 = M2.1): 1 the volumetric light at depth edges blended by the 2x2 depth footprint's coverage (else this pixel's
-// depth only), 2 depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point
+// M2.2; 0 = M2.1): 2 depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point
 struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; };
 
 // Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
@@ -204,30 +203,6 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	if (P.v.x > 0.5) {
 		float2 vlScale = P.v.z > 0.0 ? P.v.zw : float2(1.0);
 		half4 v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale);
-		if ((rw & 1) != 0) {
-			// M2.2, under TAAU: scene is the resolve of many jittered frames, depth only this frame's. Where a leaf edge
-			// crosses the pixel its depth flipped between leaf and sky from frame to frame while the resolved colour stayed a
-			// steady blend, so the light and the canopy mist's T switched on and off there (god rays flickering at the leaf
-			// edges). Instead, the light of the near and the far surface of the 2x2 depth footprint, blended by their bilinear
-			// coverage: it moves smoothly with the jitter, like the resolved colour does.
-			float2 dtex = float2(depth.get_width(), depth.get_height());
-			float2 dp = uv * dsize - 0.5;
-			float2 dfr = dp - floor(dp);
-			float4 g4 = depth.gather(shadeLinearClamp, min((floor(dp) + 1.0) / dtex, (dsize - 0.5) / dtex)); // (0,1) (1,1) (1,0) (0,0)
-			float dN = max(max(g4.x, g4.y), max(g4.z, g4.w)), dF = min(min(g4.x, g4.y), min(g4.z, g4.w));
-			if (dN > 0.0 && dN - dF > 1e-6) {
-				float distN = length(shadeWorldFromDepth(uv, dN, f));
-				float distF = dF > 0.0 ? length(shadeWorldFromDepth(uv, dF, f)) : 1e4;
-				if (distF - distN > 0.5 * (0.04 * distN + 0.15)) {
-					float4 bw = float4((1.0 - dfr.x) * dfr.y, dfr.x * dfr.y, dfr.x * (1.0 - dfr.y), (1.0 - dfr.x) * (1.0 - dfr.y));
-					float4 far = select(float4(0.0), float4(1.0), abs(g4 - dF) < abs(g4 - dN));
-					float wF = dot(bw, far);
-					half4 vN = shadeVlUpsample(vlT, vlD, uv, distN, P.v.y, vlScale);
-					half4 vF = shadeVlUpsample(vlT, vlD, uv, distF, P.v.y, vlScale);
-					v = mix(vN, vF, half(wF));
-				}
-			}
-		}
 		tv = float(v.a);
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
 		float3 lit = c * tv;

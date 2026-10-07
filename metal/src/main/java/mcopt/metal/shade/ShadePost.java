@@ -114,10 +114,6 @@ public final class ShadePost {
 	/** This frame's live render size (the TAAU sub-rect of the HDR targets; = width x height without TAAU) and world depth. */
 	private static int liveWidth, liveHeight;
 	private static @Nullable GpuTexture worldDepth;
-	/** M2.2 option: under TAAU the final pass blends the volumetric light of a depth edge's near and far surface by coverage
-	 * (mcopt.shade.vl.edge, default false: at full resolution it cost +0.1 ms spinning and +0.4 ms flying over forests for no
-	 * measurable gain in flicker). */
-	private static final boolean VL_EDGE = Boolean.getBoolean("mcopt.shade.vl.edge");
 	/** M2.2: under TAAU the final pass reads depth and the volumetric light where this frame's jittered raster shows the pixel's
 	 * scene point (mcopt.shade.vl.unjitter, default true; false = at the output uv, M2/M2.1: they moved by the jitter). */
 	private static final boolean VL_UNJITTER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.unjitter", "true"));
@@ -446,11 +442,9 @@ public final class ShadePost {
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU), w bits
-		// (TAAU): 1 the volumetric light's coverage blend at depth edges (mcopt.shade.vl.edge), 2 depth and the light read at
-		// the jittered raster's position of the pixel's scene point (mcopt.shade.vl.unjitter)
-		boolean taaDepth = taa != null && depth != 0;
-		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen)
-			.putFloat((vl && taaDepth && VL_EDGE ? 1 : 0) + (taaDepth && VL_UNJITTER ? 2 : 0)).flip();
+		// (TAAU): 2 depth and the volumetric light read at the jittered raster's position of the pixel's scene point
+		// (mcopt.shade.vl.unjitter)
+		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(taa != null && depth != 0 && VL_UNJITTER ? 2f : 0f).flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
 		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,

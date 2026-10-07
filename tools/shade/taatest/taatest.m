@@ -20,7 +20,7 @@ typedef struct Taa Taa;
 Ctx *mc_create(char *name, int nameCap, char *err, int errCap);
 Enc *mc_enc_new(Ctx *ctx);
 id<MTLCommandBuffer> mc_enc_commit(Enc *enc);
-Taa *mc_taa_new(Ctx *ctx, const char *source, int hdr, char *err, int errCap);
+Taa *mc_taa_new(Ctx *ctx, const char *source, int flags, char *err, int errCap);
 int mc_taa_resize(Taa *t, Ctx *ctx, int width, int height);
 void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth, id<MTLTexture> reactive, id<MTLTexture> dst,
 	const void *params, int paramsLength);
@@ -275,7 +275,7 @@ int main(int argc, const char **argv) {
 		dev = ctx->device;
 		Enc *enc = mc_enc_new(ctx);
 		NSString *src = [NSString stringWithContentsOfFile:[NSString stringWithUTF8String:argv[1]] encoding:NSUTF8StringEncoding error:nil];
-		Taa *taa = mc_taa_new(ctx, src.UTF8String, 0, err, sizeof err);
+		Taa *taa = mc_taa_new(ctx, src.UTF8String, getenv("TAALOSSY") ? 2 : 0, err, sizeof err);
 		if (!taa) { printf("FAIL compile taa.metal: %s\n", err); return 1; }
 		NSError *e = nil;
 		id<MTLLibrary> lib = [dev newLibraryWithSource:sceneSource options:nil error:&e];

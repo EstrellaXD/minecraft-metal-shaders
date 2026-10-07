@@ -48,7 +48,7 @@ final class TaaNative {
 		return new IllegalStateException(t);
 	}
 
-	static long create(long ctx, long source, int hdr, long err, int errCap) { try { return (long) NEW.invokeExact(ctx, source, hdr, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
+	static long create(long ctx, long source, int flags, long err, int errCap) { try { return (long) NEW.invokeExact(ctx, source, flags, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
 	static int resize(long taa, long ctx, int width, int height) { try { return (int) RESIZE.invokeExact(taa, ctx, width, height); } catch (Throwable t) { throw rethrow(t); } }
 	static void resolve(long enc, long taa, long color, long depth, long reactive, long dst, long params, int length) { try { RESOLVE.invokeExact(enc, taa, color, depth, reactive, dst, params, length); } catch (Throwable t) { throw rethrow(t); } }
 	static long history(long taa) { try { return (long) HISTORY.invokeExact(taa); } catch (Throwable t) { throw rethrow(t); } }

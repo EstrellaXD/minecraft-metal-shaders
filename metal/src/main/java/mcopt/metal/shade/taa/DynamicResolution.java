@@ -23,14 +23,15 @@ package mcopt.metal.shade.taa;
  * of its [start, end] not already covered by the previous frame's (two frames are in flight and may overlap), so it is the
  * GPU time the frame really added. An exponential average over ~12 frames is compared with the target, 86% of the frame
  * budget (headroom for the CPU side and other apps); the new scale follows s' = s * sqrt(target / time) (cost ~ pixels ~
- * s^2), limited to +-0.04 per step, quantised to 1/64, applied only when it moves more than 0.015 (or reaches a bound) and
- * at least 8 frames after the last change; after a change the frames still in flight are skipped and the average starts
- * afresh (12 frames), so it never mixes two scales. Changes cost nothing: the
- * world renders into a viewport sub-rect of targets allocated at the maximum scale.
+ * s^2), quantised to 1/64, applied only when it moves more than 0.015 (or reaches a bound). Asymmetric, so it doesn't
+ * hunt: it drops fast (up to -0.04 per step, 8 frames after the last change) and climbs slowly (up to +0.02 per step, 45
+ * frames after the last change, and only while the frame is under 92% of the target, so a climb never lands right on the
+ * edge). After a change the frames still in flight are skipped and the average starts afresh (12 frames), so it never mixes
+ * two scales. Changes cost nothing: the world renders into a viewport sub-rect of targets allocated at the maximum scale.
  */
 public final class DynamicResolution {
-	private static final float STEP_MAX = 0.04f, QUANTUM = 1f / 64f, DEADBAND = 0.015f;
-	private static final int SETTLE_FRAMES = 8, AVERAGE_FRAMES = 12, IN_FLIGHT = Math.max(1, Integer.getInteger("mcopt.metal.inFlight", 2));
+	private static final float STEP_DOWN = 0.04f, STEP_UP = 0.02f, QUANTUM = 1f / 64f, DEADBAND = 0.015f, UP_MARGIN = 0.92f;
+	private static final int SETTLE_FRAMES = 8, SETTLE_UP_FRAMES = 45, AVERAGE_FRAMES = 12, IN_FLIGHT = Math.max(1, Integer.getInteger("mcopt.metal.inFlight", 2));
 
 	private final float min, max;
 	private final double targetSeconds;
@@ -73,7 +74,8 @@ public final class DynamicResolution {
 		this.sinceChange++;
 		if (this.samples < AVERAGE_FRAMES || this.sinceChange < SETTLE_FRAMES) return this.scale;
 		float next = (float) (this.scale * Math.sqrt(this.targetSeconds / this.average));
-		next = TaaConfig.clamp(next, this.scale - STEP_MAX, this.scale + STEP_MAX);
+		if (next > this.scale && (this.sinceChange < SETTLE_UP_FRAMES || this.average > UP_MARGIN * this.targetSeconds)) return this.scale;
+		next = TaaConfig.clamp(next, this.scale - STEP_DOWN, this.scale + STEP_UP);
 		next = TaaConfig.clamp(Math.round(next / QUANTUM) * QUANTUM, this.min, this.max);
 		boolean toBound = (next == this.min || next == this.max) && next != this.scale;
 		if (Math.abs(next - this.scale) <= DEADBAND && !toBound) return this.scale;

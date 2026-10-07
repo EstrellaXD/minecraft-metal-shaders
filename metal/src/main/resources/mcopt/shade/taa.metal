@@ -67,32 +67,28 @@ static inline float3 taaExpand(float3 c) {
 }
 
 // ---- history fetch: Catmull-Rom in 5 bilinear taps (MJP, MIT; see the header) ------------------------------------------
-static inline float3 taaCatmullRom(texture2d<half> tex, sampler s, float2 uv, float2 size, float2 invSize) {
+// Positions in float (they span the whole output), weights and colours in half (this pass is bound by ALU and latency, not
+// bandwidth: tools/shade/taatest perf). centreA: the alpha of the centre tap, i.e. the bilinear history age, so the age
+// needs no fetch of its own.
+static inline half3 taaCatmullRom(texture2d<half> tex, sampler s, float2 uv, float2 size, float2 invSize, thread half &centreA) {
 	float2 pos = uv * size;
 	float2 t1 = floor(pos - 0.5) + 0.5;     // centre of the texel at grid index 1
-	float2 f = pos - t1;
-	float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-	float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-	float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-	float2 w3 = f * f * (-0.5 + 0.5 * f);
-	float2 w12 = w1 + w2;
-	float2 t0 = (t1 - 1.0) * invSize, t3 = (t1 + 2.0) * invSize, t12 = (t1 + w2 / w12) * invSize;
-	float3 c = float3(tex.sample(s, float2(t12.x, t0.y)).rgb) * (w12.x * w0.y)
-		+ float3(tex.sample(s, float2(t0.x, t12.y)).rgb) * (w0.x * w12.y)
-		+ float3(tex.sample(s, float2(t12.x, t12.y)).rgb) * (w12.x * w12.y)
-		+ float3(tex.sample(s, float2(t3.x, t12.y)).rgb) * (w3.x * w12.y)
-		+ float3(tex.sample(s, float2(t12.x, t3.y)).rgb) * (w12.x * w3.y);
-	float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
-	return max(c / wsum, 0.0); // the spline's negative lobes can ring below 0 at hard edges
-}
-
-// Clips h toward the centre of the box (centre +- extent) along the line between them: unlike a per-channel clamp it keeps
-// the history's hue. Returns how far outside the box h was (<= 1 inside), in units of the box.
-static inline float3 taaClip(float3 h, float3 centre, float3 extent, thread float &outside) {
-	float3 v = h - centre;
-	float3 a = abs(v) / max(extent, float3(1e-5));
-	outside = max(a.x, max(a.y, a.z));
-	return outside > 1.0 ? centre + v / outside : h;
+	half2 f = half2(pos - t1);
+	half2 w0 = f * (-0.5h + f * (1.0h - 0.5h * f));
+	half2 w1 = 1.0h + f * f * (-2.5h + 1.5h * f);
+	half2 w2 = f * (0.5h + f * (2.0h - 1.5h * f));
+	half2 w3 = f * f * (-0.5h + 0.5h * f);
+	half2 w12 = w1 + w2;
+	float2 t0 = (t1 - 1.0) * invSize, t3 = (t1 + 2.0) * invSize, t12 = (t1 + float2(w2 / w12)) * invSize;
+	half4 cc = tex.sample(s, t12);
+	centreA = cc.a;
+	half3 c = tex.sample(s, float2(t12.x, t0.y)).rgb * (w12.x * w0.y)
+		+ tex.sample(s, float2(t0.x, t12.y)).rgb * (w0.x * w12.y)
+		+ cc.rgb * (w12.x * w12.y)
+		+ tex.sample(s, float2(t3.x, t12.y)).rgb * (w3.x * w12.y)
+		+ tex.sample(s, float2(t12.x, t3.y)).rgb * (w12.x * w3.y);
+	half wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+	return max(c / wsum, 0.0h); // the spline's negative lobes can ring below 0 at hard edges
 }
 
 struct TaaOut {
@@ -107,22 +103,22 @@ fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(
 {
 	constexpr sampler linear(filter::linear, address::clamp_to_edge);
 	float2 q = in.position.xy;                         // output pixel centre
-	float2 ratio = p.jitter.zw;
-	float2 pin = q * ratio + p.jitter.xy;              // that scene point in the jittered input raster (pixel units)
+	float2 pin = q * p.jitter.zw + p.jitter.xy;        // that scene point in the jittered input raster (pixel units)
 	int2 base = int2(floor(pin));
 	int2 last = int2(p.input.xy) - 1;
 
 	// The 3x3 input neighbourhood: a reconstruction of this frame's colour at q (Gaussian fit of Blackman-Harris, radius
-	// ~1 input pixel, separable so 6 exponentials instead of 9), and its moments for rectifying the history (in RGB:
-	// YCoCg tested no better on tools/shade/taatest and costs ALU, which this pass is bound by).
-	float2 off = float2(base) + 0.5 - pin;               // offset of the base texel's centre from pin, in (-1, 0]
-	float3 ox = float3(off.x - 1.0, off.x, off.x + 1.0), oy = float3(off.y - 1.0, off.y, off.y + 1.0);
-	half3 wx = half3(exp(-2.29 * ox * ox)), wy = half3(exp(-2.29 * oy * oy));
+	// ~1 input pixel, separable so 6 exponentials instead of 9), and its moments for rectifying the history (in RGB: YCoCg
+	// tested no better on tools/shade/taatest and costs ALU, which this pass is bound by; a 5-tap cross instead of 3x3 was
+	// 0.06 ms cheaper but flickered 20-25% more in motion).
+	half2 off = half2(float2(base) + 0.5 - pin);        // offset of the base texel's centre from pin, in (-1, 0]
+	half3 ox = half3(off.x - 1.0h, off.x, off.x + 1.0h), oy = half3(off.y - 1.0h, off.y, off.y + 1.0h);
+	half3 wx = exp(-2.29h * ox * ox), wy = exp(-2.29h * oy * oy);
 	half3 sum = 0.0h, m1 = 0.0h, m2 = 0.0h;
 	for (int dy = 0; dy < 3; dy++) {
+		int y = clamp(base.y + dy - 1, 0, last.y);
 		for (int dx = 0; dx < 3; dx++) {
-			uint2 tc = uint2(clamp(base + int2(dx - 1, dy - 1), int2(0), last));
-			half3 c = taaCompress(cur.read(tc).rgb);
+			half3 c = taaCompress(cur.read(uint2(clamp(base.x + dx - 1, 0, last.x), y)).rgb);
 			sum += c * (wx[dx] * wy[dy]);
 			m1 += c;
 			m2 += c * c;
@@ -133,10 +129,10 @@ fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(
 	float4 z4 = curDepth.gather(point, pin / float2(curDepth.get_width(), curDepth.get_height()));
 	float zmax = max(max(z4.x, z4.y), max(z4.z, z4.w));
 	half wsum = (wx.x + wx.y + wx.z) * (wy.x + wy.y + wy.z);
-	float wnear = float(max3(wx.x, wx.y, wx.z) * max3(wy.x, wy.y, wy.z));
-	float3 current = float3(sum / wsum);
-	float3 mean = float3(m1) * (1.0 / 9.0);
-	float3 sigma = sqrt(max(float3(m2) * (1.0 / 9.0) - mean * mean, 0.0));
+	half wnear = max3(wx.x, wx.y, wx.z) * max3(wy.x, wy.y, wy.z);
+	half3 current = sum / wsum;
+	half3 mean = m1 * (1.0h / 9.0h);
+	half3 sigma = sqrt(max(m2 * (1.0h / 9.0h) - mean * mean, 0.0h));
 
 	// Camera motion from depth: this pixel's (nearest) surface in last frame's clip space. Static world only; moving
 	// entities fall back on the rectification (and later per-object motion, see TAAU.md).
@@ -150,39 +146,45 @@ fragment TaaOut taau_fs(TaaVOut in [[stage_in]], constant TaaParams &p [[buffer(
 	TaaOut o;
 	o.depth = half(clamp(viewDepth, 0.0, 65000.0));
 	bool valid = p.blend.w < 0.5 && prev.w > 0.0 && all(uvPrev > 0.0) && all(uvPrev < 1.0);
-	float age = 0.0;
-	float3 history = current;
-	float disocclusion = 0.0;
+	half age = 0.0h;
+	half3 history = current;
+	half disocclusion = 0.0h;
 	if (valid) {
 		uint2 hp = uint2(min(uvPrev * p.output.xy, p.output.xy - 1.0));
-		age = float(hist.read(hp).a);
 		// Disocclusion: the surface last frame saw there is not the one we reprojected (it was hidden, or it moved).
 		float stored = float(histDepth.read(hp).r);
 		float tolerance = 0.03 * prev.w + 0.1;
-		disocclusion = saturate((abs(stored - prev.w) - tolerance) / tolerance);
-		history = float3(taaCompress(half3(taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw) * p.misc.x)));
+		disocclusion = half(saturate((abs(stored - prev.w) - tolerance) / tolerance));
+		history = taaCompress(taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age) * half(p.misc.x));
 	}
-	// Rectify: the history may only take colours this frame's neighbourhood could produce (variance box, clipped toward
-	// the mean). A still camera allows a wider box (p.blend.y is set wider by the CPU), which keeps thin detail stable.
-	float outside = 0.0;
-	float3 clipped = taaClip(history, mean, p.blend.y * sigma + 0.002, outside);
-	age *= 1.0 - disocclusion;
+	// Rectify: the history may only take colours this frame's neighbourhood could produce (variance box). It is clipped
+	// toward the mean along the line between them, which (unlike a per-channel clamp) keeps the history's hue; outside = how
+	// far outside the box it was, in box units. A still camera allows a wider box (p.blend.y is set wider by the CPU), which
+	// keeps thin detail stable.
+	half3 extent = half(p.blend.y) * sigma + 0.002h;
+	half3 v = history - mean;
+	half3 a = abs(v) / extent;
+	half outside = max3(a.x, a.y, a.z);
+	half3 clipped = outside > 1.0h ? mean + v / outside : history;
+	age *= 1.0h - disocclusion;
 	// Blend weight of this frame: running average over the pixel's age, never below the minimum (responsiveness), scaled by
 	// the confidence that an input sample actually landed near this output pixel (upscaling: output pixels between input
 	// samples rely on the history), raised where the history had to be clipped hard (something changed: anti-ghosting)
 	// and where the reactive mask says the input is not reprojectable (particles, animated translucents).
-	float alpha = age < 0.5 ? 1.0 : max(1.0 / (age + 1.0), p.blend.x) * mix(0.35, 1.0, wnear);
-	alpha = max(alpha, saturate((outside - 1.0) * 0.25) * 0.5);
-	alpha = max(alpha, float(reactive.read(uint2(clamp(base, int2(0), int2(reactive.get_width(), reactive.get_height()) - 1))).r) * p.misc.z);
-	float3 resolved = mix(clipped, current, saturate(alpha));
-	float3 rgb = taaExpand(resolved);
-	if (any(isnan(rgb)) || any(isinf(rgb))) rgb = taaExpand(current), age = 0.0;
-	float newAge = min(age + 1.0, p.blend.z);
+	half alpha = age < 0.5h ? 1.0h : max(1.0h / (age + 1.0h), half(p.blend.x)) * mix(0.35h, 1.0h, wnear);
+	alpha = max(alpha, saturate((outside - 1.0h) * 0.25h) * 0.5h);
+	if (p.misc.z > 0.0) alpha = max(alpha, reactive.read(uint2(clamp(base, int2(0), int2(reactive.get_width(), reactive.get_height()) - 1))).r * half(p.misc.z));
+	half3 resolved = mix(clipped, current, saturate(alpha));
+	float3 rgb = taaExpand(float3(resolved));
+	half newAge = min(age + 1.0h, half(p.blend.z));
 	int debug = int(p.misc.w);
-	if (debug == 1) rgb = mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(newAge / p.blend.z));   // history age
-	else if (debug == 2) rgb = float3(saturate(outside - 1.0), disocclusion, valid ? 0.0 : 1.0);           // rejection
-	else if (debug == 3) rgb = taaExpand(current), newAge = 1.0;                          // no history
-	o.color = half4(half3(max(rgb, 0.0)), half(newAge));
+	if (debug != 0) {
+		if (debug == 1) rgb = mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z));   // history age
+		else if (debug == 2) rgb = float3(saturate(float(outside) - 1.0), float(disocclusion), valid ? 0.0 : 1.0);    // rejection
+		else if (debug == 3) rgb = taaExpand(float3(current)), newAge = 1.0h;                                         // no history
+	}
+	o.color = half4(half3(max(rgb, 0.0)), newAge);
+	if (!all(isfinite(o.color))) o.color = half4(current, 1.0h);
 	return o;
 }
 

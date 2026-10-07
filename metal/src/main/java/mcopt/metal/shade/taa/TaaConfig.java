@@ -24,7 +24,7 @@ import java.util.Locale;
  * <p>Flags:
  * <ul>
  * <li>{@code mcopt.shade.taa} (true): TAA/TAAU on while native shading is on. false = M1's native, unjittered render.</li>
- * <li>{@code mcopt.shade.preset} (balanced): performance | balanced | quality | ultra, see {@link Preset}.</li>
+ * <li>{@code mcopt.shade.preset} (performance, like M2's ShadeConfig.TIER, which reads the same flag): performance | balanced | quality | ultra, see {@link Preset}.</li>
  * <li>{@code mcopt.shade.scale}: start scale (overrides the preset's); {@code mcopt.shade.scaleMin} / {@code scaleMax}: the
  * dynamic resolution range. The world targets are allocated at scaleMax, so a narrower range also saves memory.</li>
  * <li>{@code mcopt.shade.drs} (true): dynamic resolution; {@code mcopt.shade.drsFps}: its target frame rate (preset's).</li>
@@ -33,6 +33,7 @@ import java.util.Locale;
  * <li>{@code mcopt.shade.mipBias} (true): sharper texture mips at reduced scale (log2 scale), like native.</li>
  * <li>{@code mcopt.shade.taaDebug} (0): 1 history age, 2 rejection (red clip, green disocclusion, blue off-screen), 3 no history.</li>
  * <li>{@code mcopt.shade.drsLog} (false): one log line per resolution change.</li>
+ * <li>{@code mcopt.shade.taaLossy} (false): lossy-compressed colour history (Apple8+).</li>
  * </ul>
  * Never below 0.6x, and no preset starts below 0.67x (critique C2): fewer pixels than that is below what the user ran at
  * 1080p before.
@@ -65,7 +66,7 @@ public final class TaaConfig {
 	public static final float FLOOR = 0.6f;
 
 	public static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("mcopt.shade.taa", "true"));
-	public static final Preset PRESET = preset(System.getProperty("mcopt.shade.preset", "balanced"));
+	public static final Preset PRESET = preset(System.getProperty("mcopt.shade.preset", "performance"));
 	public static final float SCALE_MAX = clamp(floatProp("mcopt.shade.scaleMax", PRESET.max), FLOOR, 1f);
 	public static final float SCALE_MIN = clamp(floatProp("mcopt.shade.scaleMin", PRESET.min), FLOOR, SCALE_MAX);
 	public static final float SCALE = clamp(floatProp("mcopt.shade.scale", PRESET.scale), SCALE_MIN, SCALE_MAX);
@@ -79,6 +80,8 @@ public final class TaaConfig {
 	/** Negative: by scale (sharpen(scale)). */
 	private static final float SHARPEN = floatProp("mcopt.shade.sharpen", -1f);
 	public static final boolean MIP_BIAS = Boolean.parseBoolean(System.getProperty("mcopt.shade.mipBias", "true"));
+	/** Lossy framebuffer compression for the colour history (Apple8+): less bandwidth, tiny error. Off by default (TAAU.md). */
+	public static final boolean LOSSY = Boolean.getBoolean("mcopt.shade.taaLossy");
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.taaDebug", 0);
 	public static final boolean DRS_LOG = Boolean.getBoolean("mcopt.shade.drsLog");
 
@@ -89,8 +92,8 @@ public final class TaaConfig {
 		try {
 			return Preset.valueOf(name.trim().toUpperCase(Locale.ROOT));
 		} catch (IllegalArgumentException e) {
-			System.out.println("[mcopt] shade: unknown mcopt.shade.preset '" + name + "', using balanced");
-			return Preset.BALANCED;
+			System.out.println("[mcopt] shade: unknown mcopt.shade.preset '" + name + "', using performance");
+			return Preset.PERFORMANCE;
 		}
 	}
 

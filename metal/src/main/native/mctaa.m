@@ -23,20 +23,23 @@ typedef struct {
 	id<MTLTexture> hist[2], depth[2];
 	id<MTLTexture> noReactive;  // 1x1 R8 zero: bound when no reactive mask is given
 	int width, height, cur;     // history size; hist[cur] is the latest
+	bool lossy;                 // history targets use lossy framebuffer compression (Apple8+, guaranteed 2:1)
 } Taa;
 
-static id<MTLTexture> taaTarget(id<MTLDevice> device, MTLPixelFormat format, int w, int h, NSString *label) {
+static id<MTLTexture> taaTarget(id<MTLDevice> device, MTLPixelFormat format, int w, int h, bool lossy, NSString *label) {
 	MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:w height:h mipmapped:NO];
 	d.storageMode = MTLStorageModePrivate;
 	d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;  // compressible: no ShaderWrite, no format views
+	if (lossy) d.compressionType = MTLTextureCompressionTypeLossy;
 	id<MTLTexture> t = [device newTextureWithDescriptor:d];
 	t.label = label;
 	return t;
 }
 
-// Compiles taa.metal; hdr: the input is linear HDR (function constant TAA_HDR), else display-encoded LDR (M1's RGBA8).
-// NULL with the compiler's message in err on failure.
-Taa *mc_taa_new(Ctx *ctx, const char *source, int hdr, char *err, int errCap) {
+// Compiles taa.metal. flags: bit 0 = the input is linear HDR (function constant TAA_HDR), else display-encoded LDR (M1's
+// RGBA8); bit 1 = lossy-compressed history (only where the GPU supports it, Apple8+). NULL with the compiler's message in err.
+Taa *mc_taa_new(Ctx *ctx, const char *source, int flags, char *err, int errCap) {
+	int hdr = flags & 1;
 	@autoreleasepool {
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
@@ -69,6 +72,7 @@ Taa *mc_taa_new(Ctx *ctx, const char *source, int hdr, char *err, int errCap) {
 		}
 		Taa *t = calloc(1, sizeof(Taa));
 		t->resolve = resolve;
+		t->lossy = (flags & 2) && [ctx->device supportsFamily:MTLGPUFamilyApple8];
 		t->output = [NSMutableDictionary new];
 		t->vs = [lib newFunctionWithName:@"taa_vs"];
 		t->outputFs = [lib newFunctionWithName:@"taa_output_fs"];
@@ -113,8 +117,8 @@ int mc_taa_resize(Taa *t, Ctx *ctx, int width, int height) {
 		for (int i = 0; i < 2; i++) {
 			[t->hist[i] release];
 			[t->depth[i] release];
-			t->hist[i] = taaTarget(ctx->device, MTLPixelFormatRGBA16Float, width, height, i ? @"mcopt shade: TAA history 1" : @"mcopt shade: TAA history 0");
-			t->depth[i] = taaTarget(ctx->device, MTLPixelFormatR16Float, width, height, i ? @"mcopt shade: TAA depth 1" : @"mcopt shade: TAA depth 0");
+			t->hist[i] = taaTarget(ctx->device, MTLPixelFormatRGBA16Float, width, height, t->lossy, i ? @"mcopt shade: TAA history 1" : @"mcopt shade: TAA history 0");
+			t->depth[i] = taaTarget(ctx->device, MTLPixelFormatR16Float, width, height, false, i ? @"mcopt shade: TAA depth 1" : @"mcopt shade: TAA depth 0");
 		}
 	}
 	t->width = width;

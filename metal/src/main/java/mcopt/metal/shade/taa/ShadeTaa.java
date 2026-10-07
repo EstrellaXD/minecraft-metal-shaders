@@ -60,6 +60,8 @@ public final class ShadeTaa {
 
 	private static @Nullable ShadeTaa instance;
 	private static boolean failed;
+	/** M2 integration: the world image TAAU resolves is linear pre-exposed HDR (set before the first get(); TAAU.md). */
+	private static boolean hdrInput;
 	private static final DynamicResolution DRS = new DynamicResolution(TaaConfig.SCALE, TaaConfig.SCALE_MIN, TaaConfig.SCALE_MAX, TaaConfig.DRS_FPS);
 
 	private final Object encoder;
@@ -94,7 +96,7 @@ public final class ShadeTaa {
 		ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.resource("taa.metal"));
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
-			long taa = TaaNative.create(MetalBridge.ctx(encoder), MemoryUtil.memAddress(source), 0, err, 4096);
+			long taa = TaaNative.create(MetalBridge.ctx(encoder), MemoryUtil.memAddress(source), (hdrInput ? 1 : 0) | (TaaConfig.LOSSY ? 2 : 0), err, 4096);
 			if (taa == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			instance = new ShadeTaa(encoder, taa);
 			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe());
@@ -105,6 +107,15 @@ public final class ShadeTaa {
 			MemoryUtil.memFree(source);
 		}
 		return instance;
+	}
+
+	/**
+	 * M2 integration (TAAU.md): declares that the image handed to {@link #resolveTextures} is linear, pre-exposed HDR (the
+	 * resolve then blends in a range-compressed space). Must be called before the first {@link #get()}.
+	 */
+	public static void setHdrInput(boolean hdr) {
+		if (instance != null && hdr != hdrInput) throw new IllegalStateException("ShadeTaa.setHdrInput after setup");
+		hdrInput = hdr;
 	}
 
 	/** A retired frame's GPU start/end (seconds, host clock), from the backend: the dynamic resolution's input. */
@@ -206,6 +217,21 @@ public final class ShadeTaa {
 	 * here: the hand, screen effects and GUI draw at native resolution).
 	 */
 	public void resolve(RenderTarget mainTarget) {
+		MetalBridge.flushClear(this.encoder, this.world.getColorTexture());
+		MetalBridge.flushClear(this.encoder, this.world.getDepthTexture());
+		MetalBridge.dropPendingClear(this.encoder, mainTarget.getColorTexture()); // overwritten whole
+		this.resolveTextures(MetalBridge.textureHandle(this.world.getColorTexture()), MetalBridge.textureHandle(this.world.getDepthTexture()), 0,
+			MetalBridge.textureHandle(mainTarget.getColorTexture()), TaaConfig.sharpen(this.scale));
+	}
+
+	/**
+	 * The resolve itself, on native MTLTexture handles (M2's HDR post chain calls this instead of {@link #resolve}, TAAU.md):
+	 * color/depth = this frame's jittered world render (any texture size; the live sub-rect is (0, 0, width(), height())),
+	 * reactive = an R8 mask in input pixels (1 = don't trust the history) or 0, dst = an output-size target that receives the
+	 * sharpened result, or 0 (only the history is written: read it with {@link #history()}, e.g. in a final pass that
+	 * sharpens). Ends the world part of the frame: from here passes draw at full size again.
+	 */
+	public void resolveTextures(long color, long depth, long reactive, long dst, float sharpen) {
 		this.swapped = false;
 		MetalBridge.setSubRect(this.encoder, null, null, 0, 0);
 		long now = System.nanoTime();
@@ -221,9 +247,6 @@ public final class ShadeTaa {
 			still = d.lengthSqr() < 1e-8 && this.reprojection.equals(this.viewProj, 1e-6f);
 		}
 		this.viewProj.invert(this.invViewProj);
-		MetalBridge.flushClear(this.encoder, this.world.getColorTexture());
-		MetalBridge.flushClear(this.encoder, this.world.getDepthTexture());
-		MetalBridge.dropPendingClear(this.encoder, mainTarget.getColorTexture()); // overwritten whole
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long p = stack.nmalloc(16, PARAMS);
 			this.invViewProj.getToAddress(p);
@@ -234,10 +257,9 @@ public final class ShadeTaa {
 			put4(p + 160, this.outWidth, this.outHeight, 1f / this.outWidth, 1f / this.outHeight);
 			put4(p + 176, this.jittered ? this.jitterX : 0, this.jittered ? this.jitterY : 0, (float) this.width / this.outWidth, (float) this.height / this.outHeight);
 			put4(p + 192, TaaConfig.alphaMin(), TaaConfig.clipGamma(still), 32, cut ? 1 : 0);
-			put4(p + 208, 1f, 0f, 0.85f, TaaConfig.DEBUG);
-			put4(p + 224, TaaConfig.sharpen(this.scale), 0, 0, 0);
-			TaaNative.resolve(this.enc, this.taa, MetalBridge.textureHandle(this.world.getColorTexture()), MetalBridge.textureHandle(this.world.getDepthTexture()), 0,
-				MetalBridge.textureHandle(mainTarget.getColorTexture()), p, PARAMS);
+			put4(p + 208, 1f, 0f, reactive != 0 ? 0.85f : 0f, TaaConfig.DEBUG); // no mask: the shader skips its read
+			put4(p + 224, sharpen, 0, 0, 0);
+			TaaNative.resolve(this.enc, this.taa, color, depth, reactive, dst, p, PARAMS);
 		}
 		this.prevViewProj.set(this.viewProj);
 		this.prevPosition = this.position;

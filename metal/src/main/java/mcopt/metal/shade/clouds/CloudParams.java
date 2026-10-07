@@ -35,7 +35,9 @@ public final class CloudParams {
 		SKY_EXTINCTION = CloudConfig.floatProperty("mcopt.shade.clouds.skyExtinction", 0.2f),
 		SUNSET_FILL = CloudConfig.floatProperty("mcopt.shade.clouds.sunsetFill", 0.4f),
 		AP_SUNSET = CloudConfig.floatProperty("mcopt.shade.clouds.apSunset", 1.5f),
-		LIGHT_STEP = CloudConfig.floatProperty("mcopt.shade.clouds.lightStep", 4f);
+		LIGHT_STEP = CloudConfig.floatProperty("mcopt.shade.clouds.lightStep", 4f),
+		OD_STEP = CloudConfig.floatProperty("mcopt.shade.clouds.odStep", 2.5f),
+		OD_MIN = CloudConfig.floatProperty("mcopt.shade.clouds.odMin", 0.5f);
 	/** World periods the noise textures tile with (blocks): the weather map's 4096 tile, the 3D noise's 120 and 30 tiles. */
 	static final double WEATHER_PERIOD = 16384.0, NOISE_PERIOD = 120.0 * 64.0;
 	static final float CURVATURE_RADIUS = 40000f;
@@ -145,7 +147,7 @@ public final class CloudParams {
 		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, CloudConfig.BLOCKY ? 1f : 0f);
 		// wind shear: the tops lean downwind by ~40 blocks over the layer (more on windy days)
 		float shear = CloudConfig.BLOCKY ? 0f : 25f + 3f * w.windSpeed;
-		put4(b, 432, w.windX * shear, w.windZ * shear, 0f, 0f);
+		put4(b, 432, w.windX * shear, w.windZ * shear, OD_STEP, OD_MIN);
 		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, sl[1]) * this.opacity : 0f;
 
 		// ---- ShadeLook ----

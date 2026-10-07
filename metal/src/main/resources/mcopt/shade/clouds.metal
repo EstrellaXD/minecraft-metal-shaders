@@ -62,7 +62,8 @@ struct CloudParams {
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
 	                       //     extinction factor, w style (0 volumetric, 1 blocky: vanilla-style 12-block cells, ray-traced)
 	float4 shear;          // 432 xy horizontal offset of the 2D shape over the layer's height (blocks; wind shear: tops lean
-	                       //     downwind, and columns stop lining up into streaks toward the zenith), zw 0
+	                       //     downwind, and columns stop lining up into streaks toward the zenith), z optical depth per step
+	                       //     in cloud (smaller = more samples in dense cloud), w the shortest step (fraction of the base step)
 };
 static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)");
 
@@ -411,9 +412,9 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		}
 		miss = 0;
 		float st = d * sigma;
-		// in dense cloud a whole step would jump from lit to opaque: at most ~1 optical depth per sample (down to a quarter
-		// step), so where the ray starts in the cloud (the jitter) stops mattering
-		float ds = clamp(1.0 / max(st, 1e-4), dt * 0.25, dt);
+		// in dense cloud a whole step would jump from lit to opaque: at most shear.z optical depths per sample (down to
+		// shear.w of a step), so where the ray starts in the cloud (the jitter) matters less
+		float ds = clamp(c.shear.z / max(st, 1e-4), dt * c.shear.w, dt);
 		float stepT = exp(-st * ds);
 		float h = saturate((y - c.layer.x) / thick);
 		float tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod);

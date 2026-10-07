@@ -39,6 +39,7 @@ GPU ms/frame from gputimes (union of command-buffer intervals / frames). Noise b
 | M2, hdrFormat=rg11b10f | 176 | 5.67 | 161 | 6.22 | m2b7-rg11 |
 | M2, exposure=fixed | 170 | 5.87 | 150 | 6.69 | m2b7-fixed (histogram cost ≈ 0) |
 | M2, hdrFormat=rg11b10f (second run) | 174 | 5.73 | 160 | 6.23 | m2b9-rg11 |
+| **final build (rg11b10f default), shade on** | 175 | 5.72 | 153 | 6.55 | 20261006-214715-m2b10-on |
 | M2 + Distant Horizons (DEV-DH, DH default config) | 61.5 | 16.3 | 56.1 | 17.8 | m2b9-dh (FT0 measured DH alone, no shade: 98 / 87 fps, 10.2 / 11.5 ms; the lean DH config, FT0_NOTES, is the recommendation) |
 
 M2 over M1 ≈ **+1.4-1.7 ms** at native Retina (all of M2a + polish). The bible budgets M2a at 1.1 ms at 0.67x internal
@@ -62,8 +63,9 @@ finals) and measured equal.
 ## Screenshots
 
 Contact sheets (M1 left, M2 right; noon, forest, sunset over water, night torches, rain) and DH: 
-`work/release/M2-base-screenshots/` (m2-vs-m1.jpg, m2-dh.jpg, m2-details.jpg). Full-size PNGs:
-`bench-results/20261006-205516-m2b9-onb/screenshots/` (latest look), DH: `bench-results/20261006-193830-m2b6-dh/screenshots/`.
+`work/release/M2-base-screenshots/` (m2-vs-m1.jpg, m2-dh.jpg, m2-details.jpg, m2-final-dev-vs-dh.jpg = final build on
+DEV and DEV-DH). Full-size PNGs: `bench-results/20261006-214715-m2b10-on/screenshots/` (final), DH:
+`bench-results/20261006-215042-m2b10-dh/screenshots/`.
 
 What changed visually vs M1: filmic highlight roll-off with bloom glow around the sun and bright water, a real round sun
 with aureole, Milky Way + twinkling coloured stars + phased moon at night, warm torch pools that keep their colour,

@@ -741,9 +741,9 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #if defined(SHADE_WEATHER) && defined(SHADE_RIPPLES)
 		// M3 weather: raindrop rings on water under open sky (weather_surface.metal), faded out where they would alias
 		if (wp.state.z > 0.02 && w.sky > 0.95h) {
-			float rf = 1.0 - smoothstep(0.012, 0.035, w.footprint);
+			float rf = 1.0 - smoothstep(0.03, 0.06, w.footprint);
 			if (rf > 0.0) {
-				float2 rs = shadeWxRipples(shadeWxXZ(w.p.xz, f), f.sunPath.w, min(wp.state.z * 1.1, 1.0)) * (rf * 1.4);
+				float2 rs = shadeWxRipples(shadeWxXZ(w.p.xz, f), f.sunPath.w, min(wp.state.z * 1.1, 1.0), w.footprint) * (rf * 1.4);
 				n = normalize(n + float3(-rs.x, 0.0, -rs.y));
 			}
 		}

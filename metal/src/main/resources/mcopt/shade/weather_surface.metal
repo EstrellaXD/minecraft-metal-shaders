@@ -65,9 +65,13 @@ static inline float shadeWxPuddleField(float2 xa) {
 // Ring profile: a damped sine packet around the radius rho, h = a sin(2 pi e / lambda) exp(-(e / w)^2), e = r - rho; the
 // slope comes from its analytic derivative. Returns the height gradient (dh/dx, dh/dz) in blocks per block.
 #define SHADE_RIPPLE_CELL 0.7
-static float2 shadeWxRipples(float2 xa, float t, float rate) {
+static float2 shadeWxRipples(float2 xa, float t, float rate, float footprint) {
 	float2 g = float2(0.0);
-	const float C = SHADE_RIPPLE_CELL, lambda = 0.075, wid = 0.055, k = 6.2831853 / lambda;
+	// farther away the rings widen with the pixel footprint (a band-limited ring instead of an aliasing one), weaker by the
+	// same factor so the slope energy stays comparable
+	float widen = max(1.0, footprint * (1.0 / 0.011));
+	const float C = SHADE_RIPPLE_CELL;
+	float lambda = 0.075 * widen, wid = 0.055 * widen, k = 6.2831853 / lambda;
 	for (int layer = 0; layer < 2; layer++) {
 		float2 q = xa * (1.0 / C) + (layer == 0 ? float2(0.0) : float2(0.5, 0.37));
 		float2 ci = floor(q);
@@ -89,7 +93,7 @@ static float2 shadeWxRipples(float2 xa, float t, float rate) {
 		float dh = env * (k * c - 2.0 * e / (wid * wid) * s);
 		g += dh * d / max(r, 1e-4);
 	}
-	return g * 0.004;
+	return g * (0.0055 / widen);
 }
 
 // ---- wet surfaces and puddles -----------------------------------------------------------------------------------------------
@@ -131,8 +135,8 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
-		float fade = 1.0 - smoothstep(0.012, 0.035, footprint);
-		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0)) * fade;
+		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
+		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0), footprint) * fade;
 #endif
 	}
 #endif

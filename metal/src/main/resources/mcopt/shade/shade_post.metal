@@ -204,7 +204,13 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 			c = c * T + S * ex;
 		}
 	}
-	// M3: the Nether's layered glowing haze / the End's violet haze (shade_dims.metal), in open air
+	// M3: the End's sky where vanilla drew none (the dragon fight), then the Nether's layered glowing haze / the End's violet
+	// haze (shade_dims.metal), in open air
+	if (dims && d <= 0.0 && L.dimTint.w > 2.5 && f.flags.y == 0 && P.r.w < 0.5) {
+		float4 w4 = f.invViewProj * float4(in.uv * 2.0 - 1.0, 0.5, 1.0);
+		float pixelAngle = 2.0 * atan(1.0 / max(abs(f.proj[1][1]), 1e-3)) / float(scene.get_height());
+		c = shadeEndSky(normalize(w4.xyz / w4.w), f, L, sr.milkyWay, pixelAngle) * ex;
+	}
 	if (dims && f.flags.y == 0) {
 		c = shadeDimsFog(c, wp, d > 0.0, f, L, ex, P.r.w > 0.5, sr.milkyWay);
 		T = float3(d > 0.0 ? exp(-L.dimTint.x * length(wp)) : 0.0);

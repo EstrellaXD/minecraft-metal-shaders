@@ -65,8 +65,8 @@ public final class ShadeDims {
 	private static final float[] NETHER_LAVA = {1.0f, 0.8f, 0.45f, 0.35f, 0.7f};
 
 	// tuning (luminance after exposure E_REF: what a white surface / the fog shows)
-	static final float NETHER_AMBIENT = 0.34f, NETHER_FOG = 0.16f, NETHER_LAVA_UP = 0.55f, NETHER_LAVA_Y = 31f;
-	static final float END_KEY = 1.45f, END_AMBIENT = 0.26f, END_FOG = 0.05f, END_FOG_SIGMA = 0.0045f;
+	static final float NETHER_AMBIENT = 0.26f, NETHER_FOG_GAIN = 3.0f, NETHER_LAVA_UP = 0.55f, NETHER_LAVA_Y = 31f, NETHER_SIGMA = 1.2f;
+	static final float END_KEY = 0.95f, END_AMBIENT = 0.2f, END_FOG = 0.05f, END_FOG_SIGMA = 0.0045f;
 	static final float END_ELEVATION = 55f, END_AZIMUTH = 30f;
 
 	private static final float[] netherW = {1f, 0f, 0f, 0f, 0f};
@@ -137,11 +137,12 @@ public final class ShadeDims {
 		}
 		for (int i = 0; i < 5; i++) netherW[i] += ((i == b ? 1f : 0f) - netherW[i]) * k;
 		float[] fog = new float[3], amb = new float[3], acc = new float[3];
-		float density = 0f, lava = 0f;
+		float density = 0f, lava = 0f, fogLuma = 0f;
 		for (int i = 0; i < 5; i++) {
 			float w = netherW[i];
 			if (w < 1e-4f) continue;
 			addChroma(fog, NETHER_HEX[i][0], w);
+			fogLuma += luma(srgbLin(NETHER_HEX[i][0])) * w;
 			addChroma(amb, NETHER_HEX[i][1], w);
 			addChroma(acc, NETHER_HEX[i][2], w);
 			density += NETHER_DENSITY[i] * w;
@@ -161,17 +162,18 @@ public final class ShadeDims {
 		java.util.Arrays.fill(f.sky.light, 0f);
 		f.sky.sunLight = false;
 		// fog in-scatter radiance (pre-exposure) and the lava glow (warm, from the accent of the wastes)
-		setLuma(fog, NETHER_FOG / E_REF);
+		setLuma(fog, fogLuma * NETHER_FOG_GAIN / E_REF); // the palette's fog as the screen should show it, a little lifted
 		copy3(fog, f.sky.horizon[0]);
 		float[] lavaC = {1.0f, 0.42f, 0.12f};
 		setLuma(lavaC, NETHER_LAVA_UP / E_REF * lava);
 		copy3(lavaC, f.sky.horizon[1]);
-		setLuma(acc, NETHER_FOG / E_REF);
+		setLuma(acc, fogLuma * NETHER_FOG_GAIN / E_REF);
 		copy3(acc, f.sky.horizon[2]);
-		fogDensity = 2.0f / Math.max(fogEnd, 16f) * density;
+		fogDensity = NETHER_SIGMA / Math.max(fogEnd, 16f) * density;
 	}
 
 	private static float fogDensity;
+	private static boolean bossFog;
 
 	private static void end(ShadeFrame f, SkyRenderState sky, float k) {
 		float[] key = srgbLin(0xC7B8FF);
@@ -199,7 +201,9 @@ public final class ShadeDims {
 		putSky(f.sky.horizon[5], 0x6AE0FF, 1f);
 		putSky(f.sky.horizon[6], 0x6A3FA0, 1f);
 		putSky(f.sky.horizon[7], 0x2F7F8F, 1f);
-		fogDensity = END_FOG_SIGMA;
+		// the dragon fight: vanilla draws no sky at all (boss fog); the final pass paints ours then, in a thicker haze
+		bossFog = net.minecraft.client.Minecraft.getInstance().gui.hud.getBossOverlay().shouldCreateWorldFog();
+		fogDensity = END_FOG_SIGMA * (bossFog ? 2.5f : 1f);
 		// the End flash (26.x): direction from the sky state's angles, as SkyRenderer places its sprite
 		float target = sky.endFlashIntensity;
 		flash += (target - flash) * Math.min(1f, k * 6f);
@@ -254,9 +258,10 @@ public final class ShadeDims {
 			int bits = (int) F.getFloat(ShadeFrame.SUN_PATH + 8) | FLAG_DIMS_LIT;
 			F.putFloat(ShadeFrame.SUN_PATH + 8, bits);
 			boolean nether = dimension == ShadeFrame.DIM_NETHER;
-			// dimTint: x fog extinction (1/block), y lava sea level, z border fog radius (blocks), w 1 = Nether, 2 = End
+			// dimTint: x fog extinction (1/block), y lava sea level, z border fog radius (blocks), w 1 = Nether, 2 = End, 3 = End
+			// without a sky pass (the dragon fight's boss fog: the final pass paints the sky)
 			float border = f.fogRenderStart < f.fogRenderEnd && f.fogRenderEnd < 1e5f ? f.fogRenderEnd : 0f;
-			put4(L, ShadeLook.DIM_TINT, fogDensity, NETHER_LAVA_Y, border, nether ? 1f : 2f);
+			put4(L, ShadeLook.DIM_TINT, fogDensity, NETHER_LAVA_Y, border, nether ? 1f : bossFog ? 3f : 2f);
 			put4(L, ShadeLook.FLASH, flashDir.x, flashDir.y, flashDir.z, nether ? 0f : flash);
 			// stay moody: less metering (bible: Nether 0.3, End 0.4), no Purkinje shift, a little more bloom
 			L.putFloat(ShadeLook.EXPOSURE_REF + 4, mcopt.metal.shade.ShadeConfig.AUTO_EXPOSURE ? (nether ? 0.3f : 0.4f) : 0f);

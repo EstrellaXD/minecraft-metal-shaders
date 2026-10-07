@@ -16,7 +16,8 @@
 //     SHADE_DP_FOG 0  fog in-scatter (both)          SHADE_DP_LAVA 1  lava up-light at the lava sea (Nether)
 //     SHADE_DP_ACCENT 2 Nether biome accent | End sky zenith   3 End sky horizon   4 End beams   5 End filaments
 //     6, 7 End nebula hues
-// ShadeLook: dimTint = (fog extinction 1/block, lava sea y, border fog radius in blocks (0 off), 1 Nether / 2 End);
+// ShadeLook: dimTint = (fog extinction 1/block, lava sea y, border fog radius in blocks (0 off), 1 Nether / 2 End / 3 End
+// without a sky pass: vanilla skips the sky during the dragon fight, the final pass paints shadeEndSky on empty pixels);
 // flash = (End flash direction, intensity); night.z = aurora strength 0..1.
 // NOISE. ShadeResources.milkyWay's alpha holds a tileable fbm (baked with the Milky Way, shade_post.metal): shadeDimsNoise.
 #ifndef MCOPT_SHADE_DIMS
@@ -110,8 +111,8 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float nb = shadeDimsNoise(mw, q * float2(16.0, 12.0) + float2(w * 1.6, w * 0.9));
 	float nb2 = shadeDimsNoise(mw, q * float2(48.0, 30.0) + float2(w * 2.2, 0.0));
 	float band = exp(-abs(e - 0.35) / 0.55);
-	float neb = smoothstep(0.42, 0.95, nb * 0.8 + nb2 * 0.35) * band;
-	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 3.0);
+	float neb = smoothstep(0.55, 1.05, nb * 0.8 + nb2 * 0.35) * band;
+	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 0.9);
 	// stars (the overworld's field, brighter and denser looking: no atmosphere)
 	float sigma = clamp(0.7 * pixelAngle / (1.5707963 / 420.0), 0.25, 0.8);
 	sky += shadeStars(dir, 1.0, f.time.y, sigma) * (0.5 * (1.0 - 0.6 * neb));
@@ -121,11 +122,11 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float az = lon;
 	float r1 = shadeDimsNoise(mw, float2(az * 64.0, t * 0.02));
 	float r2 = shadeDimsNoise(mw, float2(az * 160.0, t * 0.035 + 3.0));
-	float beam = pow(saturate(1.0 - abs(2.0 * r1 - 1.0)), 7.0);
-	float fil = pow(saturate(1.0 - abs(2.0 * r2 - 1.0)), 14.0);
-	float rise = smoothstep(-0.35, -0.02, e) * exp(-max(e + 0.05, 0.0) / (0.32 + 0.25 * r1));
+	float beam = pow(saturate(1.0 - abs(2.0 * r1 - 1.0)), 12.0);
+	float fil = pow(saturate(1.0 - abs(2.0 * r2 - 1.0)), 24.0);
+	float rise = smoothstep(-0.3, -0.04, e) * exp(-max(e + 0.04, 0.0) / (0.10 + 0.12 * r1));
 	float calm = 1.0 + 1.5 * flash;
-	sky += (f.horizon[4].rgb * beam * 2.2 + f.horizon[5].rgb * fil * 1.6) * (rise * calm);
+	sky += (f.horizon[4].rgb * beam * 0.55 + f.horizon[5].rgb * fil * 0.4) * (rise * calm);
 	if (flash > 0.0) {
 		float c = saturate(dot(dir, L.flash.xyz));
 		sky += float3(0.55, 0.7, 1.0) * (flash * (pow(c, 96.0) * 14.0 + pow(c, 6.0) * 0.5)) * length(f.horizon[4].rgb);
@@ -182,12 +183,12 @@ static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f
 	if (!geo) {
 		if (!nether || keepSky) return c;
 		float g = exp(-max(yc - L.dimTint.y, 0.0) / 40.0);
-		return (S + lava * (0.12 * g)) * ex; // the Nether's void: smoke all the way
+		return (S + lava * (0.06 * g)) * ex; // the Nether's void: smoke all the way
 	}
 	float d = length(wp);
 	float3 v = wp / max(d, 1e-4);
 	float tau = sigma * d;
-	if (nether) tau += sigma * 1.6 * shadeLayerDepth(yc, v.y, d, L.dimTint.y + 6.0, 20.0);
+	if (nether) tau += sigma * 1.0 * shadeLayerDepth(yc, v.y, d, L.dimTint.y + 6.0, 16.0);
 	float3 mid = float3(f.cameraBlock.xyz) + f.cameraFract.xyz + wp * 0.5;
 	float n = shadeDimsNoise(mw, mid.xz * (1.0 / 40.0) + float2(mid.y * (1.0 / 70.0), 0.0) + f.sunPath.w * float2(0.004, 0.0017));
 	tau *= 0.6 + 0.8 * n;
@@ -196,7 +197,7 @@ static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f
 	if (nether) {
 		float ym = yc + wp.y * 0.5;
 		float g = exp(-max(ym - L.dimTint.y, 0.0) / 30.0);
-		Sc = S * (0.8 + 0.4 * n) + lava * (0.18 * g);
+		Sc = S * (0.8 + 0.4 * n) + lava * (0.09 * g);
 	}
 	float3 o = c * T + Sc * ex * (1.0 - T);
 	if (L.dimTint.z > 0.0) {
@@ -231,7 +232,7 @@ static float3 shadeMedia(float3 c, float2 uv, float dist, constant ShadeFrame &f
 		float n1 = shadeDimsNoise(mw, uv * float2(5.0, 3.0) + float2(t * 0.03, -t * 0.12));
 		float n2 = shadeDimsNoise(mw, uv * float2(12.0, 8.0) + float2(-t * 0.05, -t * 0.22) + n1 * 1.3);
 		float glow = 0.9 + 1.8 * n1 * n2 + 0.5 * smoothstep(0.55, 0.9, n2);
-		float3 lava = float3(1.0, 0.33, 0.05) * glow * mix(1.0, 0.4, edge) + float3(0.25, 0.02, 0.0) * edge;
+		float3 lava = float3(1.0, 0.26, 0.03) * (0.3 * glow) * mix(1.0, 0.45, edge) + float3(0.18, 0.015, 0.0) * edge;
 		float T = exp(-2.5 * dist);
 		return mix(lava, c, T);
 	}

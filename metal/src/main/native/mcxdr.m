@@ -132,6 +132,41 @@ id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device) {
 	return ensurePipelines(device) ? xdrPresent : nil;
 }
 
+// Verification aid (env MCOPT_XDR_DUMP=<path prefix>): every 8 s one composed frame is written as raw RGBA16Float
+// (<prefix>-<n>-<w>x<h>.rgba16f, linear extended Display P3) for offline inspection (screenshots only see the SDR image).
+static void dumpMaybe(id<MTLCommandBuffer> cb, id<MTLTexture> dst, int valid) {
+	static const char *prefix;
+	static int checked, n;
+	static double last;
+	if (!checked) {
+		checked = 1;
+		prefix = getenv("MCOPT_XDR_DUMP");
+	}
+	if (!prefix || !valid) return;
+	double now = CACurrentMediaTime();
+	if (now - last < 8.0) return;
+	last = now;
+	NSUInteger w = dst.width, h = dst.height, bytes = w * h * 8;
+	id<MTLBuffer> buf = [cb.device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+	id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+	[b copyFromTexture:dst sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(w, h, 1) toBuffer:buf
+		destinationOffset:0 destinationBytesPerRow:w * 8 destinationBytesPerImage:bytes];
+	[b endEncoding];
+	int k = n++;
+	char path[1024];
+	snprintf(path, sizeof path, "%s-%d-%lux%lu.rgba16f", prefix, k, (unsigned long) w, (unsigned long) h);
+	char *pathCopy = strdup(path);
+	[cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+		FILE *fp = fopen(pathCopy, "wb");
+		if (fp) {
+			fwrite(buf.contents, 1, bytes, fp);
+			fclose(fp);
+		}
+		free(pathCopy);
+		[buf release];
+	}];
+}
+
 // Composes src (the game's finished RGBA8 frame) and this frame's excess into dst (RGBA16Float: a staging slot, or the drawable
 // with flip = 1) on cb. Returns 0 if it couldn't (the caller falls back to its own copy).
 int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, int flip) {
@@ -151,6 +186,7 @@ int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> d
 		[r setFragmentBytes:&p length:sizeof p atIndex:0];
 		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 		[r endEncoding];
+		if (!flip) dumpMaybe(cb, dst, valid);
 	}
 	xdrValid = 0;
 	return 1;

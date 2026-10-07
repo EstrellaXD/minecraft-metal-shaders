@@ -99,6 +99,9 @@ New on m2 (beyond the module as it was on `m2-water`):
 | `mcopt.shade=false` (this branch) vs upstream jar | 623 vs 615 | 1.60 vs 1.62 | 511 vs 506 | 1.95 vs 1.97 | wi7-noshade, wi7-upstream (no regression) |
 | DEV-DH (DH default config) + water | 51.6 | 19.4 | 50.4 | 19.9 | wi7-dh (m2b9-dh without the water module: 16.3 / 17.8) |
 
+Re-verified after the interrupted run (23:24, head 33f6bfd, `wv1-on`, all scenes + water shots): spin 115 fps / 8.70 ms GPU,
+flight 122 fps / 8.21 ms GPU, 10 shots identical in look to `wi7-on`; `tools/shade/validate.sh` ALL OK (needs JAVA_HOME = JDK 25).
+
 Cost split in the worst-case view (native Retina, same-session A/B): scene copy + pass split ≈ 0.7 ms, SSR ≈ 1.1 ms
 (after the coarse depth; reflections from `prevScene` ≈ 0.3 of it), the rest of the shading ≈ 1.5 ms; ≈ +3.3 ms total
 for half the screen water (+2.4 ms on the flight route). Everything scales with pixels: at the Performance preset's

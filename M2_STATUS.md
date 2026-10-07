@@ -72,10 +72,57 @@ with aureole, Milky Way + twinkling coloured stars + phased moon at night, warm 
 height haze/ground mist that makes distance soft (fog glow), punchier forest greens, golden band at sunset, darker grey
 overcast. DH: LOD terrain visible and part of the bloom/tone map (sunset mountains, rain hills).
 
+## Water and reflections module (merged from `m2-water`, 2026-10-06 evening)
+
+Merge + HDR wiring + new work on branch `m2` (via `m2-wint`; details: M2_INTEGRATION.md section 3, WATER.md "M2 integration").
+Water runs in the HDR translucent fragment: waves, Fresnel, SSR over the sky, refraction, absorption, caustics, foam,
+Snell's window from below, all in pre-exposed radiance, so bloom, auto-exposure and Shade Filmic treat the sun glint and
+the bright sky reflections like the rest of the frame.
+
+New on m2 (beyond the module as it was on `m2-water`):
+- **Reflections read last frame's finished HDR world** (`ShadeResources.prevScene`, `mcopt.shade.ssrPrev`): SSR hit
+  colours are reprojected from it, and the sky in reflections is the rendered sky wherever the reflected direction lands
+  on screen: clouds, sun disc and aureole, stars and (with Distant Horizons) the far LODs now mirror in open water.
+- **Baked waves** (`mcopt.shade.waterBake`): one 1024^2 mipmapped wave texture per frame (14 waves on a 64-block
+  lattice) sampled with anisotropy, instead of 7 analytic waves per pixel; less distant shimmer, a less regular glitter road.
+- **Faster SSR**: batched depth reads on a half-size coarse depth (−0.6 ms at native in the bay view).
+- Water fragments use the 4-tap tent shadow instead of PCSS; the underwater fog radiance is computed only under water.
+
+| Config (3024x1964, bay "spin" view: water ~half the screen) | spin fps | spin GPU ms | flight fps | flight GPU ms | runs |
+|---|---|---|---|---|---|
+| M2 + `mcopt.shade.water=false` (M1 stand-in water) | 174-182 | 5.51-5.76 | 145-161 | 6.23-6.90 | wi2-off, wi2-off2, wi7-off, wi7-off2 |
+| scene copy only (`dev=8`) | 159 | 6.28 | 142 | 7.06 | wi2-copy |
+| first integrated build (analytic waves, full-res march) | 108-109 | 9.17-9.24 | 121-122 | 8.19-8.25 | wi2-on, wi2-on2 |
+| **final** (`wi-7`: baked waves, coarse-depth SSR) | 108-114 | 8.77-9.24 | 113-118 | 8.50-8.85 | wi7-on, wi7-on2, wi6-on, wi4-on |
+| final, `ssr=false` | 126 | 7.91 | 126 | 7.94 | wi4-nossr |
+| SSR steps 12 / 24 / 48 (pre-coarse build) | 114 / 104-110 / 98 | 8.73 / 9.1-9.6 / 10.26 | | | wi3-s12, wi3-on*, wi3-s48 |
+| `mcopt.shade=false` (this branch) vs upstream jar | 623 vs 615 | 1.60 vs 1.62 | 511 vs 506 | 1.95 vs 1.97 | wi7-noshade, wi7-upstream (no regression) |
+| DEV-DH (DH default config) + water | 51.6 | 19.4 | 50.4 | 19.9 | wi7-dh (m2b9-dh without the water module: 16.3 / 17.8) |
+
+Cost split in the worst-case view (native Retina, same-session A/B): scene copy + pass split ≈ 0.7 ms, SSR ≈ 1.1 ms
+(after the coarse depth; reflections from `prevScene` ≈ 0.3 of it), the rest of the shading ≈ 1.5 ms; ≈ +3.3 ms total
+for half the screen water (+2.4 ms on the flight route). Everything scales with pixels: at the Performance preset's
+0.67x TAAU (0.45x pixels) and the bible's 30 % water that is ≈ 0.4 ms copy + ≈ 0.7 ms shading, i.e. at the top of the
+bible's H6 + water budget (0.7-1.15 ms). Without TAAU (m2 today) the bay view runs 108-118 fps at native Retina; views with
+less water lose proportionally less. The session noise is ±0.3 ms (other agents' games and the Claude app share the GPU).
+
+Screenshots (`work/release/M2-water-screenshots/`): `water-vs-complementary.jpg` (Iris + Complementary vs M2 water,
+same poses: sunset glitter road, shore at noon and evening, shallows with caustics, underwater toward the sun),
+`m2-base-vs-water.jpg` (M2 base with M1 water vs the module: sunset, noon overview, rain), `water-dh.jpg` (DEV-DH:
+LOD mountains and clouds mirrored at sunset), single shots `m2-water_sunset.jpg`, `m2-sunset_water.jpg`,
+`m2-water_shore_noon.jpg`, `m2-water_shallows.jpg`. Full PNGs: `bench-results/*-wi7-on/screenshots`, `*-wi7-dh/screenshots`,
+the Complementary reference `*-wref-iris/screenshots`.
+
+Water known issues: SSR hit/miss dithering per 2x2 quad shows as speckle on sparse leaves at 100 % zoom until TAAU jitters
+it; a faint diamond pattern remains in the far glitter road; the hit search uses the opaque depth copy (translucents
+are mirrored only through `prevScene` where something opaque is behind them); the TIR region from below is the rippled fog
+colour unless SSR hits; DH's own water (LOD oceans) is unshaded (FT2); glossy glass/ice is opt-in and unchecked in game;
+the copy runs every frame with translucent terrain even when no water is visible.
+
 ## Known issues / next
 
 - Sunset horizon reads a bit lemon-yellow (M1 was more orange): tune golden-hour WB/saturation and the sky's golden grade.
-- Noon water reads lighter/cyan in HDR (M1 water shader untouched; the water module replaces it).
+- (fixed by the water module) Noon water read lighter/cyan in HDR with M1's water shader.
 - Stars show through the semi-transparent vanilla clouds at night (clouds alpha); fixed by the M3 cloud system or by
   dimming stars by cloud coverage.
 - DH LODs keep DH's own lighting/fog (bridge); FT2 should redirect `distantHorizons:TerrainRenderer` into HDR with a shade

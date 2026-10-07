@@ -74,8 +74,18 @@ coefficients `L.fogR`, `L.fogM` so shafts and haze agree**), `shadeLit2`, `shade
   encoder, `mc_water_capture` blits colour attachment 0 (the HDR target, in its own format: RG11B10F/RGBA16F,
   pre-exposed linear) and depth into private ShaderRead copies, `mc_render_reopen` reopens the pass and
   `restoreAfterReopen` rebinds (pipeline state through `p.state(formats, hasDepth)`, so the HDR variant).
-  Copies: `texture(18)` scene, `texture(19)` depth, `buffer(23)` ShadeWaterParams, bound by `ShadeWater.bind` from
-  `ShadeBindings.bind/rebind`.
+  Right after the blit `mc_water_capture` renders the **coarse depth** (`shade_water_hz_fs`: per 2x2 block the nearest
+  reversed-Z, half-size R32F), which the SSR march steps read (bisection and thickness test stay full resolution).
+  Bindings (fragment stage, by `ShadeWater.bind` from `ShadeBindings.bind/rebind`): `texture(18)` scene copy,
+  `texture(19)` depth copy, `texture(20)` baked waves, `texture(21)` coarse depth, `buffer(23)` ShadeWaterParams
+  (`state.x` copies valid this frame, `state.w` waves baked this frame). Far terrain's own pipelines also use 20/21 and
+  rebind shade (and with it these) after drawing.
+- **Wave bake** (`mcopt.shade.waterBake`, default on): before the world passes (`ShadeFrameUpdater`, after the sky LUT)
+  `ShadeWater.bake` renders the wave field (`shade_water_bake_fs`: the 7 module waves + 7 off-axis extras, wave vectors on
+  a 64-block lattice so it tiles) into a 1024^2 RGBA16F texture and blits its mips; the fragment samples it once with
+  anisotropic trilinear filtering (`gradient2d` from the fragment's own `dfdx/dfdy` of the position) instead of 7
+  analytic waves per pixel, and the mips replace the footprint LOD (less shimmer far away). Caustics keep their own
+  analytic short waves.
 - **Reflections read last frame's finished HDR world** (`ShadeResources.prevScene` via `constant ShadeResources& sr
   [[buffer(19)]]` in the HDR translucent fragment; `mcopt.shade.ssrPrev`, default on): SSR hits are found in this
   frame's depth copy, their colour is fetched from `prevScene` at the hit's reprojection (`invViewProj` -> `prevViewProj`,
@@ -91,8 +101,10 @@ coefficients `L.fogR`, `L.fogM` so shafts and haze agree**), `shadeLit2`, `shade
   size), copy only the live sub-rect in `mc_water_capture`, pass the frame index into the SSR jitter, and mark water
   reactive (WATER.md "Integration with TAAU"). `prevScene` is sampled by normalized uv, so a resolver whose history is a
   different size still works if `ShadeResources.prevScene` points at it (then rescale with its exposure).
-- For FT2 (DH): `shadeWaterSceneW` is the one depth read (merged scene distance goes there); `water.metal` is a plain
-  include for DH's transparent override.
+- For FT2 (DH): `shadeWaterSceneW` (full-res) and `shadeWaterCoarseW` (march) are the only depth reads (the merged scene
+  distance goes there, and into the coarse pass); `water.metal` is a plain include for DH's transparent override.
+  Today, with DH on, far LODs already appear in water reflections through the rendered-sky path (they are sky in the
+  depth copy, visible in `prevScene`).
 
 ## 4. Depth-based post (`m2-vl`, GTAO, atmosphere composite): before the tone map
 
@@ -182,6 +194,7 @@ ShadeRender.pass(enc, pso, tex, ShadeRender.DONT_CARE, new long[] {input0, input
 | `mcopt.shade.water` | true | water module (false: M1's stand-in water, byte-identical shaders) |
 | `mcopt.shade.ssr` / `.ssrQuad` / `.ssrSteps` / `.ssrDist` | true / true / 24 / 512 | screen-space reflections (quad-shared march) |
 | `mcopt.shade.ssrPrev` | true | reflections read last frame's HDR world (clouds, sky, LODs in reflections) |
+| `mcopt.shade.waterBake` | true | waves baked once per frame into a mipmapped texture (false: analytic per pixel) |
 | `mcopt.shade.waterWaves` / `.caustics` / `.waterFoam` / `.waterReflect` / `.glossy` | 1 / true / true / 1 / false | see WATER.md |
 
 ## 9. Merge notes

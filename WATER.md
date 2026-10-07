@@ -1,4 +1,8 @@
-# Shade water and reflections (M2 module, branch `m2-water`)
+# Shade water and reflections (M2 module, branch `m2-water`, merged into `m2`)
+
+**Status:** merged into the M2 HDR base on branch `m2` (via `m2-wint`). What changed in the merge (HDR wiring, reflections
+from last frame's HDR world, baked waves, coarse-depth SSR) is in "M2 integration (done)" below and in M2_INTEGRATION.md
+section 3; the m2-water history before it is unchanged.
 
 Shader bible E14 (water), E15 basics (glossy translucents), E26 surface (seen from below). Built on `m1` as a
 self-contained, integration-ready module for the M2 HDR base (`m2`), TAAU (`m2-taau`) and far terrain (`ft0`/FT2).
@@ -43,6 +47,9 @@ marching, Tessendorf 2001 dispersion, caustics as the inverse Jacobian of the re
 |---|---|
 | `texture(18)` `sceneCopy` `texture2d<half>` | Colour attachment 0 at the translucent switch (opaque scene: sky, terrain, entities, clouds if drawn before). Same format as the attachment: RGBA8 tone-mapped sRGB in M1, RGBA16F pre-exposed linear in M2 HDR. 1x1 dummy until the first capture. |
 | `texture(19)` `depthCopy` `depth2d<float>` | Depth32Float reversed-Z at the same moment. |
+| `texture(20)` `waterWaves` `texture2d<half>` | (m2) The baked wave field: RGBA16F 1024^2 + mips over a 64-block tile (slope xz, height, Laplacian). Dummy unless `state.w`. |
+| `texture(21)` `waterCoarse` `texture2d<float>` | (m2) The SSR march's coarse depth: half-size R32F, nearest reversed-Z per 2x2 block, rendered after each copy. |
+| `buffer(19)` `ShadeResources` (m2 HDR variant) | `prevScene`: last frame's finished HDR world, the colour source of SSR hits and of the rendered sky in reflections. |
 | `buffer(23)` `ShadeWaterParams` (64 B, setFragmentBytes) | `still`, `flow` water sprite uv rects; `state` x copies valid this frame, y surface height above the eye, z wetness; `tune` x waves, y SSR distance, z reflection strength, w caustics. `state.x == 0` means never read the copies (they are dummies or last frame's). |
 
 Slot notes: textures 16/17 are M1's shadow map and sky LUT; M2's buffers 17/18/19 (ShadeLook, ShadeGpu, ShadeResources) do
@@ -63,7 +70,9 @@ the water bindings, `ShadeBindings.rebind`) after drawing.
 | `mcopt.shade.waterFoam` | true | Shoreline foam. |
 | `mcopt.shade.waterReflect` | 1.0 | Artistic scale on Fresnel (0-2). |
 | `mcopt.shade.glossy` | false | Glossy stained glass / ice / slime / honey (opt-in). |
-| `mcopt.shade.debug` | 0 | 4 = footprint / flow / distance, 5 = SSR hit weight (r) / Fresnel (g), 6 = refracted path (r) / depth (g) / no floor (b). |
+| `mcopt.shade.ssrPrev` | true | (m2 HDR) Reflections read last frame's HDR world: SSR hit colours with clouds / translucents / LODs, and the rendered sky (sun disc, clouds, stars, DH LODs) where the reflected direction is on screen. |
+| `mcopt.shade.waterBake` | true | (m2) Waves baked once per frame into a mipmapped texture (false: the 7 analytic waves per pixel). |
+| `mcopt.shade.debug` | 0 | 7 (was 4 before the m2 merge; 4 is the base's log luminance) = footprint / flow / distance, 5 = SSR hit weight (r) / Fresnel (g), 6 = refracted path (r) / depth (g) / no floor (b). |
 | `mcopt.shade.dev` bit 8 | | Pricing: water module off but the copy still taken (= copy cost). |
 
 ## Performance (M4 10-core GPU, 3024x1964 native, mcbench perf scenes, GPU ms/frame, same-session A/B)
@@ -97,7 +106,26 @@ Cost split at native Retina in this worst-case view (~2.6 ms over water off): sc
 uses Sodium's translucent pipeline, i.e. almost every frame. A possible saving: skip it when last frame drew no water
 and no glossy translucent pixels.
 
-## Integration with the M2 HDR base (branch `m2`)
+## M2 integration (done, branch `m2`)
+
+- HDR wiring exactly as planned below (steps 1-3, 5): `shadeLit2`, `exposure = ShadeGpu.exposure.x`, HDR scene copy in
+  the attachment's format (RG11B10F by default), result through `shadeFogAir2` + `shadeFinish2`; the TIR fallback colour
+  comes in as `ShadeWaterIn.fog` (`shadeLdrToHdr(fogColor, sl) / ex`, only computed under water).
+- Step 4 + 6 done (`mcopt.shade.ssrPrev`): `shadeWaterHitColor` fetches SSR hit colours from `prevScene` (depth-copy point
+  -> `invViewProj` -> `prevViewProj`, / `exposure.z`); `shadeWaterSkyRefl` reads the rendered sky in the reflected
+  (calm-normal) direction where it is on screen and the depth copy holds sky or terrain beyond 160-320 blocks, faded into
+  the LUT toward the screen edges. Clouds, the sun disc and aureole, stars and, with Distant Horizons, far LODs now
+  mirror in open water.
+- Wave bake done (`shade_water_bake_fs`, `mcopt.shade.waterBake`): the 7 waves on a 64-block lattice plus 7 off-axis
+  extras (the two longest trains give part of their energy to them, which breaks up the diamond lattice in the glitter
+  road), 1024^2 RGBA16F + mips, sampled with anisotropy. Caustics stay analytic.
+- SSR: all of a lane's depth reads are issued before testing, against the half-size coarse depth (`shade_water_hz_fs`,
+  rendered in `mc_water_capture` right after the blit); a crossing that only grazes the thickness limit fades instead of
+  popping. ~0.6 ms saved at native in the bay view (same-session `wi4` vs `wi3`).
+- Water fragments use M1's 4-tap tent shadow instead of PCSS (the shadow only gates glint and caustics).
+- Numbers and shots: M2_STATUS.md (water section).
+
+## Integration with the M2 HDR base (branch `m2`) — the plan, kept for reference
 
 1. **Merge conflicts to expect:** `MetalRenderPass.java` (keep the capture in `setPipeline` + `restoreAfterReopen`; it
    must run on the redirected HDR pass, which it does since it acts on the open encoder's attachments),
@@ -153,12 +181,12 @@ and no glossy translucent pixels.
 
 ## Known issues / next
 
-- Clouds are not in sky reflections (vanilla draws them after translucents); see HDR step 6.
-- SSR samples the pre-translucent scene: water does not reflect other water or stained glass.
-- Distant water shows a faint cross-hatch interference of the two longest waves around the glint at sunset.
+- (fixed on m2) Clouds in sky reflections and water reflecting water/glass: via `prevScene` (`ssrPrev`). The hit search
+  still uses the opaque depth copy, so a translucent surface is only mirrored where something opaque is behind it.
+- Distant water still shows a faint diamond pattern around the glint at sunset (less with the baked extra waves).
 - The TIR region from below is the fog colour rippled (SSR into the underwater scene when it hits).
 - Glossy translucents untested in game (no ice/stained glass in the bench world) -> opt-in.
-- **Next perf step: bake the waves.** The analytic waves are the biggest shader item (~0.8 ms native worst case). Bake
+- (done on m2: `mcopt.shade.waterBake`) **Bake the waves.** The analytic waves are the biggest shader item (~0.8 ms native worst case). Bake
   them once per frame into a tileable, mipmapped RGBA16F slope texture (e.g. 512² over a 32-block tile: long set in RG,
   a short set with an 8-block period in BA; wave vectors on the tile lattice; render it like the sky LUT in
   `mc_shade_lut_render`, then `generateMipmaps`), and sample it twice (scale/rotation offset octaves, anisotropic

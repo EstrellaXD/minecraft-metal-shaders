@@ -131,6 +131,14 @@ static int ensurePipelines(id<MTLDevice> device) {
 	return xdrCompose && xdrCompose16 && xdrPresent;
 }
 
+// mc_layer_configure: whether the EDR layer can be used (the compose / present pipelines built). If not, the output is
+// turned off for good (an RGBA8 layer, the plain copy; the Java side sees mc_xdr_on() = 0 and stops writing the excess).
+int mc_xdr_ready(id<MTLDevice> device) {
+	if (!xdrOn) return 0;
+	if (!ensurePipelines(device)) xdrOn = 0;
+	return xdrOn;
+}
+
 // The present pipeline for an RGBA16Float drawable (nil: use the backend's own).
 id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device) {
 	return ensurePipelines(device) ? xdrPresent : nil;

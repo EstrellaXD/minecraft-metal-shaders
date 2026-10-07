@@ -1093,12 +1093,13 @@ void mc_clear_rect(Enc *enc, id<MTLTexture> color, id<MTLTexture> depthTex, floa
 // ---- surface ----
 
 int mc_xdr_on(void);  // mcxdr.m: native shading's EDR output (off unless shade turned it on)
+int mc_xdr_ready(id<MTLDevice> device);  // builds its pipelines; turns the output off for good if they can't be built
 int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, int flip);
 id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device);
 
 void mc_layer_configure(Ctx *ctx, CAMetalLayer *layer, int width, int height, int vsync) {
 	layer.device = ctx->device;
-	if (mc_xdr_on()) { // EDR: linear extended Display P3 in half floats, values above 1 brighter than SDR white
+	if (mc_xdr_on() && mc_xdr_ready(ctx->device)) { // EDR: linear extended Display P3 in half floats, values above 1 brighter than SDR white
 		layer.pixelFormat = MTLPixelFormatRGBA16Float;
 		CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearDisplayP3);
 		layer.colorspace = cs;

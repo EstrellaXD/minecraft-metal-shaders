@@ -39,8 +39,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  */
 public final class ShadeXdr {
 	private static final Linker LINKER = Linker.nativeLinker();
-	private static @Nullable MethodHandle enable, supported, headroom, frame, pso2, pass2;
-	private static boolean decided, on;
+	private static @Nullable MethodHandle enable, isOn, supported, headroom, frame, pso2, pass2;
+	private static boolean decided, on, confirmed;
 	private static long layer;
 	private static float loggedHeadroom = -1f, peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
 	/** The scene luminance (pre-tonemap, exposed) where highlights start to use the headroom, and how many octaves above it they reach the peak. */
@@ -58,6 +58,7 @@ public final class ShadeXdr {
 	private static void link() {
 		if (enable != null) return;
 		enable = fn("mc_xdr_enable", null, JAVA_INT);
+		isOn = fn("mc_xdr_on", JAVA_INT);
 		supported = fn("mc_xdr_supported", JAVA_INT);
 		headroom = fn("mc_xdr_headroom", JAVA_FLOAT, JAVA_LONG, JAVA_INT);
 		frame = fn("mc_xdr_frame", null, JAVA_LONG, JAVA_LONG);
@@ -93,6 +94,17 @@ public final class ShadeXdr {
 
 	/** Once per world frame (ShadeFrameUpdater): follows the screen's EDR headroom. */
 	public static void frame(float dt) {
+		if (on && !confirmed) { // the layer configure may have turned it off (pipelines unavailable): follow the native side
+			confirmed = true;
+			try {
+				if ((int) isOn.invokeExact() == 0) {
+					on = false;
+					System.out.println("[mcopt] shade: XDR output off (the EDR present pipelines could not be built)");
+				}
+			} catch (Throwable t) {
+				on = false;
+			}
+		}
 		sinceQuery += dt;
 		if (sinceQuery >= 0.25f) {
 			sinceQuery = 0f;

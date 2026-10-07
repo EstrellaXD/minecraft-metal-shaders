@@ -83,7 +83,13 @@ module). See the commit log and `bench-results/*-w5-*`, `*-w6-*` for the raw run
 | no waves, caustics or SSR (`w7-base`) | 5.34 | 5.59 | refraction, absorption, sky, glint, foam: ~0.1 ms over the copy |
 | + waves (`w7-waves`) | 6.17 | 5.72 | the 7 analytic waves: ~0.8 ms (largest shader item) |
 | everything (`w7-on`) | 6.96 | 6.43 | SSR + caustics: ~0.8 ms |
-| PERF_W9 | | | |
+| + short-crested waves on all 7 (`w9-on`, `w9-on2`; `w9-off`, `w9-off2` = 4.21 / 4.20) | 7.23-7.44 | 6.54-6.79 | the crest sin cost ~0.4 ms; now applied to the 3 longest waves only (HEAD) |
+| HEAD (`w10-on`, an "all" run with shots; `w10-off` = 4.13 / 4.72) | 8.37 | 8.73 | noisier session; see the note below |
+
+Session-to-session spread: "water off" stays at 4.1-4.4 ms spin in every session, while "water on" with the same code
+measured 6.85-6.94 (w6) and 7.2-7.4 (w9), and 8.4 in w10, with other agents' GPU work and builds running alongside.
+Re-measure the HEAD in a quiet session before quoting one number. The attribution below comes from the same-session
+matrices (w5, w7).
 
 Cost split at native Retina in this worst-case view (~2.6 ms over water off): scene copy ~0.85, waves ~0.8, SSR
 ~0.5, caustics ~0.3, the rest ~0.1. Every item scales with the pixel count, so TAAU at 0.67x (0.45x pixels) brings it to
@@ -141,7 +147,7 @@ and no glossy translucent pixels.
 
 ## Screenshots
 
-`bench-results/*-w4*/screenshots` and `*-w6-on/screenshots` (`water_sunset`, `water_shore_noon`, `water_shore_evening`,
+`bench-results/*-w4*/screenshots`, `*-w6-on`, `*-w8-on` and `*-w10-on/screenshots` (`water_sunset`, `water_shore_noon`, `water_shore_evening`,
 `water_shallows`, `water_underwater_up`, plus the standard `sunset_water`). The opt-in water scenes are in mcbench
 (`-Dmcbench.water=true`, see HARNESS.md step 8b).
 

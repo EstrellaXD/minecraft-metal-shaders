@@ -129,7 +129,7 @@ public final class BenchDriver {
 	static final long[] frameNs = new long[CAP], frameAt = new long[CAP];
 	static final byte[] framePhase = new byte[CAP];
 	static int frames;
-	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo", "lights", "lights_off", "lights2", "nether", "end", "wxdry", "wxrain", "clouds", "clouds_off", "clouds2"); // clouds*: CloudShots' perf A/B (opt-in) // wxdry, wxrain: WeatherShots' perf pans (opt-in) // nether, end: DimShots' perf spins (opt-in) // zoo: EntityShots' perf segment at the entity site; lights: LightShots' (opt-in)
+	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo", "lights", "lights_off", "lights2", "nether", "end", "wxdry", "wxrain", "wxdry_notint", "wxrain_nossr", "wxrain_noripple", "wxrain_plainrain", "wxrain_dry", "wxrain2", "clouds", "clouds_off", "clouds2"); // clouds*: CloudShots' perf A/B (opt-in) // wxdry, wxrain: WeatherShots' perf pans (opt-in) // nether, end: DimShots' perf spins (opt-in) // zoo: EntityShots' perf segment at the entity site; lights: LightShots' (opt-in)
 	static int recPhase = -1, prevRecPhase = -1;
 	static long lastFrame;
 

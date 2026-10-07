@@ -25,6 +25,9 @@ import net.minecraft.world.level.material.Fluids;
  * <ul>
  * <li>{@code perf}: two recorded perf phases at the ground pose (results.json perf.wxdry / perf.wxrain, gpu.*): 10 s panning
  * +-25 degrees, clear noon, then in rain (the weather's cost; -Dmcbench.wxSeconds).</li>
+ * <li>{@code price}: the same pan as perf with parts of the weather switched off one at a time through the system property
+ * mcopt.shade.dev (read by mcopt-shade every frame): wxdry_notint, wxrain, wxrain_nossr, wxrain_noripple, wxrain_plainrain,
+ * wxrain_dry (terrain dry, M2 rain), wxrain2 (all on again: drift).</li>
  * <li>{@code wx_rain_ground} (noon, rain): 2.6 blocks above the flat torch-grid site, looking across it toward the village
  * side: wet ground, puddles with reflections and raindrop ripples, slanted lit rain.</li>
  * <li>{@code wx_wet_sunset} (it rains for a while, then clears; shot at 12000): the same pose, the ground still wet after
@@ -67,7 +70,7 @@ final class WeatherShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("perf") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass") || on("caustics"))) return;
+		if (!(on("perf") || on("price") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass") || on("caustics"))) return;
 		BenchDriver.results.put("weatherShots", JSON);
 		// the torch grid's area must be loaded on the server to read the ground (and place the glass)
 		steps.add(new BenchDriver.Scene("wx-site", 6000, false, () -> BenchDriver.spot.night));
@@ -109,6 +112,16 @@ final class WeatherShots {
 					// the cost of the weather: the same 10 s pan over the ground pose, dry, then soaked in rain
 					perf(extra, "wxdry", false, p.ground);
 					perf(extra, "wxrain", true, p.ground);
+				}
+				if (on("price") && p.ground != null) {
+					// what each part costs, inside one session: mcopt-shade reads mcopt.shade.dev every frame (SHADE_DEV_WX_* bits)
+					price(extra, "wxdry_notint", false, p.ground, 16384);
+					if (!on("perf")) perf(extra, "wxrain", true, p.ground);
+					price(extra, "wxrain_nossr", true, p.ground, 1024);
+					price(extra, "wxrain_noripple", true, p.ground, 2048);
+					price(extra, "wxrain_plainrain", true, p.ground, 8192);
+					price(extra, "wxrain_dry", true, p.ground, 4096 | 8192 | 16384);
+					price(extra, "wxrain2", true, p.ground, 0);
 				}
 				if (on("rain") && p.ground != null) shot(extra, "wx_rain_ground", 6000, true, p.ground);
 				if (on("sunset") && p.ground != null) {
@@ -172,6 +185,39 @@ final class WeatherShots {
 				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
 				BenchDriver.recPhase = -1;
 				BenchDriver.phaseRanges.get(name)[1] = now;
+				return true;
+			}
+		});
+	}
+
+	/**
+	 * A perf phase (as {@link #perf}, same scene and pan) with the system property mcopt.shade.dev set to bits for its length
+	 * (mcopt-shade's SHADE_DEV_WX_*: 1024 no puddle SSR, 2048 no ripples, 4096 dry terrain, 8192 M2 rain shading, 16384 no
+	 * coloured-shadow lookup), back to the startup value afterwards.
+	 */
+	private static void price(List<BenchDriver.Step> extra, String name, boolean rain, Pose o, int bits) {
+		String before = System.getProperty("mcopt.shade.dev");
+		extra.add(new BenchDriver.Step(name + "-dev", 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				System.setProperty("mcopt.shade.dev", Integer.toString(bits));
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				return true;
+			}
+		});
+		perf(extra, name, rain, o);
+		extra.add(new BenchDriver.Step(name + "-undev", 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				if (before == null) System.clearProperty("mcopt.shade.dev");
+				else System.setProperty("mcopt.shade.dev", before);
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
 				return true;
 			}
 		});

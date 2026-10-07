@@ -139,7 +139,7 @@ public final class CloudParams {
 		put4(b, 400, sl[0], ly, sl[2], 0f);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
 		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
-		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, 0f);
+		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, CloudConfig.BLOCKY ? 1f : 0f);
 		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, sl[1]) * this.opacity : 0f;
 
 		// ---- ShadeLook ----

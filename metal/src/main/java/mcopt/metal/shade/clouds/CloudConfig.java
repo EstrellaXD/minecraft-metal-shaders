@@ -59,6 +59,14 @@ public final class CloudConfig {
 	public static final int DOME_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.domeSteps", new int[] {10, 12, 16, 20}[TIER]), 4, 64);
 	public static final int DOME_W = 192, DOME_H = 96;
 	public static final boolean CIRRUS = flag("mcopt.shade.clouds.cirrus", true);
+	/**
+	 * Cloud style: volumetric (default) or blocky (vanilla-style 12-block cells, ray-traced and lit: the Storybook look's
+	 * default, mcopt.shade.look=storybook).
+	 */
+	public static final boolean BLOCKY = System.getProperty("mcopt.shade.clouds.style", "storybook".equalsIgnoreCase(System.getProperty("mcopt.shade.look", "").trim())
+		? "blocky" : "volumetric").trim().equalsIgnoreCase("blocky");
+	/** Blocky style: slab thickness (blocks; vanilla's fancy clouds are 4). */
+	public static final float BLOCK_THICKNESS = clamp(floatProperty("mcopt.shade.clouds.blockThickness", 8f), 2f, 64f);
 	/** Absolute y of the cumulus base; NaN = vanilla's cloud height + 8. */
 	public static final float BASE = floatProperty("mcopt.shade.clouds.base", Float.NaN);
 	public static final float THICKNESS = clamp(floatProperty("mcopt.shade.clouds.thickness", 150f), 20f, 600f);
@@ -86,7 +94,7 @@ public final class CloudConfig {
 	}
 
 	static String describe() {
-		return "preset " + Shade.PRESET + ", scale " + SCALE + " (" + CHECKER + "x" + CHECKER + " checkerboard)" + ", " + STEPS + "/" + LIGHT_STEPS + " steps"
+		return (BLOCKY ? "blocky, " : "") + "preset " + Shade.PRESET + ", scale " + SCALE + " (" + CHECKER + "x" + CHECKER + " checkerboard)" + ", " + STEPS + "/" + LIGHT_STEPS + " steps"
 			+ (SHADOWS ? ", shadows " + SHADOW_STRENGTH : ", no shadows") + (DOME ? ", dome " + DOME_STEPS + " steps" : "") + (CIRRUS ? ", cirrus" : "");
 	}
 

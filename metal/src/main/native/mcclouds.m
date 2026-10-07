@@ -22,6 +22,8 @@ typedef struct {
 	id<MTLLibrary> lib;
 	id<MTLComputePipelineState> bakeNoise, bakeWeather;
 	id<MTLRenderPipelineState> march, resolve, dome, shadow;
+	id<MTLRenderPipelineState> over;  // cloud_over for the HDR scene's format (made on first use)
+	MTLPixelFormat overFormat;
 	id<MTLTexture> noise, weather, shadowMap;
 	id<MTLTexture> marchColor, marchDist, hist[2], data[2], domeTex[2];
 	int hw, hh, mw, mh, dw, dh, cur, domeCur;
@@ -195,6 +197,7 @@ void mc_clouds_free(CloudState *s) {
 	[s->resolve release];
 	[s->dome release];
 	[s->shadow release];
+	[s->over release];
 	[s->noise release];
 	[s->weather release];
 	[s->shadowMap release];
@@ -314,6 +317,48 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 			cloudPass(cb, s->dome, s->domeTex[next], nil, @"mcopt shade: cloud dome", params, bytes, in, 3, times, base + 6);
 			s->domeCur = next;
 		}
+	}
+}
+
+// Clouds in front of the world (cloud_over): into scene (the HDR target, its live sub-rect liveW x liveH) where the depth
+// lies behind the clouds' apparent distance (this frame's march distances), scene x T + light x exposure.
+void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture> depth, int liveW, int liveH) {
+	if (!s || !s->hist[0] || !scene || !depth) return;
+	@autoreleasepool {
+		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
+		if (!s->over || s->overFormat != scene.pixelFormat) {
+			[s->over release];
+			MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
+			pd.label = @"cloud_over";
+			pd.vertexFunction = [[s->lib newFunctionWithName:@"cloud_vs"] autorelease];
+			pd.fragmentFunction = [[s->lib newFunctionWithName:@"cloud_over"] autorelease];
+			MTLRenderPipelineColorAttachmentDescriptor *c = pd.colorAttachments[0];
+			c.pixelFormat = scene.pixelFormat;
+			c.blendingEnabled = YES;
+			c.sourceRGBBlendFactor = c.sourceAlphaBlendFactor = MTLBlendFactorOne;
+			c.destinationRGBBlendFactor = c.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+			NSError *e = nil;
+			s->over = [cb.device newRenderPipelineStateWithDescriptor:pd error:&e];
+			s->overFormat = scene.pixelFormat;
+			if (!s->over) {
+				NSLog(@"mcopt clouds: cloud_over pipeline: %@", e);
+				return;
+			}
+		}
+		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+		rp.colorAttachments[0].texture = scene;
+		rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
+		r.label = @"mcopt shade: clouds over the world";
+		[r setRenderPipelineState:s->over];
+		if (liveW > 0 && liveH > 0) [r setViewport:(MTLViewport) {0, 0, liveW, liveH, 0, 1}];
+		mc_shade_bind_render(r);
+		[r setFragmentTexture:depth atIndex:0];
+		[r setFragmentTexture:s->marchDist atIndex:1];
+		[r setFragmentTexture:s->hist[s->cur] atIndex:2];
+		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+		[r endEncoding];
 	}
 }
 

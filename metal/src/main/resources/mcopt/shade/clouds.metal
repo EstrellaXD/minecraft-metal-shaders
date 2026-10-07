@@ -57,7 +57,7 @@ struct CloudParams {
 	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3), w 0
 	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
-	                       //     extinction factor, w 0
+	                       //     extinction factor, w style (0 volumetric, 1 blocky: vanilla-style 12-block cells, ray-traced)
 };
 static_assert(sizeof(CloudParams) == 432, "CloudParams layout (CloudParams.java)");
 
@@ -259,7 +259,19 @@ static bool cloudSegment(CloudRay r, float yb, float yt, float ground, float max
 
 // Cumulus density (0..1) at camera-relative p with absolute altitude y. q: 0 = 2D shape only (far light samples, shadow
 // map), 1 = + billows (3D), 2 = + fine detail.
+#define CLOUD_BLOCK 12.0
+
+// Blocky style: whether the 12-block cell at wrapped world xz holds a cloud (the weather map's cells at the cell's centre,
+// with the day's coverage), like vanilla's cloud texture but following our weather.
+static inline bool cloudBlockCell(float2 xz, constant CloudParams &c, texture2d<half> weather) {
+	float2 cell = floor(xz / CLOUD_BLOCK);
+	half4 w = weather.sample(cloudRep, (cell + 0.5) * (CLOUD_BLOCK / CLOUD_WEATHER_TILE), level(0.0));
+	float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
+	return float(w.g) > 1.0 - cov;
+}
+
 static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise) {
+	if (c.art.w > 0.5) return y >= c.layer.x && y <= c.layer.y && cloudBlockCell(c.origin.xy + p.xz, c, weather) ? 1.0 : 0.0;
 	float h = (y - c.layer.x) / (c.layer.y - c.layer.x);
 	if (h <= 0.0 || h >= 1.0) return 0.0;
 	float2 xz = c.origin.xy + p.xz;
@@ -454,6 +466,82 @@ static CloudResult cloudCirrus(float3 dir, constant CloudParams &c, texture2d<ha
 	return o;
 }
 
+// Blocky style (Storybook): the slab of 12-block cells ray-traced exactly (a 2D DDA through the cells between the slab's
+// planes, flat like vanilla's), the first filled cell's face lit: wrapped sun with a self-shadow from the cells toward the
+// light, sky light from above and the ground's from below, a forward rim toward the sun. Nearly opaque, crisp edges.
+static CloudResult cloudBlocky(float3 dir, constant CloudParams &c, texture2d<half> weather) {
+	CloudResult o;
+	o.S = 0.0;
+	o.T = 1.0;
+	o.dist = -1.0;
+	float y0 = c.layer.z, yb = c.layer.x, yt = c.layer.y;
+	float maxT = min(c.march.z, 4000.0);
+	float t0, t1;
+	if (abs(dir.y) < 1e-5) {
+		if (y0 < yb || y0 > yt) return o;
+		t0 = 0.0;
+		t1 = maxT;
+	} else {
+		float ta = (yb - y0) / dir.y, tb = (yt - y0) / dir.y;
+		t0 = max(min(ta, tb), 0.0);
+		t1 = min(max(ta, tb), maxT);
+	}
+	if (t1 <= t0) return o;
+	float2 q0 = c.origin.xy + dir.xz * t0;
+	float2 d = dir.xz;
+	float2 cell = floor(q0 / CLOUD_BLOCK);
+	float2 st = float2(d.x >= 0.0 ? 1.0 : -1.0, d.y >= 0.0 ? 1.0 : -1.0);
+	float2 ad = max(abs(d), float2(1e-6));
+	float2 tDelta = CLOUD_BLOCK / ad;
+	float2 next = ((cell + max(st, 0.0)) * CLOUD_BLOCK - q0) / (st * ad);
+	float t = t0;
+	int axis = -1;
+	bool hit = false;
+	for (int i = 0; i < 160; i++) {
+		half4 w = weather.sample(cloudRep, (cell + 0.5) * (CLOUD_BLOCK / CLOUD_WEATHER_TILE), level(0.0));
+		float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
+		if (float(w.g) > 1.0 - cov) {
+			hit = true;
+			break;
+		}
+		if (next.x < next.y) {
+			t = t0 + next.x;
+			next.x += tDelta.x;
+			cell.x += st.x;
+			axis = 0;
+		} else {
+			t = t0 + next.y;
+			next.y += tDelta.y;
+			cell.y += st.y;
+			axis = 1;
+		}
+		if (t >= t1) break;
+	}
+	if (!hit) return o;
+	float3 n = axis == 0 ? float3(-st.x, 0.0, 0.0) : axis == 1 ? float3(0.0, 0.0, -st.y)
+		: (t0 > 0.0 ? float3(0.0, dir.y > 0.0 ? -1.0 : 1.0, 0.0) : -dir);
+	float3 L = c.lightDir.xyz;
+	float3 ph = dir * t;
+	float yh = y0 + dir.y * t;
+	float vis = 1.0;
+	for (int k = 1; k <= 3; k++) {
+		float3 pk = ph + n * 0.5 + L * (float(k) * 7.0);
+		float yk = yh + n.y * 0.5 + L.y * float(k) * 7.0;
+		if (yk >= yb && yk <= yt && cloudBlockCell(c.origin.xy + pk.xz, c, weather)) vis *= 0.45;
+	}
+	float ndl = dot(n, L);
+	float wrap = saturate((ndl + 0.35) / 1.35);
+	float mu = dot(dir, L);
+	float rim = (1.0 - abs(dot(n, dir))) * cloudHG(mu, 0.75) * 0.9;
+	// sky light by the face's direction, plus light diffused through the thin slab (keeps undersides from going flat grey)
+	float3 amb = mix(c.ambBottom.rgb * 1.4 + c.ambTop.rgb * 0.5, c.ambTop.rgb * 1.25, n.y * 0.5 + 0.5) + c.light.rgb * 0.035;
+	float albedo = c.ambTop.w;
+	o.S = albedo * (c.light.rgb * (wrap * vis * 0.3183 + rim * vis) + amb) * 0.92;
+	o.T = 0.08;
+	o.dist = t;
+	return o;
+}
+
 // Aerial perspective (Photon's blend): the clouds' light fades toward the clear sky behind by the air between.
 static inline CloudResult cloudAerial(CloudResult r, float3 sky, constant CloudParams &c) {
 	if (r.dist < 0.0) return r;
@@ -466,7 +554,7 @@ static inline CloudResult cloudAerial(CloudResult r, float3 sky, constant CloudP
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
                             texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
 	float3 sky = shadeSkyLookup(dir, lut, lutS, f);
-	CloudResult cu = cloudAerial(cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise), sky, c);
+	CloudResult cu = cloudAerial(c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise), sky, c);
 	CloudResult ci = cloudAerial(cloudCirrus(dir, c, weather), sky, c);
 	CloudResult o;
 	o.S = cu.S + cu.T * ci.S; // the cirrus is always behind (far above) the cumulus
@@ -565,6 +653,31 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		o.age = 0.0h;
 	}
 	return o;
+}
+
+// Clouds in front of the world (the camera up at or above the cloud layer: flying, mountain tops): composited over the
+// HDR scene before the tone map where the terrain lies behind the clouds' apparent distance (the sky pass already put
+// them behind everything else). Blend: One, OneMinusSourceAlpha (scene x T + light x exposure).
+fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]],
+                          constant ShadeGpu &g [[buffer(18)]], depth2d<float> depth [[texture(0)]], texture2d<float> cdist [[texture(1)]],
+                          texture2d<half> hist [[texture(2)]]) {
+	float d = depth.read(uint2(in.position.xy));
+	if (d <= 0.0) discard_fragment();
+	float2 ndc = in.position.xy * f.screen.zw * 2.0 - 1.0;
+	float4 w = f.invViewProj * float4(ndc, d, 1.0);
+	float3 p = w.xyz / w.w;
+	float dist = length(p);
+	float3 dir = p / max(dist, 1e-4);
+	float4 cp = L.viewProjNoJitter * float4(dir, 0.0);
+	if (cp.w <= 1e-6) discard_fragment();
+	float2 uv = cp.xy / cp.w * 0.5 + 0.5;
+	constexpr sampler pt(filter::nearest, address::clamp_to_edge);
+	float cd = cdist.sample(pt, uv).r;
+	float k = smoothstep(cd * 0.8, cd * 1.05, dist);
+	if (k <= 0.001) discard_fragment();
+	half4 cl = hist.sample(cloudClamp, uv);
+	float T = mix(1.0, float(cl.a), k);
+	return half4(half3(min(float3(cl.rgb) * k * g.exposure.x, 60000.0)), half(1.0 - T));
 }
 
 // The reflection dome: texel (u, v) <-> azimuth u * 2 pi (atan2(z, x)), height dir.y = v^2 (dense near the horizon).

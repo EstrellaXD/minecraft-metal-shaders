@@ -74,7 +74,7 @@ public class CloudPreviewFrames {
 			int nc = CloudConfig.CHECKER;
 			hw = (hw + nc - 1) / nc * nc; hh = (hh + nc - 1) / nc * nc;
 			p.histW = hw; p.histH = hh; p.marchW = hw / nc; p.marchH = hh / nc; p.checker = nc;
-			p.base = 200f; p.top = 350f;
+			p.base = 200f; p.top = CloudConfig.BLOCKY ? 200f + CloudConfig.BLOCK_THICKNESS : 350f;
 			ByteBuffer pb = ByteBuffer.allocateDirect(CloudParams.SIZE * frames).order(ByteOrder.LITTLE_ENDIAN);
 			for (int i = 0; i < frames; i++) {
 				p.frame = i;

@@ -18,6 +18,7 @@ package mcopt.metal.shade.clouds;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import mcopt.metal.shade.ShadeFrame;
+import mcopt.metal.shade.ShadePost;
 import mcopt.metal.shade.ShadeRender;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
@@ -53,6 +54,9 @@ public final class ShadeClouds {
 	private static int frame, domeFrames;
 	private static double lastX, lastY, lastZ;
 	private static int lastDimension = -1;
+	/** ShadePost before-tonemap order (AO 50, clouds 80, VL 100). */
+	public static final int HOOK_ORDER = 80;
+	private static boolean hooked, over;
 
 	private ShadeClouds() {
 	}
@@ -68,6 +72,7 @@ public final class ShadeClouds {
 	 */
 	public static void update(long ctx, long enc, ShadeFrame f, ByteBuffer look) {
 		active = false;
+		over = false;
 		if (failed) {
 			PARAMS.packLook(look, false);
 			return;
@@ -132,7 +137,7 @@ public final class ShadeClouds {
 			p.windStepZ = sz;
 			float vanillaHeight = game.levelRenderState.cloudHeight;
 			p.base = Float.isNaN(CloudConfig.BASE) ? (Float.isFinite(vanillaHeight) && vanillaHeight > 0f ? vanillaHeight + 8f : 200f) : CloudConfig.BASE;
-			p.top = p.base + CloudConfig.THICKNESS;
+			p.top = p.base + (CloudConfig.BLOCKY ? CloudConfig.BLOCK_THICKNESS : CloudConfig.THICKNESS);
 			p.histW = hw;
 			p.histH = hh;
 			p.marchW = mw;
@@ -156,6 +161,12 @@ public final class ShadeClouds {
 			ShadeRender.resource(RESOURCE_SCREEN, MemoryUtil.memGetAddress(OUT + 16));
 			active = true;
 			wasActive = true;
+			// up at (or above) the cloud layer, clouds stand in front of the world too: composited before the tone map
+			over = f.cameraY > p.base - 48.0;
+			if (!hooked && ShadePost.active()) {
+				hooked = true;
+				ShadePost.addBeforeTonemap(HOOK_ORDER, ShadeClouds::beforeTonemap);
+			}
 			PARAMS.packLook(look, true);
 			if (CloudConfig.LOG && now - lastLog > 2_000_000_000L) {
 				lastLog = now;
@@ -174,6 +185,16 @@ public final class ShadeClouds {
 			System.out.println("[mcopt] shade: clouds failed, vanilla clouds from now on: " + t);
 			t.printStackTrace();
 			PARAMS.packLook(look, false);
+		}
+	}
+
+	private static void beforeTonemap(ShadePost.Context c) {
+		if (!active || !over || failed || state == 0 || c.depth() == 0 || c.scene() == 0) return;
+		try {
+			CloudNative.over(c.enc(), state, c.scene(), c.depth(), c.width(), c.height());
+		} catch (Throwable t) {
+			System.out.println("[mcopt] shade: clouds over the world failed: " + t);
+			over = false;
 		}
 	}
 

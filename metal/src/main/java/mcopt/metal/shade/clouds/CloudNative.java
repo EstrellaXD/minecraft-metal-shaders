@@ -33,6 +33,7 @@ final class CloudNative {
 	private static final MethodHandle OUTPUTS = fn("mc_clouds_outputs", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle TIMES = fn("mc_clouds_times", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle FREE = fn("mc_clouds_free", null, JAVA_LONG);
+	private static final MethodHandle OVER = fn("mc_clouds_over", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 
 	private CloudNative() {
 	}
@@ -86,6 +87,15 @@ final class CloudNative {
 	static void times(long state, long out) {
 		try {
 			TIMES.invokeExact(state, out);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Clouds in front of the world: into scene (live sub-rect liveW x liveH) where depth lies behind them. */
+	static void over(long enc, long state, long scene, long depth, int liveW, int liveH) {
+		try {
+			OVER.invokeExact(enc, state, scene, depth, liveW, liveH);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

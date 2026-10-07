@@ -45,7 +45,7 @@ public final class TaaConfig {
 	 */
 	public enum Preset {
 		PERFORMANCE(0.67f, 0.60f, 0.75f, 120, false),
-		BALANCED(0.80f, 0.67f, 0.90f, 120, true),
+		BALANCED(0.80f, 0.60f, 0.90f, 120, true), // floor 0.60 under load (bible §5 fallback: water-heavy views pinned it at 0.67)
 		QUALITY(1.00f, 0.85f, 1.00f, 80, true),
 		ULTRA(1.00f, 0.90f, 1.00f, 60, true);
 

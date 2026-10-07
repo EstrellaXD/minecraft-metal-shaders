@@ -37,7 +37,7 @@ public final class DynamicResolution {
 	private final double targetSeconds;
 	private float scale;
 	private double average, lastEnd;
-	private int samples, sinceChange, skip;
+	private int samples, sinceChange, skip, pinned;
 
 	public DynamicResolution(float start, float min, float max, int fps) {
 		this.min = min;
@@ -73,6 +73,15 @@ public final class DynamicResolution {
 	public float update() {
 		this.sinceChange++;
 		if (this.samples < AVERAGE_FRAMES || this.sinceChange < SETTLE_FRAMES) return this.scale;
+		// at the floor and still over budget: the preset can't hold its target here (mcopt.shade.drsLog says so every ~5 s)
+		if (this.scale <= this.min && this.average > this.targetSeconds) {
+			if (++this.pinned % 600 == 0 && TaaConfig.DRS_LOG) {
+				System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: render scale pinned at its floor %.3f, GPU %.2f ms/frame over the %.2f ms target",
+					this.scale, this.average * 1e3, this.targetSeconds * 1e3));
+			}
+		} else {
+			this.pinned = 0;
+		}
 		float next = (float) (this.scale * Math.sqrt(this.targetSeconds / this.average));
 		if (next > this.scale && (this.sinceChange < SETTLE_UP_FRAMES || this.average > UP_MARGIN * this.targetSeconds)) return this.scale;
 		next = TaaConfig.clamp(next, this.scale - STEP_DOWN, this.scale + STEP_UP);

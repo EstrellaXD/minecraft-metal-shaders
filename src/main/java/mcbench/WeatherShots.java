@@ -86,12 +86,7 @@ final class WeatherShots {
 				BenchDriver.log("weather poses " + poses);
 				List<BenchDriver.Step> extra = new ArrayList<>();
 				Poses p = poses;
-				if (on("perf") && p.ground != null) {
-					// the cost of the weather: the same 10 s pan over the ground pose, dry, then soaked in rain
-					perf(extra, "wxdry", false, p.ground);
-					perf(extra, "wxrain", true, p.ground);
-				}
-				// glass first: the ground is still dry
+				// glass first: the ground is still dry (then perf: dry, rain)
 				if (on("glass") && p.glassSite != null) {
 					extra.add(new BenchDriver.Step("wx-glass-build", 0) {
 						@Override
@@ -106,6 +101,11 @@ final class WeatherShots {
 					});
 					shot(extra, "wx_glass_noon", 6000, false, p.glassNoon);
 					shot(extra, "wx_glass_evening", 11000, false, p.glassEvening);
+				}
+				if (on("perf") && p.ground != null) {
+					// the cost of the weather: the same 10 s pan over the ground pose, dry, then soaked in rain
+					perf(extra, "wxdry", false, p.ground);
+					perf(extra, "wxrain", true, p.ground);
 				}
 				if (on("rain") && p.ground != null) shot(extra, "wx_rain_ground", 6000, true, p.ground);
 				if (on("sunset") && p.ground != null) {

@@ -223,7 +223,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     } else {
 #ifdef SHADE_WEATHER
         // M3 weather (weather_surface.metal): rain-soaked, darker albedo, puddles on open top faces, snow cover
-        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl);
+#ifdef MCOPT_HDR
+        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, sr.weatherNoise, sl.ssr.z > 0.5);
+#else
+        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, skyLut, false);
+#endif
         half3 wetAlbedo = debug == 3 ? albedo : shadeWetAlbedo(albedo, wet);
         radiance = shadeLit2(wetAlbedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
 #else

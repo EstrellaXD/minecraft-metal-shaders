@@ -81,7 +81,11 @@ public final class ShadeWeather {
 	public static final float FORCE_SNOW = floatFlag("mcopt.shade.snowAmount", -1f);
 
 	/** ShadeResources entries (shade_look.metal): last frame's linear view depth (TAA history), the coloured-shadow map. */
-	public static final int RES_PREV_DEPTH = 5, RES_SHADOW_TINT = 6;
+	public static final int RES_PREV_DEPTH = 5, RES_SHADOW_TINT = 6, RES_NOISE = 4;
+
+	/** The baked puddle/snow noise tile (ShadeResources entry 4), 0 until baked; bake failures fall back to the analytic noise. */
+	private static long noiseTexture;
+	private static boolean noiseFailed;
 
 	// ---- state (render thread) -----------------------------------------------------------------------------------------
 	/** Smoothed: wetness, puddles, snow cover, rain intensity. */
@@ -160,6 +164,28 @@ public final class ShadeWeather {
 		put4(b, ShadeLook.WET, wetness, PUDDLES ? puddles : 0f, SNOW ? snow : 0f, rain);
 		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, gust);
 		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], LIGHTNING ? flash : 0f);
+		b.putFloat(ShadeLook.SSR + 8, noiseTexture != 0 ? 1f : 0f); // ssr.z: ShadeResources.weatherNoise is baked
+	}
+
+	/**
+	 * Bakes the puddle field and snow drifts into one 256-block tile (weather_surface.metal shade_wx_noise_fs, RG16F 1024^2)
+	 * once, into enc before the world passes, and publishes it as ShadeResources entry 4. HDR only (the terrain reads it
+	 * through ShadeResources); idempotent.
+	 */
+	public static void bakeNoise(long enc) {
+		if (!ON || noiseTexture != 0 || noiseFailed || enc == 0 || !(PUDDLES || SNOW)) return;
+		try {
+			long lib = mcopt.metal.shade.ShadeRender.library(mcopt.metal.shade.ShadeRender.prelude() + mcopt.metal.shade.ShadeRender.postSource() + prelude());
+			long pso = mcopt.metal.shade.ShadeRender.pipeline(lib, "shade_fs_vs", "shade_wx_noise_fs", mcopt.metal.shade.ShadeRender.RG16F,
+				mcopt.metal.shade.ShadeRender.BLEND_NONE);
+			long tex = mcopt.metal.shade.ShadeRender.texture(mcopt.metal.shade.ShadeRender.RG16F, 1024, 1024, false, "mcopt shade weather noise");
+			mcopt.metal.shade.ShadeRender.pass(enc, pso, tex, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade weather: noise bake");
+			mcopt.metal.shade.ShadeRender.resource(RES_NOISE, tex);
+			noiseTexture = tex;
+		} catch (Throwable e) {
+			noiseFailed = true;
+			System.out.println("[mcopt] shade: weather noise bake failed, per-pixel noise from now on: " + e);
+		}
 	}
 
 	private static void put4(ByteBuffer b, int at, float x, float y, float z, float w) {

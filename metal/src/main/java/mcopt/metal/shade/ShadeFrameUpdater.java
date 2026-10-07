@@ -261,6 +261,7 @@ public final class ShadeFrameUpdater {
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
 		if (mcopt.metal.shade.water.ShadeWater.ON) mcopt.metal.shade.water.ShadeWater.bake(ShadeBindings.ctx(), enc);
+		if (ShadeConfig.HDR && !ShadeBindings.fallback()) mcopt.metal.shade.weather.ShadeWeather.bakeNoise(enc);
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());
 		if (LOG_EVERY > 0 && now - lastLog > LOG_EVERY * 1_000_000_000L) {
 			lastLog = now;

@@ -62,10 +62,33 @@ static inline float shadeWxValue(float2 x, int mask, uint salt) {
 
 // The puddle field: puddles 2-6 blocks across (8-block cells), lobes (4) and ragged rims (2), on a 32-block swell that makes
 // some stretches of ground wetter than others. About 0.5 on average (std 0.14): threshold 0.6 covers ~30 % of open ground.
+// Every lattice wraps every SHADE_WX_NOISE_TILE (256) blocks, so the field can be baked into one tile (shade_wx_noise_fs).
+#define SHADE_WX_NOISE_TILE 256.0
+#define SHADE_WX_NOISE_SIZE 1024
 static inline float shadeWxPuddleField(float2 xa) {
-	float big = shadeWxValue(xa * (1.0 / 32.0), 127, 0x01234567u);
-	return 0.5 * shadeWxValue(xa * 0.125, 511, 0x51ed270bu) + 0.3 * shadeWxValue(xa * 0.25, 1023, 0x2c1b3c6du)
-		+ 0.2 * shadeWxValue(xa * 0.5, 2047, 0x297a2d39u) + 0.25 * (big - 0.5);
+	float big = shadeWxValue(xa * (1.0 / 32.0), 7, 0x01234567u);
+	return 0.5 * shadeWxValue(xa * 0.125, 31, 0x51ed270bu) + 0.3 * shadeWxValue(xa * 0.25, 63, 0x2c1b3c6du)
+		+ 0.2 * shadeWxValue(xa * 0.5, 127, 0x297a2d39u) + 0.25 * (big - 0.5);
+}
+
+// Snow drifts: patchy, with the puddle field's hollows filling first.
+static inline float shadeWxSnowDrift(float2 xa) {
+	return shadeWxValue(xa * 0.5, 127, 0x1f83d9abu) * 0.6 + shadeWxPuddleField(xa + 37.0) * 0.4;
+}
+
+// The bake (ShadeWeather.bakeNoise, once): r = puddle field, g = snow drift over one 256-block tile, 4 texels per block
+// (RG16F 1024^2, 4 MB). The terrain samples it bilinearly (repeat) instead of evaluating 6 value noises (24 hashes) per pixel.
+fragment half4 shade_wx_noise_fs(float4 pos [[position]]) {
+	float2 xa = pos.xy * (SHADE_WX_NOISE_TILE / float(SHADE_WX_NOISE_SIZE));
+	return half4(half(shadeWxPuddleField(xa)), half(shadeWxSnowDrift(xa)), 0.0h, 1.0h);
+}
+
+constexpr sampler shadeWxRepeat(filter::linear, address::repeat, coord::normalized);
+
+// (puddle field, snow drift) at absolute xz: the baked tile when the caller has it (ShadeResources.weatherNoise), else analytic.
+static inline float2 shadeWxFields(float2 xa, texture2d<half> noise, bool baked) {
+	if (baked) return float2(noise.sample(shadeWxRepeat, xa * (1.0 / SHADE_WX_NOISE_TILE), level(0.0)).rg);
+	return float2(shadeWxPuddleField(xa), shadeWxSnowDrift(xa));
 }
 
 // ---- raindrop ripples -----------------------------------------------------------------------------------------------------
@@ -117,7 +140,7 @@ struct ShadeWet {
 // reaches sky light 15: open sky; 14 under an overhang's edge gets a little); thin: crossed plants; foliage: leaves and the
 // like (no puddles; they get wet and snow-covered); footprint: blocks per pixel (ripples fade where they would alias).
 static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool foliage, float footprint, constant ShadeFrame &f,
-                                constant ShadeLook &L) {
+                                constant ShadeLook &L, texture2d<half> noise, bool baked) {
 	ShadeWet w;
 	w.omega = 0.0h;
 	w.puddle = 0.0h;
@@ -128,16 +151,24 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h; // walls get wet streaks, undersides stay dry
 	w.omega = half(L.wet.x) * open * face * (thin ? 0.45h : foliage ? 0.7h : 1.0h);
 	float2 xa = shadeWxXZ(p.xz, f);
+	bool snowy = false, puddly = false;
 #ifdef SHADE_SNOW_COVER
-	if (L.wet.z > 0.001 && n.y > 0.5h) {
-		float drift = shadeWxValue(xa * 0.5, 2047, 0x1f83d9abu) * 0.6 + shadeWxPuddleField(xa + 37.0) * 0.4;
+	snowy = L.wet.z > 0.001 && n.y > 0.5h;
+#endif
+#ifdef SHADE_PUDDLES
+	puddly = L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h;
+#endif
+	float2 fields = snowy || puddly ? shadeWxFields(xa, noise, baked) : float2(0.0);
+#ifdef SHADE_SNOW_COVER
+	if (snowy) {
+		float drift = fields.y;
 		w.snow = half(smoothstep(1.0 - float(L.wet.z) * 1.15, 1.15 - float(L.wet.z) * 1.15, drift + 0.15)) * open;
 		w.omega *= 1.0h - w.snow;
 	}
 #endif
 #ifdef SHADE_PUDDLES
-	if (L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h) {
-		float field = shadeWxPuddleField(xa);
+	if (puddly) {
+		float field = fields.x;
 		float t = mix(0.80, 0.60, float(L.wet.y));
 		half P = half(smoothstep(t, t + 0.035, field)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter

@@ -54,7 +54,7 @@ struct ShadeLook {
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0
 	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w 0
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
-	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), zw reserved (SSR)
+	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), z 1 = ShadeResources.weatherNoise is baked (M3 weather), w reserved
 	float4 taa;        // 704  reserved for TAAU
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)
@@ -95,7 +95,7 @@ struct ShadeResources {
 	texture2d<half> prevScene;   // 1  last frame's HDR world (pre-exposed with ShadeGpu.exposure.z), before the tonemap: SSR source
 	texture2d<half> scene;       // 2  this frame's HDR world target (read it only outside the world passes: it is their attachment)
 	texture2d<half> bloom;       // 3  bloom accumulation from level 1 down (quarter size), after the post chain of the previous frame
-	texture2d<half> reserved4;
+	texture2d<half> weatherNoise;// 4  (M3 weather) RG16F 1024^2 tile of 256 blocks: r puddle field, g snow drift (baked once; weather_surface.metal)
 	texture2d<half> prevDepth;   // 5  (TAAU) linear view depth of prevScene (R16F, blocks along last frame's view axis, ~65000 = sky); valid when ssr.y == 1
 	texture2d<half> shadowTint;  // 6  (M3 weather) coloured shadows: near cascade tint map (RGBA16F, rgb transmittance, a reversed-Z light depth of the nearest translucent caster)
 	texture2d<half> reserved7;

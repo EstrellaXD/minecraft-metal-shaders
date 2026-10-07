@@ -32,8 +32,9 @@ typedef struct {
 	int timesTried, timeFrame;
 	MTLTimestamp cpu0, gpu0;
 	double timeSum[CLOUD_PASSES];
-	int timeCount;
+	int timeN[CLOUD_PASSES], timeCount;
 	uint64_t timeLast[CLOUD_TIME_RING];
+	int timeRan[CLOUD_TIME_RING];  // bit p: pass p was encoded with this ring slot's samples
 } CloudState;
 
 static id<MTLRenderPipelineState> cloudPso(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1, char *err, int errCap) {
@@ -109,19 +110,26 @@ static void timesCollect(CloudState *s, id<MTLDevice> device, int r) {
 		s->timeLast[r] = first;
 		for (int p = 0; p < CLOUD_PASSES; p++) {
 			uint64_t a = ts[2 * p].timestamp, b = ts[2 * p + 1].timestamp;
-			if (a == MTLCounterErrorValue || b == MTLCounterErrorValue || a == 0) continue; // pass skipped this frame
-			if (b > a) s->timeSum[p] += (double) (b - a) * nsPerTick / 1e6;
+			if (!(s->timeRan[r] & (1 << p))) continue; // pass skipped that frame (its samples are stale)
+			if (a == MTLCounterErrorValue || b == MTLCounterErrorValue || a == 0) continue;
+			if (b > a) {
+				s->timeSum[p] += (double) (b - a) * nsPerTick / 1e6;
+				s->timeN[p]++;
+			}
 		}
 		s->timeCount++;
 	}
 }
 
-// Average GPU ms of shadow, march, resolve and dome since the last call (out[0..3]) and the frame count (out[4]).
+// Average GPU ms of shadow, march, resolve and dome per run of each since the last call (out[0..3]; the shadow map and the
+// dome run every other frame) and the frame count (out[4]). Fragment stage start to end: other work the GPU overlaps with
+// a pass counts too, so these are upper bounds (compare whole-frame GPU time with the clouds on and off).
 void mc_clouds_times(CloudState *s, float *out) {
 	int n = s->timeCount;
 	for (int p = 0; p < CLOUD_PASSES; p++) {
-		out[p] = n > 0 ? (float) (s->timeSum[p] / n) : 0.0f;
+		out[p] = s->timeN[p] > 0 ? (float) (s->timeSum[p] / s->timeN[p]) : 0.0f;
 		s->timeSum[p] = 0;
+		s->timeN[p] = 0;
 	}
 	out[CLOUD_PASSES] = (float) n;
 	s->timeCount = 0;
@@ -296,6 +304,7 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 				if (s->timeFrame >= CLOUD_TIME_RING) timesCollect(s, dev, r);
 				times = s->times;
 				base = r * CLOUD_PASSES * 2;
+				s->timeRan[r] = (flags & 1 ? 1 : 0) | (flags & 2 ? 6 : 0) | (flags & 4 ? 8 : 0);
 				s->timeFrame++;
 			}
 		}

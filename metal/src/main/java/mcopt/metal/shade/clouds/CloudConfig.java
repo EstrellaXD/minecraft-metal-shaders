@@ -31,7 +31,7 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.clouds.shadows} (true) / {@code .shadowStrength} (0.8): cloud shadows on terrain, water and
  * god rays.</li>
  * <li>{@code mcopt.shade.clouds.dome} (true): the reflection dome (clouds in water reflections of directions off
- * screen), {@code .domeSteps} (P 10, B 12, Q 16, U 20).</li>
+ * screen), {@code .domeSteps} (P 8, B 10, Q 12, U 16).</li>
  * <li>{@code mcopt.shade.clouds.cirrus} (true): the high cirrus layer.</li>
  * <li>{@code mcopt.shade.clouds.base} / {@code .thickness}: the cumulus layer (default: vanilla's cloud height + 8, 150
  * blocks thick).</li>
@@ -56,8 +56,8 @@ public final class CloudConfig {
 	public static final float SHADOW_STRENGTH = clamp(floatProperty("mcopt.shade.clouds.shadowStrength", 0.8f), 0f, 1f);
 	public static final float SHADOW_EXTENT = clamp(floatProperty("mcopt.shade.clouds.shadowExtent", 1024f), 256f, 4096f);
 	public static final boolean DOME = flag("mcopt.shade.clouds.dome", true);
-	public static final int DOME_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.domeSteps", new int[] {10, 12, 16, 20}[TIER]), 4, 64);
-	public static final int DOME_W = 192, DOME_H = 96;
+	public static final int DOME_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.domeSteps", new int[] {8, 10, 12, 16}[TIER]), 4, 64);
+	public static final int DOME_W = 128, DOME_H = 64;
 	public static final boolean CIRRUS = flag("mcopt.shade.clouds.cirrus", true);
 	/**
 	 * Cloud style: volumetric (default) or blocky (vanilla-style 12-block cells, ray-traced and lit: the Storybook look's

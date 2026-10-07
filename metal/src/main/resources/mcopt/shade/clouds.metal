@@ -692,7 +692,7 @@ fragment half4 cloud_dome(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[b
 	float2 uv = in.position.xy / c.dome.xy;
 	float3 dir = cloudDomeDirection(uv);
 	float jitter = fract(shadeNoise(in.position.xy, 0) + c.misc.x * 0.6180339887);
-	CloudResult r = cloudSky(dir, int(c.dome.w), 3, 1, jitter, f, c, weather, noise, lut, lutS);
+	CloudResult r = cloudSky(dir, int(c.dome.w), 2, 1, jitter, f, c, weather, noise, lut, lutS);
 	half4 now = half4(half3(min(r.S, 60000.0)), half(r.T));
 	if (c.frame.z > 0.5) return now;
 	return mix(prev.read(uint2(in.position.xy)), now, half(c.dome.z));

@@ -30,7 +30,8 @@ import net.minecraft.server.MinecraftServer;
  * <li>{@code inside}: noon, at 250, inside the cumulus layer.</li>
  * <li>{@code water}: time 11800, the standard sunset spot above water, looking down at the reflected clouds.</li>
  * </ul>
- * The poses go to results.json "cloudShots".
+ * The poses go to results.json "cloudShots". {@code perf} (only by name) adds the recorded A/B phases clouds / clouds_off /
+ * clouds2 before the shots (see {@link #perf}).
  */
 final class CloudShots {
 	static final String SPEC = System.getProperty("mcbench.clouds", "").trim();
@@ -46,7 +47,9 @@ final class CloudShots {
 		if (SPEC.isEmpty() || SPEC.equals("false")) return;
 		List<String> names = SPEC.equals("all") || SPEC.equals("true") ? ALL : Arrays.stream(SPEC.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
 		Map<String, Object> json = new LinkedHashMap<>();
+		if (names.contains("perf")) perf(steps);
 		for (String n : names) {
+			if (n.equals("perf")) continue;
 			if (!ALL.contains(n)) throw new IllegalArgumentException("mcbench.clouds: unknown scene " + n + " (known: " + ALL + ")");
 			Object[] def = scene(n);
 			int time = (Integer) def[0];
@@ -64,6 +67,45 @@ final class CloudShots {
 			json.put(name, m);
 		}
 		BenchDriver.results.put("cloudShots", json);
+	}
+
+	/**
+	 * Perf phases "clouds", "clouds_off", "clouds2" (opt-in name {@code perf}, not part of {@code all}): noon, clear, at the
+	 * overview point turning a full circle in {@code -Dmcbench.cloudsSeconds} (12) s, 8 degrees up (about half the screen is
+	 * sky), with the volumetric clouds paused in the middle phase (system property mcopt.shade.clouds.pause, read by
+	 * mcopt-shade every frame: vanilla's clouds as with mcopt.shade.clouds=false): the clouds' whole cost in one session,
+	 * bracketed so drift shows (results.json perf.* / gpu.*).
+	 */
+	private static void perf(java.util.Deque<BenchDriver.Step> steps) {
+		double sec = Double.parseDouble(System.getProperty("mcbench.cloudsSeconds", "12"));
+		java.util.function.Supplier<Pose> o = () -> BenchDriver.spot.overview;
+		steps.add(new WeatherScene("clouds_perf", 6000, "clear", at(o, 0, 0f, -8f)));
+		steps.add(new BenchDriver.Settle("clouds_perf", false, 3, 120));
+		steps.add(new BenchDriver.Hold("clouds_perf", 3));
+		for (String phase : new String[] {"clouds", "clouds_off", "clouds2"}) {
+			steps.add(new BenchDriver.Step(phase, 0) {
+				@Override
+				void start(Minecraft mc, long now) {
+					BenchDriver.setPhase(phase.toUpperCase(java.util.Locale.ROOT));
+					System.setProperty("mcopt.shade.clouds.pause", Boolean.toString(phase.equals("clouds_off")));
+					Pose p = o.get();
+					long t0 = now;
+					BenchDriver.pose = t -> new Pose(p.x(), p.y(), p.z(), (float) (360.0 * Math.min(1.0, BenchDriver.secs(t - t0) / sec)), -8f);
+					BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(phase);
+					BenchDriver.phaseRanges.put(phase, new long[] {now, 0});
+					BenchDriver.log("perf " + phase + " " + sec + " s");
+				}
+
+				@Override
+				boolean poll(Minecraft mc, long now) {
+					if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+					BenchDriver.recPhase = -1;
+					BenchDriver.phaseRanges.get(phase)[1] = now;
+					System.setProperty("mcopt.shade.clouds.pause", "false");
+					return true;
+				}
+			});
+		}
 	}
 
 	/** {time, weather (clear | rain | thunder), pose supplier} for a scene name. */

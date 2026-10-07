@@ -292,7 +292,7 @@ final class LightShots {
 		run(s, String.format(Locale.ROOT, "summon minecraft:villager %.2f %d %.2f {%s,equipment:{mainhand:{id:\"minecraft:lantern\",count:1}}}", x + 1.5, y, z - 1, base));
 		run(s, String.format(Locale.ROOT, "summon minecraft:zombie %.2f %d %.2f {%s,HasVisualFire:1b}", x + 4, y, z - 3, base));
 		run(s, String.format(Locale.ROOT, "summon minecraft:magma_cube %.2f %d %.2f {%s,Size:0}", x - 3, y, z + 1.5, base));
-		run(s, String.format(Locale.ROOT, "summon minecraft:blaze %.2f %d %.2f {%s,NoGravity:1b}", x + 3, y + 2.5, z + 1.5, base));
+		run(s, String.format(Locale.ROOT, "summon minecraft:blaze %.2f %.2f %.2f {%s,NoGravity:1b}", x + 3, y + 2.5, z + 1.5, base));
 		String[] items = {"torch", "glowstone", "sea_lantern"};
 		for (int i = 0; i < items.length; i++) {
 			run(s, String.format(Locale.ROOT, "summon minecraft:item %.2f %.2f %.2f {NoGravity:1b,Age:-32768,PickupDelay:32767,Invulnerable:1b,Tags:[\"%s\"],Item:{id:\"minecraft:%s\",count:1}}",

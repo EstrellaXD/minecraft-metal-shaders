@@ -15,6 +15,7 @@ are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 | **Lightning** | Bolts near the camera (≤ 256 blocks) light the scene from their direction (terrain under open sky + the sky, a flickering envelope from the bolt's seed, then a 0.12 s afterglow); the bolt itself is written as bright HDR (bloom). The game's "Hide Lightning Flashes" turns the light off. |
 | **Snow cover** | Where it snows at the camera, top faces under open sky (leaves included) get patchy snow (τ 30 s up, 240 s down). |
 | **Coloured shadows** | The shadow pass draws Sodium's translucent terrain (stained glass and panes, ice, slime, honey, water) of the **near cascade** into a tint map (RGBA16F, 1024² default, 2048² on ultra): rgb = the light they let through (MIN blend), a = the light depth of the one nearest the light (MAX blend). Receivers more than a quarter block below it take the tint on their direct light. Water casters let through ~2 blocks of the biome water's absorption (deeper floors stay bluish-green). |
+| **Water caustics** | Not in the shadow pass: M2's water module already draws physically based caustics (the refracted sun's inverse Jacobian) on the bottom seen through the surface (`mcopt.shade.caustics`, water.metal). A tint-map pattern was tried (2026-10-07) and dropped because it would double them. |
 
 ## Flags (system properties or config/mcopt.properties; read once at startup)
 
@@ -63,7 +64,7 @@ module changes that term, change it there too (or make `shadeLit2` take a tinted
 light like a dynamic light; the dynamic-lights module can treat a flash as one more directional light instead. The puddle
 SSR reads `ShadeResources.prevScene`/`prevDepth`: any module may use them (TAA on; `ssr.x`/`ssr.y` say when valid).
 
-## Bench (mcbench `WeatherShots`, `-Dmcbench.weather=true|perf,rain,sunset,night,water,storm,glass`)
+## Bench (mcbench `WeatherShots`, `-Dmcbench.weather=true|perf,rain,sunset,night,water,storm,glass,caustics`)
 
 See `work/HARNESS.md` (8f). Typical look-dev run:
 `mcbench-run --instance "mcopt DEV" --mods <jar> --mods <sodium> --jvm "-Dmcopt.shade=true -Dmcopt.shade.weatherTime=10

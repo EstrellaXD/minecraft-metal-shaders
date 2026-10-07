@@ -107,36 +107,9 @@ fragment void shadow_cutout_fs(ShadowCutoutOut in [[stage_in]], texture2d<float>
 // MAX (the one nearest the light). Receivers (weather_surface.metal shadeShadowTint) take the tint only when they lie a
 // quarter block or more beyond that depth, i.e. below the glass. No depth attachment: the opaque cascade decides whether
 // light arrives at all. No raster bias: receivers compare their own depth.
-struct ShadowTintOut { float4 pos [[position]]; float2 uv; half4 color; float3 p; };
-// Water sprite rectangles in the block atlas (ShadeWater: still, flowing; all 0 when unknown); caustics: xy the camera's
-// world x, z modulo 1024, z the water clock (s), w the caustics' strength (0 = off).
-struct ShadowTintParams { float4 still; float4 flow; float4 caustics; };
-
-// ---- water caustics (mcopt.shade.caustics): light focused by the waves onto what lies under the water ----
-// Two value-noise fields drifting in different directions; where they are equal a bright line runs (the zero set of their
-// difference), so the lines form a moving web of about one block cells. Lattices of 1 and 1/2 block wrap every 1024
-// blocks with the camera offset (seamless). Returns the light under the surface relative to flat water, ~0.4..1.7.
-static inline float shadowCausticHash(int2 c) {
-    uint h = (uint(c.x) * 0x8da6b343u) ^ (uint(c.y) * 0xd8163841u);
-    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
-    return float(h) * (1.0 / 4294967296.0);
-}
-static inline float shadowCausticNoise(float2 x) {
-    float2 i = floor(x), u = x - i;
-    u = u * u * (3.0 - 2.0 * u);
-    int2 c = int2(i);
-    float a = shadowCausticHash(c & 1023), b = shadowCausticHash((c + int2(1, 0)) & 1023);
-    float d = shadowCausticHash((c + int2(0, 1)) & 1023), e = shadowCausticHash((c + int2(1, 1)) & 1023);
-    return mix(mix(a, b, u.x), mix(d, e, u.x), u.y);
-}
-static float shadowCaustics(float2 xz, float t) {
-    float n1 = shadowCausticNoise(xz * 1.0 + float2(0.31, 0.17) * t);
-    float n2 = shadowCausticNoise(xz * 1.0 + float2(37.5, 11.25) - float2(0.21, 0.29) * t);
-    float n3 = shadowCausticNoise(xz * 2.0 + float2(5.5, 71.5) + float2(-0.37, 0.23) * t);
-    float d = abs(n1 - n2) + 0.35 * abs(n3 - 0.5);
-    float line = saturate(1.0 - d * 5.0);
-    return 0.4 + 1.3 * line * line;
-}
+struct ShadowTintOut { float4 pos [[position]]; float2 uv; half4 color; };
+// Water sprite rectangles in the block atlas (ShadeWater: still, flowing; all 0 when unknown).
+struct ShadowTintParams { float4 still; float4 flow; };
 
 vertex ShadowTintOut shadow_tint_vs(uint vid [[vertex_id]], uint iid [[instance_id]], const device uint *arena [[buffer(0)]],
                                     const device ShadowChunk *chunks [[buffer(1)]], const device ShadowRegion *regions [[buffer(2)]],
@@ -149,7 +122,6 @@ vertex ShadowTintOut shadow_tint_vs(uint vid [[vertex_id]], uint iid [[instance_
         out.pos = float4(0.0);
         out.uv = float2(0.0);
         out.color = half4(0.0h);
-        out.p = float3(0.0);
         return out;
     }
     float3 p = shadowVertexPosition(v, regions[region]);
@@ -157,7 +129,6 @@ vertex ShadowTintOut shadow_tint_vs(uint vid [[vertex_id]], uint iid [[instance_
     uint tex = v[3];
     out.uv = float2(uint2(tex, tex >> 16) & 0x7FFFu) * (1.0 / 32768.0);
     out.color = unpack_unorm4x8_to_half(v[2]);
-    out.p = p;
     return out;
 }
 
@@ -172,9 +143,6 @@ fragment float4 shadow_tint_fs(ShadowTintOut in [[stage_in]], texture2d<float> a
         // about two blocks of water from the biome's colour (the vertex tint): clear teal shallows, green swamps
         float3 tint = max(vc * vc, float3(0.004));
         T = exp(-(float3(0.26, 0.07, 0.035) + 0.09 * -log(tint)) * 2.0);
-        // caustics: the surface's light pattern, carried down along the light to whatever the receivers are (the MIN blend
-        // keeps the darkest of overlapping water faces; values above 1 are cut by the clear value)
-        if (tp.caustics.w > 0.0) T *= mix(1.0, shadowCaustics(in.p.xz + tp.caustics.xy, tp.caustics.z), tp.caustics.w);
     } else {
         float a = t.a * float(in.color.a);
         if (a < 0.03) discard_fragment(); // the clear parts of glass

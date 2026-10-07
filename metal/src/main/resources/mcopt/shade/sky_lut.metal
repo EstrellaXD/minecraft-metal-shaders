@@ -34,12 +34,13 @@ fragment half4 shade_lut_fs(ShadeLutOut in [[stage_in]], constant ShadeFrame &f 
 	// M3: the evening sky's hue toward rose (upper sky, a little mauve) and peach (lower), at the same luminance: the warm
 	// pink-gold evening of the studied packs, our sun, rays and blue top kept (ShadeLook.skyGoldZ.w, 0 by day)
 	float rose = L.skyGoldZ.w;
-	if (rose > 0.0 && dir.y > -0.05) {
-		float up = smoothstep(0.0, 0.6, dir.y);
-		float3 tint = mix(float3(1.30, 0.98, 0.80), float3(1.22, 0.93, 0.98), up);
+	if (rose > 0.0 && dir.y > 0.03) {
+		float up = smoothstep(0.08, 0.6, dir.y);
+		float3 tint = mix(float3(1.55, 1.0, 0.62), float3(1.55, 0.86, 1.0), up); // gold-peach low, rose-mauve high
 		tint /= dot(tint, float3(0.2126, 0.7152, 0.0722));
 		float l = dot(sky, float3(0.2126, 0.7152, 0.0722));
-		float w = rose * (0.55 + 0.45 * toward) * (1.0 - 0.35 * smoothstep(0.55, 1.0, dir.y)) * smoothstep(-0.05, 0.03, dir.y);
+		// the gold horizon band stays as it is (smoothstep from 0.03): only the sky above it turns
+		float w = rose * (0.55 + 0.45 * toward) * (1.0 - 0.3 * smoothstep(0.55, 1.0, dir.y)) * smoothstep(0.03, 0.2, dir.y);
 		sky = mix(sky, l * tint, w);
 	}
 	return half4(half3(min(sky, 60000.0)), 1.0h);

@@ -32,6 +32,8 @@ import net.minecraft.world.level.material.Fluids;
  * <li>{@code vl_forest_evening}: outside the forest edge, evening sun behind the trees (looking west).</li>
  * <li>{@code vl_shelter}: inside a village house looking out of its door into low sun (the cave mouth / overhang case);
  * the time follows the door's direction. Skipped if no door faces east or west.</li>
+ * <li>{@code vl_overhang}: under a natural roof (overhang, cave mouth) 2-4 blocks thick, looking out of its opening into
+ * the low sun (east in the morning, west in the evening). Skipped if the area has none.</li>
  * <li>{@code vl_underwater}: 7 blocks under the surface of deep water, looking up toward the morning sun.</li>
  * </ul>
  * Times are golden-hour low sun (sun elevation about 14 degrees at 250 and 11750, 19 at 600 with mcopt-shade's default 30
@@ -183,6 +185,54 @@ final class GodRayShots {
 			}
 		}
 		if (shelter != null) out.put("vl_shelter", new Object[] {shelter, shelterTime});
+		// 3b. overhang / cave mouth: standing room (2 air over a solid floor) under a solid, non-leaf roof, with the open air
+		// (and the low sun) 3-9 blocks east or west at the camera's height
+		Pose over = null;
+		int overTime = 0;
+		double overBest = -1e9;
+		for (int x = cx - r; x <= cx + r; x += 2) {
+			for (int z = cz - r; z <= cz + r; z += 2) {
+				if (!l.hasChunk(x >> 4, z >> 4)) continue;
+				int top = l.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+				for (int y = top - 3; y >= top - 24 && y > 50; y--) {
+					BlockPos at = new BlockPos(x, y, z);
+					if (!l.getBlockState(at).isAir() || !l.getBlockState(at.above()).isAir()) continue;
+					if (!l.getBlockState(at.below()).isSolidRender() || !l.getFluidState(at).isEmpty()) continue;
+					// the roof: the first block above the standing room, solid and not leaves, at most 6 above the feet
+					int roof = 0;
+					for (int k = 2; k <= 6; k++) {
+						BlockState b = l.getBlockState(at.above(k));
+						if (b.isAir()) continue;
+						if (b.isSolidRender() && !b.is(BlockTags.LEAVES)) roof = k;
+						break;
+					}
+					if (roof == 0) continue;
+					for (int sgn = -1; sgn <= 1; sgn += 2) {
+						// the mouth: walking toward the sun at the camera's height, the first column with open sky above it
+						int open = 0;
+						boolean blocked = false;
+						for (int d = 1; d <= 9 && open == 0; d++) {
+							int ox = x + sgn * d;
+							BlockPos o = new BlockPos(ox, y, z);
+							if (!l.getBlockState(o).isAir() || !l.getBlockState(o.above()).isAir()) {
+								blocked = true;
+								break;
+							}
+							if (l.getHeight(Heightmap.Types.MOTION_BLOCKING, ox, z) <= y + 1) open = d;
+						}
+						if (blocked || open < 3) continue;
+						double score = open * 0.5 + roof - (Math.abs(x - cx) + Math.abs(z - cz)) / 400.0;
+						if (score > overBest) {
+							overBest = score;
+							boolean east = sgn > 0;
+							over = new Pose(x + 0.5, y + 0.05, z + 0.5, east ? -90f : 90f, -4f);
+							overTime = east ? 250 : 11750;
+						}
+					}
+				}
+			}
+		}
+		if (over != null) out.put("vl_overhang", new Object[] {over, overTime});
 		// 4. under water: the deepest column near the centre (surface at sea level), 7 blocks down, looking up east
 		int wx = 0, wz = 0, wDepth = 0;
 		for (int x = cx - r; x <= cx + r; x += 4) {

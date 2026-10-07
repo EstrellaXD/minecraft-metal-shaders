@@ -85,7 +85,7 @@ final class DimShots {
 					json.put(e.getKey(), m);
 					BenchDriver.log("dim scene " + e.getKey() + " in " + x.dim + " " + x.pose);
 					extra.add(new DimScene(e.getKey(), x));
-					extra.add(new BenchDriver.Settle(e.getKey(), false, 4, 150));
+					extra.add(new BenchDriver.Settle(e.getKey(), false, 4, 40)); // Nether chunks keep loading around: 40 s is plenty
 					extra.add(new BenchDriver.Hold(e.getKey(), Math.max(BenchDriver.SHOT_WAIT, 3)));
 					extra.add(new BenchDriver.Shot(e.getKey()));
 					if (!x.teardown.isEmpty()) extra.add(new Cmd("teardown-" + e.getKey(), x.teardown));

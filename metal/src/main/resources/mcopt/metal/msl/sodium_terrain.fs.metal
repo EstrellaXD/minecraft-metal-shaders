@@ -6,11 +6,12 @@
 // Sodium's block_layer_opaque.fsh reading the lean outputs of sodium_terrain.vs.metal. The loader prepends
 // "#define ALPHA_CUTOUT x" for the cutout and translucent passes, like Sodium's own shader defines.
 //
-// With MCOPT_SHADE defined (mcopt native shading; the loader prepends the define and mcopt/shade/shade_common.metal) the
-// texel is lit per pixel in the overworld: sun or moon light with the shadow map, directional sky light by sky level, warm
-// block light, vanilla's baked AO kept in the vertex colour, fog into the sky behind it, exposure and tone curve. Outside
-// the overworld it is vanilla's lightmapped colour and fog. Debug views (mcopt.shade.debug): 1 shadow/cascades, 2 normals,
-// 3 lighting only.
+// With MCOPT_SHADE defined (mcopt native shading; the loader prepends the define and mcopt/shade/shade_look.metal,
+// shade_common.metal, shade_m2.metal) the texel is lit per pixel in the overworld: sun or moon light with the shadow map
+// (PCSS-lite), directional sky light by sky level, warm block light, vanilla's baked AO kept in the vertex colour, height
+// haze and fog into the sky behind it; then exposure (pre-exposed radiance into the HDR world target with MCOPT_HDR, M1's
+// tone curve into RGBA8 without). Outside the overworld it is vanilla's lightmapped colour and fog (converted to
+// scene-linear in the HDR target). Debug views (mcopt.shade.debug): 1 shadow/cascades, 2 normals, 3 lighting only.
 #include <metal_stdlib>
 using namespace metal;
 
@@ -57,7 +58,8 @@ constant float2 RGSS[4] = { float2(0.125, 0.375), float2(-0.125, -0.375), float2
 
 fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffer(0)]], texture2d<float> u_BlockTex [[texture(3)]], sampler u_BlockTexSmplr [[sampler(3)]]
 #ifdef MCOPT_SHADE
-                         , constant ShadeFrame& sf [[buffer(16)]], depth2d_array<float> shadowMap [[texture(16)]], sampler shadowCompare [[sampler(12)]],
+                         , constant ShadeFrame& sf [[buffer(16)]], constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]],
+                         depth2d_array<float> shadowMap [[texture(16)]], sampler shadowCompare [[sampler(12)]],
                          texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]], float4 fragCoord [[position]]
 #endif
                          )
@@ -103,13 +105,14 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     main0_out out;
     if (sf.flags.x != SHADE_DIM_OVERWORLD) {
         color.rgb *= float(shadeVanillaFace(n, sf.flags.x)); // the face-shade-off mixins removed it from the vertices
-        out.fragColor = float4(mix(color.xyz, g.u_FogColor.xyz, float3(fogValue * g.u_FogColor.w)), color.w);
+        out.fragColor = float4(shadeVanillaOut(mix(color.xyz, g.u_FogColor.xyz, float3(fogValue * g.u_FogColor.w)), sl), color.w);
         return out;
     }
     if (shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
-        out.fragColor = float4(color.rgb, color.w);
+        out.fragColor = float4(shadeVanillaOut(color.rgb, sl), color.w);
         return out;
     }
+    float ex = shadeExposure(sf, sg);
     half3 albedo = shadeToLinear(half3(texel.rgb) * in.v_Color.rgb);
     int debug = sf.flags.w;
     if (debug == 3) albedo = half3(0.45h);
@@ -119,7 +122,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     bool foliage = false;
 #endif
     // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4)
-    half shadow = in.v_Light.y > 0.3h ? shadeShadow(shadowMap, shadowCompare, sf, p, n, thin || foliage) : half(1.0);
+    half shadow = in.v_Light.y > 0.3h ? shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, in.v_Light.y)
+        : half(1.0);
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
@@ -133,25 +137,25 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     float3 radiance;
     if (water) {
 #ifdef ALPHA_CUTOUT
-        float3 lit = shadeLit(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf);
+        float3 lit = shadeLit2(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
         float4 w = shadeWater(lit, tint, shadeLumaH(half3(texel.rgb)), alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
         radiance = w.rgb;
         alpha = w.a;
 #endif
     } else {
-        radiance = shadeLit(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf);
+        radiance = shadeLit2(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
         // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
         half tl = shadeLumaH(half3(texel.rgb));
         if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12) radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * 2.2;
     }
-    radiance = shadeFogAir(radiance, p, fogValue, skyLut, skyLutSmplr, sf);
-    float3 rgb = shadeFinish(radiance, fogValue, sf);
-    if (debug == 2) rgb = float3(n) * 0.5 + 0.5;
+    radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl);
+    float3 rgb = shadeFinish2(radiance, fogValue, sf, sl, ex);
+    if (debug == 2) rgb = shadeVanillaOut(float3(n) * 0.5 + 0.5, sl);
     if (debug == 1) {
         float d = length(p);
         float3 tint = sf.flags.z == 0 ? float3(1.0, 0.3, 0.3) : d < sf.cascadeSplits.x ? float3(0.4, 1.0, 0.4) : d < sf.cascadeSplits.y ? float3(0.4, 0.6, 1.0) : float3(1.0);
-        rgb = tint * (0.25 + 0.75 * float(shadow));
+        rgb = shadeVanillaOut(tint * (0.25 + 0.75 * float(shadow)), sl);
     }
     out.fragColor = float4(rgb, alpha);
     return out;

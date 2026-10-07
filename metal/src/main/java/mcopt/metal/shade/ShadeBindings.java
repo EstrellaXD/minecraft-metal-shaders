@@ -32,9 +32,11 @@ public final class ShadeBindings {
 	public static final boolean ON = Shade.ENABLED;
 	/** Ring slots: more than the frames that can be in flight (-Dmcopt.metal.inFlight, 2 by default) plus the one being written. */
 	private static final int RING = Math.max(3, Integer.getInteger("mcopt.metal.inFlight", 2) + 1);
-	private static final int SLOT_SIZE = 1024;
+	/** ShadeFrame (1008 B) at 0, ShadeLook (1024 B) at LOOK_OFFSET. */
+	private static final int SLOT_SIZE = 2048, LOOK_OFFSET = 1024;
 
-	private static long ctx, state, compareSampler, dummyShadow, shadowMap;
+	private static long ctx, state, compareSampler, dummyShadow, shadowMap, gpuBuffer;
+	private static ByteBuffer gpuView;
 	private static final long[] buffers = new long[RING];
 	private static final ByteBuffer[] views = new ByteBuffer[RING];
 	private static int slot;
@@ -65,7 +67,12 @@ public final class ShadeBindings {
 				buffers[i] = MetalBridge.newBuffer(context, SLOT_SIZE);
 				views[i] = MemoryUtil.memByteBuffer(MetalBridge.bufferContents(buffers[i]), SLOT_SIZE);
 				ShadeFrameUpdater.FRAME.pack(views[i]); // defaults until the first level frame: never an unwritten buffer
+				ShadeFrameUpdater.LOOK.pack(views[i].slice(LOOK_OFFSET, ShadeLook.SIZE), ShadeFrameUpdater.FRAME);
 			}
+			// ShadeGpu (buffer 18): GPU-written; starts at exposure 1 (the first frame snaps to its target)
+			gpuBuffer = ShadeNative.buffer(context, 512);
+			gpuView = MemoryUtil.memByteBuffer(MetalBridge.bufferContents(gpuBuffer), 512).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+			gpuView.putFloat(176, 1f).putFloat(180, 1f).putFloat(184, 1f);
 		} catch (Throwable e) {
 			// Nothing to bind: the shaded pipelines can't be helped, but at least vanilla's face shade comes back.
 			failed = true;
@@ -118,6 +125,25 @@ public final class ShadeBindings {
 	/** Points the native bind state at the current slot, shadow map and sampler. */
 	static void publish() {
 		ShadeNative.set(buffers[slot], 0, shadowMap != 0 ? shadowMap : dummyShadow, compareSampler);
+		ShadeNative.setM2(ctx, buffers[slot], LOOK_OFFSET, gpuBuffer);
+	}
+
+	/** This frame's ShadeLook bytes (in the current slot). */
+	static ByteBuffer currentLook() {
+		return views[slot].slice(LOOK_OFFSET, ShadeLook.SIZE);
+	}
+
+	/**
+	 * The exposure the GPU applied in a recent frame (ShadeGpu.exposure.x, read from the shared buffer without waiting, so
+	 * it may be a frame or two old): for logs and CPU-side colours that must match the HDR image. 0 before setup.
+	 */
+	public static float gpuExposure() {
+		return gpuView != null ? gpuView.getFloat(176) : 0f;
+	}
+
+	/** The metered mean log2 scene luminance (ShadeGpu.scene.x), for logs. */
+	public static float gpuMeteredLog2() {
+		return gpuView != null ? gpuView.getFloat(192) : 0f;
 	}
 
 	/** Renders the sky-view LUT from the current slot into the frame's command buffer (ends any open render encoder). */

@@ -41,6 +41,9 @@ import org.joml.Vector4f;
  */
 public final class ShadeFrameUpdater {
 	static final ShadeFrame FRAME = new ShadeFrame();
+	static final ShadeLook LOOK = new ShadeLook();
+	private static int moonPhaseIndex;
+	private static long lastLog;
 	/** The projection the world is drawn with this frame (view bobbing, hurt tilt, nausea), from ShadeGameRendererMixin. */
 	private static final Matrix4f PROJECTION = new Matrix4f();
 	private static boolean projectionSet;
@@ -156,6 +159,7 @@ public final class ShadeFrameUpdater {
 			Shade.celestial(sky.moonAngle, DIR);
 			f.moonDir.set((float) DIR[0], (float) DIR[1], (float) DIR[2]);
 			f.moonPhase = MOON_BRIGHTNESS[Math.floorMod(sky.moonPhase.index(), 8)];
+			moonPhaseIndex = sky.moonPhase.index();
 			f.starBrightness = sky.starBrightness;
 			f.dayTime = (float) (sky.sunAngle / (2 * Math.PI) - Math.floor(sky.sunAngle / (2 * Math.PI)));
 			Vector3fc skyColor = sky.skyColor;
@@ -215,10 +219,23 @@ public final class ShadeFrameUpdater {
 		boolean snap = lastDimension != f.dimension || dt > 1f;
 		lastDimension = f.dimension;
 		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
+		if (snap) LOOK.snapExposure();
 		ShadeShadows.beforePack(camera, f);
+		LOOK.update(f, moonPhaseIndex, dt); // grades f.sky.light: before f.pack
 
 		f.pack(ShadeBindings.nextSlot());
+		LOOK.pack(ShadeBindings.currentLook(), f);
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
+		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());
+		if (LOG_EVERY > 0 && now - lastLog > LOG_EVERY * 1_000_000_000L) {
+			lastLog = now;
+			System.out.printf("[mcopt] shade: e %.1f deg, exposure ref %.3f gpu %.3f, metered log2 %.2f, sat %.2f, contrast %.2f, bloom %.3f, mist %.2f, wb %.0f%n",
+				LOOK.elevation, LOOK.exposureRef, ShadeBindings.gpuExposure(), ShadeBindings.gpuMeteredLog2(), LOOK.saturation, LOOK.contrast,
+				LOOK.bloomMix, LOOK.mistSigma, LOOK.whiteBalance);
+		}
 	}
+
+	/** mcopt.shade.log=N: a line with the art layer's state every N seconds (0 = never). */
+	private static final int LOG_EVERY = Integer.getInteger("mcopt.shade.log", 0);
 }

@@ -174,6 +174,14 @@ public final class MetalBridge {
 		return value;
 	}
 
+	/**
+	 * Native shading's HDR redirect: takes texture's pending (deferred) color clear, which the redirected pass applies to
+	 * its own target instead. rgba, or null when none is pending; a pending depth clear stays.
+	 */
+	public static float @Nullable [] takePendingColorClear(Object encoder, GpuTexture texture) {
+		return ((MetalEncoder) encoder).takePendingColorClear((MetalTexture) texture);
+	}
+
 	/** The texture's contents are dead after the open render pass: it isn't stored (store action don't care). */
 	public static void discard(long enc, long texture) {
 		Native.discard(enc, texture);

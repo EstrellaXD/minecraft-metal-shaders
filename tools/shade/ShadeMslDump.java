@@ -24,9 +24,13 @@ public class ShadeMslDump {
 			// shaded
 			Files.writeString(out.resolve("shade_" + e.getKey() + ".vs.metal"), slotsT + ShadeMsl.terrain(vs));
 			Files.writeString(out.resolve("shade_" + e.getKey() + ".fs.metal"), slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			// M2 HDR variants (what MetalPipeline.variant builds through ShadeMsl's format adapter)
+			Files.writeString(out.resolve("hdr_" + e.getKey() + ".vs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(vs));
+			Files.writeString(out.resolve("hdr_" + e.getKey() + ".fs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
 			if (!e.getKey().equals("translucent")) {
 				Files.writeString(out.resolve("up_" + e.getKey() + ".pulled.vs.metal"), "#define PULLED\n" + vs);
 				Files.writeString(out.resolve("shade_" + e.getKey() + ".pulled.vs.metal"), slotsT + ShadeMsl.terrain("#define PULLED\n" + vs));
+				Files.writeString(out.resolve("hdr_" + e.getKey() + ".pulled.vs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain("#define PULLED\n" + vs));
 			}
 		}
 		// sky pipelines, with two different uniform orders (renderpearl numbers them by use)
@@ -35,20 +39,37 @@ public class ShadeMslDump {
 			String s = MetalShaderRegistry.slotDefines(orders.get(i));
 			Files.writeString(out.resolve("sky" + i + ".vs.metal"), s + ShadeMsl.skyStage("sky.vs.metal"));
 			Files.writeString(out.resolve("sky" + i + ".fs.metal"), s + ShadeMsl.skyStage("sky.fs.metal"));
+			Files.writeString(out.resolve("hdrsky" + i + ".vs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("sky.vs.metal"));
+			Files.writeString(out.resolve("hdrsky" + i + ".fs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("sky.fs.metal"));
 		}
 		String s2 = MetalShaderRegistry.slotDefines(List.of("Projection", "DynamicTransforms", "Sampler0"));
 		Files.writeString(out.resolve("celestial.vs.metal"), s2 + ShadeMsl.skyStage("celestial.vs.metal"));
 		String s3 = MetalShaderRegistry.slotDefines(List.of("DynamicTransforms", "Projection"));
 		Files.writeString(out.resolve("sunrise.vs.metal"), s3 + ShadeMsl.skyStage("sunrise_sunset.vs.metal"));
+		Files.writeString(out.resolve("stars.vs.metal"), s3 + ShadeMsl.skyStage("stars.vs.metal"));
 		Files.writeString(out.resolve("sky_lut.metal"), ShadeMsl.lut());
+		// M2 post chain (one library: bloom, final, bridge, exposure kernels, Milky Way bake)
+		Files.writeString(out.resolve("post.metal"), ShadeMsl.post());
 		// clouds: own fragment (CloudInfo slot from the defines); vanilla's generated vertex stage comes from a dump if given
 		String s4 = MetalShaderRegistry.slotDefines(List.of("CloudInfo", "Projection", "DynamicTransforms", "Fog"));
 		Files.writeString(out.resolve("clouds.fs.metal"), s4 + ShadeMsl.prelude() + ShadeMsl.resource("clouds.fs.metal"));
+		Files.writeString(out.resolve("hdrclouds.fs.metal"), "#define MCOPT_HDR\n" + s4 + ShadeMsl.prelude() + ShadeMsl.resource("clouds.fs.metal"));
 		// weather: patched generated fragment, from a -Dmcopt.metal.dumpMsl directory (MCOPT_GEN_DIR) when available
 		String gen = System.getenv("MCOPT_GEN_DIR");
 		if (gen != null) {
 			java.nio.file.Path w = java.nio.file.Path.of(gen, "minecraft_pipeline_weather.fs.metal");
-			if (Files.exists(w)) Files.writeString(out.resolve("weather.fs.metal"), ShadeMsl.weather(Files.readString(w)));
+			if (Files.exists(w)) {
+				Files.writeString(out.resolve("weather.fs.metal"), ShadeMsl.weather(Files.readString(w)));
+				Files.writeString(out.resolve("hdrweather.fs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.weather(Files.readString(w)));
+			}
+			// every generated game fragment, converted for the HDR world target (ShadeMsl.hdrFragment)
+			Path hdrGen = out.resolve("hdrgen");
+			Files.createDirectories(hdrGen);
+			try (var files = Files.list(Path.of(gen))) {
+				for (Path f : files.filter(x -> x.getFileName().toString().endsWith(".fs.metal")).toList()) {
+					Files.writeString(hdrGen.resolve(f.getFileName()), ShadeMsl.hdrFragment(Files.readString(f)));
+				}
+			}
 		}
 	}
 }

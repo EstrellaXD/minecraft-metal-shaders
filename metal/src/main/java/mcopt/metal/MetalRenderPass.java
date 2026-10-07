@@ -60,8 +60,12 @@ final class MetalRenderPass implements RenderPassBackend {
 	/** With a delegate: the current pipeline's uniform slots (index -> slot, -1 unbound); null drops its draws. */
 	private int @Nullable [] slots;
 
-	MetalRenderPass(MetalEncoder encoder, boolean hasDepth, int x, int y, int width, int height, @Nullable PassDelegate delegate) {
+	/** A format redirect's color formats (MetalHooks.Redirect.formats): pipelines draw through their variants for them; null otherwise. */
+	private final int @Nullable [] formats;
+
+	MetalRenderPass(MetalEncoder encoder, boolean hasDepth, int x, int y, int width, int height, @Nullable PassDelegate delegate, int @Nullable [] formats) {
 		this.encoder = encoder;
+		this.formats = formats;
 		this.enc = encoder.enc;
 		this.hasDepth = hasDepth;
 		this.delegate = delegate;
@@ -97,7 +101,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (this.encoder.tracing()) this.encoder.trace("  pipeline", p.name, "after draws:", this.draws, "triangles:", this.indices / 3);
 		this.pipeline = p;
 		this.recording = record ? p : null;
-		Native.pipeline(this.enc, this.hasDepth ? p.withDepth : p.withoutDepth, p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
+		Native.pipeline(this.enc, p.state(this.formats, this.hasDepth), p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
 		Arrays.fill(this.pending, 0, p.uniforms.size(), null);
 		this.dirtyUpTo = p.uniforms.size();
 	}
@@ -114,7 +118,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			this.slots = this.delegate.setPipeline(this.enc, p, p.uniforms);
 			return;
 		}
-		Native.pipeline(this.enc, this.hasDepth ? p.withDepth : p.withoutDepth, p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
+		Native.pipeline(this.enc, p.state(this.formats, this.hasDepth), p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
 		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc); // far terrain may have opened encoders of its own
 	}
 

@@ -1,0 +1,308 @@
+/*
+ * Copyright 2026 mcopt-shade contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package mcopt.metal.shade;
+
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import mcopt.metal.MetalBridge;
+import mcopt.metal.MetalHooks;
+import org.joml.Vector4fc;
+import org.jspecify.annotations.Nullable;
+import org.lwjgl.system.MemoryUtil;
+
+/**
+ * M2's HDR frame (bible §1.3, H5/H7/H8):
+ * <ol>
+ * <li><b>World phase</b> (LevelRenderer.render HEAD to render3dHud): every render pass whose color attachment is the game's
+ * main color texture draws into the HDR world target instead (a format redirect: MetalHooks.Redirect.formats, through the
+ * pipelines' RGBA16Float variants), keeping the main depth. Shaded pipelines write pre-exposed radiance there; the game's
+ * others are converted from display-referred colours (shade_look.metal, shadeLdrToHdr, patched in by ShadeMsl's format
+ * adapter).</li>
+ * <li><b>Distant Horizons bridge</b>: DH's passes ("distantHorizons:*") composite into the main RGBA8 texture from a copy of
+ * it, so before the first one the HDR world is tone-mapped into main (shade_bridge_encode), and before the next world pass
+ * the pixels DH changed come back into the HDR target (shade_bridge_decode).</li>
+ * <li><b>Before the hand</b> (render3dHud HEAD): hooks registered with {@link #addBeforeTonemap} (volumetric light, ...), then
+ * bloom (13-tap down / tent up, octave spectrum), the exposure histogram and its reduce (ShadeGpu.exposure for the next
+ * frame), and the final pass: bloom + fog glow, Purkinje, vignette, Shade Filmic, dither into the main RGBA8 target. The hand,
+ * screen effects and the GUI then draw over it as in vanilla.</li>
+ * </ol>
+ * Two HDR targets alternate per frame, so last frame's stays readable (ShadeResources.prevScene, for SSR). Render thread only.
+ */
+public final class ShadePost {
+	/** Something that runs right before the tone map, with the world's HDR image and depth (VL, atmosphere composite...). */
+	public interface Hook {
+		void run(Context c);
+	}
+
+	/**
+	 * What a hook gets. enc: the native Enc* (encode with ShadeRender.pass / dispatch, or your own natives on its command
+	 * buffer). scene: this frame's HDR world target (MTLTexture; format hdrFormat; pre-exposed radiance, ShadeGpu.exposure.x);
+	 * prevScene: last frame's (exposure ShadeGpu.exposure.z); depth: the main depth (Depth32Float, reversed Z, world only:
+	 * read before the hand pass clears it). width x height: their size. A hook may draw into scene (load action LOAD).
+	 */
+	public record Context(long enc, Object encoder, long scene, long prevScene, long depth, int width, int height, int hdrFormat, ShadeFrame frame,
+		ShadeLook look) {
+	}
+
+	private record Ordered(int order, Hook hook) {
+	}
+
+	private static final List<Ordered> BEFORE_TONEMAP = new ArrayList<>();
+
+	/** Adds a hook run before bloom and the tone map each frame (lower order first). */
+	public static synchronized void addBeforeTonemap(int order, Hook hook) {
+		BEFORE_TONEMAP.add(new Ordered(order, hook));
+		BEFORE_TONEMAP.sort((a, b) -> Integer.compare(a.order, b.order));
+	}
+
+	// ---- state -----------------------------------------------------------------------------------------------------------
+	private static boolean initialized, failed;
+	private static long library, psoDown0, psoDown, psoUp, psoFinal, psoEncode, psoDecode, psoHistogram, psoExposure, milkyWay;
+	private static final long[] hdr = new long[2];
+	private static long[] bloomLevels = new long[0], bloomAccum = new long[0];
+	private static int width, height, frame;
+	/** World passes are being redirected (between LevelRenderer.render HEAD and the tone map). */
+	private static boolean world;
+	private static boolean bridgeOpen, bridgeUsed;
+	private static @Nullable GpuTexture mainColor;
+	private static @Nullable Object encoder;
+	private static long enc;
+	/** Textures waiting for the frames that may still use them to finish: {handle, frame to release at}. */
+	private static final List<long[]> retired = new ArrayList<>();
+	private static final ByteBuffer params = ByteBuffer.allocateDirect(64).order(ByteOrder.LITTLE_ENDIAN);
+	private static boolean loggedDh;
+
+	private ShadePost() {
+	}
+
+	/** The HDR world target of this frame (MTLTexture), or 0 outside HDR mode or before the first frame. */
+	public static long sceneTexture() {
+		return ShadeConfig.HDR && initialized ? hdr[frame & 1] : 0;
+	}
+
+	/** Whether world passes are currently redirected into the HDR target. */
+	public static boolean inWorld() {
+		return world;
+	}
+
+	static synchronized boolean init() {
+		if (initialized) return true;
+		if (failed || !ShadeConfig.HDR) return false;
+		try {
+			library = ShadeRender.library(ShadeMsl.post());
+			psoDown0 = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down0", ShadeRender.RG11B10F, 0);
+			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RG11B10F, 0);
+			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RG11B10F, 0);
+			psoFinal = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final", ShadeRender.RGBA8, 0);
+			psoEncode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_encode", ShadeRender.RGBA8, 0);
+			psoDecode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_decode", ShadeConfig.HDR_FORMAT, 0);
+			psoHistogram = ShadeRender.computePipeline(library, "shade_histogram");
+			psoExposure = ShadeRender.computePipeline(library, "shade_exposure");
+			long bake = ShadeRender.pipeline(library, "shade_fs_vs", "shade_milkyway_bake", ShadeRender.RGBA16F, 0);
+			milkyWay = ShadeRender.texture(ShadeRender.RGBA16F, 1024, 512, false, "mcopt shade: Milky Way");
+			ShadeNative.bake(ShadeBindings.ctx(), bake, milkyWay);
+			MetalBridge.release(bake);
+			ShadeRender.resource(0, milkyWay);
+			MetalHooks.addRedirector(0, ShadePost::redirect);
+			initialized = true;
+			System.out.println("[mcopt] shade: HDR post chain ready (" + ShadeConfig.describe() + ")");
+			return true;
+		} catch (Throwable e) {
+			failed = true;
+			System.out.println("[mcopt] shade: HDR post chain failed, M1's tone curve instead: " + e);
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	/** Whether the HDR path is live (set up and not failed); shaded pipelines then must be the HDR variants. */
+	public static boolean active() {
+		return initialized && !failed;
+	}
+
+	/**
+	 * LevelRenderer.render HEAD (after the frame's uniforms are packed): sizes the targets to the main render target and starts
+	 * redirecting world passes. main: the game's main render target (MetalFX's smaller world target when that is on).
+	 */
+	static void beginWorld(Object metalEncoder, long nativeEnc, RenderTarget main) {
+		if (!init()) return;
+		encoder = metalEncoder;
+		enc = nativeEnc;
+		releaseRetired();
+		GpuTexture color = main.getColorTexture();
+		if (color == null) return;
+		int w = color.getWidth(0), h = color.getHeight(0);
+		if (w != width || h != height || hdr[0] == 0) resize(w, h);
+		frame++;
+		mainColor = color;
+		world = true;
+		bridgeOpen = false;
+		bridgeUsed = false;
+		ShadeRender.resource(1, hdr[(frame + 1) & 1]);
+		ShadeRender.resource(2, hdr[frame & 1]);
+	}
+
+	private static void resize(int w, int h) {
+		for (long t : hdr) retire(t);
+		for (long t : bloomLevels) retire(t);
+		for (long t : bloomAccum) retire(t);
+		width = w;
+		height = h;
+		hdr[0] = ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world A");
+		hdr[1] = ShadeRender.texture(ShadeConfig.HDR_FORMAT, w, h, false, "mcopt shade: HDR world B");
+		int n = ShadeConfig.BLOOM ? ShadeConfig.BLOOM_LEVELS : 0;
+		bloomLevels = new long[n];
+		bloomAccum = new long[n];
+		int lw = w, lh = h;
+		for (int i = 0; i < n; i++) {
+			lw = Math.max(1, (lw + 1) / 2);
+			lh = Math.max(1, (lh + 1) / 2);
+			bloomLevels[i] = ShadeRender.texture(ShadeRender.RG11B10F, lw, lh, true, "mcopt shade: bloom L" + i);
+			bloomAccum[i] = ShadeRender.texture(ShadeRender.RG11B10F, lw, lh, true, "mcopt shade: bloom U" + i);
+		}
+		ShadeRender.resource(3, n > 0 ? bloomAccum[0] : 0);
+		ShadeFrameUpdater.LOOK.snapExposure();
+		System.out.println("[mcopt] shade: HDR targets " + w + "x" + h + ", bloom " + n + " levels");
+	}
+
+	private static void retire(long t) {
+		if (t != 0) retired.add(new long[] {t, frame + 4});
+	}
+
+	private static void releaseRetired() {
+		retired.removeIf(r -> {
+			if (r[1] > frame) return false;
+			MetalBridge.release(r[0]);
+			return true;
+		});
+	}
+
+	// ---- the redirect ------------------------------------------------------------------------------------------------------
+	private static MetalHooks.@Nullable Redirect redirect(RenderPassDescriptor d) {
+		if (!world || mainColor == null) return null;
+		var colors = d.colorAttachments();
+		if (colors.size() != 1 || colors.get(0) == null) return null;
+		var attachment = colors.get(0);
+		if (attachment.textureView().texture() != mainColor || attachment.textureView().baseMipLevel() != 0) return null;
+		String label = d.label().get();
+		if (label != null && label.startsWith("distantHorizons:")) {
+			if (ShadeConfig.DH_BRIDGE && !bridgeOpen) openBridge();
+			return null; // DH composites into main RGBA8 as it would without shading
+		}
+		if (bridgeOpen) closeBridge();
+		float[] clear = null;
+		Optional<Vector4fc> explicit = attachment.clearValue();
+		if (explicit.isPresent()) {
+			Vector4fc c = explicit.get();
+			clear = new float[] {c.x(), c.y(), c.z(), c.w()};
+			MetalBridge.takePendingColorClear(encoder, mainColor);
+		} else {
+			clear = MetalBridge.takePendingColorClear(encoder, mainColor);
+		}
+		float[][] clears = null;
+		if (clear != null) {
+			float[] h = ShadeFrameUpdater.LOOK.ldrToHdr(clear[0], clear[1], clear[2]);
+			clears = new float[][] {{h[0], h[1], h[2], clear[3]}};
+		}
+		return MetalHooks.Redirect.formats(new long[] {hdr[frame & 1]}, clears, width, height, new int[] {ShadeConfig.HDR_FORMAT});
+	}
+
+	private static void openBridge() {
+		bridgeOpen = true;
+		bridgeUsed = true;
+		if (!loggedDh) {
+			loggedDh = true;
+			System.out.println("[mcopt] shade: Distant Horizons passes seen: bridging them through the HDR frame");
+		}
+		long main = MetalBridge.textureHandle(mainColor);
+		MetalBridge.takePendingColorClear(encoder, mainColor);
+		ShadeRender.pass(enc, psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
+	}
+
+	private static void closeBridge() {
+		bridgeOpen = false;
+		long main = MetalBridge.textureHandle(mainColor);
+		ShadeRender.pass(enc, psoDecode, hdr[frame & 1], ShadeRender.LOAD, new long[] {main}, null, "mcopt shade: DH bridge decode");
+	}
+
+	// ---- before the hand: hooks, bloom, exposure, tone map ---------------------------------------------------------------
+	/** GameRenderer.render3dHud HEAD (and FogRenderer.endFrame as a fallback): ends the world phase and tone-maps into main. */
+	static void beforeHand(RenderTarget main) {
+		if (!world) return;
+		world = false;
+		if (bridgeOpen) closeBridge();
+		if (mainColor == null) return;
+		long scene = hdr[frame & 1], prev = hdr[(frame + 1) & 1];
+		GpuTexture depthTexture = main.getDepthTexture();
+		long depth = 0;
+		if (depthTexture != null) {
+			MetalBridge.flushClear(encoder, depthTexture);
+			depth = MetalBridge.textureHandle(depthTexture);
+		}
+		ShadeFrame f = ShadeFrameUpdater.FRAME;
+		ShadeLook look = ShadeFrameUpdater.LOOK;
+		if (!BEFORE_TONEMAP.isEmpty()) {
+			Context c = new Context(enc, encoder, scene, prev, depth, width, height, ShadeConfig.HDR_FORMAT, f, look);
+			for (Ordered o : List.copyOf(BEFORE_TONEMAP)) {
+				try {
+					o.hook.run(c);
+				} catch (RuntimeException e) {
+					System.out.println("[mcopt] shade: post hook failed: " + e);
+				}
+			}
+		}
+		float bloomNorm = 0f;
+		int n = bloomLevels.length;
+		if (n > 0) {
+			ShadeRender.pass(enc, psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {scene}, null, "mcopt shade: bloom down 0");
+			for (int i = 1; i < n; i++) {
+				ShadeRender.pass(enc, psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");
+			}
+			if (ShadeConfig.AUTO_EXPOSURE && n > 2) {
+				long l2 = bloomLevels[2];
+				ShadeRender.dispatch(enc, psoHistogram, ShadeRender.width(l2), ShadeRender.height(l2), 16, 16, new long[] {l2}, null, "mcopt shade: histogram");
+			}
+			float spectrum = ShadeConfig.LOOK == 1 ? 0.9f : ShadeConfig.LOOK == 2 ? 0.3f : 0.6f;
+			float sum = 0f;
+			for (int i = n - 1; i >= 0; i--) {
+				float w = (float) Math.pow(i + 1, spectrum);
+				sum += w;
+				params.clear();
+				params.putFloat(w).putFloat(i == n - 1 ? 0f : 1f).putFloat(0f).putFloat(0f).flip();
+				long coarser = i == n - 1 ? bloomLevels[i] : bloomAccum[i + 1];
+				ShadeRender.pass(enc, psoUp, bloomAccum[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i], coarser}, params, "mcopt shade: bloom up");
+			}
+			bloomNorm = 1f / sum;
+		}
+		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");
+		params.clear();
+		params.putFloat(bloomNorm).putFloat(n > 0 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).flip();
+		long mainHandle = MetalBridge.textureHandle(mainColor);
+		MetalBridge.takePendingColorClear(encoder, mainColor);
+		ShadeRender.pass(enc, psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 0 ? bloomAccum[0] : scene, depth}, params, "mcopt shade: final");
+	}
+
+	/** Whether Distant Horizons' passes went through the bridge this frame. */
+	public static boolean bridgedThisFrame() {
+		return bridgeUsed;
+	}
+}

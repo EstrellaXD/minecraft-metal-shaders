@@ -26,14 +26,16 @@ struct CloudIn {
 	float4 vertexColor [[user(locn1)]];
 };
 
-fragment float4 main0(CloudIn in [[stage_in]], constant ShadeFrame& sf [[buffer(16)]], texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]],
+fragment float4 main0(CloudIn in [[stage_in]], constant ShadeFrame& sf [[buffer(16)]], constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]],
+                      texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]],
                       constant CloudInfo& ci [[buffer(MCOPT_SLOT_CloudInfo)]])
 {
 	float cloudEnd = max(sf.fogSky.y, 1.0);
 	float alpha = in.vertexColor.a * (1.0 - saturate(in.vertexDistance / cloudEnd));
 	float cover = min(in.vertexColor.a * 1.12, 0.95) * (1.0 - saturate(in.vertexDistance / cloudEnd)); // a little denser than vanilla's
-	if (sf.flags.x != SHADE_DIM_OVERWORLD || sf.fogColor.a > 0.5) return float4(in.vertexColor.rgb, alpha);
-	float2 ndc = float2(in.position.x * sf.screen.z * 2.0 - 1.0, 1.0 - in.position.y * sf.screen.w * 2.0);
+	if (sf.flags.x != SHADE_DIM_OVERWORLD || sf.fogColor.a > 0.5) return float4(shadeVanillaOut(in.vertexColor.rgb, sl), alpha);
+	// GL row order: the pixel's row counts from the bottom of the view, so NDC y = row / height * 2 - 1 (no flip)
+	float2 ndc = float2(in.position.x * sf.screen.z * 2.0 - 1.0, in.position.y * sf.screen.w * 2.0 - 1.0);
 	float4 wp = sf.invViewProj * float4(ndc, 0.5, 1.0);
 	float3 dir = normalize(wp.xyz / wp.w);
 	float k = in.vertexColor.g / max(ci.CloudColor.g, 1e-3);
@@ -56,5 +58,5 @@ fragment float4 main0(CloudIn in [[stage_in]], constant ShadeFrame& sf [[buffer(
 	float3 sky = shadeSkyLookup(dir, skyLut, skyLutSmplr, sf);
 	float t = saturate(in.vertexDistance / cloudEnd);
 	radiance = mix(radiance, sky, 0.04 + 0.7 * t * t * t);
-	return float4(shadeOutput(radiance, sf), cover);
+	return float4(shadeOut(radiance, sf, shadeExposure(sf, sg)), cover);
 }

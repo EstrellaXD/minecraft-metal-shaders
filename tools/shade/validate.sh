@@ -25,19 +25,27 @@ for f in variants/*.metal; do
 	./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f"; fail=1; }
 done
 for k in solid cutout translucent; do
-	for p in up shade; do
+	for p in up shade hdr; do
 		./pipecheck sodium variants/${p}_$k.vs.metal variants/${p}_$k.fs.metal || fail=1
 		[ -f variants/${p}_$k.pulled.vs.metal ] && { ./pipecheck none variants/${p}_$k.pulled.vs.metal variants/${p}_$k.fs.metal || fail=1; }
 	done
 done
-for i in 0 1; do ./pipecheck pos variants/sky$i.vs.metal variants/sky$i.fs.metal || fail=1; done
+for i in 0 1; do ./pipecheck pos variants/sky$i.vs.metal variants/sky$i.fs.metal || fail=1; ./pipecheck pos variants/hdrsky$i.vs.metal variants/hdrsky$i.fs.metal || fail=1; done
+./pipecheck compile variants/stars.vs.metal || fail=1
+./pipecheck compile variants/post.metal || fail=1
 ./pipecheck postex variants/celestial.vs.metal gen_position_tex.fs.metal || fail=1
 ./pipecheck poscolor variants/sunrise.vs.metal gen_position_color.fs.metal || fail=1
 ./pipecheck lut variants/sky_lut.metal variants/sky_lut.metal shade_lut_vs shade_lut_fs || fail=1
 # clouds / weather against vanilla's generated stages, when a dump dir is given (MCOPT_GEN_DIR=<-Dmcopt.metal.dumpMsl dir>)
 if [ -n "$MCOPT_GEN_DIR" ]; then
 	./pipecheck none "$MCOPT_GEN_DIR/minecraft_pipeline_clouds.vs.metal" variants/clouds.fs.metal || fail=1
+	./pipecheck none "$MCOPT_GEN_DIR/minecraft_pipeline_clouds.vs.metal" variants/hdrclouds.fs.metal || fail=1
+	./pipecheck pos variants/stars.vs.metal "$MCOPT_GEN_DIR/minecraft_pipeline_stars.fs.metal" || fail=1
 	[ -f variants/weather.fs.metal ] && { ./pipecheck compile variants/weather.fs.metal >/dev/null && echo "OK   variants/weather.fs.metal (compile)" || { ./pipecheck compile variants/weather.fs.metal; fail=1; }; }
+	n=0; for f in variants/hdrgen/*.fs.metal; do
+		./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f" | head -5; fail=1; }; n=$((n+1))
+	done
+	echo "OK   $n game fragments converted for the HDR target (ShadeMsl.hdrFragment) compile"
 fi
 echo "validate: $([ $fail = 0 ] && echo ALL OK || echo FAILURES) ($OUT)"
 exit $fail

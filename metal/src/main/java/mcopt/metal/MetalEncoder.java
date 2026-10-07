@@ -60,6 +60,11 @@ final class MetalEncoder implements CommandEncoderBackend {
 	private final ArrayDeque<Frame> inFlight = new ArrayDeque<>();
 	private List<Runnable> afterThisFrame = new ArrayList<>();
 	private final Set<MetalTexture> pendingClears = new HashSet<>();
+	/**
+	 * MTLPixelFormat per color attachment of the current pass when a format redirect (MetalHooks.Redirect.formats) put it
+	 * on attachments its pipelines weren't built for, so their variants draw it (MetalPipeline.state); null otherwise.
+	 */
+	int @Nullable [] passFormats;
 	private long submitIndex;
 	private long completedIndex = -1;
 	/** Render encoders opened in this submit; the trace's #numbers, which the GPU profile lines refer to. */
@@ -236,8 +241,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 	@Override
 	public RenderPassBackend createRenderPass(RenderPassDescriptor descriptor) {
 		// Shaderpack runtime (-Dmcopt.pack): the pass may draw into the pack's targets instead of its color attachments.
-		MetalHooks.PassRedirector redirector = MetalHooks.redirector;
-		MetalHooks.Redirect redirect = redirector == null ? null : redirector.redirect(descriptor);
+		MetalHooks.Redirect redirect = MetalHooks.hasRedirectors() ? MetalHooks.redirect(descriptor) : null;
 		// A redirect that keeps the pass's attachments only hands its pipelines to the delegate (native shading's lite tier).
 		PassDelegate keptDelegate = redirect != null && redirect.keepsAttachments() ? redirect.delegate() : null;
 		if (keptDelegate != null) redirect = null;
@@ -311,7 +315,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 			int continued = Native.renderBegin(this.enc, colorCount, colorHandles, clears, depthHandle, clearDepth ? 1 : 0, (float) depthValue, width, height);
 			if (mcopt.metal.cpu.Cpu.PASS_AB) mcopt.metal.cpu.Cpu.PASS_TIMER.end();
 			if (mcopt.metal.shade.ShadeBindings.ON && continued == 0) mcopt.metal.shade.ShadeBindings.bind(this.ctx, this.enc); // a new encoder has no bindings
-			if (redirect != null) redirect.delegate().begin(this.enc, depthHandle != 0);
+			if (redirect != null && redirect.delegate() != null) redirect.delegate().begin(this.enc, depthHandle != 0);
 			if (keptDelegate != null) keptDelegate.begin(this.enc, depthHandle != 0);
 			MetalHooks.Labeler labeler = MetalHooks.labeler;
 			if (labeler != null && continued == 0) labeler.label(this.enc, "game " + descriptor.label().get());
@@ -328,12 +332,14 @@ final class MetalEncoder implements CommandEncoderBackend {
 			if (continued == 0) this.encoderIndex++;
 		}
 		var area = descriptor.renderArea();
+		int[] formats = redirect != null && redirect.delegate() == null ? redirect.colorFormats() : null;
+		this.passFormats = formats;
 		if (redirect != null && redirect.depth() != 0) {
-			this.currentPass = new MetalRenderPass(this, true, 0, 0, redirect.width(), redirect.height(), redirect.delegate());
+			this.currentPass = new MetalRenderPass(this, true, 0, 0, redirect.width(), redirect.height(), redirect.delegate(), formats);
 			return this.currentPass;
 		}
 		this.currentPass = new MetalRenderPass(this, depth != null, area.x(), area.y(), area.width(), area.height(),
-			redirect != null ? redirect.delegate() : keptDelegate);
+			redirect != null ? redirect.delegate() : keptDelegate, formats);
 		return this.currentPass;
 	}
 
@@ -381,6 +387,15 @@ final class MetalEncoder implements CommandEncoderBackend {
 		t.pendingColorClear = null;
 		t.pendingDepthClear = Double.NaN;
 		this.pendingClears.remove(t);
+	}
+
+	/** Takes t's pending color clear (rgba), or null when it has none; a pending depth clear stays. */
+	float @Nullable [] takePendingColorClear(MetalTexture t) {
+		Vector4fc c = t.pendingColorClear;
+		if (c == null) return null;
+		t.pendingColorClear = null;
+		if (!t.hasPendingClear()) this.pendingClears.remove(t);
+		return new float[] {c.x(), c.y(), c.z(), c.w()};
 	}
 
 	/** Writes a deferred clear to memory with an empty pass: needed when the texture is read before it is drawn to. */

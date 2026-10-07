@@ -11,11 +11,11 @@
 // sky (plus a little sun), through the same exposure and tone curve, and a bit more transparent; vanilla's look elsewhere.
 #ifndef MCOPT_SHADE_WEATHER
 #define MCOPT_SHADE_WEATHER
-static float4 shadeWeather(float4 c, constant ShadeFrame &f) {
-	if (f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a > 0.5) return c;
+static float4 shadeWeather(float4 c, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g) {
+	if (f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a > 0.5) return float4(shadeVanillaOut(c.rgb, L), c.a);
 	float l = shadeLuma(c.rgb);
 	float3 light = f.ambientSky.rgb + f.sunColor.rgb * 0.3;
-	float3 lit = shadeOutput(light * (0.35 + 0.45 * l), f);
-	return float4(lit * float3(0.96, 0.98, 1.0), c.a * 0.65);
+	float3 lit = shadeOut(light * (0.35 + 0.45 * l) * float3(0.96, 0.98, 1.0), f, shadeExposure(f, g));
+	return float4(lit, c.a * 0.65);
 }
 #endif

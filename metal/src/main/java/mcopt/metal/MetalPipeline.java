@@ -56,6 +56,10 @@ final class MetalPipeline implements BackendRenderPipeline {
 	 */
 	private final @Nullable CreateInfo info;
 	private final @Nullable String vertexMsl, fragmentMsl, pulledMsl, vertexEntry, fragmentEntry;
+	/** Whether the registry replaced the vertex / fragment stage (told to MetalShaderRegistry's format adapter). */
+	private final boolean registryVertex, registryFragment;
+	/** The RGBA8 color target count was 1: what format redirects (one color) can draw with. */
+	private final int colorTargets;
 	/** variant() PSOs by key, released with the pipeline. */
 	private final Map<String, Long> variants = new java.util.HashMap<>();
 
@@ -68,6 +72,9 @@ final class MetalPipeline implements BackendRenderPipeline {
 		this.vertexEntry = retained != null ? retained.vertex.entry : null;
 		this.fragmentEntry = retained != null ? retained.fragment.entry : null;
 		this.pulledMsl = retained != null ? retained.pulled : null;
+		this.registryVertex = retained != null && retained.registryVertex;
+		this.registryFragment = retained != null && retained.registryFragment;
+		this.colorTargets = info.colorTargetStates().size();
 		this.withDepth = withDepth;
 		this.withoutDepth = withoutDepth;
 		this.pulled = pulled;
@@ -160,7 +167,8 @@ final class MetalPipeline implements BackendRenderPipeline {
 			int compare = depth == null ? 7 : MetalConst.compare(depth.depthTest());
 			long depthState = Native.depthStateNew(ctx, compare, depth != null && depth.writeDepth() ? 1 : 0);
 			MetalPipeline pipeline = new MetalPipeline(encoder, withDepth, withoutDepth, pulled, depthState, compare, info,
-				RETAIN ? new Retained(v, f, pulledSource) : null);
+				RETAIN ? new Retained(v, f, pulledSource, registered != null && registered.vertex() != null, registered != null && registered.fragment() != null) : null);
+			pipeline.prewarm();
 			return pipeline;
 		} finally {
 			if (vlib != 0) Native.release(vlib);
@@ -201,7 +209,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 		}
 	}
 
-	private record Retained(Translated vertex, Translated fragment, @Nullable String pulled) {
+	private record Retained(Translated vertex, Translated fragment, @Nullable String pulled, boolean registryVertex, boolean registryFragment) {
 	}
 
 	/** Pipelines whose registry variant was skipped (missing uniforms), logged once each. */
@@ -452,10 +460,15 @@ final class MetalPipeline implements BackendRenderPipeline {
 		long ctx = this.encoder.ctx, vlib = 0, flib = 0;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
-			String vsrc = pulled ? this.pulledMsl : this.vertexMsl;
+			String vsrc = pulled ? this.pulledMsl : this.vertexMsl, fsrc = this.fragmentMsl;
+			MetalShaderRegistry.FormatAdapter adapter = MetalShaderRegistry.formatAdapter();
+			if (adapter != null) {
+				vsrc = adapter.vertex(this.name, vsrc, this.registryVertex || pulled, colorFormats);
+				fsrc = adapter.fragment(this.name, fsrc, this.registryFragment, colorFormats);
+			}
 			vlib = libraryNew(ctx, stack, vsrc, err);
 			if (vlib == 0) throw new IllegalStateException(this.name + " variant vertex: " + MemoryUtil.memUTF8(err));
-			flib = libraryNew(ctx, stack, this.fragmentMsl, err);
+			flib = libraryNew(ctx, stack, fsrc, err);
 			if (flib == 0) throw new IllegalStateException(this.name + " variant fragment: " + MemoryUtil.memUTF8(err));
 			long vname = MemoryUtil.memAddress(stack.UTF8(this.vertexEntry)), fname = MemoryUtil.memAddress(stack.UTF8(this.fragmentEntry));
 			long pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, colorFormats), err, 4096);
@@ -466,6 +479,54 @@ final class MetalPipeline implements BackendRenderPipeline {
 			if (vlib != 0) Native.release(vlib);
 			if (flib != 0) Native.release(flib);
 		}
+	}
+
+	/**
+	 * The PSO to draw with in a pass whose color attachments have formats (null: this pipeline's own), with or without
+	 * depth. A variant that can't be built (logged once) falls back to the pipeline's own state.
+	 */
+	long state(int @Nullable [] formats, boolean depth) {
+		long own = depth ? this.withDepth : this.withoutDepth;
+		if (formats == null || this.info == null || formats.length != this.colorTargets) return own;
+		try {
+			return this.variant(formats, depth, false);
+		} catch (RuntimeException e) {
+			if (FAILED_VARIANTS.add(this.name)) System.out.println("mcopt-metal: no " + java.util.Arrays.toString(formats) + " variant of " + this.name + ": " + firstLine(e));
+			return own;
+		}
+	}
+
+	/** state() for the MetalTerrain pulled twin. */
+	long pulledState(int @Nullable [] formats) {
+		if (formats == null || this.info == null || formats.length != this.colorTargets) return this.pulled;
+		try {
+			long v = this.variant(formats, true, true);
+			return v != 0 ? v : this.pulled;
+		} catch (RuntimeException e) {
+			if (FAILED_VARIANTS.add(this.name + "+p")) System.out.println("mcopt-metal: no pulled variant of " + this.name + ": " + firstLine(e));
+			return this.pulled;
+		}
+	}
+
+	private static final java.util.Set<String> FAILED_VARIANTS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	private static String firstLine(RuntimeException e) {
+		return String.valueOf(e.getMessage()).lines().findFirst().orElse("");
+	}
+
+	/**
+	 * Builds the variants MetalShaderRegistry asks to have ready (prewarmFormats), on the compile thread, so the first
+	 * frame that needs one doesn't stall the render thread compiling it.
+	 */
+	private void prewarm() {
+		int[] formats = MetalShaderRegistry.prewarmFormats(this.name);
+		if (formats == null || this.info == null || formats.length != this.colorTargets) return;
+		for (ColorTargetState c : this.info.colorTargetStates()) {
+			if (c == null || MetalConst.pixelFormat(c.format()) != 70) return; // RGBA8Unorm targets only (what the game's main target is)
+		}
+		this.state(formats, true);
+		if (this.withoutDepth != 0) this.state(formats, false);
+		if (this.pulled != 0) this.pulledState(formats);
 	}
 
 	@Override

@@ -49,6 +49,38 @@ public final class MetalShaderRegistry {
 
 	private static final Map<String, Variant> VARIANTS = new ConcurrentHashMap<>();
 
+	/**
+	 * Rewrites a pipeline's final MSL for a variant with other color formats (MetalPipeline.variant): e.g. native shading
+	 * turns its own stages to HDR output and converts the game's display-referred colours. registry: whether that stage
+	 * came from this registry (or is the pulled terrain twin). Returns the source to compile.
+	 */
+	public interface FormatAdapter {
+		String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats);
+
+		String fragment(String pipelineName, String msl, boolean registry, int[] colorFormats);
+	}
+
+	private static volatile @Nullable FormatAdapter adapter;
+	private static volatile java.util.function.@Nullable Function<String, int @Nullable []> prewarm;
+
+	public static void setFormatAdapter(@Nullable FormatAdapter a) {
+		adapter = a;
+	}
+
+	static @Nullable FormatAdapter formatAdapter() {
+		return adapter;
+	}
+
+	/** Which format variants to build as soon as a pipeline compiles (pipeline name -> formats, or null for none). */
+	public static void setPrewarm(java.util.function.@Nullable Function<String, int @Nullable []> p) {
+		prewarm = p;
+	}
+
+	static int @Nullable [] prewarmFormats(String pipelineName) {
+		var p = prewarm;
+		return p == null ? null : p.apply(pipelineName);
+	}
+
 	private MetalShaderRegistry() {
 	}
 

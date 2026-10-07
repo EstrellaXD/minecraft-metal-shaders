@@ -7,19 +7,20 @@
 // limitations under the License.
 //
 // minecraft:pipeline/celestial (vertex; vanilla's position_tex fragment is kept). The overworld sun's textured square is
-// dropped (the sky draws a round sun with limb darkening); the moon follows the tilted sun path; the End flash draws as vanilla. Bodies are told
+// dropped (the sky draws a round sun with limb darkening), and the moon's too when the sky draws the procedural one (M2); the moon follows the tilted sun path; the End flash draws as vanilla. Bodies are told
 // apart by size: SkyRenderer scales the sun's quad by 30, the moon's by 20 and the End flash's by 60 (the length of
 // ModelViewMat's first column, rotations leaving it unchanged).
 struct CelestialIn { float3 Position [[attribute(0)]]; float2 UV0 [[attribute(1)]]; };
 struct CelestialOut { float4 gl_Position [[position]]; float2 texCoord0 [[user(locn0)]]; };
 
-vertex CelestialOut main0(CelestialIn in [[stage_in]], constant ShadeFrame& sf [[buffer(16)]],
+vertex CelestialOut main0(CelestialIn in [[stage_in]], constant ShadeFrame& sf [[buffer(16)]], constant ShadeLook& sl [[buffer(17)]],
                           constant DynamicTransforms& dt [[buffer(MCOPT_SLOT_DynamicTransforms)]], constant Projection& pr [[buffer(MCOPT_SLOT_Projection)]])
 {
 	CelestialOut out;
 	out.texCoord0 = in.UV0;
 	float size = length(dt.ModelViewMat[0].xyz);
-	if (sf.flags.x == SHADE_DIM_OVERWORLD && abs(size - 30.0) < 1.0) {
+	// the sun always, the moon too when the sky draws its own (M2 procedural moon)
+	if (sf.flags.x == SHADE_DIM_OVERWORLD && (abs(size - 30.0) < 1.0 || (abs(size - 20.0) < 1.0 && (sl.tier.y & SHADE_FEATURE_STARS) != 0))) {
 		out.gl_Position = SHADE_DROPPED;
 		return out;
 	}

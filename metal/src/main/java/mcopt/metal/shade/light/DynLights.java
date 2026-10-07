@@ -70,6 +70,8 @@ public final class DynLights {
 	static final int MAX = 64, GRID_X = 16, GRID_Y = 12, GRID_Z = 16, CELL = 8;
 	/** Blocks short of its reach where a light stops (dynlight.metal SHADE_DL_CUT). */
 	static final double CUT = 2.0;
+	/** The irradiance volume (dynlight.metal SHADE_DL_IRR_*): blocks around the camera, one voxel each. */
+	static final int IRR_X = 80, IRR_Y = 48, IRR_Z = 80;
 	/** ShadeDynLights (dynlight.metal): header 64 + lights 64 x 48 + cells 3072 x 8. */
 	static final int LIGHTS_OFFSET = 64, CELLS_OFFSET = LIGHTS_OFFSET + MAX * 48, BYTES = CELLS_OFFSET + GRID_X * GRID_Y * GRID_Z * 8;
 	private static final int RING = 4, VIS_PARAMS = 16 + 64 * 32;
@@ -127,11 +129,11 @@ public final class DynLights {
 		if (state != 0) return true;
 		if (failed) return false;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			ByteBuffer src = MemoryUtil.memUTF8(ShadeMsl.resource("dynlight_vis.metal"));
+			ByteBuffer src = MemoryUtil.memUTF8("#define SHADE_DL_KERNELS\n" + ShadeMsl.resource("dynlight.metal") + "\n" + ShadeMsl.resource("dynlight_vis.metal"));
 			try {
 				long err = stack.nmalloc(1, 4096);
 				MemoryUtil.memPutByte(err, (byte) 0);
-				state = DynLightNative.create(ctx, MemoryUtil.memAddress(src), BYTES, RING, Math.max(1, DynLightConfig.VOLUMES), Occupancy.BYTES, err, 4096);
+				state = DynLightNative.create(ctx, MemoryUtil.memAddress(src), BYTES, RING, Math.max(1, DynLightConfig.VOLUMES), Occupancy.BYTES, IRR_X, IRR_Y, IRR_Z, err, 4096);
 				if (state == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			} finally {
 				MemoryUtil.memFree(src);
@@ -250,12 +252,8 @@ public final class DynLights {
 		b.putInt(0, count).putInt(4, volumes).putInt(8, frame).putInt(12, 0);
 		b.putFloat(16, (float) (gx0 - camX)).putFloat(20, (float) (gy0 - camY)).putFloat(24, (float) (gz0 - camZ)).putFloat(28, 1f / CELL);
 		b.putFloat(32, Math.max(1, DynLightConfig.VOLUMES)).putFloat(36, DynLightConfig.STRENGTH).putFloat(40, DynLightConfig.SPEC).putFloat(44, DynLightConfig.ENTITY);
-		Src hand = count > 0 && ACTIVE.get(0).hand ? ACTIVE.get(0) : null;
-		if (hand != null) {
-			b.putFloat(48, (float) (hand.x - camX)).putFloat(52, (float) (hand.y - camY)).putFloat(56, (float) (hand.z - camZ)).putFloat(60, hand.reach);
-		} else {
-			b.putFloat(48, 0f).putFloat(52, 0f).putFloat(56, 0f).putFloat(60, 0f);
-		}
+		int ix0 = (int) Math.floor(camX) - IRR_X / 2, iy0 = (int) Math.floor(camY) - IRR_Y / 2, iz0 = (int) Math.floor(camZ) - IRR_Z / 2;
+		b.putFloat(48, (float) (ix0 - camX)).putFloat(52, (float) (iy0 - camY)).putFloat(56, (float) (iz0 - camZ)).putFloat(60, count > 0 ? 1f : 0f);
 		// lights + grid
 		java.util.Arrays.fill(cells, 0L);
 		for (int i = 0; i < count; i++) {
@@ -295,6 +293,7 @@ public final class DynLights {
 		b.position(0);
 		// lights that fall off the list keep the cells' bits clear; unused light slots are never named by a cell
 		if (dirty > 0) DynLightNative.vis(enc, state, visParams, VIS_PARAMS, dirty);
+		if (count > 0) DynLightNative.irr(enc, state); // the terrain's irradiance volume from these lights and slabs
 		cpuNanos = System.nanoTime() - t0;
 		if (DynLightConfig.LOG && t0 - lastLog > 2_000_000_000L) {
 			lastLog = t0;

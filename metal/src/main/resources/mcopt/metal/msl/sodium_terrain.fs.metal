@@ -66,7 +66,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
                          depth2d_array<float> shadowMap [[texture(16)]], sampler shadowCompare [[sampler(12)]],
                          texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]], float4 fragCoord [[position]]
 #ifdef SHADE_DYNLIGHT
-                         , constant ShadeDynLights& dl [[buffer(24)]], texture3d<half> dlVis [[texture(23)]]
+                         , constant ShadeDynLights& dl [[buffer(24)]], texture3d<half> dlVis [[texture(23)]], texture3d<half> dlIrr [[texture(24)]]
+                         , texture3d<half> dlDir [[texture(25)]]
 #endif
 #ifdef SHADE_WATER
                          , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
@@ -134,7 +135,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         {
             // vanilla's colour carries its lightmap (block light curve b / (4 - 3b), the dimension's ambient floor): a carried
             // light raises it toward the level reaching it (display-referred: sqrt of the response, warm like the lightmap)
-            float3 dyn = shadeDynamicLights(dl, dlVis, in.v_Pos, float3(n), thin, half(0.0));
+            float3 dyn = shadeDynamicLightsVol(dl, dlIrr, dlDir, in.v_Pos, float3(n), thin, half(0.0));
             if (dyn.x + dyn.y + dyn.z > 1e-4) {
                 float b = float(in.v_Light.x), have = max(b / (4.0 - 3.0 * b), 0.12);
                 float3 want = sqrt(dyn) * float3(1.0, 0.86, 0.72);
@@ -215,7 +216,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
             float fres = 0.02 + 0.98 * pow(1.0 - saturate(dot(dlN, V)), 5.0);
             dlSpec *= sf.ambientBlock.xyz * (0.25 + 3.0 * fres);
         } else {
-            wi.lit += sf.ambientBlock.xyz * shadeDynamicLights(dl, dlVis, p, float3(n), false, in.v_Light.x);
+            wi.lit += sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), false, in.v_Light.x);
         }
 #endif
         wi.exposure = ex;
@@ -247,7 +248,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef ALPHA_CUTOUT
         float3 lit = shadeLit2(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
 #ifdef SHADE_DYNLIGHT
-        lit += sf.ambientBlock.xyz * shadeDynamicLights(dl, dlVis, p, float3(n), false, in.v_Light.x);
+        lit += sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), false, in.v_Light.x);
 #endif
         float4 w = shadeWater(lit, tint, shadeLumaH(half3(texel.rgb)), alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
         radiance = w.rgb;
@@ -256,7 +257,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     } else {
         radiance = shadeLit2(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
 #ifdef SHADE_DYNLIGHT
-        radiance += float3(albedo) * sf.ambientBlock.xyz * shadeDynamicLights(dl, dlVis, p, float3(n), thin, in.v_Light.x);
+        radiance += float3(albedo) * sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), thin, in.v_Light.x);
 #endif
         // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.

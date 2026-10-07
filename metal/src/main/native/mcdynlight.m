@@ -14,6 +14,7 @@
 //     frame before the world passes (shade_dl_vis),
 // bound on every render encoder native shading binds (ShadeBindings.bind), vertex and fragment stages:
 //   buffer(24)  this frame's ShadeDynLights      texture(23)  the visibility volumes
+//   texture(24), texture(25) (fragment only): the irradiance volume (rgb light, mean light direction) the terrain samples
 // Both slots are unused by the game's pipelines (uniforms and samplers from 0, Sodium's 20-22/26, vertex buffers 27-30,
 // water's 18-23); far terrain's own pipelines use 24 but rebind shade after drawing.
 // Manual retain/release (the dylib builds with -fno-objc-arc), like the other files.
@@ -27,15 +28,16 @@ typedef struct {
 	id<MTLBuffer> occupancy;
 	id<MTLTexture> vis;
 	int slabs;
-	id<MTLComputePipelineState> visPso;
+	id<MTLComputePipelineState> visPso, irrPso;
+	id<MTLTexture> irr, dir;  // the irradiance volume: rgb light, mean light direction (one voxel per block)
 } DlState;
 
 // The one state mc_dl_bind binds from (set by mc_dl_new).
 static DlState *dl;
 
-// source: dynlight_vis.metal; bytes: the ShadeDynLights size; ring: slots (> frames in flight); slabs: visibility volumes
+// source: dynlight.metal (with SHADE_DL_KERNELS) + dynlight_vis.metal; irrW x irrH x irrD: the irradiance volume; bytes: the ShadeDynLights size; ring: slots (> frames in flight); slabs: visibility volumes
 // (<= 64); occBytes: the occupancy buffer's size. NULL with the compiler's message in err.
-DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs, int occBytes, char *err, int errCap) {
+DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs, int occBytes, int irrW, int irrH, int irrD, char *err, int errCap) {
 	@autoreleasepool {
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
@@ -52,8 +54,16 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 			snprintf(err, errCap, "shade_dl_vis: %s", e ? e.localizedDescription.UTF8String : "missing");
 			return NULL;
 		}
+		id<MTLFunction> fi = [[lib newFunctionWithName:@"shade_dl_irr"] autorelease];
+		id<MTLComputePipelineState> ipso = fi ? [ctx->device newComputePipelineStateWithFunction:fi error:&e] : nil;
+		if (!ipso) {
+			[pso release];
+			snprintf(err, errCap, "shade_dl_irr: %s", e ? e.localizedDescription.UTF8String : "missing");
+			return NULL;
+		}
 		DlState *s = calloc(1, sizeof(DlState));
 		s->visPso = pso;
+		s->irrPso = ipso;
 		s->ringSize = ring < 2 ? 2 : ring > DL_RING_MAX ? DL_RING_MAX : ring;
 		for (int i = 0; i < s->ringSize; i++) {
 			s->ring[i] = [ctx->device newBufferWithLength:bytes options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
@@ -74,6 +84,14 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 		td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
 		s->vis = [ctx->device newTextureWithDescriptor:td];
 		s->vis.label = @"mcopt shade: dynamic light visibility";
+		td.width = irrW;
+		td.height = irrH;
+		td.depth = irrD;
+		td.pixelFormat = MTLPixelFormatRGBA16Float;
+		s->irr = [ctx->device newTextureWithDescriptor:td];
+		s->irr.label = @"mcopt shade: dynamic light irradiance";
+		s->dir = [ctx->device newTextureWithDescriptor:td];
+		s->dir.label = @"mcopt shade: dynamic light direction";
 		dl = s;
 		return s;
 	}
@@ -86,6 +104,9 @@ void mc_dl_free(DlState *s) {
 	[s->occupancy release];
 	[s->vis release];
 	[s->visPso release];
+	[s->irrPso release];
+	[s->irr release];
+	[s->dir release];
 	free(s);
 }
 
@@ -110,6 +131,8 @@ void mc_dl_bind(Enc *enc) {
 	[r setFragmentBuffer:b offset:0 atIndex:24];
 	[r setVertexTexture:s->vis atIndex:23];
 	[r setFragmentTexture:s->vis atIndex:23];
+	[r setFragmentTexture:s->irr atIndex:24];
+	[r setFragmentTexture:s->dir atIndex:25];
 }
 
 // The visibility volumes for this frame (params: DlVisParams, volumes of them), on the frame's command buffer before the
@@ -126,6 +149,23 @@ void mc_dl_vis(Enc *enc, DlState *s, const void *params, int length, int volumes
 		[c setBuffer:s->occupancy offset:0 atIndex:1];
 		[c setTexture:s->vis atIndex:0];
 		[c dispatchThreads:MTLSizeMake(32, 32, 32 * volumes) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
+		[c endEncoding];
+	}
+}
+
+// The irradiance volume from this frame's lights (ring slot s->slot) and the visibility slabs, after mc_dl_vis.
+void mc_dl_irr(Enc *enc, DlState *s) {
+	if (!s) return;
+	@autoreleasepool {
+		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
+		id<MTLComputeCommandEncoder> c = [cb computeCommandEncoder];
+		c.label = @"mcopt shade: dynamic light irradiance";
+		[c setComputePipelineState:s->irrPso];
+		[c setBuffer:s->ring[s->slot] offset:0 atIndex:0];
+		[c setTexture:s->vis atIndex:0];
+		[c setTexture:s->irr atIndex:1];
+		[c setTexture:s->dir atIndex:2];
+		[c dispatchThreads:MTLSizeMake(s->irr.width, s->irr.height, s->irr.depth) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
 		[c endEncoding];
 	}
 }

@@ -27,7 +27,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 /** Downcalls into native/mcdynlight.m (pointers cross as longs). */
 final class DynLightNative {
 	private static final Linker LINKER = Linker.nativeLinker();
-	private static final MethodHandle NEW = fn("mc_dl_new", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle NEW = fn("mc_dl_new", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle IRR = fn("mc_dl_irr", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle CONTENTS = fn("mc_dl_contents", JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle SLOT = fn("mc_dl_slot", null, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle BIND = fn("mc_dl_bind", null, JAVA_LONG);
@@ -47,9 +48,9 @@ final class DynLightNative {
 		return new IllegalStateException(t);
 	}
 
-	static long create(long ctx, long source, int bytes, int ring, int slabs, int occBytes, long err, int errCap) {
+	static long create(long ctx, long source, int bytes, int ring, int slabs, int occBytes, int irrW, int irrH, int irrD, long err, int errCap) {
 		try {
-			return (long) NEW.invokeExact(ctx, source, bytes, ring, slabs, occBytes, err, errCap);
+			return (long) NEW.invokeExact(ctx, source, bytes, ring, slabs, occBytes, irrW, irrH, irrD, err, errCap);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -75,6 +76,14 @@ final class DynLightNative {
 	static void bind(long enc) {
 		try {
 			BIND.invokeExact(enc);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void irr(long enc, long state) {
+		try {
+			IRR.invokeExact(enc, state);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

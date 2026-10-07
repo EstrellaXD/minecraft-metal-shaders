@@ -38,6 +38,9 @@ using namespace metal;
 #define SHADE_DL_GRID_X 16     // light grid cells (8 blocks each): 128 x 96 x 128 blocks around the camera
 #define SHADE_DL_GRID_Y 12
 #define SHADE_DL_GRID_Z 16
+#define SHADE_DL_IRR_X 80      // the irradiance volume: 80 x 48 x 80 blocks around the camera, one voxel per block
+#define SHADE_DL_IRR_Y 48
+#define SHADE_DL_IRR_Z 80
 
 struct ShadeDynLight {
 	float4 pos;    // xyz camera-relative position, w reach in blocks (the light level; the light is l - d at distance d)
@@ -50,7 +53,7 @@ struct ShadeDynLights {
 	uint4 info;      //    0  x light count, y lights with a visibility volume, z frame, w 0
 	float4 grid;     //   16  xyz camera-relative min corner of the light grid, w 1 / cell size (blocks)
 	float4 params;   //   32  x visibility slabs in texture(23), y global strength, z specular strength, w entity strength
-	float4 eye;      //   48  xyz camera-relative position of the local player's hand light (0 when none), w its reach
+	float4 irr;      //   48  xyz camera-relative min corner of the irradiance volume (textures 24/25), w 1 when it was computed
 	ShadeDynLight lights[SHADE_DL_MAX];                              // 64
 	uint2 cells[SHADE_DL_GRID_X * SHADE_DL_GRID_Y * SHADE_DL_GRID_Z]; // 3136: per cell the lights that can reach into it
 };
@@ -121,6 +124,66 @@ static float3 shadeDynamicLights(constant ShadeDynLights &D, texture3d<half> vis
 	}
 	return sum * (D.params.y * (1.0 - 0.5 * shadeDlCurve(float(block))));
 }
+
+// The terrain's path (cost independent of the light count): the irradiance volume (shade_dl_irr computes every light's
+// light, visibility included, once per block voxel per frame) sampled trilinearly half a block in front of the surface,
+// with a wrapped N.L against the voxels' mean light direction (dir: sum of directions weighted by each light's luminance,
+// divided by the total, so its length is 1 for one light and shrinks where lights come from several sides: the term then
+// blends toward 0.6, as if lit from around). Same units and day/placed-light attenuation as shadeDynamicLights.
+static float3 shadeDynamicLightsVol(constant ShadeDynLights &D, texture3d<half> irr, texture3d<half> dirs, float3 p, float3 n, bool thin, half block) {
+	if (D.info.x == 0u || D.irr.w <= 0.0) return float3(0.0);
+	float3 v = (p + n * 0.5 - D.irr.xyz) * float3(1.0 / SHADE_DL_IRR_X, 1.0 / SHADE_DL_IRR_Y, 1.0 / SHADE_DL_IRR_Z);
+	if (any(v <= 0.0) || any(v >= 1.0)) return float3(0.0);
+	constexpr sampler s(filter::linear, address::clamp_to_edge, coord::normalized);
+	float3 e = float3(irr.sample(s, v, level(0.0)).rgb);
+	if (e.x + e.y + e.z < 1e-5) return float3(0.0);
+	float3 dir = float3(dirs.sample(s, v, level(0.0)).xyz);
+	float r = length(dir);
+	float c = dot(n, dir) / max(r, 1e-3);
+	float w = thin ? 0.55 + 0.45 * abs(c) : mix(0.6, saturate((c + 0.3) * (1.0 / 1.3)), saturate(r));
+	return e * (w * D.params.y * (1.0 - 0.5 * shadeDlCurve(float(block))));
+}
+
+// The irradiance volume (compute, mcdynlight.m, after the visibility slabs): per block voxel around the camera, every light
+// of its grid cell as shadeDlOne computes it at the voxel centre without the N.L term (that waits for the surface normal),
+// its visibility read exactly from the light's slab; rgb into irr, the luminance-weighted mean direction into dirs.
+#ifdef SHADE_DL_KERNELS
+kernel void shade_dl_irr(uint3 t [[thread_position_in_grid]], constant ShadeDynLights &D [[buffer(0)]], texture3d<half> vis [[texture(0)]],
+                         texture3d<half, access::write> irr [[texture(1)]], texture3d<half, access::write> dirs [[texture(2)]]) {
+	if (any(t >= uint3(SHADE_DL_IRR_X, SHADE_DL_IRR_Y, SHADE_DL_IRR_Z))) return;
+	float3 c = D.irr.xyz + float3(t) + 0.5;
+	uint2 m = shadeDlMask(D, c);
+	float3 e = float3(0.0), ds = float3(0.0);
+	float ls = 0.0;
+	for (uint k = 0u; k < 2u; k++) {
+		uint bits = k == 0u ? m.x : m.y;
+		while (bits != 0u) {
+			uint i = ctz(bits) + 32u * k;
+			bits &= bits - 1u;
+			constant ShadeDynLight &L = D.lights[i];
+			float3 v = L.pos.xyz - c;
+			float d2 = dot(v, v), reach = L.pos.w, cut = reach - SHADE_DL_CUT;
+			if (d2 >= cut * cut) continue;
+			float d = sqrt(d2);
+			float b = saturate((reach - max(d, 0.75)) * (1.0 / 15.0));
+			float f = shadeDlCurve(b) * saturate(cut - d);
+			if (L.vol.w >= 0.0) {
+				int3 q = int3(floor(c - L.vol.xyz));
+				if (any(q < 0) || any(q >= SHADE_DL_VOL)) continue;
+				f *= float(vis.read(uint3(uint(q.x), uint(q.y), uint(L.vol.w) * SHADE_DL_VOL + uint(q.z))).r);
+			}
+			if (f <= 1e-5) continue;
+			float3 ci = L.color.rgb * f;
+			float w = dot(ci, float3(0.2126, 0.7152, 0.0722));
+			e += ci;
+			ds += v * (w / max(d, 1e-3));
+			ls += w;
+		}
+	}
+	irr.write(half4(half3(min(e, 60000.0)), 0.0h), t);
+	dirs.write(half4(half3(ls > 0.0 ? ds / ls : float3(0.0)), 0.0h), t);
+}
+#endif
 
 // Diffuse plus a glossy highlight (water, wet or polished surfaces): v = unit direction from p toward the camera,
 // shininess the Blinn-Phong exponent, spec its strength (Fresnel-weighted by the caller). Returns diffuse in rgb as

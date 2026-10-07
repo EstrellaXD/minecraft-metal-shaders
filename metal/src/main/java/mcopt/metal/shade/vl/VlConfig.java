@@ -47,6 +47,15 @@ import mcopt.metal.shade.Shade;
  * history onto each frame's noise: flickering shafts); 0 = the plain box (M2.1).</li>
  * <li>{@code mcopt.shade.vl.box3} (true, M2.2): the history's clamp box spans the 3x3 neighbourhood (as before M2's review);
  * false: the spatial filter's plus of 5 (M2/M2.1: too tight, the shafts flickered).</li>
+ * <li>{@code mcopt.shade.vl.histDepth} (true, M2.2): the history is fetched from the texels of its bilinear footprint at this
+ * point's distance; false: one bilinear sample (M2/M2.1: at leaf edges it mixed leaf and sky distances, the history was
+ * dropped and the raw march showed: flickering shafts).</li>
+ * <li>{@code mcopt.shade.vl.crepSmooth} (true, M2.2): the screen-space (crepuscular) taps get each texel's own offset and read
+ * the sky mask bilinearly; false: one offset per frame for every texel, point reads (M2/M2.1: the dark sky rays near the sun
+ * flickered, the temporal clamp could not average a noise shared by the whole neighbourhood).</li>
+ * <li>{@code mcopt.shade.vl.nearDither} (true, M2.2): the canopy mist's own steps get each texel's own offset; false: the march's
+ * per-frame offset shared by every texel (M2/M2.1: the beams under trees and the veil over the sky between the leaves
+ * flickered).</li>
  * <li>{@code mcopt.shade.vl.edge} (true, M2.2; read by ShadePost): under TAAU the final pass blends the light of a depth
  * edge's near and far surface by their coverage of the 2x2 depth footprint; false: this frame's jittered depth alone (M2/M2.1).</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
@@ -80,6 +89,12 @@ public final class VlConfig {
 	public static final float STILL = clamp(floatProperty("mcopt.shade.vl.still", 0.6f), 0f, 4f);
 	/** M2.2: the history clamp box over the 3x3 neighbourhood (M2 before its review); false = the filter's plus (M2/M2.1). */
 	public static final boolean BOX3 = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.box3", "true"));
+	/** M2.2: the history from its footprint's texels at this point's distance; false = one bilinear sample (M2/M2.1). */
+	public static final boolean HIST_DEPTH = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.histDepth", "true"));
+	/** M2.2: crepuscular taps offset per texel over a bilinear sky mask; false = one offset per frame, point reads (M2/M2.1). */
+	public static final boolean CREP_SMOOTH = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.crepSmooth", "true"));
+	/** M2.2: the canopy mist's own steps offset per texel; false = the march's per-frame offset (M2/M2.1). */
+	public static final boolean NEAR_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.nearDither", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
@@ -107,6 +122,6 @@ public final class VlConfig {
 
 	static String describe() {
 		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + NEAR_STEPS + " near + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
-			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
+			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") + (HIST_DEPTH ? "" : ", bilinear history") + (CREP_SMOOTH ? "" : ", frame-jittered taps") + (NEAR_DITHER ? "" : ", frame-jittered mist steps") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
 }

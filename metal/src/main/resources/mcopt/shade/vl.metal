@@ -51,8 +51,11 @@ struct VlParams {
 	float4 light;     //  64 rgb light colour (linear irradiance / pi, art-graded, pre-exposure), w canopy mist sigma_s at canopy 1 (1/block)
 	float4 crep;      //  80 x screen-space ray strength (0 = off), y taps, z on-screen weight of the light, w angular falloff
 	float4 sunPx;     //  96 xy the light's position in full-res target pixels (Metal rows), z history clamp allowance of a still
-	                  //     view (share of the neighbourhood mean; 0 = the plain clamp, M2.1), w 1 = the clamp box over the
-	                  //     3x3 neighbourhood (M2.2; 0 = the filter's plus, M2.1)
+	                  //     view (share of the neighbourhood mean; 0 = the plain clamp, M2.1), w bits (M2.2; 0 = M2.1): 1 the clamp
+	                  //     box over the 3x3 neighbourhood (else the filter's plus), 2 the history fetched from the texels at
+	                  //     this point's distance (else one bilinear sample), 4 the crepuscular taps offset per texel over a
+	                  //     bilinear sky mask (else one offset per frame, point reads), 8 the canopy mist's own steps offset
+	                  //     per texel (else the march's per-frame offset)
 	float4 water;     // 112 rgb extinction under water (1/block), w scattering (1/block)
 	float4 water2;    // 128 x surface y (camera-relative), y underwater (0/1), z max distance under water, w caustic strength
 	float4 temporal;  // 144 x history weight, y reset (1 = drop history), z frame index, w time (s, wraps)
@@ -274,7 +277,11 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		}
 		if (nNear > 0 && local > 1e-7) {
 			float Dn = min(D, 2.5 * p.mist.x), dtn = Dn / float(nNear), tl = 1.0;
-			float xn = fract(xi + 0.5);
+			// M2.2 (sunPx.w bit 8): each texel's own offset (IGN + R1). With the march's shared per-frame offset every ray of a
+			// neighbourhood crossed the leaf shadows at the same depths, so the light of the whole neighbourhood rose and fell
+			// together: the temporal clamp, built from the neighbours, followed that noise and the beams and the veil over the sky
+			// flickered (the carve's 1 / (1 - k) gain made it worse). Its few steps stay within the near cascade around the camera.
+			float xn = (int(p.sunPx.w) & 8) != 0 ? vlNoise(in.position.xy + 7.0, p.temporal.z) : fract(xi + 0.5);
 			for (int j = 0; j < nNear; j++) {
 				float t = (float(j) + xn) * dtn;
 				float sLocal = local * vlMistDensity(t, dir.y * t, p);
@@ -333,10 +340,21 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float2 toV = (p.sunPx.xy - fpos) / scale, fv = in.position.xy;
 		int taps = int(p.crep.y);
 		float open = 0.0, wsum = 0.0, w = 1.0;
+		// M2.2 (sunPx.w bit 4): each texel's own tap offset (IGN + R1) and a bilinear mask: the shared per-frame offset moved
+		// every tap of a neighbourhood across the leaf holes together, so the neighbourhood clamp could not see that noise and
+		// the dark sky rays and the streaks changed every frame; the mask is small (R8 at VL resolution), so the scattered
+		// taps stay in cache
+		bool smoothTaps = (int(p.sunPx.w) & 4) != 0;
+		float xc = smoothTaps ? vlNoise(in.position.xy, p.temporal.z) : xi;
+		constexpr sampler maskLin(filter::linear, address::clamp_to_edge);
+		float2 maskTexel = 1.0 / float2(prevSky.get_width(), prevSky.get_height());
 		for (int k = 0; k < taps; k++) {
-			float s = (float(k) + xi) / float(taps);
+			float s = (float(k) + xc) / float(taps);
 			float2 q = fv + toV * (s * s);
-			if (all(q >= 0.0) && all(q < p.size.xy)) open += float(prevSky.read(uint2(q)).r) * w;
+			if (all(q >= 0.0) && all(q < p.size.xy)) {
+				open += (smoothTaps ? float(prevSky.sample(maskLin, clamp(q, 0.5, p.size.xy - 0.5) * maskTexel).r)
+				                    : float(prevSky.read(uint2(q)).r)) * w;
+			}
 			wsum += w;
 			w *= 0.92;
 		}
@@ -387,7 +405,7 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	}
 	// M2.2: the clamp box over the full 3x3 again (as before M2's review), only the filter stays a plus: the plus's box
 	// was so tight that the history snapped to each frame's noise (shafts flickering at leaf edges)
-	if (p.sunPx.w > 0.0) {
+	if ((int(p.sunPx.w) & 1) != 0) {
 		const int2 diag[4] = {int2(1, 1), int2(-1, 1), int2(1, -1), int2(-1, -1)};
 		for (int k = 0; k < 4; k++) {
 			half4 s = raw.read(uint2(clamp(px + diag[k], int2(0), hi)));
@@ -411,10 +429,38 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	if (any(puv < 0.0) || any(puv > 1.0)) return half4(half3(cur), half(d));
 	// the history covers the live part of its target that last frame used (TAAU dynamic resolution: carve.zw)
 	float2 hs = p.carve.z > 0.0 ? p.carve.zw : float2(1.0);
-	float2 hTexel = 0.5 / float2(history.get_width(), history.get_height());
-	half4 h = history.sample(lin, clamp(puv * hs, hTexel, hs - hTexel));
+	float2 hdim = float2(history.get_width(), history.get_height());
+	float2 hTexel = 0.5 / hdim;
 	float dPrev = sky ? 1e4 : length(dir * d + p.camDelta.xyz);
-	bool valid = abs(float(h.a) - dPrev) < 0.08 * dPrev + 0.6;
+	float tol = 0.08 * dPrev + 0.6;
+	half4 h;
+	bool valid;
+	if ((int(p.sunPx.w) & 2) != 0) {
+		// M2.2: the bilinear footprint's texels at this point's distance only. A plain bilinear fetch blended the distances of a
+		// leaf and the sky behind it into one that matched neither, so every texel near a leaf edge lost its history and showed
+		// this frame's raw march; under TAAU the jitter moves the leaf edges by a sub-pixel every frame, so the texels along
+		// them alternated leaf/sky and their light jumped between the two raw values (shafts flickering at the leaf edges).
+		float2 hp = clamp(puv * hs, hTexel, hs - hTexel) * hdim - 0.5;
+		float2 hfl = floor(hp), hfr = hp - hfl;
+		int2 hb = int2(hfl), hhi = int2(hs * hdim + 0.5) - 1;
+		float4 acc = 0.0;
+		float wacc = 0.0;
+		for (int j = 0; j <= 1; j++) {
+			for (int i = 0; i <= 1; i++) {
+				half4 s = history.read(uint2(clamp(hb + int2(i, j), int2(0), hhi)));
+				float bw = (i == 0 ? 1.0 - hfr.x : hfr.x) * (j == 0 ? 1.0 - hfr.y : hfr.y) + 1e-4;
+				if (abs(float(s.a) - dPrev) < tol) {
+					acc += float4(s) * bw;
+					wacc += bw;
+				}
+			}
+		}
+		valid = wacc > 0.0;
+		h = half4(acc / max(wacc, 1e-6));
+	} else {
+		h = history.sample(lin, clamp(puv * hs, hTexel, hs - hTexel));
+		valid = abs(float(h.a) - dPrev) < tol;
+	}
 	if (!valid) return half4(half3(cur), half(d));
 	// widen the box a little (the march is noisy; a tight box would flicker)
 	float3 mid = 0.5 * (mn + mx), ext = 0.5 * (mx - mn) * 1.35 + 0.002 * (abs(mid) + 0.001);

@@ -118,8 +118,9 @@ public final class CloudConfig {
 	 */
 	public static final int MODE_STABLE = 1;
 	/**
-	 * {@link #MODE_LIGHT2} (mcopt.shade.clouds.halfLight, default true): the march's light march (and its sky-light sample)
-	 * on every other in-cloud sample, the samples between lit by the mean of their neighbours' (M3.3 price).
+	 * {@link #MODE_LIGHT2} (mcopt.shade.clouds.halfLight, default false): the march's light march (and its sky-light sample)
+	 * on every other in-cloud sample, the samples between lit by the mean of their neighbours'. Off by default: no gain
+	 * measured in game (run m33c-2: march timer 0.394 vs 0.395 ms) for a small change of look.
 	 */
 	public static final int MODE_LIGHT2 = 2;
 	/**
@@ -138,7 +139,7 @@ public final class CloudConfig {
 	public static int modeBits() {
 		int dev = Integer.getInteger("mcopt.shade.clouds.dev", 0);
 		return (flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0)
-			| (flag("mcopt.shade.clouds.halfLight", true) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)
+			| (flag("mcopt.shade.clouds.halfLight", false) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)
 			| (flag("mcopt.shade.clouds.batch", true) && (dev & DEV_OLD_BATCH) == 0 ? MODE_BATCH : 0)
 			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0);
 	}

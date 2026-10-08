@@ -81,6 +81,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
 #define CLOUD_MODE_LIGHT2 2 // the light march (and the sky-light sample above) on every other in-cloud sample, the ones between
                             // lit by the mean of their neighbours' (cloudMarch)
 #define CLOUD_MODE_BATCH 4  // a march sample's texture fetches issued together (cloudDensityB, cloudLightDepthB): same values
+                            // (tried on the shadow map's six samples too: twice as slow there, run m33c-2's timer: removed)
 #define CLOUD_MODE_PAIR 8   // the march's empty-air tests two at a time (both fetches issued together): same tests, same values
 static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
@@ -1207,23 +1208,6 @@ fragment half cloud_shadow(CloudVsOut in [[stage_in]], constant CloudParams &c [
 	float ds = (sb - sa) / float(N);
 	float tau = 0.0;
 	float3 base = float3(rel.x, yRef - c.layer.z, rel.y);
-	if (cloudMode(c, CLOUD_MODE_BATCH) && !cloudDev(c, CLOUD_DEV_OLD_MIP)) {
-		// M3.3: the six samples' fetches issued together (same values)
-		half4 w[N], nz[N];
-		float hs[N];
-		float inv = 1.0 / (c.layer.y - c.layer.x);
-		for (int i = 0; i < N; i++) {
-			float s = sa + (float(i) + 0.5) * ds;
-			float3 p = base + float3(L.x, ly, L.z) * s;
-			float y = yRef + ly * s;
-			float2 xz = c.origin.xy + p.xz;
-			hs[i] = (y - c.layer.x) * inv;
-			w[i] = cloudWeatherAt(xz, hs[i], c, weather);
-			nz[i] = noise.sample(cloudRepMip, cloudNoisePos(xz, y, c) * CLOUD_NOISE_SCALE, level(0.0));
-		}
-		for (int i = 0; i < N; i++) tau += cloudDensityMath(w[i], nz[i], nz[i], hs[i], 1, c, 1.0) * ds;
-		return half(exp(-tau * c.shape.z * 0.8));
-	}
 	for (int i = 0; i < N; i++) {
 		float s = sa + (float(i) + 0.5) * ds;
 		float3 p = base + float3(L.x, ly, L.z) * s;

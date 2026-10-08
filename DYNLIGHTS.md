@@ -45,7 +45,9 @@ LevelRenderer.render HEAD (ShadeFrameUpdater, after the globals and the sky LUT)
   DynLights.frame
     Occupancy.update ........ CPU: block occupancy window (8x8x8 sections around the camera) within 300 us
     gather .................. CPU: hands + entities within 48 blocks (entitiesForRendering), keyed by entity id + kind
-    fade / flicker / pick ... in 0.06 s, out 0.18 s; fire +-7.5 %; the 64 strongest (hands first)
+    fade / flicker / pick ... in 0.06 s, out 0.18 s; fire +-7.5 %; the 64 strongest (hands first), with hysteresis: a
+                              light already in the list, or holding a slab, wins a near tie (x1.15 each), and one left
+                              out past the cap fades in again when it comes back (no pop, no flip-flop at the cuts)
     visibility slabs ........ the 16 strongest within 40 blocks keep a 32^3 slab; recomputed only when the light moved,
                               its reach changed or the occupancy changed (static mobs / items cost nothing after the first frame)
     pack .................... lights + light grid into this frame's ring slot (buffer 24)

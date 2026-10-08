@@ -1,5 +1,12 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
+## Status (2026-10-08 08:30) - M3.1 performance pass (branch `m3.1-clouds`), stopped by the usage limit
+
+Done (all committed, builds, validate ALL OK): price breakdown tools + six savings behind `mcopt.shade.clouds.lean`
+(default true; false = M3 exactly). Measured in session: the clouds cost **~0.65-0.71 ms** at balanced (was ~0.77-0.87
+with the M3 path in the same sessions). **Target <= 0.5 ms NOT reached.** Details, numbers and next steps: section
+"M3.1 performance" at the end. Older status below.
+
 ## Status (2026-10-07 23:25) - ready for M3 integration
 
 Finished this round (runs `work/bench-results/20261007-2247..2319-cf*`, scripts `work/notes/m3-2026-10-07/prefix-scripts/clouds-fx/run7*.sh, run8.sh`):
@@ -319,3 +326,76 @@ Ways to reach the budget (not done, for the integration/next step): shadow fetch
 terrain (as done in VL), cloud shadow in VL every other step, the dome and shadow map in the same command encoder as the
 march (fewer render passes), resolve + march at checker 3 with a smaller history for balanced, or accept ~0.6 ms as the
 price (the sky is most of the screen in this scene: the worst case).
+
+## M3.1 performance (2026-10-08, branch `m3.1-clouds` from m3-int 857bd0e)
+
+### Tools (for pricing inside one session)
+- `mcopt.shade.clouds.dev` (int bits, **read every frame**; 0 normally; `CloudConfig.DEV_*`): passes reach them in
+  `CloudParams.lightDir.w`, consumers in `ShadeLook.clouds1.z` (`shadeCloudDev`, shade_clouds.metal).
+  Pricing: 1 no march+resolve, 2 no shadow map/dome pass, 4 no sky composite, 8 no fog lookup, 16 no cloud-shadow use
+  (clouds0.z = 0), 32 VL ignores clouds, 4096 history scale `mcopt.shade.clouds.scaleAlt` (0.4).
+  M3 way back: 256 fog, 512 VL, 1024 resolve, 2048 march sky lookup, 8192 noise mips, 16384 dome cadence
+  (28416 = all of them = M3; `mcopt.shade.clouds.lean=false` sets them all).
+- mcbench (`CloudShots`): `-Dmcbench.cloudsDev=<bits|off>,...` adds phases `clouds_d1..d8` after `clouds` (each with
+  those dev bits; `off` = paused like clouds_off) -> several A/B pairs per session. Script:
+  `work/notes/m3-2026-10-07/clouds-m31/run.sh <jar> <label> <list> [jvm] [shots]`; analysis
+  `clouds-m31/summary.py <result dir>` (per phase + least-squares fit gpu = a + b*phase + offset[dev]: drift-corrected
+  price of each variant, with the residual sd); `clouds-m31/imgdiff.py` (PNG diffs).
+- Offline: `CLOUDS_DEV=<bits> tools/shade/clouds/run.sh time 3024 1964 0.45 24` (real passes, quiet GPU).
+
+### Where the cost is (run `20261008-075402-m31c-1`, balanced, DRS off, battery, perf spin 8 deg up)
+Drift-fit offsets vs all on: no passes (dev 3) **-0.64 ms**; no sky composite +0.04, no fog -0.06 (lean fog already),
+no cloud-shadow use -0.02, no VL clouds +0.02 (all noise); paused (vanilla clouds) -0.67. So **the price is the passes**;
+the consumers are ~0 once gated (vanilla clouds in "off" cost about what the consumers do). In-game GPU timer per frame:
+march **0.40-0.45**, resolve **0.19-0.21**, shadow 0.03-0.05 / 4, dome 0.11-0.12 per update.
+Offline (quiet GPU): march 0.21-0.27, resolve 0.18 (= DRAM bandwidth: ~18 B/px at 1362x885), shadow 0.045, dome 0.10.
+March split (offline experiments): pass overhead 0.04, primary density march ~0.11, light march ~0.10 (its 3D-noise
+samples ~0.05), dUp ~0.01, fine detail ~0. The march does not scale with ray count (scale 0.36: -36 % rays, -20 % time;
+checker 1: 9x rays, 4.8x time): fetch coherence and the long horizon rays dominate.
+
+### What changed (each commit; flag `mcopt.shade.clouds.lean`, default true)
+| Commit | Change | Dev bit (M3 way) | Measured |
+|---|---|---|---|
+| e8719e7 | `shadeFogAir2` (shade_m2.metal, shared): the clouds behind terrain are looked up only where their blend weight max(ap*0.6, border-fog edge) can show (faded in 1.5-3.5 %: terrain nearer than ~75 blocks skips the fetch; border fog keeps full clouds) | 256 | part of the run-2 OLD delta |
+| e8719e7 | `vl.metal` (shared): cloud shadow fetched on at most every other lit VL step, held for the next | 512 | ~0 |
+| e8719e7 | `cloud_resolve`: the 5 march distances by 2 gathers | 1024 | resolve -3..-6 % offline |
+| e8719e7 | `cloudSky`: sky LUT lookup only where a cloud was hit (exact) | 2048 | march -2 % offline |
+| 54d3c0c | **noise mips**: M3's `cloudRep` sampler had no mip filter, so `level(lod)` was ignored (level 0 at any distance). Now `cloudRepMip` (nearest level, lod dithered per sample; shadow map stays level 0) | 8192 | march and dome **-10..-15 % offline**; image diff mean 0.3/255 (far billows only) |
+| b89cbb5 / 91fad2d | reflection dome every 8th frame at performance/balanced (`mcopt.shade.clouds.domeEvery`) | 16384 | ~-0.014 ms/frame |
+
+### Prices (in session, drift-fit, balanced, DRS off, battery)
+| Run | M3.1 (lean) vs paused | M3 path (dev bits) vs M3.1 | so M3 price |
+|---|---|---|---|
+| m31c-1 (07:54, jar 1) | +0.67 | +0.25 (dev 3840, one phase) | ~0.92 |
+| m31c-2 (08:07, jar 2) | +0.65 | **+0.22** (3 old phases vs 4 new, sd 0.07) | ~0.87 |
+| m31c-4 (08:14, jar 4, 3 off + 3 old + 4 new phases) | **+0.71** | **+0.06** (sd 0.07) | ~0.77 |
+Reading: the clouds now cost **~0.65-0.71 ms** (before: ~0.77-0.92 in the same sessions). The two careful runs disagree
+on the saving (0.22 vs 0.06 ms): the honest figure is **~0.1-0.2 ms saved**, target 0.5 not reached. History scale 0.4
+(dev 4096, m31c-2): resolve timer 0.20 -> 0.15 but whole frame +0.03 +- 0.07 (no gain measured): not adopted.
+
+### Look
+Shots (`bench-results/20261008-080722-m31c-2` new, `20261008-081233-m31c-3-oldlook` M3; noon_south, sunset_west, water,
+inside, above): same character, no new banding/comb/blocks; the sunset sea keeps Gael's fixes (no light lines, no
+rectangles; the faint glints in the sunlit gaps are in both). The clouds moved between the runs (wind), so the pixel
+diff is not meaningful: **next: re-shoot both with `-Dmcopt.shade.clouds.wind=0`** (same clouds) and diff.
+
+### Tried and dropped (offline, run.sh time)
+mip_filter::linear (no gain: two levels), far light samples with the noise mean (no gain), steps 12 (~0), 4x4 not tried
+(comb risk), history scale 0.4/0.36 (resolve scales, march barely).
+
+### Next steps (to reach <= 0.5 ms)
+1. Empty-space skip in the march: a max-reduced mip of the weather map (g + 0.55 r) baked once, coarse steps of 64+ blocks
+   where no cell can hold cloud (the primary density march is ~0.11 ms offline).
+2. The light march (~40 % of the march): amortise (e.g. a low-res light-transmittance volume around the camera every few
+   frames) instead of 3 samples per in-cloud step.
+3. The resolve is DRAM-bound (18 B/px): only fewer pixels or fewer bytes help (R11G11B10 S + R8G8 T/age = 12 B/px, but
+   watch requantisation banding).
+4. Run the cloud passes off the critical path (async compute queue / the previous frame's history sampled with
+   prevViewProj) so their latency-bound tails overlap terrain work.
+
+### Shared files touched (integration)
+`shade_m2.metal` (shadeFogAir2: `edge` computed before the clouds block, gate; behaviour otherwise identical),
+`vl.metal` (cloud shadow hold, dev bits), `sky.fs.metal` (dev bit 4 only), `shade_clouds.metal` (dev helpers),
+`clouds.metal`, `CloudConfig/CloudParams/ShadeClouds.java`, `tools/shade/clouds/*` (CLOUDS_DEV),
+`work/mcbench` (`CloudShots.java`, `BenchDriver.REC_PHASES` + clouds_d1..d8; commits 862d838, a52ef55).
+`ShadeLook.clouds1.z` now carries the dev bits (was reserved), `CloudParams.lightDir.w` too.

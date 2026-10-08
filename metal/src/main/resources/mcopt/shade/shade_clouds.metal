@@ -20,6 +20,15 @@
 
 constexpr sampler shadeCloudSampler(filter::linear, address::clamp_to_edge);
 
+// M3.1 dev bits (ShadeLook.clouds1.z = mcopt.shade.clouds.dev, read every frame; 0 normally, CloudConfig.DEV_*): the bench's
+// price phases switch a consumer off, or an M3.1 saving back to M3's way, inside one session.
+#define SHADE_CLOUD_DEV_NO_SKY 4      // the sky pass skips the composite
+#define SHADE_CLOUD_DEV_NO_FOG 8      // shadeFogAir2 skips the clouds behind distant terrain
+#define SHADE_CLOUD_DEV_NO_VL 32      // VL ignores the clouds (shadow per step, sky mask)
+#define SHADE_CLOUD_DEV_OLD_FOG 256   // M3: the fog looks the clouds up for every terrain pixel
+#define SHADE_CLOUD_DEV_OLD_VL 512    // M3: VL fetches the cloud shadow on every lit step
+static inline bool shadeCloudDev(constant ShadeLook &L, int bit) { return (int(L.clouds1.z) & bit) != 0; }
+
 // Light reaching camera-relative p through the cumulus (1 = open sky .. ~0.1 under a thick cloud), for the sun/moon term.
 static inline float shadeCloudShadow(float3 p, constant ShadeLook &L, texture2d<half> map) {
 	if (L.clouds0.z <= 0.0) return 1.0;

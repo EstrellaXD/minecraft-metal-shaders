@@ -58,6 +58,8 @@ public final class CloudParams {
 	/** How far the cumulus moved since last frame (blocks). */
 	public float windStepX, windStepZ;
 	public float opacity = 1f;
+	/** This frame's dev bits (CloudConfig.devBits): the passes read them in lightDir.w, the consumers in ShadeLook.clouds1.z. */
+	public int dev;
 
 	// ---- derived, for the log / tools ----
 	public final float[] light = new float[3];
@@ -113,7 +115,7 @@ public final class CloudParams {
 			this.lightDir[2] = f.moonDir.z;
 		}
 		put4(b, 224, this.light[0], this.light[1], this.light[2], this.sunLit ? 1f : 0f);
-		put4(b, 240, this.lightDir[0], this.lightDir[1], this.lightDir[2], 0f);
+		put4(b, 240, this.lightDir[0], this.lightDir[1], this.lightDir[2], this.dev);
 		float[] as = f.sky.ambientSky, ag = f.sky.ambientGround;
 		float albedo = 0.96f - 0.3f * storm;
 		// a low sun: less of the sky's grey-blue fill, so the sunlit sides stay saturated gold against darker bases
@@ -201,8 +203,9 @@ public final class CloudParams {
 		int o = ShadeLook.CLOUD_SHADOW_VP;
 		float[] cols = {1f / e, 0f, 0f, 0f, -this.shadowLx / e, -this.shadowLz / e, 0f, 0f, 0f, 1f / e, 0f, 0f, u0, v0, 0f, 1f};
 		for (int i = 0; i < 16; i++) b.putFloat(o + 4 * i, cols[i]);
-		put4(b, ShadeLook.CLOUDS0, this.base - this.cameraY, this.top - this.cameraY, this.shadowStrength, 1f);
-		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + CloudConfig.CIRRUS_ABOVE - this.cameraY, 0f, 0f);
+		boolean shadowUse = (this.dev & CloudConfig.DEV_NO_SHADOW_USE) == 0;
+		put4(b, ShadeLook.CLOUDS0, this.base - this.cameraY, this.top - this.cameraY, shadowUse ? this.shadowStrength : 0f, 1f);
+		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + CloudConfig.CIRRUS_ABOVE - this.cameraY, this.dev, 0f);
 	}
 
 	private static final int[] ORDER1 = {0}, ORDER2 = {0, 3, 1, 2}, ORDER3 = {0, 7, 5, 2, 6, 4, 8, 3, 1};

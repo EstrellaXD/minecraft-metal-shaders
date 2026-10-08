@@ -48,7 +48,7 @@ struct CloudParams {
 	                       //     the 3D noise (mcopt.shade.clouds.noiseDrift 0.82 x the wind: the clouds boil a little as they drift)
 	float4 wind;           // 208 xy how far the clouds moved since last frame (blocks), z cirrus coverage, w rain/storm 0..1
 	float4 light;          // 224 rgb irradiance from the light reaching the cloud layer (sun or moon; before exposure), w 1 sun
-	float4 lightDir;       // 240 xyz toward the light (unit), w 0
+	float4 lightDir;       // 240 xyz toward the light (unit), w M3.1 dev bits (mcopt.shade.clouds.dev; CLOUD_DEV_*)
 	float4 ambTop;         // 256 rgb mean sky radiance above the layer (before exposure), w albedo
 	float4 ambBottom;      // 272 rgb mean radiance from below (ground and haze), w multiple-scattering boost of the ambient
 	float4 march;          // 288 x primary steps, y light steps, z max distance (blocks), w aerial perspective distance (blocks)
@@ -68,7 +68,18 @@ struct CloudParams {
 };
 static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)");
 
+// M3.1 dev bits (CloudParams.lightDir.w; CloudConfig.DEV_*): an M3.1 saving switched back to M3's way, for pricing in game
+#define CLOUD_DEV_OLD_RESOLVE 1024 // the resolve reads its five march distances one by one (M3)
+#define CLOUD_DEV_OLD_MARCH 2048   // the march looks the sky up for every ray, cloud or not (M3)
+#define CLOUD_DEV_OLD_MIP 8192     // the billow noise from its full-size level at any distance (M3)
+static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.lightDir.w) & bit) != 0; }
+
 constexpr sampler cloudRep(filter::linear, address::repeat);
+// M3.1: the billow noise from the mip level of the sample's footprint, as cloudDensity's lod always meant (M3's cloudRep has
+// no mip filter, so its level(lod) read the full-size level at any distance: rays 3 history pixels apart fetched scattered
+// texels, slow on the cache; the far billows aliased into grain). Nearest level with the lod dithered per sample (the
+// history averages neighbouring levels: no contour where the level changes): march ~ -12 %, same look (CLOUDS.md M3.1).
+constexpr sampler cloudRepMip(filter::linear, mip_filter::nearest, address::repeat);
 constexpr sampler cloudClamp(filter::linear, address::clamp_to_edge);
 
 // ---- bakes ---------------------------------------------------------------------------------------------------------------
@@ -300,7 +311,8 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	if (d <= 0.0) return 0.0;
 	if (q == 0) return saturate(d * 0.85);
 	float3 n3 = float3(xz.x + c.origin.z - c.origin.x, y, xz.y + c.origin.w - c.origin.y);
-	half4 n = noise.sample(cloudRep, n3 * CLOUD_NOISE_SCALE, level(lod));
+	half4 n = cloudDev(c, CLOUD_DEV_OLD_MIP) ? noise.sample(cloudRep, n3 * CLOUD_NOISE_SCALE, level(lod))
+		: noise.sample(cloudRepMip, n3 * CLOUD_NOISE_SCALE, level(lod));
 	// billows (after Photon's detail erosion): Worley distance squared eats into the shape between the cells, more where
 	// the cloud is thin (dampen(1 - d)), so the edges and the tops break into round lobes; the Perlin-Worley adds variety
 	float wd = 1.0 - (float(n.g) * 0.75 + float(n.r) * 0.25);
@@ -308,7 +320,8 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	thin = thin * (2.0 - thin);
 	d -= c.shape.w * 0.55 * wd * wd * thin;
 	if (q >= 2 && d > 0.0) {
-		half4 m = noise.sample(cloudRep, n3 * CLOUD_DETAIL_SCALE, level(lod + 1.0));
+		half4 m = cloudDev(c, CLOUD_DEV_OLD_MIP) ? noise.sample(cloudRep, n3 * CLOUD_DETAIL_SCALE, level(lod + 1.0))
+			: noise.sample(cloudRepMip, n3 * CLOUD_DETAIL_SCALE, level(lod + 1.0));
 		float wd2 = 1.0 - (float(m.g) * 0.6 + float(m.b) * 0.4);
 		// fine detail: strongest on the sides and lower half, little on the domes' crowns
 		float fade = 0.6 + 0.2 * smoothstep(0.85, 1.0, 1.0 - h) - 0.35 * smoothstep(0.05, 0.5, h);
@@ -416,7 +429,9 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 			continue;
 		}
 		// mip of the noise for this sample's footprint (pixel angle x distance)
-		float lod = max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0);
+		// (M3.1: dithered per sample for the nearest-level sampler; CLOUD_DEV_OLD_MIP: M3's, whose level was ignored)
+		float lod = cloudDev(c, CLOUD_DEV_OLD_MIP) ? max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0)
+			: max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
 		float d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
 		if (d <= 0.002) {
 			if (++miss >= 4) fine = false;
@@ -601,10 +616,15 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
                             texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
-	float3 sky = shadeSkyLookup(dir, lut, lutS, f);
-	float hf = cloudHorizonFade(dir, c);
-	CloudResult cu = cloudAerial(c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise), sky, hf, c);
-	CloudResult ci = cloudAerial(cloudCirrus(dir, c, weather), sky, hf, c);
+	CloudResult cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+	CloudResult ci = cloudCirrus(dir, c, weather);
+	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)
+	if (cu.dist >= 0.0 || ci.dist >= 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH)) {
+		float3 sky = shadeSkyLookup(dir, lut, lutS, f);
+		float hf = cloudHorizonFade(dir, c);
+		cu = cloudAerial(cu, sky, hf, c);
+		ci = cloudAerial(ci, sky, hf, c);
+	}
 	CloudResult o;
 	o.S = cu.S + cu.T * ci.S; // the cirrus is always behind (far above) the cumulus
 	o.T = cu.T * ci.T;
@@ -702,7 +722,13 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 	float2 uv = (float2(px) + 0.5) / c.size.xy;
 	float3 dir = cloudDirection(uv, c);
 	half4 now = cur.read(mp);
-	float dNow = curDist.read(mp).r;
+	// M3.1: the march distances around mp by two gathers (texel corners: (x-1..x, y-1..y) and (x..x+1, y..y+1); each returns
+	// (x0,y1) (x1,y1) (x1,y0) (x0,y0)) instead of five reads; clamp_to_edge = M3's clamped neighbours
+	bool oldTaps = cloudDev(c, CLOUD_DEV_OLD_RESOLVE);
+	constexpr sampler gatherS(filter::nearest, address::clamp_to_edge);
+	float2 msz = c.size.zw;
+	float4 g0 = oldTaps ? float4(0.0) : curDist.gather(gatherS, float2(mp) / msz);
+	float dNow = oldTaps ? curDist.read(mp).r : g0.y;
 	// reproject: where this direction's cloud (at the current march's distance) was last frame. The density is read at
 	// origin + p with origin = camera + the accumulated wind, so a cloud drifts by -wind each frame: last frame it was at
 	// p + wind (the sign matters: the other way round the history smeared 2 x wind per frame, blurring and patterning the
@@ -722,7 +748,16 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		int2 mi = int2(mp), ms = int2(c.size.zw) - 1;
 		int2 ax = int2(min(mi.x + 1, ms.x), mi.y), bx = int2(max(mi.x - 1, 0), mi.y);
 		int2 ay = int2(mi.x, min(mi.y + 1, ms.y)), by = int2(mi.x, max(mi.y - 1, 0));
-		float d1 = curDist.read(uint2(ax)).r, d2 = curDist.read(uint2(bx)).r, d3 = curDist.read(uint2(ay)).r, d4 = curDist.read(uint2(by)).r;
+		float d1, d2, d3, d4;
+		if (oldTaps) {
+			d1 = curDist.read(uint2(ax)).r, d2 = curDist.read(uint2(bx)).r, d3 = curDist.read(uint2(ay)).r, d4 = curDist.read(uint2(by)).r;
+		} else {
+			float4 g1 = curDist.gather(gatherS, (float2(mp) + 1.0) / msz);
+			d1 = g1.z; // (x+1, y)
+			d2 = g0.x; // (x-1, y)
+			d3 = g1.x; // (x, y+1)
+			d4 = g0.z; // (x, y-1)
+		}
 		float dMin = min(min(min(d1, d2), min(d3, d4)), dNow), dMax = max(max(max(d1, d2), max(d3, d4)), dNow);
 		if (dMax > dMin * 1.3 + 4.0) {
 			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
@@ -819,7 +854,7 @@ fragment half cloud_shadow(CloudVsOut in [[stage_in]], constant CloudParams &c [
 	for (int i = 0; i < N; i++) {
 		float s = sa + (float(i) + 0.5) * ds;
 		float3 p = base + float3(L.x, ly, L.z) * s;
-		tau += cloudDensity(p, yRef + ly * s, 1, c, weather, noise, 1.0, 1.1) * ds;
+		tau += cloudDensity(p, yRef + ly * s, 1, c, weather, noise, 1.0, cloudDev(c, CLOUD_DEV_OLD_MIP) ? 1.1 : 0.0) * ds; // (level 0 both ways)
 	}
 	return half(exp(-tau * c.shape.z * 0.8));
 }

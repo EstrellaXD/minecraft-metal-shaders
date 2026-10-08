@@ -61,6 +61,10 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * <li>{@code fgbutton}: the pause menu with mcopt-shade's "Gen. de cuadros" button ({@code rb_fgbutton_0}), pressed
  * ({@code rb_fgbutton_1}, the config line logged), pressed again ({@code rb_fgbutton_2}); config/mcopt.properties is put back
  * byte for byte afterwards (it is the dev instance's: a left-over frame generation key would reach every later run).</li>
+ * <li>{@code timejump}: the day time jumping (sleeping, /time set) with the volumetric clouds' history: at the overview, for each
+ * frame limit of {@code -Dmcbench.tjFps} (default {@code 30,0}; 0 = the bench's own) and mcopt-shade's
+ * {@code mcopt.shade.clouds.timeSnap} false / true: noon held 14 s, then {@code time set 12400}, shots 1.5 s and 5 s later
+ * ({@code rb_tj_<fps>_<snap>_1s}, {@code _5s}); the frame limit and the property are put back afterwards.</li>
  * </ul>
  */
 final class RobustShots {
@@ -87,6 +91,7 @@ final class RobustShots {
 				case "fail" -> fail(steps);
 				case "framegen" -> framegen(steps);
 				case "fgbutton" -> fgButton(steps);
+				case "timejump" -> timeJump(steps);
 				default -> throw new IllegalArgumentException("mcbench.robust: unknown event " + e);
 			}
 		}
@@ -556,6 +561,39 @@ final class RobustShots {
 			else java.nio.file.Files.deleteIfExists(cfg);
 			note("fgbutton", "config/mcopt.properties restored");
 		}, 1.0));
+	}
+
+	// ---- timejump -----------------------------------------------------------------------------------------------------
+
+	static void timeJump(Deque<BenchDriver.Step> steps) {
+		final int[] savedFps = new int[1];
+		steps.add(new BenchDriver.Scene("rb_tj", 6000, false, () -> BenchDriver.spot.overview));
+		steps.add(new BenchDriver.Settle("rb_tj", false, 3, 120));
+		steps.add(step("rb-tj-save", 0, mc -> savedFps[0] = mc.options.framerateLimit().get(), 0.1));
+		for (String fps : System.getProperty("mcbench.tjFps", "30,0").split(",")) {
+			final int limit = Integer.parseInt(fps.trim());
+			for (String snap : new String[] {"false", "true"}) {
+				String tag = "rb_tj_" + (limit == 0 ? "free" : limit) + "_" + (snap.equals("true") ? "snap" : "m32");
+				steps.add(step(tag + "-noon", 0, mc -> {
+					mc.options.framerateLimit().set(limit == 0 ? savedFps[0] : limit);
+					System.setProperty("mcopt.shade.clouds.timeSnap", snap);
+					BenchDriver.cmd(BenchDriver.server(mc), "time set 6000");
+					note("timejump", tag + ": frame limit " + mc.options.framerateLimit().get() + ", timeSnap " + snap + ", noon held 14 s");
+				}, 14));
+				steps.add(step(tag + "-jump", 0, mc -> {
+					BenchDriver.cmd(BenchDriver.server(mc), "time set 12400");
+					note("timejump", tag + ": time set 12400, fps now " + mc.getFps());
+				}, 1.5));
+				steps.add(new Snap(tag + "_1s"));
+				steps.add(step(tag + "-wait", 0, mc -> note("timejump", tag + ": fps " + mc.getFps()), 3.5));
+				steps.add(new Snap(tag + "_5s"));
+			}
+		}
+		steps.add(step("rb-tj-restore", 0, mc -> {
+			mc.options.framerateLimit().set(savedFps[0]);
+			System.clearProperty("mcopt.shade.clouds.timeSnap");
+			note("timejump", "frame limit back to " + savedFps[0] + ", timeSnap cleared");
+		}, 0.5));
 	}
 
 	/** Presses the open screen's button whose label starts with prefix; returns its label afterwards (null: none). */

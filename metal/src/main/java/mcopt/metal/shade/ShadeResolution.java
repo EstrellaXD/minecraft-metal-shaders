@@ -59,14 +59,12 @@ public final class ShadeResolution {
 		return CHOICES[index] != 0;
 	}
 
-	/** The menu label for the current choice at this output size. */
+	/** The menu label for the current choice (short: it must fit the pause menu's 204-pixel button). */
 	public static String label(int outWidth, int outHeight) {
 		int c = CHOICES[index];
-		if (c == 0) return "Resolución del mundo: Auto";
-		float s = scale(outHeight);
-		int w = Math.round(outWidth * s), h = Math.round(outHeight * s);
-		if (c < 0) return "Resolución del mundo: Nativa (" + w + "×" + h + ")";
-		return "Resolución del mundo: " + c + "p (" + w + "×" + h + ")";
+		if (c == 0) return "Resolución: Auto (dinámica)";
+		if (c < 0) return "Resolución: Nativa";
+		return "Resolución: " + c + "p";
 	}
 
 	/** Next choice (the pause-menu button), saved to config/mcopt.properties. */

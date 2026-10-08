@@ -35,6 +35,9 @@ public class CloudPreviewFrames {
 			{"day3", 30f, 0f, 0f, 120f, 15f, 3.3, -1f},
 			{"sparse", 30f, 0f, 0f, 60f, 12f, 0.0, 0.25f},
 			{"dense", 30f, 0f, 0f, 60f, 12f, 0.0, 0.75f},
+			// M3.3: optional 9th column = camera y (the default 80 is below the layer: base 200, top 350)
+			{"inside", 20f, 0f, 0f, 30f, 2f, 0.0, -1f, 250.0},
+			{"horizon_sunset", 85f, 0f, 0f, 90f, 2f, 0.0, -1f},
 		};
 		for (Object[] s : sc) {
 			String name = (String) s[0];
@@ -50,7 +53,7 @@ public class CloudPreviewFrames {
 			f.eyeSkyLight = 15;
 			f.dayTime = ((Float) s[1] / 360f + 1f) % 1f;
 			f.width = W; f.height = H;
-			f.cameraX = 120.5; f.cameraY = 80.0; f.cameraZ = -340.25;
+			f.cameraX = 120.5; f.cameraY = s.length > 8 ? (Double) s[8] : 80.0; f.cameraZ = -340.25;
 			float yaw = (float) Math.toRadians((Float) s[4]), pitch = (float) Math.toRadians((Float) s[5]);
 			f.view.identity().rotateX(-pitch).rotateY(yaw);
 			f.proj.setPerspective((float) Math.toRadians(70), (float) W / H, 768f, 0.05f, true);

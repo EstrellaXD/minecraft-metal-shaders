@@ -695,6 +695,60 @@ static CloudResult cloudCirrus(float3 dir, constant CloudParams &c, texture2d<ha
 	return o;
 }
 
+// M3.3 (CLOUD_MODE_BATCH): cloudCirrus in two halves, the first one's fetch issued before the cumulus march and used after
+// it (the same values as cloudCirrus).
+struct CloudCirrusPre {
+	float t;     // distance to the cirrus plane (<= 0: none)
+	float2 s;    // the streaks' frame position
+	half4 w0;    // the broad sheets' fetch
+};
+
+static inline CloudCirrusPre cloudCirrusBegin(float3 dir, constant CloudParams &c, texture2d<half> weather) {
+	CloudCirrusPre o;
+	o.t = 0.0;
+	o.s = 0.0;
+	o.w0 = half4(0.0h);
+	if (c.wind.z <= 0.001) return o;
+	CloudRay r = cloudRay(dir, c);
+	float r1, r2;
+	if (!cloudRoots(r.a, r.b, r.y0 - c.cirrus.x, r1, r2)) return o;
+	float t = r1 > 0.0 ? r1 : r2;
+	if (t <= 0.0 || t > c.march.z * 1.6) return o;
+	float2 rel = dir.xz * t;
+	float2 wd = c.windDir.xy, wn = float2(-wd.y, wd.x);
+	o.s = c.cirrus.zw + float2(dot(rel, wd), dot(rel, wn));
+	o.w0 = weather.sample(cloudRep, o.s * float2(1.0 / 16384.0, 1.0 / 4096.0), level(0.0));
+	o.t = t;
+	return o;
+}
+
+static inline CloudResult cloudCirrusEnd(CloudCirrusPre pre, float3 dir, constant CloudParams &c, texture2d<half> weather) {
+	CloudResult o;
+	o.S = 0.0;
+	o.T = 1.0;
+	o.dist = -1.0;
+	if (pre.t <= 0.0) return o;
+	float2 s = pre.s;
+	half4 w0 = pre.w0;
+	float2 warp = (float2(w0.a, w0.r) - 0.5) * 0.06;
+	half4 w1 = weather.sample(cloudRep, s * float2(1.0 / 8192.0, 1.0 / 2048.0) + warp, level(0.0));
+	half4 w2 = weather.sample(cloudRep, s * float2(1.0 / 4096.0, 1.0 / 1024.0) + warp * 1.5, level(0.0));
+	float n = float(w0.b) * 0.45 + float(w1.b) * 0.4 + float(w2.a) * 0.15;
+	float d = cloudRemap(n, 1.0 - c.wind.z * 0.6, 1.0, 0.0, 1.0);
+	d *= 0.55 + 0.45 * float(w2.b);
+	d = d * d * (3.0 - 2.0 * d);
+	if (d <= 0.0) return o;
+	float tau = d * c.cirrus.y;
+	float T = exp(-tau);
+	float mu = dot(dir, c.lightDir.xyz);
+	float phase = 0.6 * cloudHG(mu, 0.75) + 0.4 * cloudHG(mu, 0.2);
+	float3 S = (c.light.rgb * phase * 3.0 + c.ambTop.rgb * 0.9) * (1.0 - T) * 0.9;
+	o.S = S;
+	o.T = T;
+	o.dist = pre.t;
+	return o;
+}
+
 // Blocky style (Storybook): the slab of 12-block cells ray-traced exactly (a 2D DDA through the cells between the slab's
 // planes, flat like vanilla's), the first filled cell's face lit: wrapped sun with a self-shadow from the cells toward the
 // light, sky light from above and the ground's from below, a forward rim toward the sun. Nearly opaque, crisp edges.
@@ -796,8 +850,16 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
                             texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
-	CloudResult cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
-	CloudResult ci = cloudCirrus(dir, c, weather);
+	// (M3.3 CLOUD_MODE_BATCH: the cirrus' first fetch is issued before the cumulus march and waits alongside it)
+	CloudResult ci, cu;
+	if (cloudMode(c, CLOUD_MODE_BATCH)) {
+		CloudCirrusPre pre = cloudCirrusBegin(dir, c, weather);
+		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+		ci = cloudCirrusEnd(pre, dir, c, weather);
+	} else {
+		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+		ci = cloudCirrus(dir, c, weather);
+	}
 	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)
 	if (cu.dist >= 0.0 || ci.dist >= 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH)) {
 		float3 sky = shadeSkyLookup(dir, lut, lutS, f);

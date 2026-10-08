@@ -185,12 +185,15 @@ Screenshots (full size JPEG) and a video: `work/release/M3-clouds-screenshots/`.
 
 ### 7.2 While turning (video `nubes_giro_M3_vs_antes.mp4`: 12 s of our clouds turning a full circle, then 12 s of the old ones)
 
-Recorded with the in-game recorder (run c16, 1512x982 60 fps). Before the fix of this session, cloud edges moving across
-the screen showed a **comb / hatching pattern** (period 3 pixels, along the motion). Cause: while the view moves, the
-history is resampled every frame with Catmull-Rom, whose slight gain at mid frequencies compounds over frames and grows
-the checkerboard's residue. Fix: while the view moves, the resolve clamps the history to the range of this frame's march
-samples around it (a looser version of the clamp already used where distances jump), as TAA does; a still view keeps its
-converged detail. See 7.4 for the check.
+Recorded with the in-game recorder (run c16, 1512x982 60 fps; the bench turns 30 degrees per second). Most of the sky is
+stable: no crawling noise, no smearing behind the clouds, the clouds keep their shapes. **Open problem:** some cloud edges
+that move across the screen show a **comb / hatching pattern** (teeth ~6 history pixels apart, i.e. 2 march blocks), most
+visible on bright edges against blue sky (frames `giro_peine_*.png`). The vanilla clouds in the same video are clean, so it
+comes from our checkerboard reconstruction. Tried this session: clamping the reprojected history to this frame's march
+range while the view moves (the usual TAA cure for resampling build-up): no visible change in the same frames (run c20),
+so it was reverted. Under a pure rotation the reprojection is exact whatever the distance, so the next suspects are the
+previous-frame matrix the resolve gets (is it the frame the history was made with?) and the slot order x motion beat. A
+diagnostic recording with `checker=1` (no checkerboard) is in run c22 (see Status).
 
 ### 7.3 Cost (in-session A/B: phases `clouds` / `clouds_off` / `clouds2`)
 

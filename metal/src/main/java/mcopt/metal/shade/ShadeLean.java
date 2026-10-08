@@ -21,6 +21,8 @@ package mcopt.metal.shade;
 public final class ShadeLean {
 	/** mcopt.shade.lean (true): false draws every frame with the full terrain (M3.0). */
 	public static final boolean ON = ShadeConfig.flag("mcopt.shade.lean", true);
+	/** mcopt.shade.leanSky (true): the sky's variant without the aurora code while no aurora shows (LEAN_NOAURORA). */
+	public static final boolean SKY = ShadeConfig.flag("mcopt.shade.leanSky", true);
 	private static volatile int tag;
 
 	private ShadeLean() {
@@ -28,7 +30,7 @@ public final class ShadeLean {
 
 	/** This frame's lean tag (ShadeMsl.LEAN_OW | LEAN_DRY | LEAN_NODL), 0 when off. */
 	public static int tag() {
-		return ON ? tag : 0;
+		return (ON ? tag & ShadeMsl.LEAN_TERRAIN : 0) | (SKY ? tag & ShadeMsl.LEAN_NOAURORA : 0);
 	}
 
 	/** Once per frame, after the weather and the dynamic lights updated, before the world pass (ShadeFrameUpdater). */
@@ -37,6 +39,7 @@ public final class ShadeLean {
 		if (dimension == ShadeFrame.DIM_OVERWORLD) t |= ShadeMsl.LEAN_OW;
 		if (!mcopt.metal.shade.weather.ShadeWeather.ON || mcopt.metal.shade.weather.ShadeWeather.dry()) t |= ShadeMsl.LEAN_DRY;
 		if (!mcopt.metal.shade.light.DynLights.ON || mcopt.metal.shade.light.DynLights.activeCount() == 0) t |= ShadeMsl.LEAN_NODL;
+		if (mcopt.metal.shade.dims.DimsConfig.AURORA == 0 || mcopt.metal.shade.dims.ShadeDims.aurora() <= 0.002f) t |= ShadeMsl.LEAN_NOAURORA;
 		tag = t;
 	}
 }

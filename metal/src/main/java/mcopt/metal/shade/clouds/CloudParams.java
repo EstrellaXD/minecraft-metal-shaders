@@ -159,9 +159,10 @@ public final class CloudParams {
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
 		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.4f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
-		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard
+		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard (M3.3: at
+		// most 3, so a 4x4 checkerboard reads the noise from the same mip levels as 3x3: the same far billows)
 		float fovY = (float) (2.0 * Math.atan(1.0 / Math.max(Math.abs(f.proj.m11()), 1e-3f)));
-		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, fovY / Math.max(this.histH, 1) * n);
+		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, fovY / Math.max(this.histH, 1) * Math.min(n, 3));
 		put4(b, 400, sl[0], ly, sl[2], this.mode);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
 		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;

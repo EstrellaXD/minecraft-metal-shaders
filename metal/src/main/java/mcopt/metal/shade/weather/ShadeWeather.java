@@ -203,16 +203,18 @@ public final class ShadeWeather {
 			put4(b, ShadeLook.WIND, 1f, 0f, 0f, 0f);
 			put4(b, ShadeLook.FLASH, 0f, 1f, 0f, 0f);
 			put4(b, ShadeLook.WATER, 0f, 0f, 0f, 0f);
-			put4(b, ShadeLook.WATER_ABS, 0f, 1f, 0f, 0f);
+			put4(b, ShadeLook.WATER_ABS, 0f, 1f, 0f, 0.12f);
 			return;
 		}
 		// M3.3 wet ground: ShadeLook.water (576, reserved for the water module, unused by it) = (on, soaked film roughness,
-		// vegetation's extra roughness, film reflections' gate), waterAbs (592) = (extra darkening, sheen scale, 0, 0); read
+		// vegetation's extra roughness, film reflections' gate), waterAbs (592) = (extra darkening, sheen scale, texel height
+		// proxy strength, rim band width in puddle-field units); read
 		// every frame, so a bench can switch them live (mcbench WetShots / MiscShots ab phases)
 		boolean wetAll = WET_ALL && flag("mcopt.shade.wetAll", true);
 		put4(b, ShadeLook.WATER, wetAll ? 1f : 0f, floatFlag("mcopt.shade.wetRough", 0.2f), floatFlag("mcopt.shade.wetVeg", 0.1f),
 			wetAll ? Math.max(floatFlag("mcopt.shade.wetSsr", WET_SSR), 0f) : 0f);
-		put4(b, ShadeLook.WATER_ABS, floatFlag("mcopt.shade.wetDark", 0f), floatFlag("mcopt.shade.wetSheen", 1f), floatFlag("mcopt.shade.wetTex", 0f), 0f);
+		put4(b, ShadeLook.WATER_ABS, floatFlag("mcopt.shade.wetDark", 0f), floatFlag("mcopt.shade.wetSheen", 1f), floatFlag("mcopt.shade.wetTex", 0f),
+			Math.max(floatFlag("mcopt.shade.wetRim", 0.12f), 0.005f));
 		put4(b, ShadeLook.WET, wetness, PUDDLES ? puddles : 0f, SNOW ? snow : 0f, rain);
 		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, snowfall); // w: snowfall (gust only shapes the slant)
 		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], LIGHTNING ? flash : 0f);

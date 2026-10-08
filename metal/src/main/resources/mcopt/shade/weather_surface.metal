@@ -241,10 +241,10 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
 		w.puddle = P;
 		if (SHADE_WET_ALL_ON(L)) {
-			// (M3.3 wet ground) the film thickens toward the puddles over the field's last 0.12 below the threshold (about half a
-			// block to two blocks around each puddle: a smooth film -> standing water rim), and hollows of the field hold a
+			// (M3.3 wet ground) the film thickens toward the puddles over the field's last ShadeLook.waterAbs.w below the threshold
+			// (0.12: about half a block to two blocks around each puddle: a smooth film -> standing water rim), and hollows hold a
 			// smoother film than its rises (blocks-wide patches: no pixel noise)
-			w.low = half(smoothstep(t - 0.12, t, field)) * half(L.wet.y) * open * (1.0h - w.snow);
+			w.low = half(smoothstep(t - L.waterAbs.w, t, field)) * half(L.wet.y) * open * (1.0h - w.snow); // (band: ShadeLook.waterAbs.w)
 			w.var = half(clamp(field - 0.5, -0.3, 0.3));
 		}
 #ifdef SHADE_RIPPLES

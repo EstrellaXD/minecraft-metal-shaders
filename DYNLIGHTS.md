@@ -4,6 +4,16 @@ Gael's request: "si voy caminando con una antorcha, que vaya iluminando en tiemp
 What moves and glows now lights its surroundings in real time, in every shaded path, behind `mcopt.shade.dynLights`
 (default on with `mcopt.shade=true`; `false` = M2.1's shaders byte for byte, no bindings, no mixins).
 
+## Status (2026-10-07 18:20)
+
+- Done: module complete (light list, visibility slabs, irradiance volume, entity vertex patch, hand packed light);
+  build + `validate.sh` ALL OK at `731a503`. Resume run 2026-10-07 evening: selection hysteresis added (no popping at the
+  64-light / 16-slab cuts). In-session price from the 14:30 / 14:51 runs: +0.12 / +0.18 ms GPU (budget 0.4).
+- Running: `dl-r1-on` (HEAD before the hysteresis, same GPU code) and `dl-r2-on` (`731a503`): every LightShots scene +
+  the lights / lights_off / lights2 perf phases + `-Dmcopt.shade.dynLights.log=true`.
+- Next: fill section 7 with r1/r2, copy screenshots to `work/release/M3-lights-screenshots/`, section 9 (integration
+  with the m3 base) is written below.
+
 ## 1. What gives light
 
 | Source | Light | Position |

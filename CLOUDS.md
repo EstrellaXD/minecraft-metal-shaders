@@ -1,5 +1,16 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
+## M3.3 Status (2026-10-08 09:50) - branch `m3.3-clouds` from m3-int 397e241: plan
+
+1. Comb / hatching on soft cloud edges (still camera + wind + 3x3 checkerboard). Reproduce offline first
+   (`tools/shade/clouds/run.sh png` with a still camera over a few hundred frames, crops at full size), find the cause
+   with a debug output, fix behind a flag (off = M3.2), confirm in game (noon_south, still camera, wind on; and turning).
+   Evidence: `work/release/M3.3-screenshots/clouds_comb_*`.
+2. Price <= 0.5 ms at balanced (now ~0.65-0.71): empty-space skip (max-reduced weather mip), cheaper light march,
+   fewer resolve bytes; in-session pricing with `clouds-m31` tools; look kept (wind=0 shots old vs new, imgdiff).
+3. Only if cheap: far horizon band layering; speckle on far clouds from inside.
+Scripts/evidence: `work/notes/m33-2026-10-08/clouds/`.
+
 ## Status (2026-10-08 08:30) - M3.1 performance pass (branch `m3.1-clouds`), stopped by the usage limit
 
 Done (all committed, builds, validate ALL OK): price breakdown tools + six savings behind `mcopt.shade.clouds.lean`

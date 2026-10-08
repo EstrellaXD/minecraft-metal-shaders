@@ -96,10 +96,14 @@ present (mcmetal.m pqFill / mc_present): compose pass -> RGBA16F staging slot (o
 
 ## 5. Integration with the other M3 branches
 
-- **Dynamic lights / held light**: Nether/End terrain goes through `shadeLitDims`, which starts from
-  `shadeLit2(albedo, n, sky = 0, block, shadow = 0, ...)`: anything added inside `shadeLit2` (block light, held light) also
-  lights the Nether and the End. A term added after `shadeLit2` in `sodium_terrain.fs.metal` must be added after the
-  `dims ? shadeLitDims(...) : shadeLit2(...)` line too (same place).
+- **Dynamic lights / held light**: Nether/End terrain calls the same single `shadeLit2(...)` as the overworld (sky light
+  and sun shadow passed as 0 there) and then adds `shadeLitDimsExtra(...)` (the dimension ambient, lava up-light, End key
+  light and flash). So a term added inside `shadeLit2`, or right after that call in `sodium_terrain.fs.metal`
+  (`radiance += shadeDynamicLights(...)`), lights the Nether and the End with no extra work.
+- **Entities (M3 base `shade_entity.metal`)**: the base keeps vanilla colours for entities outside the overworld. After the
+  merge, `shadeEntityShade` should take the same branch as terrain when `shadeDimsLit(f)` is set (shadeLit2 with sky 0 +
+  `shadeLitDimsExtra`), otherwise mobs in the Nether/End look flat next to the lit terrain. Not done here (this branch is
+  from m2.1, without the entity lighting).
 - **Clouds / weather**: aurora is added in `sky.fs.metal`'s `shadeSkyPixel` after `shadeSkyRadiance2`; a cloud layer drawn
   in the sky pass should composite over it. The dimension fog and media run in `shadeFinalScene` right after the overworld
   haze; anything else from depth there (rain fog, clouds composite) goes after it in the same order.

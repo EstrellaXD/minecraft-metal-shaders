@@ -90,9 +90,19 @@ fragment half4 shade_wx_noise_fs(float4 pos [[position]]) {
 constexpr sampler shadeWxRepeat(filter::linear, address::repeat, coord::normalized);
 
 // (puddle field, snow drift) at absolute xz: the baked tile when the caller has it (ShadeResources.weatherNoise), else analytic.
-static inline float2 shadeWxFields(float2 xa, texture2d<half> noise, bool baked) {
+// LDR variants (no ShadeResources, so no tile): a lite field, only the one that is needed, from 3 (puddles) or 2 (snow) value
+// noises instead of 9 (the same 8/4-block shapes and 32-block swell, without the 2-block ragged rims).
+static inline float2 shadeWxFields(float2 xa, texture2d<half> noise, bool baked, bool puddly, bool snowy) {
 	if (baked) return float2(noise.sample(shadeWxRepeat, xa * (1.0 / SHADE_WX_NOISE_TILE), level(0.0)).rg);
+#ifndef MCOPT_HDR
+	float2 r = float2(0.0);
+	if (puddly) r.x = 0.62 * shadeWxValue(xa * 0.125, 31, 0x51ed270bu) + 0.38 * shadeWxValue(xa * 0.25, 63, 0x2c1b3c6du)
+		+ 0.25 * (shadeWxValue(xa * (1.0 / 32.0), 7, 0xfbb04194u) - 0.5);
+	if (snowy) r.y = shadeWxValue(xa * 0.5, 127, 0x1f83d9abu) * 0.6 + shadeWxValue((xa + 37.0) * 0.125, 31, 0x51ed270bu) * 0.4;
+	return r;
+#else
 	return float2(shadeWxPuddleField(xa), shadeWxSnowDrift(xa));
+#endif
 }
 
 // ---- raindrop ripples -----------------------------------------------------------------------------------------------------
@@ -169,7 +179,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 #ifdef SHADE_PUDDLES
 	puddly = L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h;
 #endif
-	float2 fields = snowy || puddly ? shadeWxFields(xa, noise, baked && !shadeDev(f, SHADE_DEV_WX_ANALYTIC)) : float2(0.0);
+	float2 fields = snowy || puddly ? shadeWxFields(xa, noise, baked && !shadeDev(f, SHADE_DEV_WX_ANALYTIC), puddly, snowy) : float2(0.0);
 #ifdef SHADE_SNOW_COVER
 	if (snowy) {
 		float drift = fields.y;

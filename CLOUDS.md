@@ -1,5 +1,16 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
+## M3.3 Status (2026-10-08 11:40, resumed session, merged in m3-int) - DONE
+
+Run 4 (`bench-results/20261008-112734-m33c-4`, jar 2f215b7, **battery**, in-session so valid as A/B; `abprice.py`): 24 interleaved
+6-s spins, drift-corrected: **M3.3 (stable 3x3) = M3.2's price** (old vs new +0.02 +- 0.02 ms), 4x4 checkerboard -0.05 +- 0.02 ms,
+clouds off -0.61 ms (the whole module ~0.6 ms in this sky-heavy spin). GPU timers: march 0.33 (new) / 0.20 (c4) / 0.43 (old),
+resolve 0.29 / 0.36 / 0.20 ms. Look, frozen clouds (`variantdiff.py fold fnew`): mean diff 1.2-2.8 / 255, `up` 2.4 levels darker
+in the cloud bodies (hardly visible side by side); turning (`turn_south`): M3.2's diagonal hatching gone, a fine grain on the
+edges remains. **Decision: defaults stay** (stable on, checker 3: the 4x4 saves 0.05 ms for more grain, not worth it). The comb
+fix is the M3.3 change; the price target (<= 0.5 ms) is not reached: the march is latency-bound, the next real step is a
+lower-resolution march for far clouds (left for later, documented in "M3.1 performance").
+
 ## M3.3 Status (2026-10-08 11:25) - resumed (new session after 52efc55)
 
 Offline (quiet-ish GPU, `work/notes/m33-2026-10-08/clouds/pvchk.sh` -> `pvchk1.out`, 3024x1964, history 0.45, M3.3 modes,

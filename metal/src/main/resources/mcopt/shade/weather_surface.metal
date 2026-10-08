@@ -182,7 +182,7 @@ struct ShadeWet {
 	half film;
 	half low;
 	half var;
-	half dark; // extra darkening exponent of the film (ShadeLook.waterAbs.x, look development; 0)
+	half dark; // extra darkening exponent of the film (ShadeLook.waterAbs.x: mcopt.shade.wetDark, 0.2)
 	half tex;  // the texel's height proxy -1..1 (sodium_terrain.fs.metal, shadeWetTexHeight): + raised (drier), - a crevice (wetter)
 };
 
@@ -462,15 +462,20 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	float veg = saturate((float(albedo.g) - max(float(albedo.r), float(albedo.b))) * 8.0);
 	float rough = mix(min(mix(0.8, 0.38, float(w.omega)) + 0.25 * veg, 0.95), 0.03, P);
 	// (M3.3 wet ground) solid ground soaks into a smooth film (ShadeLook.water.y: ~0.2 on stone, paths, wood, sand; vegetation
-	// + water.z, so grass tops are glossy but a little rougher), smoother in the field's hollows and toward standing water
-	// over the rim (low), then the puddle's 0.03; the film covers the ground (k) as it soaks, a little less on vegetation
+	// + water.z, so grass tops are glossy but rougher), smoother in the field's hollows and toward standing water over the rim
+	// (low), then the puddle's 0.03; the film covers the ground (k) as it soaks
+	// Grass tops are not a flat sheet of water: blades stand out of it, so vegetation keeps a share of the film (waterAbs.y)
+	// and a rougher one; by hue (green over red and blue, relative to green), so the darkened wet albedo still counts
 	float film = 0.0;
 	if (w.film > 0.0h) {
+		float g = max(float(albedo.g), 1e-3);
+		float vegR = saturate(((g - max(float(albedo.r), float(albedo.b))) / g - 0.1) * 2.5);
 		float soak = saturate(float(w.omega) * 1.15);
 		float tx = float(w.tex) * (1.0 - float(w.low)); // (texel relief: raised texels rougher and partly dry, crevices smoother)
-		float rS = clamp(L.water.y + L.water.z * veg - 0.25 * float(w.var) + 0.18 * tx, 0.06, 0.6);
-		rough = mix(mix(mix(0.8, rS, soak), 0.06, float(w.low)), 0.03, P);
-		film = max(soak * (1.0 - 0.12 * veg) * (1.0 - 0.35 * saturate(tx)), float(w.low)) * L.waterAbs.y;
+		float rS = clamp(L.water.y + L.water.z * vegR - 0.25 * float(w.var) + 0.18 * tx, 0.06, 0.6);
+		float low2 = float(w.low) * float(w.low); // (the rim turns into standing water only close to the puddle's edge)
+		rough = mix(mix(mix(0.8, rS, soak), 0.06, low2), 0.03, P);
+		film = max(soak * mix(1.0, L.waterAbs.y, vegR) * (1.0 - 0.35 * saturate(tx)), low2);
 	}
 	float cosV = max(dot(-v, n), 0.02);
 	float F = shadeWxFresnel(cosV, rough);

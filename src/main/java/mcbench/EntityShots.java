@@ -108,6 +108,10 @@ final class EntityShots {
 				Pose o = BenchDriver.spot.sunset;
 				return new Pose(o.x(), o.y(), o.z(), o.yaw(), -25f);
 			});
+			rose(steps, "away", () -> { // the sky opposite the sun (the Belt of Venus side)
+				Pose o = BenchDriver.spot.sunset;
+				return new Pose(o.x(), o.y(), o.z(), o.yaw() + 180f, -8f);
+			});
 		}
 		steps.add(new BenchDriver.Step("ent-cleanup", 0) {
 			@Override
@@ -146,7 +150,7 @@ final class EntityShots {
 	static void cleanup(MinecraftServer s) {
 		cmd(s, "kill @e[tag=" + TAG + "]");
 		cmd(s, "tick unfreeze");
-		System.clearProperty("mcopt.shade.skyRose");
+		System.clearProperty(ROSE_PROP);
 		if (caveTorch != null) {
 			cmd(s, String.format(Locale.ROOT, "setblock %d %d %d air replace", caveTorch.getX(), caveTorch.getY(), caveTorch.getZ()));
 			caveTorch = null;
@@ -324,24 +328,27 @@ final class EntityShots {
 		};
 	}
 
+	/** The property the rose pairs switch off then on (-Dmcbench.roseProp, e.g. mcopt.shade.sunsetArt). */
+	static final String ROSE_PROP = System.getProperty("mcbench.roseProp", "mcopt.shade.skyRose");
+
 	/** The evening rose off then on at one pose, in one session, the ticks frozen around the pair. */
 	private static void rose(java.util.Deque<BenchDriver.Step> steps, String tag, java.util.function.Supplier<Pose> p) {
 		String off = "rose_off_" + tag, onName = "rose_on_" + tag;
 		steps.add(new BenchDriver.Scene(off, 12400, false, p));
 		steps.add(new BenchDriver.Settle(off, false, 3, 120));
-		steps.add(prop("rose-freeze-" + tag, "mcopt.shade.skyRose", "false", "tick freeze"));
+		steps.add(prop("rose-freeze-" + tag, ROSE_PROP, "false", "tick freeze"));
 		steps.add(new BenchDriver.Hold(off, Math.max(BenchDriver.SHOT_WAIT, 2.5)));
 		steps.add(new BenchDriver.Shot(off));
-		steps.add(prop("rose-on-" + tag, "mcopt.shade.skyRose", "true", null));
+		steps.add(prop("rose-on-" + tag, ROSE_PROP, "true", null));
 		steps.add(new BenchDriver.Hold(onName, Math.max(BenchDriver.SHOT_WAIT, 2.5)));
 		steps.add(new BenchDriver.Shot(onName));
-		steps.add(prop("rose-unfreeze-" + tag, "mcopt.shade.skyRose", null, "tick unfreeze"));
+		steps.add(prop("rose-unfreeze-" + tag, ROSE_PROP, null, "tick unfreeze"));
 		steps.add(new BenchDriver.Step("ent-record-rose-" + tag, 0) {
 			@Override
 			boolean poll(Minecraft mc, long now) {
 				Map<String, Object> m = p.get().json();
 				m.put("time", 12400);
-				m.put("shots", off + " (mcopt.shade.skyRose=false), " + onName + " (true), ticks frozen");
+				m.put("shots", off + " (" + ROSE_PROP + "=false), " + onName + " (true), ticks frozen");
 				JSON.put("rose_" + tag, m);
 				return true;
 			}

@@ -1,14 +1,18 @@
 # M3 base + entities (branch `m3`, the M3 integration branch)
 
-## Status (2026-10-07 18:25)
+## Status (2026-10-07 20:10)
 
-- Done: all features (section 1). Re-verified after the pause: build + `validate.sh` ALL OK (also with `MCOPT_GEN_DIR` =
-  the 402-stage dump of 10:56). Fresh shots `20261007-181121-m3r-shots`: entities noon/evening/night, hand, motion look right.
-- New since the pause: `mcopt.shade.entityShadows.pause` (per-frame switch) + mcbench zoo phases `zoo / zoo_noshadow / zoo2`
-  (entity shadows priced inside one session); evening rose warmer (upper sky rose instead of mauve: it read lilac-grey next
-  to Complementary's peach).
-- Running: ABBA entity cost (m3 on / flags off / M2.1), sky check, taaDebug 5, DH sanity. Next: fill section 7.
-- Section 8: integration checklist for the M3 merge (dated; the module branches were still being finished).
+- **Done.** All features (section 1), re-verified after the pause: build + `validate.sh` ALL OK (also with `MCOPT_GEN_DIR` =
+  the 402-stage dump: 36 entity/item/particle pipelines build). Fresh shots: entities noon/evening/night, hand, moving mobs,
+  DH sanity: all right (section 7.3).
+- Costs (section 7): M3 base = **0 within noise** vs M2.1 (zoo of ~12 mobs: 6.41 vs 6.42 ms GPU, ~156 fps, balanced, DRS
+  off); entity shadows priced in one session: < 0.05 ms. New per-frame switch `mcopt.shade.entityShadows.pause` + mcbench
+  phases `zoo / zoo_noshadow / zoo2`.
+- Look fix: evening rose warmer (upper sky warm rose instead of mauve, which read lilac-grey next to Complementary).
+- Section 8: integration checklist for the M3 merge (re-checked 20:08; three REAL collisions open in m3-skydims, one design
+  decision for dynamic lights on entities).
+- Next: the integration workflow (vl-stable, then the modules, following section 8); `taaDebug` views in the HDR path
+  (7.3, pre-existing).
 
 
 Branch `m3` starts from `m2.1` (water M2.1) and is where the M3 modules (dynamic lights `m3-lights`, weather/clouds
@@ -22,8 +26,8 @@ without a listener / tagged redirect). Read `M2_INTEGRATION.md` first: this file
 |---|---|---|
 | Entities, block entities, dropped items, armour, moving blocks and particles lit by the shade model (bible E17) | `ShadeEntity.java`, `shade_entity.metal`, `ShadeMsl.FORMAT_ADAPTER` | `mcopt.shade.entities` (true) |
 | First-person hand and held items lit the same way (tone-mapped in the fragment, no fog) | `ShadePost.handRedirect`, `ShadeEntity.HAND_FORMAT`, `MCOPT_HAND` in `shade_entity.metal` | `mcopt.shade.handLight` (true) |
-| Entity sun shadows in the near cascade (bible E08 / M3c), vanilla blob shadow off | `MetalDrawTap`, `shadow/EntityCasters.java`, `mcshadow.m` `mc_shadow_entity_*`, `shadow.metal` `shadow_entity_vs/fs` | `mcopt.shade.entityShadows` (true), `.log` (false) |
-| Per-object motion for TAAU (moving entities don't smear) (bible E18 step 4) | `taa/ShadeMotion.java`, `taa.metal` `TaaMovers`, `mctaa.m` `mc_taa_movers` | `mcopt.shade.taaMotion` (true); `mcopt.shade.taaDebug=5` shows it |
+| Entity sun shadows in the near cascade (bible E08 / M3c), vanilla blob shadow off | `MetalDrawTap`, `shadow/EntityCasters.java`, `mcshadow.m` `mc_shadow_entity_*`, `shadow.metal` `shadow_entity_vs/fs` | `mcopt.shade.entityShadows` (true), `.log` (false), `.pause` (read every frame: bench A/B) |
+| Per-object motion for TAAU (moving entities don't smear) (bible E18 step 4) | `taa/ShadeMotion.java`, `taa.metal` `TaaMovers`, `mctaa.m` `mc_taa_movers` | `mcopt.shade.taaMotion` (true); `taaDebug=5` view (does not show in the HDR path: see 7) |
 | **Dynamic-lights seam**: `shadeDynamicLights(ShadeDynIn, f, L, R)` called by terrain, water and entities (stub returns 0) | `shade_dynlight.metal` (in `ShadeMsl.prelude()`) | — (the module's) |
 | Evening sky: rose / peach hue of the upper sky at golden hour (Complementary-like, our sun, rays and blue top kept) | `ShadeLook.SKY_ROSE` -> `skyGoldZ.w`, `sky_lut.metal` | look-scaled (epic 1, storybook 1.15, natural 0.6) |
 | Underwater god rays: caustic curtains on the water's real-time clock (were on the game time, which the server corrects every second: the jumps smeared them through the 0.9 history), less history under water (0.8), stronger (HDR_WATER 0.45 -> 0.6, carve 0.55 -> 0.62) | `vl/ShadeVl.java` | `mcopt.shade.vl.underwater` (true) |
@@ -71,7 +75,7 @@ static inline float3 shadeDynamicLights(ShadeDynIn d, constant ShadeFrame &f, co
   (`MetalHooks.TAG_SHIFT`: a variant tag, the pipeline is built for the low bits); `MCOPT_HAND` then writes
   `sRGB(shadeDisplay(radiance))`, no fog.
 - Validation: `MCOPT_GEN_DIR=<a -Dmcopt.metal.dumpMsl dir> tools/shade/validate.sh` patches the dumped stages and builds
-  every pair as a real pipeline (19 world + 19 hand variants). Re-dump after a Minecraft / mcopt update.
+  every pair as a real pipeline (36 = 18 world + 18 hand variants; `item_cutout` is skipped, see above). Re-dump after a Minecraft / mcopt update.
 
 ## 4. Entity shadows: how it works
 
@@ -110,13 +114,75 @@ Translation only (limb swing and turning stay with the variance clip). `mctaa.m`
 
 ## 7. Costs and tests
 
-See section 8 (filled from the runs below).
+**In plain words (for Gael):** lighting the mobs, items and particles with our shader, their real sun shadows, the lit
+hand and the anti-smear for moving mobs together cost **nothing measurable**: with ~12 mobs, a chest, a sign and floating
+items filling the screen the GPU needs **~6.4 ms per frame (~155 fps) with M3, the same as with M2.1**. The differences
+between runs (0.1-0.2 ms) are noise: two runs of the exact same M2.1 jar differed by more than that. Entity shadows alone,
+switched on and off inside the same game session: **< 0.05 ms**.
+
+### 7.1 How it was measured (provisional: clean numbers come after the integration)
+
+- `mcbench-run --direct` on `mcopt DEV`, 3024x1964 fullscreen, preset balanced, **`-Dmcopt.shade.drs=false`** (fixed render
+  scale 0.80). Dynamic resolution holds the GPU at ~7.2 ms (86 % of 1/120 s) by moving the scale, so every older A/B with
+  DRS on (`m3-ab*`, `m3f-*`) measured scale changes, not cost: not used. `-Dmcbench.entities=perf
+  -Dmcbench.standardShots=false --scenes all --seconds 12`: phases spin, flight (standard world, no mobs), then `zoo`,
+  `zoo_noshadow`, `zoo2` (10 s each, the zoo panning, noon).
+- Order (ABBA across launches, other agents' runs in between): on-1 18:21, off-1 18:39, m21-1 19:07, m21-2 19:35, off-2
+  19:49, on-2 20:05. "off" = this jar with `mcopt.shade.entities=false`, `entityShadows=false`, `taaMotion=false`,
+  `handLight=false`; "M2.1" = `release/mcopt-shade-M2.1.jar`. Jar `notes/m3base/m3-a8692a3.jar` (the costs are the same
+  in b677538: only sky colours changed).
+- All on AC power; CPU of other processes during the runs: median 60-110 % (clean; a gradle build is 400-1000 %).
+  **m21-2 is drifted**: every phase ~0.7 ms slower, rising inside the run (zoo 6.97 -> 7.35 ms with an identical config),
+  no CPU load to explain it (GPU clocks / another app's GPU work): kept in the table, left out of the means.
+
+### 7.2 Results (GPU ms per frame; lower is better)
+
+| Run | spin | flight | zoo | zoo_noshadow | zoo2 |
+|---|---|---|---|---|---|
+| on-1 (`20261007-182151-m3p-on-1`) | 9.387 | 8.885 | 6.522 | 6.351 | 6.347 |
+| off-1 (`...183929-m3p-off-1`) | 9.365 | 8.868 | 6.497 | 6.388 | 6.386 |
+| M2.1-1 (`...190718-m3p-m21-1`) | 9.234 | 8.926 | 6.418 | 6.361 | 6.486 |
+| M2.1-2 (`...193559-m3p-m21-2`, drifted) | *10.033* | *9.992* | *6.965* | *7.120* | *7.350* |
+| off-2 (`...194927-m3p-off-2`) | 9.161 | 8.783 | 6.417 | 6.457 | 6.480 |
+| on-2 (`...200535-m3p-on-2`) | 9.315 | 8.636 | 6.448 | 6.446 | 6.482 |
+| **mean M3 on** | **9.35** (107 fps) | **8.76** (114 fps) | | | **6.41** (156 fps) |
+| **mean M3 flags off** | **9.26** | **8.83** | | | **6.43** |
+| **M2.1** (run 1) | **9.23** | **8.93** | mean of its 3 zoo phases **6.42** | | |
+
+M3 on minus M2.1: spin +0.12 ms, flight -0.17 ms, zoo -0.01 ms: **zero within the noise** (run-to-run spread of the same
+config here is 0.1-0.2 ms). The spin/flight views have no mobs, so they show that nothing leaked into terrain, sky or post.
+
+In-session price of the entity shadows (`zoo_noshadow` vs `zoo2`, same session): on-1 6.351 vs 6.347 (+0.00); on-2
+6.446 vs 6.482 (+0.04 ms). The first `zoo` phase runs ~0.1-0.15 ms high in every run, the M2.1 jar included (it has no pause switch, so its
+three phases are identical): warm-up, not cost.
+
+### 7.3 Visual checks (screenshots in `work/release/M3-base-screenshots/`)
+
+- `20261007-181121-m3r-shots` (b8bbf23) and `20261007-183759-m3r2-shots` (b677538): entities at noon, evening, night (torches),
+  the lit hand at night, moving mobs. Mobs sit in the terrain's light: sunlit tops warm, sides facing away take the blue
+  sky light like terrain sides, torch-lit at night like the grass around them; no shadow acne on mobs at 1:1
+  (`entities_noon_1to1_M3_resume.jpg`); a villager, a horse and a pig moving at 4-6 blocks/s stay sharp, no ghost trail
+  (`moving_mobs_M3_resume.jpg`); real mob shadows replace the blob.
+- **Evening sky, warmer**: next to Complementary the upper sky read lilac-grey. The rose tint of the upper sky is now warm
+  rose instead of mauve (`sky_lut.metal`: `(1.6, 0.88, 0.86)` was `(1.55, 0.86, 1.0)`) and ~12 % stronger around sunset
+  (`ShadeLook.SKY_ROSE`); the gold horizon band, the sun, the rays and the blue zenith stay ours.
+  `sunset_Complementary_vs_M3rose-before_vs_M3rose-after.jpg` (top Complementary, middle before, bottom after).
+- DH sanity (`20261007-192612-m3r-dh`, DEV-DH, DH 3.3.4): loads, LODs drawn, zoo lit, no exceptions (only the offline
+  login's 401s): spin 15.7 ms / 64 fps, flight 17.0 ms / 59 fps (DRS on; earlier m3-dh 18.5 ms, M2 final m2f-dh 16.4 ms:
+  DH numbers swing with its LOD loading). `DH_sanity_M3_resume_1928.jpg`.
+- `taaDebug=5` (`20261007-190614-m3r-taadbg5`): **the debug view does not appear** in the HDR path: the TAAU debug resolve
+  writes into the output target `dst`, and since M2 folded the output pass into the final pass the HDR resolve passes
+  `dst = 0` (`ShadeTaa` line ~213, `mctaa.m mc_taa_resolve`): the debug pipeline is never used. Pre-existing (all taaDebug
+  views, M2 on); the motion was checked by the off/on shots instead (`moving_mobs_taau_motion_off_vs_on.jpg`).
+- Validation: `validate.sh` ALL OK; with `MCOPT_GEN_DIR` (402-stage dump) "36 entity / item / particle pipelines lit by
+  shade (ShadeEntity) build".
 
 ## 8. Integration checklist (for the M3 integration)
 
-Written 2026-10-07 18:30 from the docs and `git diff m2.1..HEAD` of each branch at these heads (the module agents were still
-finishing them: **re-run the diffs at merge time** and check every row): `m3` (this branch), `vl-stable` 87f9fa2,
-`m3-lights` 201277c, `m3-clouds` c8430bb, `m3-weather` 5bdb27b, `m3-skydims` 152d505. All five module branches start from
+Written 2026-10-07 18:30, re-checked 20:08 from the docs and `git diff m2.1..HEAD` of each branch at these heads (the module
+agents were still finishing them: **re-run the diffs at merge time** and check every row): `m3` (this branch), `vl-stable`
+87f9fa2, `m3-lights` d4d1838, `m3-clouds` 9772fbb, `m3-weather` 37163d3, `m3-skydims` 2030a03. At 20:08 the REAL rows below
+were all still open (skydims `FLAG_DIMS_LIT = 4096`, its else-branch `FLASH` write, `P.r.w > 0.5`). All five module branches start from
 `m2.1`, not from `m3`: none of them knows the entity path, the draw tap or the dynamic-light seam of this branch.
 Merge order (workflow plan): `vl-stable` first, then the modules into `m3`. Rows marked **REAL** are semantic collisions
 (both sides compile, the result is wrong); the others are textual (union both sides).
@@ -141,7 +207,7 @@ Merge order (workflow plan): `vl-stable` first, then the modules into `m3`. Rows
 | 608 | `heldLight` | free | m3-lights uses its own buffer(24), not this field |
 | 656 `.w` | `skyGoldZ.w` evening rose | m3 | |
 | 672 `.z` | `night.z` aurora | skydims | |
-| 688 `.y` / `.z` | `ssr.y` prevDepth valid / `ssr.z` weather noise baked | weather | |
+| 688 `.y` / `.z` / `.w` | `ssr.y` prevDepth valid / `ssr.z` weather noise baked / `ssr.w` shadowTint holds casters | weather | |
 | 752 | `dimTint` | skydims | |
 | 768 | `flash` | **weather** (lightning, overworld) **and skydims** (End flash) | **REAL**: `ShadeDims.pack` runs after `ShadeLook.pack` (which calls `ShadeWeather.pack`) and, when the dims are not lit, writes `flash = (0,1,0,0)`: the overworld lightning flash is erased every frame. Fix: skydims writes `flash` only while dims are lit (End); weather writes it only in the overworld (it already gets `dimension == OVERWORLD`). Consumers: weather's terrain `shadeWxFlash` only in the non-dims branch, skydims' `shadeLitDimsExtra` / End sky only in the End: one writer and one consumer per dimension |
 
@@ -209,6 +275,8 @@ stage today (entities: game slots from 0, m3's shade slots buffer 16-19, texture
   in the march, sky mask = cloud transmittance) edit `vl_march`: hand-merge; the VL encoder must bind 17 and 19.
 - `shade_post.metal` / `ShadePost.java`: vl-stable (unjitter, r.w), skydims (XDR final, r.w, `shade_final` signature), weather
   (prevDepth publish in `beginWorld`), m3 (`handRedirect`, `EntityCasters.commit` in `beforeHand`).
+- `ShadeBindings.java`: lights (`DynLights.init/bind` in bind/rebind), weather (`setPrevDepthValid`). `shade_common.metal`:
+  weather's `SHADE_DEV_WX_*` defines (see 8.1).
 - `ShadeFrameUpdater`: order weather update -> look/frame pack -> `ShadeDims.pack` -> clouds params/update -> `DynLights.frame`.
 - `ShadowPass.java`, `mcshadow.m`, `ShadowNative.java`, `shadow.metal`: m3 (entity casters), weather (tint), skydims (End light).
 - `MetalRenderPass.java`: m3 draw tap + redirect tags, clouds skip of vanilla clouds. `MetalSurface.java`, `mcmetal.m`:

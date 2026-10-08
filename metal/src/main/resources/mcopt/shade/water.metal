@@ -436,6 +436,13 @@ static float3 shadeWaterHitColor(float2 uv, float exposure, float prevExposure, 
 		if (pc.w > 0.0 && all(uvp > 0.0) && all(uvp < 1.0)) {
 			return shadeWaterHazed(float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure, pw, f, L);
 		}
+#ifdef SHADE_WATER_EDGE_REFL
+		// FT1.2: where last frame did not see the point (the side the camera turns toward; SSR's edge-column hits past a side)
+		// this frame's opaque copy, hazed like the hits read from last frame (both are taken before the final pass's haze).
+		// Unhazed, the far shore and the render distance's fog band mirrored darker and clearer there: a hard slanted seam
+		// on the water that swept along while turning (recording rf1-base)
+		return shadeWaterHazed(shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure), pw, f, L);
+#endif
 	}
 	return shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure);
 }
@@ -451,7 +458,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 	// M3: the volumetric clouds in that direction from their reflection dome (off-screen directions; on screen the rendered
 	// sky below holds them, already with their aerial perspective)
 	bool volumetricClouds = L != nullptr && R != nullptr && L->clouds0.w > 0.5;
-#ifdef SHADE_WATER_DOME_SIDES
+#ifdef SHADE_WATER_EDGE_REFL
 	// FT1.2: the dome along the rendered sky's (calm) direction rs: a cloud keeps its shape where the mirrored sky fades from
 	// the screen into the dome below (along r the ripples shredded it into blotches there)
 	bool domeSides = volumetricClouds && L->clouds1.x > 0.5;
@@ -471,7 +478,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 			// M2.1: off a side the edge column stands in for the sky there (it changes slowly sideways): no side fade, the
 			// weight halves by NDC +-2 (uv -0.5 / 1.5)
 			float wgt = saturate(min(uv.y, 1.0 - uv.y) * 12.0) * (1.0 - 0.5 * smoothstep(0.0, 0.5, abs(uv.x - 0.5) - 0.5));
-#ifdef SHADE_WATER_DOME_SIDES
+#ifdef SHADE_WATER_EDGE_REFL
 			// FT1.2: with the clouds' reflection dome (the sky and its clouds by direction) the edge column smeared the clouds
 			// sideways, and where the mirrored direction left the screen a hard slanted seam crossed the water (clouds appeared
 			// and vanished on it while turning): the rendered sky fades into the dome over the last 1/8 of the screen instead,

@@ -106,12 +106,12 @@ public final class ShadeWater {
 	 */
 	public static final boolean SSR_EDGE = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrEdge", "true"));
 	/**
-	 * FT1.2 {@code mcopt.shade.water.domeSides} (true): with the volumetric clouds' reflection dome, the mirrored sky fades into
-	 * the dome over the last 1/8 of the screen at the sides and the top, instead of the edge column standing in past a side
-	 * (Gael: mirrored clouds deformed at the screen edges and appeared / vanished there while turning); the dome is read along
-	 * the same calm direction as the rendered sky. false = M3.4.
+	 * FT1.2 {@code mcopt.shade.water.edgeRefl} (true; Gael: mirrored clouds deformed at the screen edges and appeared / vanished
+	 * there while turning): with the volumetric clouds' reflection dome, the mirrored sky fades into the dome over the last 1/8
+	 * of the screen at the sides and the top instead of the edge column standing in past a side, the dome read along the same
+	 * calm direction as the rendered sky; and SSR hits that last frame did not see (turning) are hazed like the others. false = M3.4.
 	 */
-	public static final boolean DOME_SIDES = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.domeSides", "true"));
+	public static final boolean EDGE_REFL = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.edgeRefl", "true"));
 	/**
 	 * M3: the sun glint's distance widening (normals averaging out across a pixel) only at grazing views; from high up the
 	 * widened glint of a low sun was a broad glow cut into bright rectangles by the terrain's shadows (false: M2.1's glint).
@@ -173,7 +173,7 @@ public final class ShadeWater {
 			if (DETAIL_EXTRAS) b.append("#define SHADE_WATER_DETAIL_EXTRAS 1\n");
 		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
-		if (DOME_SIDES) b.append("#define SHADE_WATER_DOME_SIDES 1\n");
+		if (EDGE_REFL) b.append("#define SHADE_WATER_EDGE_REFL 1\n");
 		if (GLINT_GRAZE) b.append("#define SHADE_WATER_GLINT_GRAZE 1\n");
 		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n#define SHADE_WAVE_BAKE_SIZE ").append(BAKE_SIZE).append('\n');
 		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
@@ -199,7 +199,7 @@ public final class ShadeWater {
 				}
 			}
 			System.out.println("[mcopt] shade: water on (ssr " + SSR + (SSR_QUAD ? " quad" : "") + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
-				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ", glint graze " + GLINT_GRAZE + ", dome sides " + DOME_SIDES + ")");
+				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ", glint graze " + GLINT_GRAZE + ", edge reflections " + EDGE_REFL + ")");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: water setup failed, M1 water from now on: " + e);

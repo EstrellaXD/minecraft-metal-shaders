@@ -73,7 +73,17 @@ static inline float4 shadeCloudsScreen(float3 dir, constant ShadeLook &L, textur
 	float4 c = L.viewProjNoJitter * float4(dir, 0.0);
 	if (c.w <= 1e-6) return float4(0.0, 0.0, 0.0, 1.0);
 	float2 uv = c.xy / c.w * 0.5 + 0.5;
-	return float4(tex.sample(shadeCloudSampler, uv, level(0.0)));
+	if (L.clouds1.w < 0.5) return float4(tex.sample(shadeCloudSampler, uv, level(0.0)));
+	// M3.4 (mcopt.shade.clouds.smooth): a cubic B-spline from 4 bilinear taps (Sigg & Hadwiger's weights): the magnified history
+	// shows no texel blocks on soft edges, and its per-pixel noise is smoothed
+	float2 sz = float2(tex.get_width(), tex.get_height());
+	float2 t = uv * sz - 0.5, i = floor(t), f = t - i, f2 = f * f, f3 = f2 * f;
+	float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0, w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0, w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, w3 = f3 / 6.0;
+	float2 g0 = w0 + w1, g1 = w2 + w3;
+	float2 h0 = (i - 0.5 + w1 / g0) / sz, h1 = (i + 1.5 + w3 / g1) / sz;
+	float4 a = float4(tex.sample(shadeCloudSampler, float2(h0.x, h0.y), level(0.0))), b = float4(tex.sample(shadeCloudSampler, float2(h1.x, h0.y), level(0.0)));
+	float4 cc = float4(tex.sample(shadeCloudSampler, float2(h0.x, h1.y), level(0.0))), d = float4(tex.sample(shadeCloudSampler, float2(h1.x, h1.y), level(0.0)));
+	return g0.y * (g0.x * a + g1.x * b) + g1.y * (g0.x * cc + g1.x * d);
 }
 
 // The clouds toward unit dir from the reflection dome (any direction; nothing below the horizon).

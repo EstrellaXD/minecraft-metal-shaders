@@ -36,7 +36,34 @@ Contact sheets: `ROOT/work/release/M3.3-screenshots/robust_*.jpg`.
 | (e) fullscreen -> windowed 3024x1684 -> window 2000x1280 -> fullscreen | **OK.** TAAU and HDR targets rebuilt at each size (log: `TAA 1814x1010 -> 3024x1684`, `HDR targets 2000x1280`...), shots correct at each size. |
 | (f) shader build failure (injected, then a resource reload) | **OK, clean per pipeline.** `failCompile=terrain`: the three Sodium terrain pipelines log `registry MSL for sodium:pipeline/... failed to build, using the game's shaders` and draw with the game's shaders (vanilla-lit terrain, shaded sky and clouds), no crash. `*`: every shaded pipeline falls back (13 log lines): a vanilla look, **but no clouds at all** (ours are composited in the shaded sky, vanilla's stay replaced; fixed in dab0821). Clearing it and reloading brings the full shading back (`robust_fail_terrain_all_restored.jpg`). |
 
-## 2. Flags added (all default = the fixed behaviour; the value in brackets = M3.2)
+## 2. Fixes checked in R2 (`bench-results/20261008-094839-rb2-framegen`, jar dab0821, frame generation on)
+
+- (c) Improved Transparency: with the option set to on, the four shots match the "off" ones (water with reflections, thin
+  rain); the log says once `Improved Transparency is on in the video settings: kept off while the shaders run`.
+- (f) `*` failure: now with vanilla clouds (`the shaded sky did not build: volumetric clouds off, vanilla clouds instead`), back to
+  volumetric clouds after the restoring reload (`the shaded sky built again`).
+- Pause menu: "Resolución: Auto (dinámica)" and "Gen. de cuadros: Sí" side by side; pressed: "Gen. de cuadros: No (al
+  reiniciar)" and the config line `mcopt.metal.framegen=false`; pressed again: "Sí", `true`; the file was restored afterwards.
+- Seen once, not explained yet: `rb_transp_off_water` (the first scene after the pause-menu test, 45 blocks away and the time
+  jumping 6000 -> 12400) had smeared clouds with horizontal streaks after 5 s; the same jump in R1 (no frame generation, no pause
+  menu before) was clean. R5 (frame generation) and the final run (no frame generation) repeat that sequence to tell which.
+
+## 3. Frame generation (upstream MetalFX interpolation) with our shaders
+
+- **It runs** with the native shading: no crash, XDR turns itself off (`XDR output off (... frame generation: off)`), the GUI and
+  the hand are composited onto generated frames correctly (dump `*-3-generated`), screens show real frames only.
+- **Motion vectors were wrong under TAAU (fixed, `mcopt.shade.framegen.taau`).** At the level-drawn point the main target is
+  TAAU's world target, rendered in a sub-rect (80 % at auto) with a jittered projection; upstream read its depth texel for texel
+  at the output size, so most pixels got another pixel's depth. Turning (rotation only) doesn't care about depth, so `turn` dumps
+  look alike; moving does: upstream's generated frame tears the sand terraces' edges into dark specks, the fix's is clean
+  (`ROOT/work/release/M3.3-screenshots/robust_framegen_move_upstream_vs_fix_zoom.jpg`, dumps in
+  `notes/m33-2026-10-08/robust/r2-framegen-dumps/`).
+- **The real frame rate halves to 30 fps.** FrameGen paces real frames to half the refresh (60 on the 120 Hz panel) only when a
+  frame fits in 85 % of 16.7 ms; with our shading plus MetalFX interpolation at 3024x1964 it doesn't, so it holds every image
+  two refreshes: 30 real + 30 generated = 60 shown fps (dumps: "33.3 ms between the real frames"), against ~88-95 real fps
+  without it at balanced. R5 measures it (FrameGen's report now reaches latest.log) at auto and at 1080p.
+
+## 4. Flags added (all default = the fixed behaviour; the value in brackets = M3.2)
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -47,7 +74,7 @@ Contact sheets: `ROOT/work/release/M3.3-screenshots/robust_*.jpg`.
 | `mcopt.shade.dev.failCompile` | empty | Dev only: inject shader build failures (see `ShadeRobust`). |
 | `mcopt.metal.framegen.dumpTag` | empty | Dev only: re-arms FrameGen's dumps (files prefixed with the tag). |
 
-## 3. Integration notes (shared or upstream files touched)
+## 5. Integration notes (shared or upstream files touched)
 
 - `metal/src/main/native/mcmetal.m`: + `mc_device_allocated` (one function). `Native.java`, `MetalBridge.java`: its binding.
 - `MetalPipeline.java` (upstream): registry path: injected failure check (dev) and `ShadeRobust.registryBuilt` calls (only

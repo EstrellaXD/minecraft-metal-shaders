@@ -115,8 +115,11 @@ final class WeatherShots {
 				}
 				if (on("price") && p.ground != null) {
 					// what each part costs, inside one session: mcopt-shade reads mcopt.shade.dev every frame (SHADE_DEV_WX_* bits)
+					// a 10 s warm-up first (not recorded: the first phase of a session ran ~0.1-0.2 ms slow), then dry A/B/A for the tint map
+					price(extra, "wxwarm", false, p.ground, 0);
 					if (!on("perf")) price(extra, "wxdry", false, p.ground, 0); // dry, everything on: the tint map's price against wxdry_notint
 					price(extra, "wxdry_notint", false, p.ground, 16384);
+					price(extra, "wxdry2", false, p.ground, 0);
 					if (!on("perf")) perf(extra, "wxrain", true, p.ground);
 					price(extra, "wxrain_nossr", true, p.ground, 1024);
 					price(extra, "wxrain_nogate", true, p.ground, 65536); // puddle SSR on every puddle pixel (no Fresnel gate)

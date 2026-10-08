@@ -161,9 +161,11 @@ drift. GPU ms per frame:
 | `20261007-181411-dl-r1-on` (`1e7f6c2`) | AC | clean (total 105-244 %) | 8.131 | 7.979 | 8.144 | **+0.16 ms** |
 R2_ROW
 Control: with the module off (`20261007-144310-dl-t6-off`) the same three phases read 7.722 / 7.767 / 7.772 ms: the
-phase-to-phase noise is ~0.05 ms. **Price: ~0.15 ms GPU for the hands + 9 lights (budget 0.4 ms).** The first version
-(per-pixel loop over the lights, before the irradiance volume) cost ~1 ms in the same scene (`20261007-132040-dl-t5`:
-8.94 / 8.69 / 8.97, +0.27 there on battery with fewer pixels lit, ~1 ms in the earlier t3/t4 runs).
+phase-to-phase noise is ~0.05 ms. **Price: ~0.15 ms GPU for the hands + 9 lights (budget 0.4 ms).** History of the
+same measurement: the first version (per-pixel loop over the lights) cost **+1.06 ms** (`20261007-123517-dl-t3` and
+`-123726-dl-t4`, AC: 8.84 / 7.81 / 8.91 and 8.84 / 7.85 / 8.94); the irradiance volume computed over the whole 80 x 48 x 80
+blocks every frame **+0.27 ms** (`20261007-132040-dl-t5`, battery: 8.94 / 8.69 / 8.97); computed only over the box the
+lights reach (current) **~0.15 ms**.
 
 CPU (the render thread, `-Dmcopt.shade.dynLights.log=true`, one line every 2 s, r1): occupancy + gather + packing
 **0.01-0.06 ms per frame** with 2-11 lights (median ~0.03 ms); 0.3 ms (the occupancy budget, 300 us) in the frames where

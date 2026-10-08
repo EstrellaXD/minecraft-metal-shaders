@@ -62,6 +62,11 @@ public class ShadeMslDump {
 		String s3 = MetalShaderRegistry.slotDefines(List.of("DynamicTransforms", "Projection"));
 		Files.writeString(out.resolve("sunrise.vs.metal"), s3 + ShadeMsl.skyStage("sunrise_sunset.vs.metal"));
 		Files.writeString(out.resolve("stars.vs.metal"), s3 + ShadeMsl.skyStage("stars.vs.metal"));
+		// FT1: Distant Horizons' LOD terrain stages (ShadeDh), with DH's uniform order (shared, unique, lightmap, frag, atlas)
+		String sd = MetalShaderRegistry.slotDefines(List.of("vertSharedUniformBlock", "vertUniqueUniformBlock", "uLightMap", "fragUniformBlock", "uBlockAtlas"));
+		Files.writeString(out.resolve("dh_terrain.vs.metal"), sd + ShadeMsl.prelude() + ShadeMsl.resource("dh_terrain.vs.metal"));
+		Files.writeString(out.resolve("dh_terrain.fs.metal"), sd + ShadeMsl.prelude() + ShadeMsl.resource("dh_terrain.fs.metal"));
+		Files.writeString(out.resolve("dh_terrain_jitter.vs.metal"), sd + ShadeMsl.prelude() + "#define SHADE_DH_JITTER\n#define SHADE_DH_SKY_HIGH\n" + ShadeMsl.resource("dh_terrain.vs.metal"));
 		Files.writeString(out.resolve("sky_lut.metal"), ShadeMsl.lut());
 		// M3 End sky box (mcopt.shade.dims): two uniform orders, LDR and HDR
 		List<List<String>> endOrders = List.of(List.of("Projection", "DynamicTransforms", "Sampler0"), List.of("Sampler0", "DynamicTransforms", "Projection"));

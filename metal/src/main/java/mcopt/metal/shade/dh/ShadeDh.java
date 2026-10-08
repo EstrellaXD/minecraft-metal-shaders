@@ -15,65 +15,98 @@
  */
 package mcopt.metal.shade.dh;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.List;
+import mcopt.metal.MetalShaderRegistry;
+import mcopt.metal.shade.ShadeMsl;
 
 /**
- * FT1: Distant Horizons' own screen effects while the shade frame runs. DH draws its LODs into our HDR frame through
- * ShadePost's bridge; on top of that it runs its own SSAO (two full-screen passes), its own TAA (a full-screen pass plus
- * a history copy) and its "vanilla fade" (a full-screen pass that samples main colour): ~10 ms on the M4 at Retina with DH
- * at 40 chunks (run ft1-0-before: ~50 fps against ~97 without DH). Our frame already has its own AA (TAAU) and lighting,
- * so while it runs those are switched off through DH's config API overrides (values DH holds in memory only: its
- * DistantHorizons.toml and its settings screen keep the player's choice), and the overrides are cleared when it stops
- * (fallback, shading off), which gives DH its own settings back.
- * <p>
- * Live flags, read every frame (the bench's in-session A/B sets them): {@code mcopt.shade.dh.ssao}, {@code mcopt.shade.dh.aa}
- * = "off" (default) or "dh" (DH's own setting); {@code mcopt.shade.dh.fade} = "NONE" (default), "SINGLE_PASS",
- * "DOUBLE_PASS" or "dh". Reflection on DH's internal config entries (Config.Client.Advanced.Graphics; DH 3.3.3-3.3.4, the
- * versions the Metal path is gated to): no compile-time dependency on DH (LGPL, shipped unmodified). Any failure turns
- * this off for the session and leaves DH's settings alone.
+ * FT1: Distant Horizons under the shade frame.
+ * <ul>
+ * <li><b>Its LODs lit by the shade model</b> ({@link #LIGHT}, mcopt.shade.dh.light, default true): our own stages for its
+ * two terrain pipelines (dh_terrain.{vs,fs}.metal) through MetalShaderRegistry, so the LODs get the sun / moon, sky and
+ * torch light, cloud shadows and aerial perspective of the near terrain instead of DH's lightmap look and grey fog.</li>
+ * <li><b>Its own screen effects off</b> while the shade frame runs: SSAO (two full-screen passes), TAA (a full-screen pass
+ * plus a history copy) and the "vanilla fade" (a full-screen pass sampling main colour) cost ~2.5 ms on the M4 at Retina
+ * with DH at 40 chunks (run ft1-1: 54 -> 62 fps); our frame has its own AA (TAAU). With our LOD lighting also DH's fog
+ * (ours replaces it) and its baked face shading (lodShading; ours lights the faces by N.L).</li>
+ * </ul>
+ * The settings go through DH's config API overrides (values DH holds in memory only: its DistantHorizons.toml and its settings
+ * screen keep the player's choice); they are cleared when the shade frame stops (fallback, shading off), which gives DH its
+ * own settings back. Live flags, read every frame (the bench's in-session A/B sets them): {@code mcopt.shade.dh.ssao},
+ * {@code .aa}, {@code .fog}, {@code .shading} = "off" (default) or "dh" (DH's own setting); {@code mcopt.shade.dh.fade} =
+ * "NONE" (default), "SINGLE_PASS", "DOUBLE_PASS" or "dh". Reflection on DH's internal config entries
+ * (Config.Client.Advanced.Graphics; DH 3.3.3-3.3.4, the versions the Metal path is gated to): no compile-time dependency on
+ * DH (LGPL, shipped unmodified). Any failure turns the overrides off for the session and leaves DH's settings alone.
  */
 public final class ShadeDh {
 	public static final boolean LOADED = mcopt.metal.DhCompat.loaded();
+	/** Our stages for DH's LOD terrain (registered by {@link #register}). */
+	public static final boolean LIGHT = LOADED && !"false".equals(System.getProperty("mcopt.shade.dh.light"));
+	public static final List<String> PIPELINES = List.of("distanthorizons:opaque_terrain", "distanthorizons:transparent_terrain");
 	private static final String CFG = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics";
 	private static final String USER = "mcopt-shade";
 
-	/** DH's config entries (ConfigEntry), its setApiValue(Object, String), and the fade-mode enum. */
-	private static Object ssao, aa, fade;
+	/** One overridable DH setting: its ConfigEntry, what was last applied (null = no override). */
+	private static final class Entry {
+		final String cls, field;
+		Object entry, applied;
+
+		Entry(String cls, String field) {
+			this.cls = cls;
+			this.field = field;
+		}
+	}
+
+	private static final Entry SSAO = new Entry(CFG, "enableSsao"), AA = new Entry(CFG, "enableAntiAliasing"),
+		FADE = new Entry(CFG + "$Quality", "vanillaFadeMode"), FOG = new Entry(CFG + "$Fog", "enableDhFog"),
+		SHADING = new Entry(CFG + "$Quality", "lodShading");
+	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING};
 	private static Method setApi;
-	private static Class<?> fadeEnum;
-	private static boolean failed, resolved;
-	/** What was last applied (null = no override). */
-	private static Object appliedSsao, appliedAa, appliedFade;
-	private static boolean logged;
+	private static Class<?> fadeEnum, shadingEnum;
+	private static boolean failed, resolved, logged;
 
 	private ShadeDh() {
+	}
+
+	/** ShadeMsl.register (HDR shading on): our stages for DH's two terrain pipelines. */
+	public static void register() {
+		if (!LIGHT) return;
+		String defines = (Boolean.getBoolean("mcopt.shade.dh.jitter") ? "#define SHADE_DH_JITTER\n" : "")
+			+ (Boolean.getBoolean("mcopt.shade.dh.skyHigh") ? "#define SHADE_DH_SKY_HIGH\n" : "");
+		String vertex = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.vs.metal");
+		String fragment = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.fs.metal");
+		for (String name : PIPELINES) {
+			MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(generated -> vertex, generated -> fragment,
+				List.of("vertSharedUniformBlock", "vertUniqueUniformBlock", "fragUniformBlock", "uBlockAtlas")));
+		}
+		System.out.println("[mcopt] shade dh: Distant Horizons' LOD terrain lit by the shade model (mcopt.shade.dh.light=false: DH's own look)");
 	}
 
 	/** Once per level frame. shading: the HDR shade frame draws this frame (not fallback). */
 	public static void frame(boolean shading) {
 		if (!LOADED || failed) return;
 		if (!resolved && !resolve()) return;
-		Object wantSsao = shading ? off("mcopt.shade.dh.ssao") : null;
-		Object wantAa = shading ? off("mcopt.shade.dh.aa") : null;
-		Object wantFade = shading ? fadeMode() : null;
 		try {
-			if (wantSsao != appliedSsao) setApi.invoke(ssao, appliedSsao = wantSsao, USER);
-			if (wantAa != appliedAa) setApi.invoke(aa, appliedAa = wantAa, USER);
-			if (wantFade != appliedFade) setApi.invoke(fade, appliedFade = wantFade, USER);
+			apply(SSAO, shading ? off("mcopt.shade.dh.ssao") : null);
+			apply(AA, shading ? off("mcopt.shade.dh.aa") : null);
+			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "NONE") : null);
+			apply(FOG, shading && LIGHT ? off("mcopt.shade.dh.fog") : null);
+			apply(SHADING, shading && LIGHT && off("mcopt.shade.dh.shading") != null ? named(shadingEnum, "-", "DISABLED") : null);
 		} catch (Throwable t) {
 			fail(t);
 			return;
 		}
 		if (!logged && shading) {
 			logged = true;
-			System.out.println("[mcopt] shade dh: Distant Horizons' SSAO " + state(appliedSsao) + ", anti-aliasing " + state(appliedAa) + ", vanilla fade "
-				+ (appliedFade == null ? "DH's setting" : appliedFade) + " while the shade frame runs");
+			StringBuilder b = new StringBuilder("[mcopt] shade dh: while the shade frame runs, Distant Horizons'");
+			for (Entry e : ALL) b.append(' ').append(e.field).append('=').append(e.applied == null ? "(DH's)" : e.applied);
+			System.out.println(b);
 		}
 	}
 
-	private static String state(Object v) {
-		return v == null ? "DH's setting" : "off";
+	private static void apply(Entry e, Object want) throws ReflectiveOperationException {
+		if (want != e.applied) setApi.invoke(e.entry, e.applied = want, USER);
 	}
 
 	/** Boolean.FALSE (override off) unless the flag says "dh". */
@@ -82,28 +115,26 @@ public final class ShadeDh {
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	private static Object fadeMode() {
-		String v = System.getProperty("mcopt.shade.dh.fade", "NONE");
+	private static Object named(Class<?> type, String key, String def) {
+		String v = System.getProperty(key, def);
 		if ("dh".equalsIgnoreCase(v)) return null;
 		try {
-			return Enum.valueOf((Class<? extends Enum>) fadeEnum, v.toUpperCase(java.util.Locale.ROOT));
+			return Enum.valueOf((Class<? extends Enum>) type, v.toUpperCase(java.util.Locale.ROOT));
 		} catch (IllegalArgumentException e) {
-			return Enum.valueOf((Class<? extends Enum>) fadeEnum, "NONE");
+			return Enum.valueOf((Class<? extends Enum>) type, def);
 		}
 	}
 
 	private static boolean resolve() {
 		try {
 			ClassLoader cl = ShadeDh.class.getClassLoader();
-			Class<?> graphics = Class.forName(CFG, true, cl);
-			Class<?> quality = Class.forName(CFG + "$Quality", true, cl);
-			Field fs = graphics.getField("enableSsao"), fa = graphics.getField("enableAntiAliasing"), ff = quality.getField("vanillaFadeMode");
-			ssao = fs.get(null);
-			aa = fa.get(null);
-			fade = ff.get(null);
-			if (ssao == null || aa == null || fade == null) return false; // DH's config not built yet: next frame
-			setApi = ssao.getClass().getMethod("setApiValue", Object.class, String.class);
+			for (Entry e : ALL) {
+				e.entry = Class.forName(e.cls, true, cl).getField(e.field).get(null);
+				if (e.entry == null) return false; // DH's config not built yet: next frame
+			}
+			setApi = SSAO.entry.getClass().getMethod("setApiValue", Object.class, String.class);
 			fadeEnum = Class.forName("com.seibel.distanthorizons.api.enums.config.EDhApiMcRenderingFadeMode", true, cl);
+			shadingEnum = Class.forName("com.seibel.distanthorizons.api.enums.config.EDhApiLodShading", true, cl);
 			resolved = true;
 			return true;
 		} catch (Throwable t) {
@@ -114,6 +145,6 @@ public final class ShadeDh {
 
 	private static void fail(Throwable t) {
 		failed = true;
-		System.out.println("[mcopt] shade dh: could not switch Distant Horizons' SSAO / anti-aliasing / fade (" + t + "); its own settings stay");
+		System.out.println("[mcopt] shade dh: could not switch Distant Horizons' settings (" + t + "); its own settings stay");
 	}
 }

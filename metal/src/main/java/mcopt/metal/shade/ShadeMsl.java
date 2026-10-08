@@ -351,6 +351,7 @@ public final class ShadeMsl {
 				List.of("DynamicTransforms", "Projection", "Sampler0")));
 		}
 		if (ShadeConfig.HDR) {
+			mcopt.metal.shade.dh.ShadeDh.register(); // FT1: Distant Horizons' LOD terrain lit by the shade model
 			MetalShaderRegistry.setFormatAdapter(FORMAT_ADAPTER);
 			MetalShaderRegistry.setPrewarm(ShadeMsl::prewarm);
 		}

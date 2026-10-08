@@ -49,8 +49,12 @@ public final class ShadeDims {
 	static final float E_REF = 0.86f;
 	/** The End's exposure relative to the palettes' reference: -0.4 EV, the island read pale lilac-white at E_REF (2026-10-07 shots). */
 	static final float END_EXPOSURE = 0.76f;
-	/** sunPath.z bit (ShadeFrame dev bits field): Nether/End terrain is lit per pixel (shade_dims.metal SHADE_FLAG_DIMS_LIT). */
-	public static final int FLAG_DIMS_LIT = 4096;
+	/**
+	 * sunPath.z bit (ShadeFrame dev bits field): Nether/End terrain is lit per pixel (shade_dims.metal SHADE_FLAG_DIMS_LIT).
+	 * 1 << 23: the top bit a float holds exactly together with every lower one. Convention (M3 merge): mcopt.shade.dev toggles
+	 * count up from 1 (M2 1-16, weather 1024-65536), per-frame state flags count down from 1 << 23.
+	 */
+	public static final int FLAG_DIMS_LIT = 1 << 23;
 	/** ShadeLook.tier.y feature bits of this module (high bits, clear of the M2/M3 feature bits counted up from 128). */
 	public static final int FEATURE_DIMS = 1 << 20, FEATURE_MEDIA = 1 << 21, FEATURE_SHIMMER = 1 << 22;
 
@@ -304,8 +308,9 @@ public final class ShadeDims {
 			L.putFloat(ShadeLook.GRADE1 + 12, 0f);
 			L.putFloat(ShadeLook.BLOOM, L.getFloat(ShadeLook.BLOOM) + (nether ? 0.03f : 0.02f));
 		} else {
+			// flash is not written here: in the overworld it belongs to the weather module (lightning, written by ShadeLook.pack
+			// before this call); its only consumers on this side (shadeLitDimsExtra, shadeEndSky) run with the dims lit
 			put4(L, ShadeLook.DIM_TINT, 0f, 0f, 0f, 0f);
-			put4(L, ShadeLook.FLASH, 0f, 1f, 0f, 0f);
 		}
 	}
 

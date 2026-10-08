@@ -452,7 +452,8 @@ public final class ShadePost {
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
-		// w: Distant Horizons drew into this frame (its LODs are where the depth is empty: the Nether's fog leaves them)
+		// w: a bit field (as an exact small float): 1 = Distant Horizons drew into this frame (its LODs are where the depth is
+		// empty: the Nether's fog leaves them); 2 = M2.2's VL/depth unjitter (vl-stable ORs it in at the merge: 1 | 2)
 		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(bridgeUsed ? 1f : 0f);
 		// x: XDR (M3): on, peak (x SDR white), knee, octaves to the peak
 		boolean xdr = psoFinalXdr != 0 && mcopt.metal.shade.dims.ShadeXdr.highlights();

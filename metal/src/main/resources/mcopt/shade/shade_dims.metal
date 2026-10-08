@@ -18,12 +18,14 @@
 //     6, 7 End nebula hues
 // ShadeLook: dimTint = (fog extinction 1/block, lava sea y, border fog radius in blocks (0 off), 1 Nether / 2 End / 3 End
 // without a sky pass: vanilla skips the sky during the dragon fight, the final pass paints shadeEndSky on empty pixels);
-// flash = (End flash direction, intensity); night.z = aurora strength 0..1.
+// flash = (End flash direction, intensity), written only while the dims are lit (in the overworld the field is the weather
+// module's lightning); night.z = aurora strength 0..1.
 // NOISE. ShadeResources.milkyWay's alpha holds a tileable fbm (baked with the Milky Way, shade_post.metal): shadeDimsNoise.
 #ifndef MCOPT_SHADE_DIMS
 #define MCOPT_SHADE_DIMS
 
-#define SHADE_FLAG_DIMS_LIT 4096          // sunPath.z bit: Nether/End terrain is lit per pixel (mcopt.shade.dims)
+#define SHADE_FLAG_DIMS_LIT (1 << 23)     // sunPath.z bit: Nether/End terrain is lit per pixel (mcopt.shade.dims); state flags count
+                                          // down from 1 << 23, mcopt.shade.dev toggles up from 1 (weather: 1024-65536)
 #define SHADE_FEATURE_DIMS (1 << 20)      // ShadeLook.tier.y: the Nether/End looks
 #define SHADE_FEATURE_MEDIA (1 << 21)     // camera inside lava / powder snow
 #define SHADE_FEATURE_SHIMMER (1 << 22)   // heat shimmer over distant Nether terrain
@@ -139,10 +141,13 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float nb = shadeDimsNoise(mw, q * float2(16.0, 12.0) + float2(w * 1.6, w * 0.9));
 	float band = exp(-abs(e - 0.35) / 0.55);
 	float neb = smoothstep(0.72, 1.0, nb * 0.75 + w * 0.4) * band;
-	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 0.55);
+	// below the horizon the nebula and the stars fade out (a hint in the void, not clouds under the island; 15 % at 25
+	// degrees down): the beams rise from there
+	float below = mix(1.0, 0.15, smoothstep(0.0, 0.45, -e));
+	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 0.55 * below);
 	// stars (the overworld's field, brighter and denser looking: no atmosphere)
 	float sigma = clamp(0.7 * pixelAngle / (1.5707963 / 420.0), 0.25, 0.8);
-	sky += shadeEndStars(dir, sigma) * (0.8 * (1.0 - 0.6 * neb));
+	sky += shadeEndStars(dir, sigma) * (0.8 * (1.0 - 0.6 * neb) * below);
 	// beams: ridged noise around the horizon, rising from below it
 	float flash = L.flash.w;
 	float az = lon;

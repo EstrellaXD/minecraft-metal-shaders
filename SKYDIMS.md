@@ -5,7 +5,24 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
-## Status (2026-10-07 20:07)
+## Status (2026-10-07 22:10) — pre-merge fixes
+
+Fixes from the skeptic check (`work/notes/m3-2026-10-07/prefix-checks.json`, check:skydims), built + validate ALL OK:
+- **Merge collisions (BASE.md section 8) resolved on this side:** (a) the overworld no longer writes `ShadeLook.FLASH`
+  (it belongs to the weather module's lightning there; this module writes it only while the dims are lit); (b)
+  `FLAG_DIMS_LIT` moved from 4096 (weather's `SHADE_DEV_WX_DRY`) to `1 << 23` (convention: `mcopt.shade.dev` toggles count
+  up from 1, per-frame state flags count down from `1 << 23`); (c) `ShadeFinalParams.r.w` is a bit field: 1 = DH drew,
+  2 = M2.2's VL unjitter (vl-stable ORs 2 in at the merge); the final pass tests `(int(P.r.w) & 1)`.
+- Nether heat shimmer keeps the TAAU sharpen (it was dropped for every Nether terrain pixel).
+- End sky: nebula and stars fade below the horizon (15 % at 25 degrees down; the void no longer shows big teal clouds).
+- Master switch `mcopt.shade.skydims` (true): false turns dims, aurora, media and XDR off (= M2.1), for the after-merge
+  "every module flag off" check. Note: only run `sdr-dh-m21` (the M2.1 jar) is a true M2.1 baseline in 6.6.
+- XDR highlights stay on with the chat open (it draws no background); other screens still drop them.
+- Open, for the merge: **Nether particles** read as dark unfogged specks over the lit haze (vanilla lightmap at block
+  light 0): m3 routes particles through `shadeEntityShade`, whose dims-lit branch must cover them (BASE.md 8.6 row);
+  recheck nether_basalt / nether_warped after the merge. Aurora price unchanged (below).
+
+## (previous) Status (2026-10-07 20:07)
 
 **Module finished** (pending the merge into m3, which is the next workflow). Done today after the pause: WIP terrain
 refactor completed; XDR: SDR-only-screen fallback (+ `mcopt.shade.xdrTest` dev switch), knee 3 -> 2 so torches/lava

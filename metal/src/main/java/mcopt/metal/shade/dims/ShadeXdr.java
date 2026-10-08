@@ -185,9 +185,11 @@ public final class ShadeXdr {
 			pass2.invokeExact(enc, pipeline, t0, t1, t, n, params == null ? 0L : MemoryUtil.memAddress(params), params == null ? 0 : params.remaining(),
 				MemoryUtil.memAddress(stack.UTF8(label)));
 			// with a screen open (pause menu, inventory...) the world behind it is blurred / dimmed by passes that keep main's alpha:
-			// no highlights then (they would show unblurred through the menu)
+			// no highlights then (they would show unblurred through the menu). The chat screen draws no background (the world
+			// stays as it is, its text box is GUI coverage in main's alpha): highlights stay on, no brightness jump on opening it.
 			var mc = net.minecraft.client.Minecraft.getInstance();
-			frame.invokeExact(enc, mc != null && mc.gui.screen() != null ? 0L : t1);
+			var screen = mc != null ? mc.gui.screen() : null;
+			frame.invokeExact(enc, screen != null && !(screen instanceof net.minecraft.client.gui.screens.ChatScreen) ? 0L : t1);
 		} catch (RuntimeException | Error e) {
 			throw e;
 		} catch (Throwable th) {

@@ -23,6 +23,8 @@ import mcopt.metal.shade.ShadeConfig;
  * M3 "sky, dimensions and XDR" flags (read once at startup; config/mcopt.properties becomes system properties first). Every
  * one needs mcopt.shade=true; the dimension looks and camera media also need the HDR frame (mcopt.shade.hdr, default on).
  * <ul>
+ * <li>{@code mcopt.shade.skydims} (true): the whole module; false turns every flag below off (= M2.1: no Nether/End looks,
+ * aurora, camera media or XDR output). For the after-merge check "every module flag off = M2.1".</li>
  * <li>{@code mcopt.shade.dims} (true): the Nether and End looks (bible E24, E25): terrain lit per pixel with a dimension
  * ambient (Nether biome palettes, lava up-light; the End's violet key light with shadows), our own fog from depth in the final
  * pass (Nether: layered glowing haze; End: a thin violet haze), the End sky (gradient, nebula, stars, beams, flash).</li>
@@ -40,18 +42,20 @@ import mcopt.metal.shade.ShadeConfig;
  * </ul>
  */
 public final class DimsConfig {
-	public static final boolean DIMS = Shade.ENABLED && ShadeConfig.HDR && flag("mcopt.shade.dims", true);
+	/** mcopt.shade.skydims: the module's master switch. */
+	public static final boolean MODULE = Shade.ENABLED && flag("mcopt.shade.skydims", true);
+	public static final boolean DIMS = MODULE && ShadeConfig.HDR && flag("mcopt.shade.dims", true);
 	/** 0 off, 1 auto (cold biomes, some nights), 2 always. */
-	public static final int AURORA = Shade.ENABLED ? switch (System.getProperty("mcopt.shade.aurora", "auto").trim().toLowerCase(Locale.ROOT)) {
+	public static final int AURORA = MODULE ? switch (System.getProperty("mcopt.shade.aurora", "auto").trim().toLowerCase(Locale.ROOT)) {
 		case "off", "false" -> 0;
 		case "always", "on", "true" -> 2;
 		default -> 1;
 	} : 0;
-	public static final boolean MEDIA = Shade.ENABLED && ShadeConfig.HDR && flag("mcopt.shade.media", true);
+	public static final boolean MEDIA = MODULE && ShadeConfig.HDR && flag("mcopt.shade.media", true);
 	public static final boolean END_SHADOWS = DIMS && flag("mcopt.shade.endShadows", true);
 	public static final boolean NETHER_SHIMMER = DIMS && flag("mcopt.shade.netherShimmer", Shade.TIER >= 2);
 	/** 0 off, 1 auto, 2 on. */
-	public static final int XDR = Shade.ENABLED && ShadeConfig.HDR ? switch (System.getProperty("mcopt.shade.xdr", "auto").trim().toLowerCase(Locale.ROOT)) {
+	public static final int XDR = MODULE && ShadeConfig.HDR ? switch (System.getProperty("mcopt.shade.xdr", "auto").trim().toLowerCase(Locale.ROOT)) {
 		case "off", "false" -> 0;
 		case "on", "true" -> 2;
 		default -> 1;
@@ -76,7 +80,7 @@ public final class DimsConfig {
 	}
 
 	public static String describe() {
-		return "dims " + DIMS + ", aurora " + new String[] {"off", "auto", "always"}[AURORA] + ", media " + MEDIA + ", end shadows " + END_SHADOWS
+		return (MODULE ? "" : "module off (mcopt.shade.skydims=false): ") + "dims " + DIMS + ", aurora " + new String[] {"off", "auto", "always"}[AURORA] + ", media " + MEDIA + ", end shadows " + END_SHADOWS
 			+ ", nether shimmer " + NETHER_SHIMMER + ", xdr " + new String[] {"off", "auto", "on"}[XDR] + " (peak cap " + XDR_PEAK + ")";
 	}
 }

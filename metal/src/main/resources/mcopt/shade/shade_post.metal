@@ -187,16 +187,15 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	uint2 dpx = min(uint2(in.uv * dsize), uint2(dsize) - 1u);
 	float d = depth.read(dpx);
 	bool dims = DIMS && (L.tier.y & SHADE_FEATURE_DIMS) != 0 && L.dimTint.x > 0.0 && f.flags.x != SHADE_DIM_OVERWORLD;
-	half3 c0;
+	uint2 sp = px;
 	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && L.dimTint.w < 1.5 && d > 0.0) {
-		// M3 heat shimmer over distant Nether terrain (shade_dims.metal): this pixel shows a slightly displaced one
+		// M3 heat shimmer over distant Nether terrain (shade_dims.metal): this pixel shows a slightly displaced one (still
+		// sharpened below, like every other pixel: the shimmer must not soften the Nether next to the overworld)
 		float dist = length(shadeWorldFromDepth(in.uv, d, f));
-		int2 q = clamp(int2(px) + int2(round(shadeShimmer(in.uv, dist, f, sr.milkyWay))), int2(0), int2(scene.get_width(), scene.get_height()) - 1);
-		c0 = scene.read(uint2(q)).rgb;
-	} else {
-		c0 = scene.read(px).rgb;
-		if (P.r.z > 0.0) c0 = shadeSharpen(scene, px, c0, half(P.r.z));
+		sp = uint2(clamp(int2(px) + int2(round(shadeShimmer(in.uv, dist, f, sr.milkyWay))), int2(0), int2(scene.get_width(), scene.get_height()) - 1));
 	}
+	half3 c0 = scene.read(sp).rgb;
+	if (P.r.z > 0.0) c0 = shadeSharpen(scene, sp, c0, half(P.r.z));
 	float3 c = float3(c0);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
@@ -209,13 +208,15 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	}
 	// M3: the End's sky where vanilla drew none (the dragon fight), then the Nether's layered glowing haze / the End's violet
 	// haze (shade_dims.metal), in open air
-	if (dims && d <= 0.0 && L.dimTint.w > 2.5 && f.flags.y == 0 && P.r.w < 0.5) {
+	// r.w is a bit field: 1 = Distant Horizons drew into this frame (its LODs sit where depth is empty), 2 = M2.2's VL unjitter
+	bool dhDrew = (int(P.r.w) & 1) != 0;
+	if (dims && d <= 0.0 && L.dimTint.w > 2.5 && f.flags.y == 0 && !dhDrew) {
 		float4 w4 = f.invViewProj * float4(in.uv * 2.0 - 1.0, 0.5, 1.0);
 		float pixelAngle = 2.0 * atan(1.0 / max(abs(f.proj[1][1]), 1e-3)) / float(scene.get_height());
 		c = shadeEndSky(normalize(w4.xyz / w4.w), f, L, sr.milkyWay, pixelAngle) * ex;
 	}
 	if (dims && f.flags.y == 0) {
-		c = shadeDimsFog(c, wp, d > 0.0, f, L, ex, P.r.w > 0.5, sr.milkyWay);
+		c = shadeDimsFog(c, wp, d > 0.0, f, L, ex, dhDrew, sr.milkyWay);
 		T = float3(d > 0.0 ? exp(-L.dimTint.x * length(wp)) : 0.0);
 	}
 	// M3: the camera inside lava or powder snow (E26)

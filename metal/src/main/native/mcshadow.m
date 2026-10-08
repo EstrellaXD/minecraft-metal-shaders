@@ -49,7 +49,23 @@ typedef struct {
 	id<MTLRenderPipelineState> tint;
 	id<MTLTexture> tintMap;
 	bool tintDirty;  // the map holds casters (it is cleared once when they're gone)
+	id<MTLTexture> tintLite;  // M3.3 pricing (mcopt.shade.tintDev 8): a smaller tint map, same format; nil until asked for
+	bool tintLiteDirty;
+	// M3.3 (mcopt.shade.shadowFarSpread): a second map of the same shape. The far cascade is drawn a quarter per frame into
+	// back's far slice; once complete, mc_shadow_swap makes it the map receivers bind (map <-> back). nil until first used.
+	id<MTLTexture> back;
+	// M3.3 (mcopt.shade.shadowTimes): GPU timers per shadow pass kind (SHADOW_TIME_KINDS), a ring of SHADOW_TIME_RING frames
+	id<MTLCounterSampleBuffer> times;
+	int timesTried, timeFrame, timeSlot;
+	MTLTimestamp cpu0, gpu0;
+	double timeSum[4];
+	int timeN[4], timeCount;
+	uint64_t timeLast[4];
+	int timeRan[4];  // per ring slot: bit k = pass kind k was encoded with that slot's samples
 } Shadow;
+
+#define SHADOW_TIME_RING 4
+#define SHADOW_TIME_KINDS 4  // 0 near cascade, 1 far cascade (whole), 2 far cascade (one spread part), 3 tint pass
 
 static void copyErr(NSError *e, const char *fallback, char *err, int errCap) {
 	strlcpy(err, e ? e.description.UTF8String : fallback, errCap);
@@ -167,6 +183,9 @@ void mc_shadow_free(Shadow *s) {
 	[s->quadIndices release];
 	[s->tint release];
 	[s->tintMap release];
+	[s->back release];
+	[s->times release];
+	[s->tintLite release];
 	free(s);
 }
 
@@ -179,15 +198,34 @@ id<MTLSamplerState> mc_shadow_compare_sampler(Shadow *s) { return s->compare; }
  * stay alive until the command buffer completes (Java marks them used by this submit). Returns the profiling encoder index
  * this pass took (-1 when not profiling), so a -Dmcopt.metal.trace run can attribute its GPU time.
  */
+static void timerAttach(Shadow *s, MTLRenderPassDescriptor *rp, int kind);
+
+int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
+	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp,
+	int target, int load, int timerKind);
+
 int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp) {
+	return mc_shadow_render_ex(enc, s, layer, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, slopeScale, clamp,
+		0, 0, -1);
+}
+
+/*
+ * mc_shadow_render with M3.3's choices: target 0 = the map receivers bind, 1 = the back map (mc_shadow_spread_init; the far
+ * cascade drawn in parts); load 1 keeps what the slice holds (the parts drawn before) instead of clearing it; timerKind
+ * >= 0 times the pass (mc_shadow_times_frame), -1 not.
+ */
+int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
+	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp,
+	int target, int load, int timerKind) {
 	id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
 	int profiled = -1;
+	id<MTLTexture> map = target == 1 && s->back ? s->back : s->map;
 	@autoreleasepool {
 		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-		rp.depthAttachment.texture = s->map;
+		rp.depthAttachment.texture = map;
 		rp.depthAttachment.slice = layer;
-		rp.depthAttachment.loadAction = MTLLoadActionClear;
+		rp.depthAttachment.loadAction = load ? MTLLoadActionLoad : MTLLoadActionClear;
 		rp.depthAttachment.clearDepth = 0.0;  // reversed Z: nothing casts
 		rp.depthAttachment.storeAction = MTLStoreActionStore;
 		rp.renderTargetWidth = s->resolution;
@@ -201,9 +239,11 @@ int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int ca
 			sb.endOfFragmentSampleIndex = enc->sampleCount + 3;
 			profiled = enc->sampleCount / 4;
 			enc->sampleCount += 4;
+		} else if (timerKind >= 0) {
+			timerAttach(s, rp, timerKind);
 		}
 		id<MTLRenderCommandEncoder> r = [cmd renderCommandEncoderWithDescriptor:rp];
-		r.label = layer == 0 ? @"mcopt shadow cascade 0" : @"mcopt shadow cascade 1";
+		r.label = layer == 0 ? @"mcopt shadow cascade 0" : target == 1 ? @"mcopt shadow cascade 1 (back, part)" : @"mcopt shadow cascade 1";
 		[r setViewport:(MTLViewport) {0, 0, s->resolution, s->resolution, 0, 1}];
 		[r setDepthStencilState:s->depthWrite];
 		[r setCullMode:MTLCullModeNone];  // only light-facing ranges are listed; unassigned quads (plants) are two-sided
@@ -261,6 +301,129 @@ int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int ca
 		[r endEncoding];
 	}
 	return profiled;
+}
+
+// ---- M3.3 far cascade spread (mcopt.shade.shadowFarSpread) ----------------------------------------------------------------
+// The back map (same shape as the map), made on first use: 0 = ready, 1 = failed (the far cascade then keeps M3.2's way).
+int mc_shadow_spread_init(Shadow *s) {
+	if (!s) return 1;
+	if (s->back) return 0;
+	@autoreleasepool {
+		MTLTextureDescriptor *td = [[MTLTextureDescriptor new] autorelease];
+		td.textureType = MTLTextureType2DArray;
+		td.pixelFormat = s->format;
+		td.width = s->resolution;
+		td.height = s->resolution;
+		td.arrayLength = s->layers;
+		td.storageMode = MTLStorageModePrivate;
+		td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+		s->back = [s->device newTextureWithDescriptor:td];
+		s->back.label = @"mcopt shadow map (2)";
+	}
+	return s->back ? 0 : 1;
+}
+
+// The back map becomes the map receivers bind and the other way round (call before this frame's cascades are encoded;
+// mc_shadow_texture returns the new one). Tracked textures on one queue: the old map's readers in frames still in flight
+// finish before anything writes it again.
+void mc_shadow_swap(Shadow *s) {
+	if (!s || !s->back) return;
+	id<MTLTexture> t = s->map;
+	s->map = s->back;
+	s->back = t;
+}
+
+// ---- M3.3 GPU timers (mcopt.shade.shadowTimes): vertex start to fragment end of every shadow pass ---------------------
+static void timesInit(Shadow *s) {
+	s->timesTried = 1;
+	if (![s->device supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) return;
+	@autoreleasepool {
+		for (id<MTLCounterSet> set in s->device.counterSets) {
+			if (![set.name isEqualToString:MTLCommonCounterSetTimestamp]) continue;
+			MTLCounterSampleBufferDescriptor *d = [[MTLCounterSampleBufferDescriptor new] autorelease];
+			d.counterSet = set;
+			d.storageMode = MTLStorageModeShared;
+			d.sampleCount = SHADOW_TIME_RING * SHADOW_TIME_KINDS * 4;
+			s->times = [s->device newCounterSampleBufferWithDescriptor:d error:nil];
+			[s->device sampleTimestamps:&s->cpu0 gpuTimestamp:&s->gpu0];
+			break;
+		}
+	}
+}
+
+static void timesCollect(Shadow *s, int r) {
+	MTLTimestamp cpu1, gpu1;
+	[s->device sampleTimestamps:&cpu1 gpuTimestamp:&gpu1];
+	if (gpu1 <= s->gpu0 || cpu1 <= s->cpu0) return;
+	double nsPerTick = (double) (cpu1 - s->cpu0) / (double) (gpu1 - s->gpu0);
+	@autoreleasepool {
+		const int n = SHADOW_TIME_KINDS * 4;
+		NSData *data = [s->times resolveCounterRange:NSMakeRange((NSUInteger) (n * r), n)];
+		if (data.length < n * sizeof(MTLCounterResultTimestamp)) return;
+		const MTLCounterResultTimestamp *ts = data.bytes;
+		uint64_t first = 0;
+		for (int i = 0; i < n; i++) if (ts[i].timestamp != MTLCounterErrorValue && ts[i].timestamp != 0) { first = ts[i].timestamp; break; }
+		if (first == 0 || first == s->timeLast[r]) return;
+		s->timeLast[r] = first;
+		for (int k = 0; k < SHADOW_TIME_KINDS; k++) {
+			if (!(s->timeRan[r] & (1 << k))) continue;
+			// vertex start, vertex end, fragment start, fragment end: the pass spans the earliest start to the latest end
+			uint64_t a = UINT64_MAX, b = 0;
+			for (int j = 0; j < 4; j++) {
+				uint64_t t = ts[4 * k + j].timestamp;
+				if (t == MTLCounterErrorValue || t == 0) continue;
+				if (j == 0 || j == 2) a = t < a ? t : a;
+				else b = t > b ? t : b;
+			}
+			if (a != UINT64_MAX && b > a) {
+				s->timeSum[k] += (double) (b - a) * nsPerTick / 1e6;
+				s->timeN[k]++;
+			}
+		}
+		s->timeCount++;
+	}
+}
+
+// Start of a timed frame (frame: a counter that advances once per frame): picks the ring slot this frame's passes sample
+// into, after reading what that slot held SHADOW_TIME_RING frames ago. Returns 0, or 1 when the GPU can't time passes.
+int mc_shadow_times_frame(Shadow *s, long long frame) {
+	if (!s) return 1;
+	if (!s->timesTried) timesInit(s);
+	if (!s->times) return 1;
+	int r = (int) (frame % SHADOW_TIME_RING);
+	if (s->timeFrame >= SHADOW_TIME_RING && s->timeRan[r]) timesCollect(s, r);
+	s->timeRan[r] = 0;
+	s->timeSlot = r;
+	s->timeFrame++;
+	return 0;
+}
+
+static void timerAttach(Shadow *s, MTLRenderPassDescriptor *rp, int kind) {
+	if (!s->times || kind < 0 || kind >= SHADOW_TIME_KINDS) return;
+	int base = (s->timeSlot * SHADOW_TIME_KINDS + kind) * 4;
+	MTLRenderPassSampleBufferAttachmentDescriptor *sb = rp.sampleBufferAttachments[0];
+	sb.sampleBuffer = s->times;
+	sb.startOfVertexSampleIndex = (NSUInteger) base;
+	sb.endOfVertexSampleIndex = (NSUInteger) base + 1;
+	sb.startOfFragmentSampleIndex = (NSUInteger) base + 2;
+	sb.endOfFragmentSampleIndex = (NSUInteger) base + 3;
+	s->timeRan[s->timeSlot] |= 1 << kind;
+}
+
+// Average GPU ms per run of each pass kind since the last call (out[0..3]: near, far whole, far part, tint), how many runs
+// (out[4..7]) and how many frames were read back (out[8]). Vertex start to fragment end: work the GPU overlaps with a pass
+// counts too, so these are upper bounds.
+void mc_shadow_times(Shadow *s, float *out) {
+	for (int k = 0; k < SHADOW_TIME_KINDS; k++) {
+		out[k] = s && s->timeN[k] > 0 ? (float) (s->timeSum[k] / s->timeN[k]) : 0.0f;
+		out[SHADOW_TIME_KINDS + k] = s ? (float) s->timeN[k] : 0.0f;
+		if (s) {
+			s->timeSum[k] = 0;
+			s->timeN[k] = 0;
+		}
+	}
+	out[2 * SHADOW_TIME_KINDS] = s ? (float) s->timeCount : 0.0f;
+	if (s) s->timeCount = 0;
 }
 
 // ---- M3 entity casters ----------------------------------------------------------------------------------------------------
@@ -472,6 +635,27 @@ int mc_shadow_tint_init(Shadow *s, int resolution, char *err, int errCap) {
 
 id<MTLTexture> mc_shadow_tint_texture(Shadow *s) { return s->tintMap; }
 
+// M3.3: a second, smaller tint map (resolution^2; the pipeline of mc_shadow_tint_init), for mc_shadow_tint_render_ex's lite.
+// Returns it, or nil (no tint pipeline yet, or no memory).
+id<MTLTexture> mc_shadow_tint_lite_init(Shadow *s, int resolution) {
+	if (!s || !s->tint) return nil;
+	if (s->tintLite && (int) s->tintLite.width == resolution) return s->tintLite;
+	@autoreleasepool {
+		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:resolution height:resolution mipmapped:NO];
+		td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+		td.storageMode = MTLStorageModePrivate;
+		[s->tintLite release];
+		s->tintLite = [s->device newTextureWithDescriptor:td];
+		s->tintLite.label = @"mcopt shadow tint (lite)";
+		s->tintLiteDirty = true;
+	}
+	return s->tintLite;
+}
+
+int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
+	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes,
+	int lite, int timerKind);
+
 /*
  * The tint pass for the near cascade: clears the map to (1, 1, 1, 0) (no tint, no caster) and draws the translucent lists
  * (records as mc_shadow_render's; every record is drawn with the tint pipeline). params: the MSL ShadowTintParams (48 bytes:
@@ -479,18 +663,28 @@ id<MTLTexture> mc_shadow_tint_texture(Shadow *s) { return s->tintMap; }
  */
 int mc_shadow_tint_render(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes) {
+	return mc_shadow_tint_render_ex(enc, s, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params, paramBytes, 0, -1);
+}
+
+// mc_shadow_tint_render into the lite map (lite 1, after mc_shadow_tint_lite_init) or the normal one, timed as timerKind (-1: no).
+int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
+	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes,
+	int lite, int timerKind) {
 	if (!s->tint || !s->tintMap) return 0;
-	if (drawCount == 0 && !s->tintDirty) return 0;
+	id<MTLTexture> map = lite && s->tintLite ? s->tintLite : s->tintMap;
+	bool *dirty = map == s->tintLite ? &s->tintLiteDirty : &s->tintDirty;
+	if (drawCount == 0 && !*dirty) return 0;
 	id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
 	@autoreleasepool {
 		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-		rp.colorAttachments[0].texture = s->tintMap;
+		rp.colorAttachments[0].texture = map;
 		rp.colorAttachments[0].loadAction = MTLLoadActionClear;
 		rp.colorAttachments[0].clearColor = MTLClearColorMake(1.0, 1.0, 1.0, 0.0);
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+		if (timerKind >= 0) timerAttach(s, rp, timerKind);
 		id<MTLRenderCommandEncoder> r = [cmd renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shadow tint";
-		int res = (int) s->tintMap.width;
+		int res = (int) map.width;
 		[r setViewport:(MTLViewport) {0, 0, res, res, 0, 1}];
 		if (drawCount > 0 && atlas) {
 			[r setRenderPipelineState:s->tint];
@@ -521,6 +715,6 @@ int mc_shadow_tint_render(Enc *enc, Shadow *s, const void *cascade, int cascadeB
 		}
 		[r endEncoding];
 	}
-	s->tintDirty = drawCount > 0;
+	*dirty = drawCount > 0;
 	return 1;
 }

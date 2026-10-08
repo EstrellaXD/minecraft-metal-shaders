@@ -81,11 +81,30 @@ final class ShadowCasters {
 	/** Why the last build found nothing to do, or null. */
 	@Nullable String problem;
 	/**
-	 * M3 coloured shadows: the near cascade's translucent sections listed for the tint pass this build (block coordinates of
-	 * each 16^3 box's minimum corner, x y z triples), for the casters' light-space rectangle (ShadowPass).
+	 * M3 coloured shadows: the near cascade's translucent casters listed for the tint pass this build, as world block boxes
+	 * (x0 y0 z0 x1 y1 z1, max exclusive: a section's 16^3 box, or with tintTight the box of its translucent blocks), for the
+	 * casters' light-space rectangle (ShadowPass).
 	 */
-	int[] tintBoxes = new int[3 * 64];
+	int[] tintBoxes = new int[6 * 64];
 	int tintCount;
+	/**
+	 * M3.3 far cascade spread: when farPart >= 0, cascade 1 lists only the sections of that part (farParts parts: section x, z
+	 * on a lattice, so every part is spread evenly over the map); -1 lists them all (M3.2).
+	 */
+	int farPart = -1, farParts = 1;
+	/**
+	 * M3.3 (mcopt.shade.tintDev 4 / mcopt.shade.tintTight): the tint rectangle from the translucent blocks themselves, not their
+	 * sections' 16^3 boxes (sections holding none are not drawn either). Only while water is left out of the tint pass (the
+	 * blocks are read from the client level; water is a fluid, not a block model).
+	 */
+	boolean tintTight;
+	/** Sections scanned for their translucent blocks: section key -> {signature, frame scanned, x0, y0, z0, x1, y1, z1} (empty: x0 > x1). */
+	private final java.util.HashMap<Long, int[]> tightCache = new java.util.HashMap<>();
+	private final java.util.IdentityHashMap<BlockState, Boolean> translucentStates = new java.util.IdentityHashMap<>();
+	private @Nullable BlockStateModelSet translucentStatesFor;
+	private int buildFrame;
+	/** Sections scanned this build (stats). */
+	int tightScans;
 
 	private static @Nullable Field rsmField() {
 		try {
@@ -106,6 +125,8 @@ final class ShadowCasters {
 		boolean tintNoWater) {
 		this.tint = tint && draw[0];
 		this.tintCount = 0;
+		this.tightScans = 0;
+		this.buildFrame++;
 		this.tintLevel = null;
 		this.tintModels = null;
 		if (this.tint && tintNoWater) {
@@ -183,12 +204,74 @@ final class ShadowCasters {
 		return chunk.getSection(i).maybeHas(this.translucentModel);
 	}
 
-	private void addTintBox(int x, int y, int z) {
-		if (this.tintCount * 3 == this.tintBoxes.length) this.tintBoxes = java.util.Arrays.copyOf(this.tintBoxes, this.tintBoxes.length * 2);
-		this.tintBoxes[this.tintCount * 3] = x;
-		this.tintBoxes[this.tintCount * 3 + 1] = y;
-		this.tintBoxes[this.tintCount * 3 + 2] = z;
+	private void addTintBox(int x0, int y0, int z0, int x1, int y1, int z1) {
+		if (this.tintCount * 6 == this.tintBoxes.length) this.tintBoxes = java.util.Arrays.copyOf(this.tintBoxes, this.tintBoxes.length * 2);
+		int i = this.tintCount * 6;
+		this.tintBoxes[i] = x0;
+		this.tintBoxes[i + 1] = y0;
+		this.tintBoxes[i + 2] = z0;
+		this.tintBoxes[i + 3] = x1;
+		this.tintBoxes[i + 4] = y1;
+		this.tintBoxes[i + 5] = z1;
 		this.tintCount++;
+	}
+
+	private boolean translucentState(BlockState st) {
+		Boolean b = this.translucentStates.get(st);
+		if (b == null) {
+			b = this.translucentModel.test(st);
+			this.translucentStates.put(st, b);
+		}
+		return b;
+	}
+
+	/**
+	 * M3.3 tintTight: the box of section (sx, sy, sz)'s blocks with a translucent model (stained glass and panes, ice, slime,
+	 * honey...), world block coordinates, max exclusive; null when it holds none. Cached per section, scanned again when its
+	 * translucent geometry (signature: base vertex, vertex counts) changes, and at least every 2 s (an edit that keeps the
+	 * counts). Falls back to the whole section when the level or the models are not there.
+	 */
+	private int @Nullable [] tightBox(int sx, int sy, int sz, long ptr) {
+		int[] whole = {sx * 16, sy * 16, sz * 16, sx * 16 + 16, sy * 16 + 16, sz * 16 + 16};
+		ClientLevel level = this.tintLevel;
+		if (level == null || this.tintModels == null) return whole;
+		if (this.translucentStatesFor != this.tintModels) {
+			this.translucentStates.clear();
+			this.tightCache.clear();
+			this.translucentStatesFor = this.tintModels;
+		}
+		long sig = SectionRenderDataUnsafe.getBaseVertex(ptr) * 31L + SectionRenderDataUnsafe.getSliceMask(ptr);
+		for (int i = 0; i < 7; i++) sig = sig * 131L + SectionRenderDataUnsafe.getVertexCount(ptr, i);
+		long key = net.minecraft.core.SectionPos.asLong(sx, sy, sz);
+		int[] c = this.tightCache.get(key);
+		if (c != null && c[0] == (int) (sig ^ (sig >>> 32)) && this.buildFrame - c[1] < 240) return c[2] > c[5] ? null : java.util.Arrays.copyOfRange(c, 2, 8);
+		LevelChunk chunk = level.getChunkSource().getChunk(sx, sz, ChunkStatus.FULL, false);
+		if (chunk == null) return whole;
+		int si = chunk.getSectionIndexFromSectionY(sy);
+		if (si < 0 || si >= chunk.getSectionsCount()) return whole;
+		net.minecraft.world.level.chunk.LevelChunkSection section = chunk.getSection(si);
+		int x0 = 16, y0 = 16, z0 = 16, x1 = -1, y1 = -1, z1 = -1;
+		if (section.maybeHas(this.translucentModel)) {
+			for (int y = 0; y < 16; y++) for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+				if (!this.translucentState(section.getBlockState(x, y, z))) continue;
+				x0 = Math.min(x0, x);
+				y0 = Math.min(y0, y);
+				z0 = Math.min(z0, z);
+				x1 = Math.max(x1, x);
+				y1 = Math.max(y1, y);
+				z1 = Math.max(z1, z);
+			}
+		}
+		this.tightScans++;
+		if (this.tightCache.size() > 4096) this.tightCache.clear();
+		int[] box = {sx * 16 + x0, sy * 16 + y0, sz * 16 + z0, sx * 16 + x1 + 1, sy * 16 + y1 + 1, sz * 16 + z1 + 1};
+		this.tightCache.put(key, new int[] {(int) (sig ^ (sig >>> 32)), this.buildFrame, box[0], box[1], box[2], box[3], box[4], box[5]});
+		return x0 > x1 ? null : box;
+	}
+
+	/** M3.3 far spread: the part (0..parts-1) of section column (sx, sz): a lattice, so every 2 x 2 columns hold one of each of 4. */
+	static int part(int sx, int sz, int parts) {
+		return Math.floorMod(sx + sz * ((parts + 1) / 2), parts);
 	}
 
 	/** One region: its sections that cast into a cascade being drawn, from list (camera mode) or all of them (light mode). */
@@ -198,11 +281,16 @@ final class ShadowCasters {
 		GpuBuffer arena = resources.getGeometryBuffer();
 		if (arena == null || arena.isClosed()) return;
 		double ox = region.getOriginX(), oy = region.getOriginY(), oz = region.getOriginZ();
-		boolean any = false;
+		boolean any = false, near = false;
 		for (int c = 0; c < 2; c++) {
-			if (draw[c] && cascades[c].casts(ox, oy, oz, ox + RenderRegion.REGION_WIDTH * 16, oy + RenderRegion.REGION_HEIGHT * 16, oz + RenderRegion.REGION_LENGTH * 16)) any = true;
+			if (draw[c] && cascades[c].casts(ox, oy, oz, ox + RenderRegion.REGION_WIDTH * 16, oy + RenderRegion.REGION_HEIGHT * 16, oz + RenderRegion.REGION_LENGTH * 16)) {
+				any = true;
+				if (c == 0) near = true;
+			}
 		}
 		if (!any) return;
+		// M3.3 far spread: a region only the far cascade wants this frame skips the other parts' sections before reading them
+		boolean partOnly = !near && this.farPart >= 0;
 		int regionIndex = -1;
 		for (int kind = 0; kind < (this.tint ? 3 : 2); kind++) {
 			TerrainRenderPass pass = kind == KIND_SOLID ? DefaultTerrainRenderPasses.SOLID : kind == KIND_CUTOUT ? DefaultTerrainRenderPasses.CUTOUT
@@ -227,6 +315,7 @@ final class ShadowCasters {
 					if (i == RenderRegion.REGION_SIZE) break;
 					section = i;
 				}
+				if (partOnly && part(region.getChunkX() + (section >> 5 & 7), region.getChunkZ() + (section >> 2 & 7), this.farParts) != this.farPart) continue;
 				long ptr = storage.getDataPointer(section);
 				if ((SectionRenderDataUnsafe.getSliceMask(ptr) & faceMask) == 0) continue;
 				if (!this.sectionCasts(region, section, cascades, draw)) continue;
@@ -235,7 +324,13 @@ final class ShadowCasters {
 					if (!this.sectionIn[0]) continue;
 					int sx = region.getChunkX() + (section >> 5 & 7), sy = region.getChunkY() + (section & 3), sz = region.getChunkZ() + (section >> 2 & 7);
 					if (this.tintLevel != null && !this.maybeTranslucentBlocks(sx, sy, sz)) continue;
-					this.addTintBox(sx * 16, sy * 16, sz * 16);
+					if (this.tintTight && this.tintLevel != null) {
+						int[] b = this.tightBox(sx, sy, sz, ptr);
+						if (b == null) continue; // only water (or stale palette entries): nothing tints here
+						this.addTintBox(b[0], b[1], b[2], b[3], b[4], b[5]);
+					} else {
+						this.addTintBox(sx * 16, sy * 16, sz * 16, sx * 16 + 16, sy * 16 + 16, sz * 16 + 16);
+					}
 				}
 				if (regionIndex < 0) regionIndex = this.addRegion(region, camera);
 				for (int c = 0; c < 2; c++) {
@@ -253,7 +348,8 @@ final class ShadowCasters {
 		double x = (region.getChunkX() + (section >> 5 & 7)) * 16.0, y = (region.getChunkY() + (section & 3)) * 16.0, z = (region.getChunkZ() + (section >> 2 & 7)) * 16.0;
 		boolean any = false;
 		for (int c = 0; c < 2; c++) {
-			this.sectionIn[c] = draw[c] && cascades[c].casts(x, y, z, x + 16, y + 16, z + 16);
+			this.sectionIn[c] = draw[c] && (c == 0 || this.farPart < 0 || part((int) x >> 4, (int) z >> 4, this.farParts) == this.farPart)
+				&& cascades[c].casts(x, y, z, x + 16, y + 16, z + 16);
 			any |= this.sectionIn[c];
 		}
 		return any;

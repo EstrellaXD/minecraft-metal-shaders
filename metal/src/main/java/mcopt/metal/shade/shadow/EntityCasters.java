@@ -116,9 +116,30 @@ public final class EntityCasters {
 	 * is decided here, not in its shader.)
 	 */
 	public static boolean dropBlob(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
-		return shadow != 0 && ShadowPass.enabled() && !ShadowPass.lightIsMoon()
-			&& level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) >= BLOB_SKY;
+		if (!LOG) {
+			return shadow != 0 && ShadowPass.enabled() && !ShadowPass.lightIsMoon()
+				&& level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) >= BLOB_SKY;
+		}
+		// M3.3: the same decision, counted by reason for the log (mcopt.shade.entityShadows.log)
+		if (shadow == 0 || !ShadowPass.enabled()) {
+			blobKeptNoMap++;
+			return false;
+		}
+		if (ShadowPass.lightIsMoon()) {
+			blobKeptMoon++;
+			return false;
+		}
+		int sky = level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos);
+		if (sky < BLOB_SKY) {
+			blobKeptDark++;
+			blobDarkSkyMax = Math.max(blobDarkSkyMax, sky);
+			return false;
+		}
+		blobDropped++;
+		return true;
 	}
+
+	private static int blobDropped, blobKeptNoMap, blobKeptMoon, blobKeptDark, blobDarkSkyMax;
 
 	/** Sky light from which receivers use the shadow map (sky / 15 > 0.3). */
 	private static final int BLOB_SKY = 5;
@@ -141,7 +162,10 @@ public final class EntityCasters {
 		if (LOG && System.nanoTime() - lastLog > 4_000_000_000L) {
 			lastLog = System.nanoTime();
 			System.out.println("[mcopt] shade: entity casters: " + ShadowNative.entityCount(shadow) + " draws cast this frame" + (stale ? " (stale: dropped)" : "")
-				+ ", last frame recorded " + lastRecorded + ", dropped " + lastDropped + ", shift " + String.format("%.3f %.3f %.3f", dx, dy, dz));
+				+ ", last frame recorded " + lastRecorded + ", dropped " + lastDropped + ", shift " + String.format("%.3f %.3f %.3f", dx, dy, dz)
+				+ "; blob pieces since last line: dropped " + blobDropped + ", kept (no map " + blobKeptNoMap + ", moon " + blobKeptMoon + ", sky light < "
+				+ BLOB_SKY + " " + blobKeptDark + (blobKeptDark > 0 ? ", max " + blobDarkSkyMax : "") + ")");
+			blobDropped = blobKeptNoMap = blobKeptMoon = blobKeptDark = blobDarkSkyMax = 0;
 		}
 	}
 

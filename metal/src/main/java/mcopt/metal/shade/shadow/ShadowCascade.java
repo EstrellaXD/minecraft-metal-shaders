@@ -73,6 +73,25 @@ final class ShadowCascade {
 		y[2] = z[0] * x[1] - z[1] * x[0];
 	}
 
+	/** M3.3 far spread: this cascade becomes a copy of other (the back map's fit, once all its parts are drawn). */
+	void copyFrom(ShadowCascade o) {
+		System.arraycopy(o.x, 0, this.x, 0, 3);
+		System.arraycopy(o.y, 0, this.y, 0, 3);
+		System.arraycopy(o.z, 0, this.z, 0, 3);
+		this.u0 = o.u0;
+		this.v0 = o.v0;
+		this.zNear = o.zNear;
+		this.zFar = o.zFar;
+		this.w0 = o.w0;
+		this.radius = o.radius;
+		this.resolution = o.resolution;
+		this.cx = o.cx;
+		this.cy = o.cy;
+		this.cz = o.cz;
+		this.casterReach = o.casterReach;
+		this.valid = o.valid;
+	}
+
 	double texelWorld() {
 		return 2.0 * this.radius / this.resolution;
 	}

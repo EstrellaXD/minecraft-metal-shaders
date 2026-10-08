@@ -164,3 +164,36 @@ resolve ~ history pixels (bandwidth).
   when DH drew this frame (`mc_clouds_over` mode 1).
 - `mcopt.shade=false`: nothing of this runs (MetalRenderPass's skip is behind `ShadeClouds.ON`, a static final false).
   `mcopt.shade.clouds=false`: m2.1 behaviour (vanilla clouds, `clouds.fs.metal`), the prelude helpers return "no cloud".
+
+## 7. Results (2026-10-07, provisional: final numbers are measured after the M3 integration)
+
+Screenshots (full size JPEG) and a video: `work/release/M3-clouds-screenshots/`.
+
+### 7.1 How it looks (in-game shots, `-Dmcbench.clouds=all`, runs c11 18:08 and c12 18:30)
+
+| Scene | Verdict |
+|---|---|
+| noon, toward / away from the sun (`noon_south`, `noon_north`) | Big rounded cumulus with bright sunlit tops and grey bases, smaller ones to the horizon, which they reach and melt into the haze. Mirrored in the lake with their real shapes (the M2 complaint, "flat peach clouds in the water", is gone: `water`, `noon_south`). |
+| looking up (`up`) | Thick cloud edge in front of the sun: bright silver lining along the edge, soft grey body. (The round glow around the sun with a visible rim is the sky's sun halo from M2, not the clouds.) |
+| morning toward the sun (`morning_east`) | Strong forward scattering: the cloud in front of the sun glows white, silver rims; reflections in the water. |
+| sunset toward the sun (`sunset_west`), dusk (`dusk`) | The best scenes: gold-lit sides, darker violet/grey bodies, orange-red undersides at dusk, god rays through the gaps. Close to Photon's look. |
+| sunset away from the sun (`sunset_east`) | Correct but dull: taupe/brown clouds against a blue-grey sky (Photon gets pinker tops here). A variant with more sky fill (`sunsetFill=0.75`, run c15) changed little; left for the art pass. |
+| night (`night`) | Moonlit grey-white cumulus with stars and the Milky Way between them. Very nice. |
+| rain, thunder (`rain`, `thunder`) | The sky closes in: dark, heavy storm bases with lighter tops, a few blue gaps. |
+| above the clouds (`above`, 380 high) | **Fixed this session**: from above, the whole deck showed as flat grey haze (the "fade into the horizon" from the afternoon only makes sense for a camera below the layer). Now: white cauliflower tops in front of the hazy ground. `clouds_above_BEFORE-fix.jpg` vs `clouds_above.jpg`. |
+| inside the cloud layer (`inside`, 250 high) | **Fixed by the WIP finished this session** (finer steps near the camera inside the layer): the checkerboard pattern on the clouds against the sky is gone; a little speckle remains on far clouds seen through near fog. `clouds_inside_BEFORE-fix.jpg` vs `clouds_inside.jpg`. |
+
+### 7.2 While turning (video `nubes_giro_M3_vs_antes.mp4`: 12 s of our clouds turning a full circle, then 12 s of the old ones)
+
+Recorded with the in-game recorder (run c16, 1512x982 60 fps). Before the fix of this session, cloud edges moving across
+the screen showed a **comb / hatching pattern** (period 3 pixels, along the motion). Cause: while the view moves, the
+history is resampled every frame with Catmull-Rom, whose slight gain at mid frequencies compounds over frames and grows
+the checkerboard's residue. Fix: while the view moves, the resolve clamps the history to the range of this frame's march
+samples around it (a looser version of the clamp already used where distances jump), as TAA does; a still view keeps its
+converged detail. See 7.4 for the check.
+
+### 7.3 Cost (in-session A/B: phases `clouds` / `clouds_off` / `clouds2`)
+
+Balanced, DRS off, 3024x1964, noon, the overview point turning a full circle 8 degrees up in 12 s (about half the screen is
+sky); `clouds_off` = `mcopt.shade.clouds.pause`, i.e. m2.1's vanilla clouds (which cost a little themselves). Whole-frame
+GPU ms (`gpu.gpuMsPerFrame`).

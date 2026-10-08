@@ -36,6 +36,20 @@ static NSString *fgSource = @
 	"  depth.write(float4(d), id);\n"
 	"  motion.write(half4(half2(mv), 0.0h, 0.0h), id);\n"
 	"}\n"
+	// mcopt-shade M3.3 (our native shading's TAAU, -Dmcopt.shade=true): the level's depth is the TAAU world target's, whose
+	// live sub-rect (0, 0, src) holds this frame's render (smaller than the output when the render scale is below 1); each
+	// output pixel reads the depth texel under its uv there. The matrices are the unjittered ones.
+	"struct ReprojectSub { float4x4 m; float4x4 prev; float4x4 cur; float4x4 curInv; float2 size; float hand; float pad; float2 src; float2 pad2; };\n"
+	"kernel void fg_motion_depth_sub(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> depth [[texture(1)]],\n"
+	"                                texture2d<half, access::write> motion [[texture(2)]], constant ReprojectSub &r [[buffer(0)]], uint2 id [[thread_position_in_grid]]) {\n"
+	"  if (id.x >= uint(r.size.x) || id.y >= uint(r.size.y)) return;\n"
+	"  float2 uv = (float2(id) + 0.5) / r.size;\n"
+	"  uint2 sid = min(uint2(uv * r.src), uint2(r.src) - 1u);\n"
+	"  float d = src.read(sid).r;\n"
+	"  float2 mv = d >= r.hand ? float2(0.0) : motionOf(r.m * float4(uv * 2.0 - 1.0, d, 1.0), uv);\n"
+	"  depth.write(float4(d), id);\n"
+	"  motion.write(half4(half2(mv), 0.0h, 0.0h), id);\n"
+	"}\n"
 	// Distance-based (native shading): its lit scene copy holds each pixel's distance from the eye in alpha (65000 = sky).
 	"kernel void fg_motion_distance(texture2d<float, access::read> scene [[texture(0)]], texture2d<float, access::write> depth [[texture(1)]],\n"
 	"                               texture2d<half, access::write> motion [[texture(2)]], constant Reproject &r [[buffer(0)]], uint2 id [[thread_position_in_grid]]) {\n"
@@ -102,6 +116,7 @@ static NSString *fgSource = @
 typedef struct {
 	id interpolator;  // id<MTLFXFrameInterpolator>
 	id<MTLComputePipelineState> motionDepth, motionDistance, capture, same;
+	id<MTLComputePipelineState> motionDepthSub;  // mcopt-shade M3.3 (fg_motion_depth_sub; nil if it failed: mcf_motion_sub then does nothing)
 	id<MTLRenderPipelineState> composite, plain, motionView, copy;
 	id<MTLCommandQueue> presentQueue;  // the presents' own queue: they never wait behind the next frame's work
 	id<MTLSamplerState> sampler;
@@ -233,6 +248,10 @@ Fg *mcf_new(Ctx *ctx, char *err, int errCap) {
 		Fg *fg = calloc(1, sizeof(Fg));
 		fg->motionDepth = computePipeline(d, lib, @"fg_motion_depth", &e);
 		fg->motionDistance = computePipeline(d, lib, @"fg_motion_distance", &e);
+		{
+			NSError *e2 = nil; // optional (mcopt-shade): its failure must not change upstream's checks below
+			fg->motionDepthSub = computePipeline(d, lib, @"fg_motion_depth_sub", &e2);
+		}
 		fg->capture = computePipeline(d, lib, @"fg_capture", &e);
 		fg->same = computePipeline(d, lib, @"fg_same", &e);
 		fg->sameCounts = [d newBufferWithLength:16 * 3 * sizeof(uint32_t) options:MTLResourceStorageModeShared];
@@ -323,6 +342,7 @@ void mcf_free(Fg *fg) {
 	freeTextures(fg);
 	[fg->motionDepth release];
 	[fg->motionDistance release];
+	[fg->motionDepthSub release];
 	[fg->capture release];
 	[fg->same release];
 	[fg->sameCounts release];
@@ -356,6 +376,31 @@ void mcf_motion(Enc *enc, Fg *fg, id<MTLTexture> source, int distance, const flo
 	[c setBytes:&r length:sizeof r atIndex:0];
 	[c dispatchThreads:MTLSizeMake(fg->width, fg->height, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
 	[c endEncoding];
+}
+
+// mcopt-shade M3.3: mcf_motion's depth path for a level depth whose live sub-rect is srcW x srcH texels (native shading's
+// TAAU world target). Returns 0 when its pipeline is missing (nothing encoded).
+typedef struct { simd_float4x4 m, prev, cur, curInv; simd_float2 size; float hand, pad; simd_float2 src, pad2; } ReprojectSub;
+
+int mcf_motion_sub(Enc *enc, Fg *fg, id<MTLTexture> source, const float *matrices, float hand, int srcW, int srcH) {
+	if (!fg->motionDepthSub) return 0;
+	ReprojectSub r;
+	memcpy(&r, matrices, sizeof(simd_float4x4) * 4);
+	r.size = simd_make_float2(fg->width, fg->height);
+	r.hand = hand;
+	r.pad = 0;
+	r.src = simd_make_float2(srcW, srcH);
+	r.pad2 = simd_make_float2(0, 0);
+	id<MTLComputeCommandEncoder> c = [mc_frame_cmd(enc) computeCommandEncoder];
+	[c setLabel:@"framegen motion (shade TAAU)"];
+	[c setComputePipelineState:fg->motionDepthSub];
+	[c setTexture:source atIndex:0];
+	[c setTexture:fg->depth atIndex:1];
+	[c setTexture:fg->motion atIndex:2];
+	[c setBytes:&r length:sizeof r atIndex:0];
+	[c dispatchThreads:MTLSizeMake(fg->width, fg->height, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+	[c endEncoding];
+	return 1;
 }
 
 // This frame's level image (the main color before the GUI draws), becoming the newer of the two; hand (or nil): the

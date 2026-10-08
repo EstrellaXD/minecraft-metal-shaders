@@ -3,6 +3,6 @@
 	"package": "mcopt.metal.mixin.shade",
 	"plugin": "mcopt.metal.mixin.shade.ShadeMixinPlugin",
 	"compatibilityLevel": "JAVA_25",
-	"client": ["SodiumFlatFaceShadeMixin", "SodiumSmoothFaceShadeMixin", "ShadeFogMixin", "ShadeGameRendererMixin", "ShadeLevelRendererMixin", "ShadePostMixin", "ShadeTaaGameRendererMixin", "ShadeTaaCameraMixin", "ShadePauseScreenMixin"],
+	"client": ["SodiumFlatFaceShadeMixin", "SodiumSmoothFaceShadeMixin", "ShadeFogMixin", "ShadeGameRendererMixin", "ShadeLevelRendererMixin", "ShadePostMixin", "ShadeTaaGameRendererMixin", "ShadeTaaCameraMixin", "ShadePauseScreenMixin", "ShadeOitMixin"],
 	"injectors": { "defaultRequire": 1 }
 }

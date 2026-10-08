@@ -46,6 +46,27 @@ public final class ShadeRobust {
 		if (failCompile(what)) throw new IllegalStateException("injected shader build failure for " + what + " (-Dmcopt.shade.dev.failCompile)");
 	}
 
+	private static volatile boolean skyFailed;
+
+	/**
+	 * A registry (shaded) pipeline was built (ok) or fell back to the game's own shaders (MetalPipeline.compile). The volumetric
+	 * clouds are composited inside the shaded sky ({@code minecraft:pipeline/sky}): when that one falls back they could not show,
+	 * so they step back (mcopt.shade.clouds.pause, which ShadeClouds reads every frame) and vanilla's clouds come back, until a
+	 * resource reload builds the shaded sky again. {@code mcopt.shade.robustFallback} (default true): false = M3.2 (no clouds then).
+	 */
+	public static void registryBuilt(String name, boolean ok) {
+		if (!name.equals("minecraft:pipeline/sky") || "false".equals(System.getProperty("mcopt.shade.robustFallback"))) return;
+		if (!ok) {
+			skyFailed = true;
+			System.setProperty("mcopt.shade.clouds.pause", "true");
+			System.out.println("[mcopt] shade: the shaded sky did not build: volumetric clouds off, vanilla clouds instead");
+		} else if (skyFailed) {
+			skyFailed = false;
+			System.clearProperty("mcopt.shade.clouds.pause");
+			System.out.println("[mcopt] shade: the shaded sky built again: volumetric clouds back");
+		}
+	}
+
 	/** Bytes the Metal device has allocated now (MTLDevice.currentAllocatedSize), or -1 off the Metal backend. Render thread. */
 	public static long deviceAllocatedBytes() {
 		Object encoder = MetalBridge.encoder(((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend());

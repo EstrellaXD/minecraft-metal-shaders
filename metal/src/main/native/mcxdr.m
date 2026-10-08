@@ -145,16 +145,19 @@ id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device) {
 }
 
 // Verification aid (env MCOPT_XDR_DUMP=<path prefix>): every 8 s one composed frame is written as raw RGBA16Float
-// (<prefix>-<n>-<w>x<h>.rgb9e5 / .rgba16f, linear extended Display P3) for offline inspection (screenshots only see the SDR image).
+// (<prefix>-<n>-<w>x<h>.rgb9e5 / .rgba16f, linear extended Display P3; at most MCOPT_XDR_DUMP_MAX, default 24) for offline
+// inspection (screenshots only see the SDR image).
 static void dumpMaybe(id<MTLCommandBuffer> cb, id<MTLTexture> dst, int valid) {
 	static const char *prefix;
-	static int checked, n;
+	static int checked, n, max;
 	static double last;
 	if (!checked) {
 		checked = 1;
 		prefix = getenv("MCOPT_XDR_DUMP");
+		const char *m = getenv("MCOPT_XDR_DUMP_MAX"); // at most this many files (default 24; ~24 MB each at 3024x1964)
+		max = m ? atoi(m) : 24;
 	}
-	if (!prefix || !valid) return;
+	if (!prefix || !valid || n >= max) return;
 	double now = CACurrentMediaTime();
 	if (now - last < 8.0) return;
 	last = now;

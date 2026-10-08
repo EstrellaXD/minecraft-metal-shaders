@@ -146,6 +146,14 @@ public final class CloudConfig {
 	public static final int MODE_BATCH = 4;
 	/** {@link #MODE_PAIR} (mcopt.shade.clouds.pair, default true): the march's empty-air tests two at a time (same tests). */
 	public static final int MODE_PAIR = 8;
+	/**
+	 * FT1.2 {@link #MODE_EDGE} (mcopt.shade.clouds.edgeGate, default true; Gael: pixelated cloud edges at sunset): the stable
+	 * resolve keeps its history inside this frame's march colours only where the reprojection depends on the distance (the
+	 * nearest and farthest march distance around land more than half a history pixel apart: camera motion, wind parallax),
+	 * not on every soft edge against the sky. That clamp's box comes from the 1/3-resolution march, one per 3x3 block: it cut
+	 * the edges into 3x3-block steps and left bright / dark specks (offline: edge error vs a 1x1 reference -15 %, same price).
+	 */
+	public static final int MODE_EDGE = 16;
 
 	/**
 	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bits 32768 /
@@ -158,7 +166,8 @@ public final class CloudConfig {
 		return (flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0)
 			| (flag("mcopt.shade.clouds.halfLight", false) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)
 			| (flag("mcopt.shade.clouds.batch", true) && (dev & DEV_OLD_BATCH) == 0 ? MODE_BATCH : 0)
-			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0);
+			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0)
+			| (flag("mcopt.shade.clouds.edgeGate", true) ? MODE_EDGE : 0);
 	}
 	/**
 	 * M3.4 (Gael: cloud edges look pixelated and flicker at sunset): the sky, fog and VL read the clouds' history (0.45 of the

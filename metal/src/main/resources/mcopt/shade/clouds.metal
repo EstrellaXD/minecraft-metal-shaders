@@ -83,6 +83,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
 #define CLOUD_MODE_BATCH 4  // a march sample's texture fetches issued together (cloudDensityB, cloudLightDepthB): same values
                             // (tried on the shadow map's six samples too: twice as slow there, run m33c-2's timer: removed)
 #define CLOUD_MODE_PAIR 8   // the march's empty-air tests two at a time (both fetches issued together): same tests, same values
+#define CLOUD_MODE_EDGE 16  // the stable resolve's history clamp only where the reprojection depends on the distance (FT1.2)
 static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
@@ -1075,7 +1076,8 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 	uint qMin = min(min(qu.x, qu.y), min(qu.z, qu.w));
 	float dNow = max(g0.y, 1.0);
 	float3 wnd = float3(c.wind.x, 0.0, c.wind.y);
-	float4 pc = c.prevViewProj * float4(dir * (qMin != CLOUD_DIST_NONE ? cloudDistDecode(qMin) : dNow) + wnd, 1.0);
+	float dRep = qMin != CLOUD_DIST_NONE ? cloudDistDecode(qMin) : dNow;
+	float4 pc = c.prevViewProj * float4(dir * dRep + wnd, 1.0);
 	float2 puv = pc.xy / max(pc.w, 1e-6) * 0.5 + 0.5;
 	bool valid = c.frame.z < 0.5 && pc.w > 1e-4 && all(puv >= 0.0) && all(puv <= 1.0);
 	half4 h = half4(0.0h, 0.0h, 0.0h, 1.0h);
@@ -1100,7 +1102,18 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 		float4 g1 = curDist.gather(gatherS, (float2(mp) + 1.0) / msz);
 		float d1 = g1.z, d2 = g0.x, d3 = g1.x, d4 = g0.z;
 		float dMin = min(min(min(d1, d2), min(d3, d4)), g0.y), dMax = max(max(max(d1, d2), max(d3, d4)), g0.y);
-		if (dMax > dMin * 1.3 + 4.0) {
+		bool jump = dMax > dMin * 1.3 + 4.0;
+		if (jump && cloudMode(c, CLOUD_MODE_EDGE)) {
+			// FT1.2: only where it matters, i.e. where the history would come from apart with the nearest vs the farthest
+			// distance around (camera motion, wind parallax: a near cloud over a far one). The box below is one per 3x3 block of
+			// the 1/3-resolution march: on every soft edge against the sky it cut the edge into block steps and specks. pc =
+			// dRep A + B with A = prevViewProj (dir, 0), so the reprojection with distance d is d A + B
+			float4 A = c.prevViewProj * float4(dir, 0.0), B = pc - dRep * A;
+			float4 pa = dMin * A + B, pb = dMax * A + B;
+			float2 sep = (pa.xy / max(pa.w, 1e-6) - pb.xy / max(pb.w, 1e-6)) * 0.5 * c.size.xy;
+			jump = dot(sep, sep) > 0.25; // half a history pixel
+		}
+		if (jump) {
 			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
 			half4 lo = min(min(min(c1, c2), min(c3, c4)), now), hi = max(max(max(c1, c2), max(c3, c4)), now);
 			half4 pad = (hi - lo) * 0.15h;

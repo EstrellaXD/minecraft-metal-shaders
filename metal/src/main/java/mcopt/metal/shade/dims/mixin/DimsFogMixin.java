@@ -52,10 +52,14 @@ abstract class DimsFogMixin {
 		if (this.getFogType(camera) != FogType.ATMOSPHERIC) return;
 		FogData fog = cir.getReturnValue();
 		if (fog == null || fog.environmentalEnd < 24f) return; // blindness, darkness: vanilla's
-		ShadeDims.vanillaFog(fog.environmentalStart, fog.environmentalEnd);
+		// our fog's density follows vanilla's fog end, but other mods may have pushed it away already (Distant Horizons does:
+		// the Nether then had no fog at all); never more than vanilla's own Nether distance / the render distance
+		float rd = renderDistanceInChunks * 16f;
+		float end = Math.min(fog.environmentalEnd, dim == Level.NETHER ? Math.min(rd, 192f) * 0.5f : rd);
+		ShadeDims.vanillaFog(Math.min(fog.environmentalStart, end * 0.5f), end);
 		// the Nether: vanilla's fog only at the view distance's edge (entities, particles out there fade into the fog colour
 		// where our border fog is already opaque); its end is where Sodium stops drawing chunks (ShadeDims.netherCull)
-		float cull = dim == Level.NETHER ? ShadeDims.netherCull(fog.environmentalEnd) : 0f;
+		float cull = dim == Level.NETHER ? ShadeDims.netherCull(end) : 0f;
 		if (cull > 0f) {
 			fog.environmentalStart = cull * 0.96f;
 			fog.environmentalEnd = cull;

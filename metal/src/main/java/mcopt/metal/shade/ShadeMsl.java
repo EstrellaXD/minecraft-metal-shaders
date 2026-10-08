@@ -140,7 +140,7 @@ public final class ShadeMsl {
 		patched = patched.replace(WEATHER_SIGNATURE, WEATHER_SIGNATURE
 			+ ", constant ShadeFrame& mcoptShadeFrame [[buffer(16)]], constant ShadeLook& mcoptShadeLook [[buffer(17)]], constant ShadeGpu& mcoptShadeGpu [[buffer(18)]]"
 			+ (m3 ? ", float4 mcoptFragCoord [[position]], texture2d<half> mcoptSkyLut [[texture(17)]], sampler mcoptSkyLutSmplr [[sampler(13)]]" : ""));
-		return prelude() + (m3 ? "#define SHADE_WEATHER\n" : "") + resource("weather.metal") + "\n" + patched;
+		return prelude() + (m3 ? "#define SHADE_WEATHER\n" + (ShadeWeather.LITE ? "#define SHADE_WX_LITE\n" : "") : "") + resource("weather.metal") + "\n" + patched;
 	}
 
 	private static final String VERTEX_SIGNATURE = "vertex main0_out main0(main0_in in [[stage_in]]";

@@ -48,6 +48,9 @@ import mcopt.metal.shade.ShadeMsl;
  * per pixel: 8 / 10 / 14 / 20), {@code mcopt.shade.puddleDist} (64 blocks).</li>
  * <li>{@code mcopt.shade.ripples} (true): raindrop rings on puddles and on water under open sky; {@code mcopt.shade.rippleLayers}
  * (1 on performance/balanced, 2 on quality/ultra): drop grids.</li>
+ * <li>{@code mcopt.shade.weatherLite} (true on performance/balanced): budget gates that keep the look (no sun highlight on
+ * wet surfaces in heavy rain, raindrop rings only where the puddle mirror shows them, rain streaks lit by the sky's mean
+ * light); puddle reflections are untouched.</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
  * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
  * <li>{@code mcopt.shade.lightning} (true): bolts light the scene and the sky, and glow (the game's "Hide Lightning Flashes"
@@ -74,6 +77,12 @@ public final class ShadeWeather {
 	public static final boolean RIPPLES = flag("mcopt.shade.ripples", true);
 	/** Raindrop grids: 2 (quality, ultra) or 1 with faster drops (performance, balanced: about half the cost). */
 	public static final int RIPPLE_LAYERS = Integer.getInteger("mcopt.shade.rippleLayers", Shade.TIER >= 2 ? 2 : 1) >= 2 ? 2 : 1;
+	/**
+	 * Budget gates (performance, balanced): no sun highlight on wet surfaces in heavy rain (the sun is behind the clouds),
+	 * raindrop rings only where the puddle mirror shows them, rain streaks lit by the sky's mean light (no sky-view LUT per
+	 * streak fragment). Puddle reflections are untouched. Quality/ultra keep the full shading (dev bits 32/64/128 price it).
+	 */
+	public static final boolean LITE = flag("mcopt.shade.weatherLite", Shade.TIER <= 1);
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);
 	public static final boolean SLANT = flag("mcopt.shade.rainSlant", true);
 	public static final boolean LIGHTNING = flag("mcopt.shade.lightning", true);
@@ -203,6 +212,15 @@ public final class ShadeWeather {
 		b.putFloat(at, x).putFloat(at + 4, y).putFloat(at + 8, z).putFloat(at + 12, w);
 	}
 
+	/**
+	 * True when the coloured shadows have faded out (weather_surface.metal shadeShadowTint, SHADE_DEV_WX_RAIN_TINT: over rain
+	 * 0.5-0.8, with LITE or dev bit 256): heavy rain, where the sun they colour gives a third of its light or less. ShadowPass
+	 * then skips the tint pass (ssr.w stays 0, so the receivers skip the lookup as well).
+	 */
+	public static boolean tintHidden() {
+		return ON && rain >= 0.8f && (LITE || (Integer.getInteger("mcopt.shade.dev", 0) & 256) != 0);
+	}
+
 	/** The wetness the water module's ripples and roughness use (rain intensity while it rains). */
 	public static float rainIntensity() {
 		return rain;
@@ -226,6 +244,7 @@ public final class ShadeWeather {
 	public static String prelude(boolean translucent) {
 		if (!MODULE) return "";
 		StringBuilder s = new StringBuilder("#define SHADE_WEATHER\n");
+		if (LITE) s.append("#define SHADE_WX_LITE\n");
 		if (PUDDLES && !translucent) s.append("#define SHADE_PUDDLES\n");
 		if (PUDDLE_SSR && !translucent) s.append("#define SHADE_PUDDLE_SSR\n#define SHADE_PUDDLE_STEPS ").append(PUDDLE_STEPS).append('\n')
 			.append("#define SHADE_PUDDLE_DIST ").append(String.format(Locale.ROOT, "%.1f", PUDDLE_DIST)).append('\n')
@@ -238,7 +257,7 @@ public final class ShadeWeather {
 	}
 
 	static String describe() {
-		return "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
+		return (LITE ? "lite, " : "") + "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
 			+ ", lightning " + LIGHTNING + ", coloured shadows " + (COLOR_SHADOWS ? COLOR_SHADOW_RES + "^2" : "off");
 	}
 }

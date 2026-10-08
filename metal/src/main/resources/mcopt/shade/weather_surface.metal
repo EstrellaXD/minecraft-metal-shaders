@@ -37,6 +37,15 @@
 #define SHADE_PUDDLE_N SHADE_PUDDLE_STEPS
 #endif
 
+// the budget gates (SHADE_DEV_WX_SUN_GATE, RIPPLE_GATE, LITE_RAIN): always on with SHADE_WX_LITE, else per dev bit
+#ifndef SHADE_WX_BUDGET
+#ifdef SHADE_WX_LITE
+#define SHADE_WX_BUDGET(f, bit) true
+#else
+#define SHADE_WX_BUDGET(f, bit) shadeDev(f, bit)
+#endif
+#endif
+
 constexpr sampler shadeWxLinear(filter::linear, address::clamp_to_edge, coord::normalized);
 constexpr sampler shadeWxNearest(filter::nearest, address::clamp_to_edge, coord::normalized);
 
@@ -197,7 +206,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
 		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
-		if (shadeDev(f, SHADE_DEV_WX_RIPPLE_GATE)) {
+		if (SHADE_WX_BUDGET(f, SHADE_DEV_WX_RIPPLE_GATE)) {
 			// rings show in what the puddle mirrors: where the flat water's Fresnel x P is ~2 % (looking down near the feet)
 			// they only stir a uniform overcast sky; fade them in over F*P 0.02-0.035 (the march's gate starts at 0.035)
 			float cv = saturate(-p.y * rsqrt(max(dot(p, p), 1e-6)));
@@ -429,7 +438,7 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	float3 sun = float3(0.0);
 	// (SHADE_DEV_WX_SUN_GATE: in heavy rain the sun is behind the clouds, the highlight fades out over rain 0.5-0.8 and is not
 	// computed above it; per frame, so the branch is uniform)
-	float sunW = shadeDev(f, SHADE_DEV_WX_SUN_GATE) ? 1.0 - smoothstep(0.5, 0.8, L.wet.w) : 1.0;
+	float sunW = SHADE_WX_BUDGET(f, SHADE_DEV_WX_SUN_GATE) ? 1.0 - smoothstep(0.5, 0.8, L.wet.w) : 1.0;
 	if (sunW > 0.0) sun = float3(f.sunColor.rgb) * (min(shadeWxGgx(n, v, f.lightDirWorld.xyz, a), 60.0) * float(in.shadow)
 		* float(smoothstep(0.3h, 0.8h, in.sky)) * sunW);
 	float k = mix(float(w.omega) * 0.65 * (1.0 - 0.5 * veg), 1.0, P);
@@ -451,6 +460,10 @@ static inline float3 shadeWxFlash(half3 albedo, half3 n, half sky, constant Shad
 // be farther from the light than it by a quarter block (and the map fades out with the near cascade's edge). 1 = untinted.
 // L.tintRect: the casters' rectangle in the same light clip space (ShadowPass): receivers outside it skip the sample.
 static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> tint) {
+	// (SHADE_DEV_WX_RAIN_TINT: in heavy rain the sun behind the clouds gives a third of its light or less: the tint fades out
+	// over rain 0.5-0.8 and is not looked up above it; per frame, so the branch is uniform)
+	float rw = SHADE_WX_BUDGET(f, SHADE_DEV_WX_RAIN_TINT) ? 1.0 - smoothstep(0.5, 0.8, L.wet.w) : 1.0;
+	if (rw <= 0.0) return half3(1.0h);
 	float4 c = f.shadowViewProj[0] * float4(p + float3(n) * (0.75 * f.cascadeSplits.z), 1.0);
 	if (any(c.xy < L.tintRect.xy) || any(c.xy > L.tintRect.zw)) return half3(1.0h);
 	float m = max(abs(c.x), abs(c.y));
@@ -461,7 +474,7 @@ static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, constant
 	// coloured light keeps part of its brightness (a red pane lights the floor red, not dark brown): luminance pulled halfway
 	// back toward white light, at most x2.2 per channel
 	half3 T = t.rgb * min(rsqrt(max(dot(t.rgb, half3(0.2126h, 0.7152h, 0.0722h)), 0.05h)), 2.2h);
-	return mix(half3(1.0h), T, half(gate));
+	return mix(half3(1.0h), T, half(gate * rw));
 }
 
 // The direct light's share of shadeLit2 that the tint changes (the same sun term: wrap, gate, shadow), times (tint - 1):

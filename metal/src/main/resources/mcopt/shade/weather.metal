@@ -25,6 +25,15 @@ static float4 shadeWeather(float4 c, constant ShadeFrame &f, constant ShadeLook 
 }
 
 #ifdef SHADE_WEATHER
+// the budget gates (SHADE_DEV_WX_SUN_GATE, RIPPLE_GATE, LITE_RAIN): always on with SHADE_WX_LITE, else per dev bit
+#ifndef SHADE_WX_BUDGET
+#ifdef SHADE_WX_LITE
+#define SHADE_WX_BUDGET(f, bit) true
+#else
+#define SHADE_WX_BUDGET(f, bit) shadeDev(f, bit)
+#endif
+#endif
+
 // pixel: the fragment position ([[position]]); lut: the sky-view LUT. c: vanilla's result (texture x vertex colour x lightmap x
 // fog), whose luminance carries the lightmap (torches near the streak) and the texture's streak shape.
 static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, texture2d<half> lut,
@@ -40,7 +49,7 @@ static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, cons
 	float l = shadeLuma(c.rgb);
 	float3 skyMean = f.ambientSky.rgb;
 	// (SHADE_DEV_WX_LITE_RAIN: the overcast sky's mean light a little raised instead of the LUT in the streak's direction)
-	float3 sky = shadeDev(f, SHADE_DEV_WX_LITE_RAIN) ? skyMean * 1.12 : shadeSkyLookup(float3(v.x, max(v.y, 0.02), v.z), lut, lutS, f);
+	float3 sky = SHADE_WX_BUDGET(f, SHADE_DEV_WX_LITE_RAIN) ? skyMean * 1.12 : shadeSkyLookup(float3(v.x, max(v.y, 0.02), v.z), lut, lutS, f);
 	// forward scattering of the sun through the drops (a soft glow toward the sun), and the flash
 	float mu = dot(v, f.lightDirWorld.xyz);
 	float3 sun = f.sunColor.rgb * (0.03 + 0.45 * shadeHG(mu, 0.6));

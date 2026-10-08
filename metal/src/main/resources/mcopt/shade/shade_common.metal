@@ -101,10 +101,12 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_NO_TINT 16384    // no coloured shadows: no tint lookup on the terrain, no tint pass (ShadowPass)
 #define SHADE_DEV_WX_ANALYTIC 32768   // puddle/snow noise evaluated per pixel instead of the baked tile
 #define SHADE_DEV_WX_NO_SSR_GATE 65536 // puddle reflections marched on every puddle pixel (not only where Fresnel shows them)
-// M3 weather budget candidates (priced in one session by mcbench's weather price phases, then made defaults or dropped)
+// M3 weather budget gates: always on with SHADE_WX_LITE (mcopt.shade.weatherLite, default on for performance and balanced);
+// on quality/ultra these dev bits switch them on for pricing (mcbench weather price phases wxrain_c32 / c64 / c128 / c224)
 #define SHADE_DEV_WX_SUN_GATE 32       // no sun highlight on wet surfaces in heavy rain (the sun is behind the clouds: <= 32 %)
 #define SHADE_DEV_WX_RIPPLE_GATE 64    // raindrop rings only where the puddle mirror shows them (flat Fresnel x puddle >= 0.02)
 #define SHADE_DEV_WX_LITE_RAIN 128     // rain streaks lit by the sky's mean light, no sky-view LUT lookup per fragment
+#define SHADE_DEV_WX_RAIN_TINT 256     // coloured shadows fade out in heavy rain (the direct sun they colour is <= 32 % there)
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

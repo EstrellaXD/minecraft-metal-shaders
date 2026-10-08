@@ -353,7 +353,8 @@ public final class ShadowPass {
 		int faceMask = ShadowCasters.faceMask(this.light, ShadowConfig.ALL_FACES);
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
 		// SHADE_DEV_WX_NO_TINT (16384, mcopt.shade.dev, read per frame): skip the tint pass too, to price coloured shadows in one session
-		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0;
+		// in heavy rain on performance/balanced (ShadeWeather.tintHidden) the receivers' tint has faded out: no pass either
+		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0 && !mcopt.metal.shade.weather.ShadeWeather.tintHidden();
 		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint,
 			mcopt.metal.shade.water.ShadeWater.ON);
 		if (ShadowConfig.STATS) this.statBuildNanos += System.nanoTime() - t0;

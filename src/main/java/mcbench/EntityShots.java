@@ -25,7 +25,9 @@ import net.minecraft.server.level.ServerLevel;
  * air, so the saved world the other runs use is left as it was. Mobs have NoAI and face the camera.
  * <ul>
  * <li>{@code perf}: a recorded perf phase "zoo" (results.json perf.zoo / gpu.zoo): noon, panning +-20 degrees over the zoo
- * for -Dmcbench.zooSeconds (10) s, to price entity lighting and shadows.</li>
+ * for -Dmcbench.zooSeconds (10) s, to price entity lighting and shadows; then "zoo_noshadow" (system property
+ * mcopt.shade.entityShadows.pause, read by mcopt-shade every frame: no entity shadows) and "zoo2" (as zoo): the entity
+ * shadows' cost A/B in one session, bracketed.</li>
  * <li>{@code ent_noon} (6000): villager, iron golem, cow, sheep, pig, horse, chicken, an armour stand in iron armour, a
  * chest, a sign, an item frame with a compass and floating dropped items, from 9 blocks: lighting and shadows on mobs.</li>
  * <li>{@code ent_evening} (11500): the same with a low sun from the west: long entity shadows across the ground.</li>
@@ -208,26 +210,30 @@ final class EntityShots {
 		steps.add(new BenchDriver.Scene("zoo", 6000, false, () -> site.camera(9.5, 2.4, 9f)));
 		steps.add(new BenchDriver.Settle("zoo", false, 3, 120));
 		steps.add(new BenchDriver.Warmup(2));
-		steps.add(new BenchDriver.Step("zoo", 0) {
-			@Override
-			void start(Minecraft mc, long now) {
-				BenchDriver.setPhase("ZOO");
-				Pose o = site.camera(9.5, 2.4, 9f);
-				long t0 = now;
-				BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (20.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
-				BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf("zoo");
-				BenchDriver.phaseRanges.put("zoo", new long[] {now, 0});
-				BenchDriver.log("perf zoo " + sec + " s");
-			}
+		for (String phase : new String[] {"zoo", "zoo_noshadow", "zoo2"}) {
+			steps.add(new BenchDriver.Step(phase, 0) {
+				@Override
+				void start(Minecraft mc, long now) {
+					BenchDriver.setPhase(phase.toUpperCase(Locale.ROOT));
+					System.setProperty("mcopt.shade.entityShadows.pause", Boolean.toString(phase.equals("zoo_noshadow")));
+					Pose o = site.camera(9.5, 2.4, 9f);
+					long t0 = now;
+					BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (20.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
+					BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(phase);
+					BenchDriver.phaseRanges.put(phase, new long[] {now, 0});
+					BenchDriver.log("perf " + phase + " " + sec + " s");
+				}
 
-			@Override
-			boolean poll(Minecraft mc, long now) {
-				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
-				BenchDriver.recPhase = -1;
-				BenchDriver.phaseRanges.get("zoo")[1] = now;
-				return true;
-			}
-		});
+				@Override
+				boolean poll(Minecraft mc, long now) {
+					if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+					BenchDriver.recPhase = -1;
+					BenchDriver.phaseRanges.get(phase)[1] = now;
+					System.setProperty("mcopt.shade.entityShadows.pause", "false");
+					return true;
+				}
+			});
+		}
 	}
 
 	/** Creative mode with a torch and a lantern in the hands, HUD shown (the hand renders only then), at night. */

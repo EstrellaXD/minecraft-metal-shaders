@@ -19,8 +19,9 @@ crops `ab_*.jpg` in that folder, scripts `prefix-scripts/clouds-fx/`):
    `-Dmcopt.shade.waterReflect=...`/`mcopt.shade.debug` views to pin it; fix belongs on m3 after integration (shared).
 3. **Horizontal stripes in the far clouds near the horizon**: same with `checker=1` and `wind=0` -> not the checkerboard /
    reprojection: the march itself at grazing angles (long steps over a long path; suspects: the loop cap
-   `3n+4` iterations running out in dense far cloud, the start offset t0 + jitter*dt aliasing per row). Next: test
-   `steps=60`, and a larger iteration cap / per-row jitter decorrelation.
+   `3n+4` iterations running out in dense far cloud, the start offset t0 + jitter*dt aliasing per row). In test (168ebf0,
+   run fx4-budget 22:12): loop budget +2n for stretches > 1200 blocks; and fx4-steps60 (fog-fix jar, steps=60) to see whether
+   the step size alone matters. If the budget does not remove the stripes, revert 168ebf0's clouds.metal change.
 
 Next steps (in order): item 2 (pin the water path, describe/fix); fix item 3 (`steps=60` test; loop cap / remaining-path
 extrapolation in cloudMarch); then the check findings (comb with a still camera: diagnose with wind=0/checker=1 crops at

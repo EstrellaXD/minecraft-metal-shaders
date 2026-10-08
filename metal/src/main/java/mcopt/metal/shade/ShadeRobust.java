@@ -46,7 +46,19 @@ public final class ShadeRobust {
 		if (failCompile(what)) throw new IllegalStateException("injected shader build failure for " + what + " (-Dmcopt.shade.dev.failCompile)");
 	}
 
-	private static volatile boolean skyFailed;
+	private static volatile boolean skyFailed, postFailed;
+
+	/**
+	 * The HDR post chain failed to set up (ShadePost.init): the world then renders M1's way (LDR tone curve in the shaders),
+	 * whose sky has no volumetric-cloud composite (sky.fs.metal: MCOPT_HDR only), so neither ours nor vanilla's clouds would
+	 * show; ours step back for good and vanilla's return (M3.3 robustness run rb3). mcopt.shade.robustFallback=false: M3.2.
+	 */
+	public static void postFailed() {
+		if ("false".equals(System.getProperty("mcopt.shade.robustFallback"))) return;
+		postFailed = true;
+		System.setProperty("mcopt.shade.clouds.pause", "true");
+		System.out.println("[mcopt] shade: no HDR post chain: volumetric clouds off, vanilla clouds instead");
+	}
 
 	/**
 	 * A registry (shaded) pipeline was built (ok) or fell back to the game's own shaders (MetalPipeline.compile). The volumetric
@@ -62,7 +74,7 @@ public final class ShadeRobust {
 			System.out.println("[mcopt] shade: the shaded sky did not build: volumetric clouds off, vanilla clouds instead");
 		} else if (skyFailed) {
 			skyFailed = false;
-			System.clearProperty("mcopt.shade.clouds.pause");
+			if (!postFailed) System.clearProperty("mcopt.shade.clouds.pause");
 			System.out.println("[mcopt] shade: the shaded sky built again: volumetric clouds back");
 		}
 	}

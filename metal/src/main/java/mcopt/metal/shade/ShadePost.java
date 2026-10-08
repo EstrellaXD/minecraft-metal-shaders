@@ -210,6 +210,7 @@ public final class ShadePost {
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: HDR post chain failed, M1's tone curve instead: " + e);
+			ShadeRobust.postFailed(); // M3.3: vanilla clouds then (M1's sky has no volumetric-cloud composite)
 			e.printStackTrace();
 			return false;
 		}

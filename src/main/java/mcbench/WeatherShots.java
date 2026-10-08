@@ -20,7 +20,7 @@ import net.minecraft.world.level.material.Fluids;
 
 /**
  * Opt-in weather screenshots ({@code -Dmcbench.weather=true} for all of them, or a comma list of
- * {@code perf,rain,sunset,night,water,storm,glass,caustics}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
+ * {@code perf,price,rain,sunset,night,water,storm,glass,caustics,snow,move}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
  * weather work (branch m3-weather). Poses are found in the loaded world around the bench spot (server thread):
  * <ul>
  * <li>{@code perf}: two recorded perf phases at the ground pose (results.json perf.wxdry / perf.wxrain, gpu.*): 10 s panning
@@ -42,6 +42,11 @@ import net.minecraft.world.level.material.Fluids;
  * <li>{@code wx_glass_noon} / {@code wx_glass_evening} (6000 / 11000, clear): a 6x6 roof of six colours of stained glass, 4
  * blocks above a flat grass patch beside the torch grid: coloured shadows. The glass is set back to air afterwards (and
  * before, in case an earlier run was interrupted: only stained glass is replaced, natural blocks are never touched).</li>
+ * <li>{@code wx_snowfall} (noon, "rain", which falls as snow there): the nearest snowy biome (base temperature below 0.05, not
+ * a frozen ocean; the search may generate new chunks there), 2.6 blocks above its surface, looking level: falling snow.</li>
+ * <li>{@code move}: an unrecorded phase {@code wxmove} (bench phase WXMOVE, for -Dmcopt.rec.start=wxmove): rain at noon,
+ * the camera walks (4.3 blocks/s, 6 s, -Dmcbench.wxMoveSeconds) from the ground pose across the torch grid looking 25
+ * degrees down: puddle edges and reflections in motion.</li>
  * </ul>
  * mcopt flags that go well with it: {@code -Dmcopt.shade.weatherTime=10} (wetness builds and dries 10x faster, so the
  * rain shots show soaked ground after the usual hold). Poses go to results.json "weatherShots".
@@ -63,14 +68,14 @@ final class WeatherShots {
 		return false;
 	}
 
-	record Poses(Pose ground, Pose water, Pose storm, double[] bolt, Pose glassNoon, Pose glassEvening, int[] glassSite, Pose shallow) {
+	record Poses(Pose ground, Pose water, Pose storm, double[] bolt, Pose glassNoon, Pose glassEvening, int[] glassSite, Pose shallow, Pose snow) {
 	}
 
 	static Poses poses;
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("perf") || on("price") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass") || on("caustics"))) return;
+		if (!(on("perf") || on("price") || on("rain") || on("sunset") || on("night") || on("water") || on("storm") || on("glass") || on("caustics") || on("snow") || on("move"))) return;
 		BenchDriver.results.put("weatherShots", JSON);
 		// the torch grid's area must be loaded on the server to read the ground (and place the glass)
 		steps.add(new BenchDriver.Scene("wx-site", 6000, false, () -> BenchDriver.spot.night));
@@ -140,6 +145,8 @@ final class WeatherShots {
 				if (on("night") && p.ground != null) shot(extra, "wx_night_rain", 18000, true, p.ground);
 				if (on("water") && p.water != null) shot(extra, "wx_rain_water", 6000, true, p.water);
 				if (on("storm") && p.storm != null) storm(extra, p);
+				if (on("move") && p.ground != null) move(extra, p.ground);
+				if (on("snow") && p.snow != null) shot(extra, "wx_snowfall", 6000, true, p.snow);
 				extra.add(new BenchDriver.Step("wx-cleanup", 0) {
 					@Override
 					void start(Minecraft mc2, long now2) {
@@ -227,6 +234,39 @@ final class WeatherShots {
 				return true;
 			}
 		});
+	}
+
+	/**
+	 * Rain at noon; then (phase WXMOVE, not a recorded perf phase: for the video recorder) the camera walks from the ground pose
+	 * along its horizontal look direction at 4.3 blocks/s, 25 degrees down, for -Dmcbench.wxMoveSeconds (6) s.
+	 */
+	private static void move(List<BenchDriver.Step> extra, Pose o) {
+		double sec = Double.parseDouble(System.getProperty("mcbench.wxMoveSeconds", "6"));
+		extra.add(new BenchDriver.Scene("wxmove", 6000, true, () -> o));
+		extra.add(new BenchDriver.Settle("wxmove", true, 3, 120));
+		extra.add(new BenchDriver.Hold("wxmove", 4));
+		extra.add(new BenchDriver.Step("wxmove", 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				BenchDriver.setPhase("WXMOVE");
+				long t0 = now;
+				double yr = Math.toRadians(o.yaw());
+				double dx = -Math.sin(yr), dz = Math.cos(yr);
+				BenchDriver.pose = t -> {
+					double d = 4.3 * BenchDriver.secs(t - t0);
+					return new Pose(o.x() + dx * d, o.y(), o.z() + dz * d, o.yaw(), 25f);
+				};
+				BenchDriver.log("wxmove " + sec + " s");
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				return BenchDriver.secs(now - BenchDriver.curStart) >= sec;
+			}
+		});
+		Map<String, Object> m = o.json();
+		m.put("seconds", sec);
+		JSON.put("wxmove", m);
 	}
 
 	/** Rain over the water, a bolt on the water ahead; the shot 0.12 s after it is summoned (the bolt lives ~0.4 s). */
@@ -351,7 +391,20 @@ final class WeatherShots {
 				}
 			}
 		}
-		return new Poses(ground, water, storm, bolt, glassNoon, glassEvening, site, shallow);
+		// 6. snowfall: the nearest snowy biome (as DimShots' aurora), 2.6 blocks above its surface, looking level
+		Pose snow = null;
+		if (on("snow")) {
+			BlockPos origin = BlockPos.containing(spot.overview.x(), 80, spot.overview.z());
+			var hit = l.findClosestBiome3d(h -> h.value().getBaseTemperature() < 0.05f && !h.is(net.minecraft.world.level.biome.Biomes.FROZEN_OCEAN)
+				&& !h.is(net.minecraft.world.level.biome.Biomes.DEEP_FROZEN_OCEAN), origin, 3000, 32, 64);
+			if (hit != null) {
+				int x = hit.getFirst().getX(), z = hit.getFirst().getZ();
+				l.getChunk(x >> 4, z >> 4);
+				int y = l.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
+				snow = new Pose(x + 0.5, y + 2.6 - Spot.EYE, z + 0.5, 180f, 6f); // feet: the eye 2.6 above the surface
+			}
+		}
+		return new Poses(ground, water, storm, bolt, glassNoon, glassEvening, site, shallow, snow);
 	}
 
 	/** Depth of the water column at x, z when it is 1-3 blocks over a solid floor at sea level, else 0. */

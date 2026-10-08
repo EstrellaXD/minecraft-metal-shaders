@@ -19,7 +19,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * Opt-in dynamic-light screenshots and perf ({@code -Dmcbench.dynLights=true} for all, or a comma list of
- * {@code field,mobs,perf,cave,walk,water,nether}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
+ * {@code field,mobs,perf,cave,walk,water,glint,soul,nether}; off by default, so the standard plan is unchanged), owned by the mcopt-shade M3
  * dynamic lights work (branch m3-lights). Everything summoned carries the tag {@code mcbench_dl} and is killed before and
  * after (dropped items near the sites too); nothing is built. The player is in creative mode with a torch in the main hand
  * and a soul lantern in the off hand while these run, the HUD shown so the first-person hand renders (screenshots are read
@@ -38,6 +38,10 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * <li>{@code dl_cave_walk}: walking that way at 3.5 blocks/s, shot after 1.5 s (the light moving with the player).</li>
  * <li>{@code dl_water}: night, standing on a shore two blocks from open water and looking out over it: the held lights
  * on the water (diffuse and their glint on the ripples).</li>
+ * <li>{@code dl_glint} ({@code glint}): the shore, looking out low (pitch 10) at a zombie holding a torch 6 blocks out,
+ * floating with its hand ~0.8 block over the water: the torch's glint on the ripples between it and the camera.</li>
+ * <li>{@code dl_soul} ({@code soul}): the field patch, the player holding only a soul lantern (main hand, off hand empty)
+ * and a skeleton holding one 4 blocks ahead, nothing else lit: the soul light's own colour.</li>
  * <li>{@code dl_nether}: in the Nether (a floor near 0, 0 found after arriving), two blazes and a magma cube 4-7 blocks
  * ahead, the hands lit.</li>
  * </ul>
@@ -71,7 +75,7 @@ final class LightShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("field") || on("mobs") || on("perf") || on("cave") || on("walk") || on("water") || on("nether"))) return;
+		if (!(on("field") || on("mobs") || on("perf") || on("cave") || on("walk") || on("water") || on("glint") || on("soul") || on("nether"))) return;
 		BenchDriver.results.put("dynLights", JSON);
 		steps.add(new BenchDriver.Scene("dl-site", 18000, false, () -> BenchDriver.spot.night));
 		steps.add(new BenchDriver.Settle("dl-site", false, 3, 120));
@@ -115,6 +119,26 @@ final class LightShots {
 		}
 		if (on("walk")) walk(steps);
 		if (on("water")) shot(steps, "dl_water", 18000, () -> shore != null ? shore : field);
+		if (on("glint")) {
+			steps.add(command("dl-glint-summon", s -> summonGlint(s)));
+			shot(steps, "dl_glint", 18000, () -> shore != null ? new Pose(shore.x(), shore.y(), shore.z(), shore.yaw(), 10f) : field);
+		}
+		if (on("soul")) {
+			steps.add(command("dl-soul-on", s -> {
+				cleanup(s);
+				cmd(s, "item replace entity @a weapon.mainhand with minecraft:soul_lantern");
+				cmd(s, "item replace entity @a weapon.offhand with minecraft:air");
+				String base = "NoAI:1b,Silent:1b,PersistenceRequired:1b,Invulnerable:1b,Tags:[\"" + TAG + "\"],Rotation:[180f,0f]";
+				run(s, String.format(Locale.ROOT, "summon minecraft:skeleton %.2f %d %.2f {%s,equipment:{mainhand:{id:\"minecraft:soul_lantern\",count:1}}}",
+					field.x() + 0.5, fieldY, field.z() + 4, base));
+			}));
+			shot(steps, "dl_soul", 18000, () -> new Pose(field.x(), fieldY, field.z(), 0f, 25f));
+			steps.add(command("dl-soul-off", s -> {
+				cleanup(s);
+				cmd(s, "item replace entity @a weapon.mainhand with minecraft:torch");
+				cmd(s, "item replace entity @a weapon.offhand with minecraft:soul_lantern");
+			}));
+		}
 		if (on("nether")) nether(steps);
 		steps.add(new BenchDriver.Step("dl-cleanup", 0) {
 			@Override
@@ -310,6 +334,32 @@ final class LightShots {
 			cj.put("air", bestAir);
 			JSON.put("cave", cj);
 		}
+	}
+
+	/** A step that runs f on the server thread once and waits a second. */
+	private static BenchDriver.Step command(String name, java.util.function.Consumer<MinecraftServer> f) {
+		return new BenchDriver.Step(name, 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				f.accept(BenchDriver.server(mc));
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				showHud(mc);
+				return BenchDriver.secs(now - BenchDriver.curStart) >= 1.0;
+			}
+		};
+	}
+
+	/** Server thread: a zombie holding a torch 6 blocks out over the water from the shore pose, hand ~0.8 block above it. */
+	static void summonGlint(MinecraftServer s) {
+		if (shore == null) return;
+		double yaw = Math.toRadians(shore.yaw()), fx = -Math.sin(yaw), fz = Math.cos(yaw);
+		String base = "NoAI:1b,Silent:1b,PersistenceRequired:1b,Invulnerable:1b,NoGravity:1b,Tags:[\"" + TAG + "\"],Rotation:["
+			+ String.format(Locale.ROOT, "%.1f", shore.yaw() + 180f) + "f,0f]";
+		run(s, String.format(Locale.ROOT, "summon minecraft:zombie %.2f %.2f %.2f {%s,equipment:{mainhand:{id:\"minecraft:torch\",count:1}}}",
+			shore.x() + fx * 6, shore.y() - 0.35, shore.z() + fz * 6, base));
 	}
 
 	/** Server thread (a command step): the field's lights, a line 4..8 blocks north of the mobs camera. */

@@ -57,7 +57,7 @@ struct CloudParams {
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
 	float4 dome;           // 352 xy dome size (px), z blend of the new march, w primary steps of the dome march
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
-	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3),
+	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-4),
 	                       //     w radians a march sample covers (history pixel angle x N; the noise mip by distance)
 	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w M3.3 mode bits
 	                       //     (CLOUD_MODE_*; CloudConfig.modeBits, read every frame; 0 = M3.2)

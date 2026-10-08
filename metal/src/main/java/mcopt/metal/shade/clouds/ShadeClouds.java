@@ -155,7 +155,9 @@ public final class ShadeClouds {
 			int ow = Math.max(1, window.getWidth()), oh = Math.max(1, window.getHeight());
 			float scale = (dev & CloudConfig.DEV_SCALE_ALT) != 0 ? CloudConfig.SCALE_ALT : CloudConfig.SCALE;
 			int hw = Math.max(16, Math.round(ow * scale)), hh = Math.max(16, Math.round(oh * scale));
-			int checker = CloudConfig.CHECKER;
+			// (M3.3: dev bit DEV_CHECKER_ALT = the other checkerboard, mcopt.shade.clouds.checkerAlt, for in-session pricing; the
+			// march target's size changes, so the switch drops the history once)
+			int checker = (dev & CloudConfig.DEV_CHECKER_ALT) != 0 ? CloudConfig.CHECKER_ALT : CloudConfig.CHECKER;
 			hw = (hw + checker - 1) / checker * checker;
 			hh = (hh + checker - 1) / checker * checker;
 			int mw = hw / checker, mh = hh / checker;
@@ -165,7 +167,10 @@ public final class ShadeClouds {
 			long ticks = level.getDefaultClockTime();
 			double days = (ticks + f.partialTick) / 24000.0;
 			WEATHER.update(days, f.rain, f.thunder, dt, snap, CloudConfig.SEED);
-			float sx = WEATHER.windX * WEATHER.windSpeed * dt, sz = WEATHER.windZ * WEATHER.windSpeed * dt;
+			// (M3.3: mcopt.shade.clouds.freeze, read every frame, default false: the clouds stand still, no wind displacement at
+			// all, for look comparisons of variants shot one after another inside one session; the bench sets it)
+			float move = Boolean.getBoolean("mcopt.shade.clouds.freeze") ? 0f : dt;
+			float sx = WEATHER.windX * WEATHER.windSpeed * move, sz = WEATHER.windZ * WEATHER.windSpeed * move;
 			CloudParams p = PARAMS;
 			p.windX += sx;
 			p.windZ += sz;

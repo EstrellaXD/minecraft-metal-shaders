@@ -47,7 +47,7 @@ public final class CloudParams {
 
 	// ---- inputs (set by the caller each frame) ----
 	public int histW = 1, histH = 1, marchW = 1, marchH = 1, frame;
-	/** Checkerboard N (1-3): one history pixel of each N x N block is marched per frame. */
+	/** Checkerboard N (1-4): one history pixel of each N x N block is marched per frame. */
 	public int checker = 3;
 	public boolean reset = true, domeValid;
 	/** The cloud shadow map is rendered this frame (else consumers keep reading the one rendered on an earlier frame). */
@@ -80,12 +80,12 @@ public final class CloudParams {
 		inv.get(0, b);
 		m.translation(-f.prevJitterX, -f.prevJitterY, 0f).mul(f.prevViewProj).get(64, b);
 		put4(b, 128, this.histW, this.histH, this.marchW, this.marchH);
-		int n = Math.max(1, Math.min(3, this.checker));
+		int n = Math.max(1, Math.min(4, this.checker));
 		int slot = Math.floorMod(this.frame, n * n);
-		// slot orders that spread consecutive frames apart: 2x2 (0,0) (1,1) (1,0) (0,1); 3x3 by a Bayer-like order
-		int[] order = n == 3 ? ORDER3 : n == 2 ? ORDER2 : ORDER1;
+		// slot orders that spread consecutive frames apart: 2x2 (0,0) (1,1) (1,0) (0,1); 3x3 by a Bayer-like order; 4x4 Bayer
+		int[] order = n == 4 ? ORDER4 : n == 3 ? ORDER3 : n == 2 ? ORDER2 : ORDER1;
 		int cell = order[slot];
-		put4(b, 144, cell % n, cell / n, this.reset ? 1f : 0f, CloudConfig.MAX_AGE);
+		put4(b, 144, cell % n, cell / n, this.reset ? 1f : 0f, CloudConfig.maxAge(n));
 		float camY = (float) f.cameraY;
 		put4(b, 160, this.base, this.top, camY, 1f / (2f * CURVATURE_RADIUS));
 		float storm = w.storm;
@@ -211,6 +211,8 @@ public final class CloudParams {
 	}
 
 	private static final int[] ORDER1 = {0}, ORDER2 = {0, 3, 1, 2}, ORDER3 = {0, 7, 5, 2, 6, 4, 8, 3, 1};
+	/** 4x4 (M3.3): the cells (y * 4 + x) by their value in the 4x4 Bayer matrix. */
+	private static final int[] ORDER4 = {0, 10, 2, 8, 5, 15, 7, 13, 1, 11, 3, 9, 4, 14, 6, 12};
 
 	/** SHADE_FEATURE_CLOUDS (shade_look.metal). */
 	public static final int FEATURE_CLOUDS = 4096;

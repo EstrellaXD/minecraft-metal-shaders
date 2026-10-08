@@ -1,6 +1,37 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## Status (2026-10-07 22:15) - fixing Gael's sunset report + check findings before M3 integration
+## Status (2026-10-07 23:25) - ready for M3 integration
+
+Finished this round (runs `work/bench-results/20261007-2247..2319-cf*`, scripts `work/notes/m3-2026-10-07/prefix-scripts/clouds-fx/run7*.sh, run8.sh`):
+- **Gael's sunset report** (`work/notes/m3-2026-10-07/gael-report-sunset-lines/README.md`, "Resultado final"), all three
+  items: (1) light lines + columns fixed (81d0eb8, fog looks the clouds up at the pixel's own direction); (3) horizon
+  stripes mostly fixed (e9fe3a0, march steps capped at ~48 blocks on long grazing stretches; a softer layering remains in
+  the farthest band); (2) **bright rectangles on the water: the sun glint, fixed (fe29a8f, `water.metal`, shared)**.
+  Attribution (sunset_west): same with `ssrPrev=false` (not the rendered-sky reflection), debug view 6 shows deep water
+  there (not the floor), with `shadows=false` they merge into one broad glow under the sun (`ab_sea_head_noshadows.jpg`).
+  So: M2.1 widened the glint with distance (alpha 0.035 + 0.10 x dist/110) for long glitter roads; from a high camera the
+  near water is far but seen steeply, the widened lobe of a low sun lit it as a broad glow and the terrain's long sunset
+  shadows cut that into bright blocky patches. Fix: the widening only at grazing views (x (1 - smoothstep(0.1, 0.4, -v.y))),
+  flag `mcopt.shade.waterGlintGraze` (default true; false = m2.1). Low over the water the glitter road is unchanged
+  (`work/release/M3-clouds-screenshots/water_glint_graze_off_vs_on.jpg`); the patches are now faint glints in the sunlit
+  gaps (`fix2_sea_before_after_glint.jpg`). Final before/after of the view: `final_*_antes_despues.jpg` in that folder.
+- **noiseDrift** (666b4b4 WIP): built, tested on the still-camera comb with the same clouds (cf7 drift 1 vs cf2 drift
+  0.82, `work/release/M3-clouds-screenshots/comb_still_noiseDrift1_vs_082.png`): the comb is the same, so the default went
+  back to 0.82 (458afd6; flag kept, documented).
+- **Price** (7.3, new rows): +0.67 / +0.78 ms at head-equivalent jars, +0.83 ms before the dt cap (other power state):
+  e9fe3a0's horizon step cap costs nothing measurable (< 0.15 ms, the run-to-run noise). The module is ~0.7-0.8 ms at
+  balanced in this sky-heavy scene, about 2x the E05 budget (0.30-0.45): open, ideas in 7.3.
+- build OK, `validate.sh` ALL OK at fe29a8f.
+
+Still open (for review / after integration):
+1. **Comb on soft cloud edges, also with a still camera** (check finding): needs the wind (wind=0 clean) and the 3x3
+   checkerboard (checker=1 clean); not the boil (noiseDrift=1 same). Next suspects: the non-marched pixels reproject the
+   wind at the block's one march distance (`cloud_resolve`: `dNow = curDist.read(mp)`, sky pixels at the slab's middle)
+   -> try a per-pixel (bilinear) distance, a debug output of |puv - uv| and age per slot; or an always-on neighbourhood
+   clamp to the current march.
+2. Over budget (~2x), see 7.3. 3. Sunset away from the sun looks taupe (art). 4. Farthest horizon band: soft layering.
+
+### Status (2026-10-07 22:15) - fixing Gael's sunset report + check findings before M3 integration
 
 Gael's report (`work/notes/m3-2026-10-07/gael-report-sunset-lines/`, sunset_west: "líneas raras de reflejo en el mar").
 A/B runs at head 4611a6f (scene sunset_west + water, one flag per run; `work/bench-results/20261007-2149..2204-fx*`,
@@ -79,7 +110,7 @@ Edits to shared files (all small, all behind the module's flags or no-ops when i
 | `MetalRenderPass.java` | `drawIndexed`: skips vanilla's `clouds`/`flat_clouds` draw while `ShadeClouds.replacesVanilla()` |
 | `sky.fs.metal` | HDR: `sky = sky * T + S` from `shadeCloudsScreen` (in front of sun, moon, stars; behind everything drawn later) |
 | `sodium_terrain.fs.metal` (PolyForm, header kept) | `ShadeResources& sr` declared for every HDR variant (was water only); `shadow *= shadeCloudShadow(p, sl, sr.cloudShadow)` (sky light > 0.3); `wi.res = &sr` and `shadeGlossy(..., &sr, ...)` for the dome |
-| `water.metal` | `ShadeWaterIn.res` (ShadeResources pointer); `shadeWaterSkyRefl` / `shadeGlossy` take `constant ShadeResources *R`: the LUT sky gets the dome's clouds; the M2 hack that hazes vanilla clouds read back from `prevScene` is skipped while the volumetric clouds draw (they are hazed already) |
+| `water.metal` | (fe29a8f, not clouds: Gael's sunset report item 2) the sun glint widens with distance only at grazing views (`SHADE_WATER_GLINT_GRAZE`, flag `mcopt.shade.waterGlintGraze` in `ShadeWater.java`); `ShadeWaterIn.res` (ShadeResources pointer); `shadeWaterSkyRefl` / `shadeGlossy` take `constant ShadeResources *R`: the LUT sky gets the dome's clouds; the M2 hack that hazes vanilla clouds read back from `prevScene` is skipped while the volumetric clouds draw (they are hazed already) |
 | `vl.metal` | `vl_march` takes ShadeLook (17) + ShadeResources (19): HDR: the march's sun visibility x `shadeCloudShadow` (shafts from cloud gaps); the sky mask = the clouds' transmittance there (crepuscular streaks from the clouds around the sun) |
 | `tools/shade/ShadeMslDump.java` | dumps `clouds_passes.metal` (validate.sh compiles it) |
 | `metal/build.gradle` | `mcclouds.m` |
@@ -196,6 +227,13 @@ resolve ~ history pixels (bandwidth).
   game's Clouds option OFF; we ignore that while DH is loaded (`.withDh`). DH's LODs are not in the world depth, so the
   "clouds over the world" composite (camera above the layer) takes empty-depth pixels below the horizon as far terrain
   when DH drew this frame (`mc_clouds_over` mode 1).
+- **`water.metal` glint (fe29a8f, also matters for m3 / m3-weather, which share the file)**: in `shadeWaterAbove` the
+  glint's `alpha` line became `far = saturate(dist / 110) * (1 - smoothstep(0.1, 0.4, -v.y))` under
+  `#ifdef SHADE_WATER_GLINT_GRAZE` (else the m2.1 `far = saturate(dist / 110)`), then `alpha = 0.035 + 0.10 * far + 0.06 *
+  wp.state.z`. `ShadeWater.java`: flag `GLINT_GRAZE` (`mcopt.shade.waterGlintGraze`, default true), the define in
+  `prelude()` after SHADE_SSR_EDGE, and the setup log line. The old line is unchanged on m3, m3-weather, m3-lights and
+  m3-skydims (checked 23:25), so this should merge cleanly; if a later change touches the rain term (`wp.state.z`) keep
+  both: only `dist / 110` gets the grazing factor.
 - `mcopt.shade=false`: nothing of this runs (MetalRenderPass's skip is behind `ShadeClouds.ON`, a static final false).
   `mcopt.shade.clouds=false`: m2.1 behaviour (vanilla clouds, `clouds.fs.metal`), the prelude helpers return "no cloud".
 
@@ -262,6 +300,9 @@ GPU ms (`gpu.gpuMsPerFrame`).
 | c23 (20:08, AC) | same, `steps=16` | 9.20 | 8.31 | 9.19 | **+0.89 / +0.89** | yes (106-189 %) |
 | c26 (20:07, AC) | + VL cloud-shadow fetch along the ray / skipped in terrain shadow, `steps=24` | 8.64 | 7.97 | 8.67 | **+0.67 / +0.70** | yes (102-147 %) |
 | c26 (20:12, AC) | **branch head** (+ VL change, 20 steps) | 9.13 | 8.24 | 8.86 | **+0.89 / +0.63** | yes (85-116 %) |
+| fx6 (22:20, battery) | e9fe3a0 (fog fix + horizon dt cap), DRS off | 8.66 | 7.90 | 8.71 | **+0.76 / +0.80** | yes (120 %) |
+| cf1 (22:48, battery) | 666b4b4 (+ noiseDrift 1; same cost) | 9.15 | 8.39 | 8.97 | **+0.76 / +0.58** | yes (109 %) |
+| cf6 (23:07, AC) | 210a644 (fog fix, **before** the dt cap) | 9.10 | 8.25 | 9.05 | **+0.85 / +0.80** | yes (78 %) |
 
 Reading, in plain words: the volumetric clouds cost **about 0.6-0.9 ms of GPU per frame at balanced** on this scene
 (about 7-10 % of the frame; ~115 instead of ~125 fps here), against the bible's E05 budget of 0.30-0.45 ms: **over

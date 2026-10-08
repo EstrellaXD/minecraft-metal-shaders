@@ -529,21 +529,24 @@ static half shadeShadow(depth2d_array<float> map, sampler cmp, constant ShadeFra
 }
 
 // M3.4 (water, mcopt.shade.waterShadowSoft): one cascade's visibility over a disc of the horizontal plane around p (a water
-// surface): 8 taps on a Vogel disc of radius r blocks, turned per pixel and frame (TAAU averages them), each projected on
-// its own so its depth is the plane's there (no acne on a flat receiver seen by a low sun).
+// surface): 4 taps on a Vogel disc of radius r blocks, turned per pixel and frame (TAAU averages them into a smooth edge),
+// in place of shadeShadow's 4-tap tent (same fetches: 8 taps cost +0.42 ms on a half-water view). The map is orthographic,
+// so a tap at p + (dx, 0, dz) projects to c0 + dx vp[0] + dz vp[2]: its depth is the plane's there (no acne on a flat
+// receiver seen by a low sun).
 static inline float shadeShadowCascadeDisc(depth2d_array<float> map, sampler cmp, uint layer, float4x4 vp, float3 p, float3 offset, float r,
                                            float turn, thread float &m) {
 	float4 c0 = vp * float4(p + offset, 1.0);
 	m = max(abs(c0.x), abs(c0.y));
 	if (c0.z <= 0.0 || c0.z >= 1.0) m = 2.0;
 	if (m >= 1.0) return 1.0;
+	float3 ax = vp[0].xyz, az = vp[2].xyz;
 	float s = 0.0;
-	for (int i = 0; i < 8; i++) {
-		float a = (float(i) + turn) * 2.39996323, d = r * sqrt((float(i) + 0.5) / 8.0);
-		float4 c = vp * float4(p + offset + float3(cos(a) * d, 0.0, sin(a) * d), 1.0);
-		s += map.sample_compare(cmp, shadeShadowUV(c.xyz), layer, c.z);
+	for (int i = 0; i < 4; i++) {
+		float a = (float(i) + turn) * 2.39996323, d = r * sqrt((float(i) + 0.5) * 0.25);
+		float3 c = c0.xyz + ax * (cos(a) * d) + az * (sin(a) * d);
+		s += map.sample_compare(cmp, shadeShadowUV(c), layer, c.z);
 	}
-	return s * 0.125;
+	return s * 0.25;
 }
 
 // M3.4 (water): shadeShadow for an up-facing water surface with a soft edge of radius r blocks. Distant blocky casters (an

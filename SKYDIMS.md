@@ -185,8 +185,11 @@ is not in these numbers.
 | Nether (wastes, 360 spin) | 4.66 ms (215 fps) | 4.07 ms (246 fps) | 4.66 ms (215 fps) | **+0.60 ms** | P ~0, Q +0.2 (assumed per-pixel lighting already paid) |
 | End (main island) | 4.41 ms (227 fps) | 3.26 ms (307 fps) | 4.44 ms (225 fps) | **+1.17 ms** | "like the overworld minus clouds" (shadows ~0.7-1.0 + VL beams 0.4-0.5) |
 | Overworld noon, XDR highlights on / SDR-screen mode / on | 11.98 ms | 11.61 ms | 11.77 ms | **~+0.25 ms** | +0.2-0.4 (P) |
-| Aurora | - | - | - | **<= 0.1 ms** estimate: 6 noise taps per sky pixel, only on aurora nights (microbench of the first cut x 1/3) | P 0.06 / Q 0.12 |
+| Aurora (only on aurora nights) | - | - | - | **0.48 ms if every pixel were aurora sky**; ~0.15-0.25 ms in a real night view (30-50 % of the screen is sky above the horizon) | P 0.06 / Q 0.12: **over** |
 | Camera in lava / powder snow | - | - | - | ~0 (one noise tap per pixel, only while inside) | ~0 |
+
+Shader microbenchmarks (`tools/shade/dimstime`, every pixel of 3024x1964 paying, minus an empty pass, no game running):
+aurora 0.48 ms, End sky 0.58 ms, Nether fog 0.14 ms, camera media ~0 ms.
 
 Three runs (r1, r4, r6) gave the same prices within 0.1 ms. CPU load was normal during the perf segments (median 128 %; the
 peaks are the game's own start-up). Every price is a difference inside one game session, so it is solid even though the

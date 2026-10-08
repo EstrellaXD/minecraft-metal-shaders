@@ -4,15 +4,18 @@ Gael's request: "si voy caminando con una antorcha, que vaya iluminando en tiemp
 What moves and glows now lights its surroundings in real time, in every shaded path, behind `mcopt.shade.dynLights`
 (default on with `mcopt.shade=true`; `false` = M2.1's shaders byte for byte, no bindings, no mixins).
 
-## Status (2026-10-07 18:20)
+## Status (2026-10-07 19:30)
 
-- Done: module complete (light list, visibility slabs, irradiance volume, entity vertex patch, hand packed light);
-  build + `validate.sh` ALL OK at `731a503`. Resume run 2026-10-07 evening: selection hysteresis added (no popping at the
-  64-light / 16-slab cuts). In-session price from the 14:30 / 14:51 runs: +0.12 / +0.18 ms GPU (budget 0.4).
-- Running: `dl-r1-on` (HEAD before the hysteresis, same GPU code) and `dl-r2-on` (`731a503`): every LightShots scene +
-  the lights / lights_off / lights2 perf phases + `-Dmcopt.shade.dynLights.log=true`.
-- Next: fill section 7 with r1/r2, copy screenshots to `work/release/M3-lights-screenshots/`, section 9 (integration
-  with the m3 base) is written below.
+- **Done.** Module complete and measured: light list (both hands, mobs and players holding lights, dropped items, burning
+  entities, blazes, magma cubes, glow squid, projectiles, TNT, minecarts, fireworks, lightning), visibility slabs, the
+  irradiance volume, the entity vertex patch, the lit first-person hand. Build + `tools/shade/validate.sh` ALL OK at HEAD.
+- This resume (evening of 2026-10-07): the WIP commit only held doc edits (kept). Added selection hysteresis (lights near
+  the 64-light / 16-slab cuts no longer flip in and out; a light left out fades in again instead of popping), renamed the
+  module's include guard (it collided with the m3 seam file's), filled section 7 (results: **~0.2 ms GPU**, CPU
+  0.01-0.06 ms per frame) and wrote section 9 (how to plug into the m3 seam).
+- Screenshots: `work/release/M3-lights-screenshots/` (`on_*` this module, `off_*` the same poses without it).
+- Next (integration workflow, not this branch): follow section 9 on `m3`; then re-check the hand in game (m3 lights it in
+  its own pass) and measure clean whole-frame numbers there.
 
 ## 1. What gives light
 
@@ -163,9 +166,10 @@ drift. GPU ms per frame:
 | `20261007-181411-dl-r1-on` (`1e7f6c2`) | AC | clean (total 105-244 %) | 8.131 | 7.979 | 8.144 | **+0.16 ms** |
 | `20261007-182737-dl-r2-on` (`731a503`, + hysteresis) | AC | **contaminated in `lights_off`** (Chrome 114 % + Python 95 % at its end, total 384 %) | 8.261 | 8.321 | 8.291 | (-0.05: the slowed `off` phase hides the cost; not used) |
 | `20261007-185356-dl-r3-on` (`8aa4a96`, 12 s phases) | AC | clean in `lights` / `lights_off` (98-160 %); `lights2` ends at 376 % and drifts up | 8.385 | 8.071 | 8.787 | +0.31 (lights vs off; lights2 not trusted) |
-R2_ROW
+| `20261007-192454-dl-r4-on` (`8aa4a96`, 12 s phases, perf only) | AC | clean (112-151 %) | 8.166 | 7.906 | 8.069 | **+0.21 ms** |
 Control: with the module off (`20261007-144310-dl-t6-off`) the same three phases read 7.722 / 7.767 / 7.772 ms: the
-phase-to-phase noise is ~0.05 ms. **Price: ~0.15 ms GPU for the hands + 9 lights (budget 0.4 ms).** History of the
+phase-to-phase noise is ~0.05 ms. **Price: ~0.2 ms GPU for the hands + 9 lights (budget 0.4 ms)**: +0.12, +0.16 and +0.21 ms in the three clean runs, +0.31
+in r3, whose phases drifted (its `lights2` alone is 0.4 ms above `lights`). History of the
 same measurement: the first version (per-pixel loop over the lights) cost **+1.06 ms** (`20261007-123517-dl-t3` and
 `-123726-dl-t4`, AC: 8.84 / 7.81 / 8.91 and 8.84 / 7.85 / 8.94); the irradiance volume computed over the whole 80 x 48 x 80
 blocks every frame **+0.27 ms** (`20261007-132040-dl-t5`, battery: 8.94 / 8.69 / 8.97); computed only over the box the

@@ -168,13 +168,27 @@ public final class ShadeSky {
 		float l = luma(out[0], out[1], out[2]);
 		for (int k = 0; k < 3; k++) out[k] = Math.max(l + (out[k] - l) * SKY_SATURATION, out[k] * 0.5f);
 		float gh = goldenHourWeight(s.sunY, s.rain), h = 1f - Math.min(Math.abs(dy), 1f);
-		gh *= 0.55f + 0.45f * h * h * h;
-		out[0] *= 1f + 0.45f * gh; out[1] *= 1f + 0.02f * gh; out[2] *= 1f - 0.28f * gh;
+		if (sunsetArt) { // shade_common.metal shadeSunsetGrade
+			float dl = dx * dx + dz * dz, sl = s.sunX * s.sunX + s.sunZ * s.sunZ;
+			float toward = dl > 1e-8f && sl > 1e-8f ? (float) ((dx * s.sunX + dz * s.sunZ) / Math.sqrt(dl * sl)) * 0.5f + 0.5f : 0.5f;
+			float band = (float) Math.pow(Math.max(h, 1e-4f), 9f + (2f - 9f) * toward * toward);
+			float t = toward > 0.5f ? toward * 2f - 1f : toward * 2f;
+			float[] a = toward > 0.5f ? ART_SIDE : ART_AWAY, b = toward > 0.5f ? ART_TOWARD : ART_SIDE;
+			float k = gh * (0.2f + 0.8f * band);
+			for (int c = 0; c < 3; c++) out[c] *= 1f + (a[c] + (b[c] - a[c]) * t - 1f) * k;
+		} else {
+			gh *= 0.55f + 0.45f * h * h * h;
+			out[0] *= 1f + 0.45f * gh; out[1] *= 1f + 0.02f * gh; out[2] *= 1f - 0.28f * gh;
+		}
 		float grey = 1f - 0.45f * s.thunder, w = s.rain * 0.75f;
 		out[0] = mix(out[0], l * 0.92f * grey, w) * SKY_BRIGHTNESS;
 		out[1] = mix(out[1], l * 0.96f * grey, w) * SKY_BRIGHTNESS;
 		out[2] = mix(out[2], l * grey, w) * SKY_BRIGHTNESS;
 	}
+
+	/** M3 sunset art (mcopt.shade.sunsetArt, set every frame by ShadeLook): the azimuth-aware grade of shadeSunsetGrade. */
+	public static volatile boolean sunsetArt = true;
+	private static final float[] ART_TOWARD = {1.52f, 0.98f, 0.64f}, ART_SIDE = {1.42f, 0.96f, 0.80f}, ART_AWAY = {1.18f, 0.90f, 1.06f};
 
 	/** shade_common.metal's shadeGoldenHour weight: the warm grade on the sky while the sun is low. */
 	static float goldenHourWeight(float sunY, float rain) {

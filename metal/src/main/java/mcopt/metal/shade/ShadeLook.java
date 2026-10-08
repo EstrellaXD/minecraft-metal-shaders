@@ -175,6 +175,7 @@ public final class ShadeLook {
 			}
 		}
 		this.skyRose = roseOn() ? rose * goldK * ROSE_LOOK[ShadeConfig.LOOK] : 0f;
+		ShadeSky.sunsetArt = ShadeConfig.flag("mcopt.shade.sunsetArt", true); // read every frame (bench A/B in one session)
 		// night: the keyframes' desaturation would grey the torch-lit pools too; the dim parts get the Purkinje shift (final
 		// pass, luminance-gated) instead, so the grade keeps colour where there is light
 		float night = 1f - smooth(-10f, -2f, this.elevation);
@@ -262,7 +263,7 @@ public final class ShadeLook {
 		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, 0.6f * (1f - f.rain));
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
-		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], 0f);
+		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], ShadeSky.sunsetArt ? 1f : 0f); // w: M3 sunset art
 		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], this.skyRose);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
 		put4(b, RENDER_SCALE, f.renderScale, (float) (Math.log(f.mipScale) / Math.log(2)), f.width, f.height);

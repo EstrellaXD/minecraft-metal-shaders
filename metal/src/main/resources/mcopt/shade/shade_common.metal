@@ -216,8 +216,24 @@ static inline float3 shadeGoldenHour(float dirY, float sunY, float rain) {
 	return mix(float3(1.0), float3(1.45, 1.02, 0.72), w * (0.55 + 0.45 * h * h * h));
 }
 
+// M3 sunset art (mcopt.shade.sunsetArt; ShadeSky.radiance mirrors it): the golden-hour grade follows the sun's azimuth, as
+// real skies and the studied packs do (BSL / Complementary: the bright band widens toward the sun), instead of warming every
+// azimuth alike (a flat orange ring around the horizon): a broad gold-orange glow toward the sun whose band reaches higher,
+// peach on the sides, and opposite the sun a thin rose-lilac band (the Belt of Venus) over a cooler horizon.
+static inline float3 shadeSunsetGrade(float3 dir, float3 sun, float sunY, float rain) {
+	float w = (1.0 - smoothstep(0.02, 0.32, sunY)) * smoothstep(-0.16, -0.02, sunY) * (1.0 - rain);
+	float h = 1.0 - saturate(abs(dir.y));
+	float dl = dot(dir.xz, dir.xz), sl = dot(sun.xz, sun.xz);
+	float toward = dl > 1e-8 && sl > 1e-8 ? dot(dir.xz, sun.xz) * rsqrt(dl * sl) * 0.5 + 0.5 : 0.5;
+	float band = pow(max(h, 1e-4), mix(9.0, 2.0, toward * toward));
+	float3 col = toward > 0.5 ? mix(float3(1.42, 0.96, 0.80), float3(1.52, 0.98, 0.64), toward * 2.0 - 1.0)
+	                          : mix(float3(1.18, 0.90, 1.06), float3(1.42, 0.96, 0.80), toward * 2.0);
+	return mix(float3(1.0), col, w * (0.2 + 0.8 * band));
+}
+
 // The sky's radiance along dir (no sun disc): sun and moon scattering, faint airglow, overcast in rain. Linear, pre-exposure.
-static float3 shadeSkyRadiance(float3 dir, constant ShadeFrame &f, thread float3 &transmittance) {
+// art: M3 sunset art (shadeSunsetGrade) instead of M2's shadeGoldenHour.
+static float3 shadeSkyRadiance(float3 dir, constant ShadeFrame &f, thread float3 &transmittance, bool art = false) {
 	float3 sky = float3(0.0);
 	float3 tr = float3(1.0);
 	float mie = f.atmosphere.z;
@@ -227,7 +243,7 @@ static float3 shadeSkyRadiance(float3 dir, constant ShadeFrame &f, thread float3
 	float rain = f.weather.x;
 	float l = shadeLuma(sky);
 	sky = max(l + (sky - l) * SHADE_SKY_SATURATION, sky * 0.5); // ShadeSky.SKY_SATURATION, never below half the channel
-	sky *= shadeGoldenHour(dir.y, f.sunDirWorld.w, rain);
+	sky *= art ? shadeSunsetGrade(dir, f.sunDirWorld.xyz, f.sunDirWorld.w, rain) : shadeGoldenHour(dir.y, f.sunDirWorld.w, rain);
 	sky = mix(sky, float3(l) * float3(0.92, 0.96, 1.0) * (1.0 - 0.45 * f.weather.y), rain * 0.75) * f.atmosphere.w;
 	transmittance = tr;
 	return sky;

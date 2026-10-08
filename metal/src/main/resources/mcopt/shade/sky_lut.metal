@@ -23,13 +23,14 @@ fragment half4 shade_lut_fs(ShadeLutOut in [[stage_in]], constant ShadeFrame &f 
 	float2 uv = (in.position.xy - 0.5) / float2(SHADE_LUT_W - 1, SHADE_LUT_H - 1);
 	float3 transmittance;
 	float3 dir = shadeLutDirection(uv, f);
-	float3 sky = shadeSkyRadiance(dir, f, transmittance);
+	bool art = L.skyGoldH.w > 0.5; // M3 sunset art (mcopt.shade.sunsetArt)
+	float3 sky = shadeSkyRadiance(dir, f, transmittance, art);
 	// M2 art layer: the golden hour's warm horizon and rose upper sky (ShadeLook.skyGold*), strongest toward the sun; baked
 	// into the LUT so the sky, its reflections and the fog into the sky behind terrain all agree
 	float2 hz = dir.xz, sz = f.sunDirWorld.xz;
 	float toward = dot(hz, hz) > 1e-8 && dot(sz, sz) > 1e-8 ? dot(normalize(hz), normalize(sz)) * 0.5 + 0.5 : 0.5;
 	float3 gain = mix(L.skyGoldH.rgb, L.skyGoldZ.rgb, smoothstep(0.02, 0.55, abs(dir.y)));
-	gain = mix(float3(1.0), max(gain, 0.0), 0.55 + 0.45 * toward);
+	gain = mix(float3(1.0), max(gain, 0.0), art ? 0.15 + 0.85 * toward * toward : 0.55 + 0.45 * toward); // art: little gold away from the sun
 	sky *= gain;
 	// M3: the evening sky's hue toward rose (upper sky, a little mauve) and peach (lower), at the same luminance: the warm
 	// pink-gold evening of the studied packs, our sun, rays and blue top kept (ShadeLook.skyGoldZ.w, 0 by day)

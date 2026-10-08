@@ -60,7 +60,13 @@ import mcopt.metal.shade.ShadeMsl;
  * <li>{@code mcopt.shade.colorShadows} (true) and {@code mcopt.shade.colorShadowRes} (1024; 2048 on ultra): coloured light
  * through stained glass, ice and water (near cascade).</li>
  * <li>{@code mcopt.shade.weatherTime} (1): time scale of wetting and drying (the bench uses 10).</li>
- * <li>{@code mcopt.shade.wetness} (-1 = from the weather): force wetness and puddles to this value (look development).</li>
+ * <li>{@code mcopt.shade.wetness} (-1 = from the weather): force wetness and puddles to this value (look development; M3.3:
+ * read again every frame).</li>
+ * <li>{@code mcopt.shade.wetAll} (M3.3, true): in rain the whole open ground soaks (a water film with a Fresnel sheen and
+ * reflections on all solid ground, puddles the deeper water in its low spots); false at startup = M3.2's shaders, and it is
+ * read again every frame (false = M3.2's look) for in-session A/B. {@code mcopt.shade.wetRough} (0.2), {@code wetVeg} (0.1),
+ * {@code wetSsr} (film reflections' gate, 0 = off), {@code wetDark}, {@code wetVegFilm}, {@code wetTex}, {@code wetRim} likewise
+ * ({@link #WET_ALL}).</li>
  * <li>{@code mcopt.shade.snowAmount} (-1 = from the weather): force the snow cover to this value (look development).</li>
  * </ul>
  */
@@ -108,6 +114,15 @@ public final class ShadeWeather {
 	public static final float TIME_SCALE = Math.clamp(floatFlag("mcopt.shade.weatherTime", 1f), 0.1f, 100f);
 	public static final float FORCE_WET = floatFlag("mcopt.shade.wetness", -1f);
 	public static final float FORCE_SNOW = floatFlag("mcopt.shade.snowAmount", -1f);
+	/**
+	 * M3.3 wet ground (Gael: the whole ground should get wet in rain, not only the puddles): solid ground under open sky soaks
+	 * into a water film (darker, a Fresnel sheen of the sky, the sun's highlight, reflections where the sheen shows them),
+	 * puddles are the deeper water in its low spots with a wetter rim. false at startup: weather_surface.metal compiles
+	 * without it (M3.2's shaders); on, the property is read again every frame (ShadeLook.water.x: false = M3.2's look).
+	 */
+	public static final boolean WET_ALL = flag("mcopt.shade.wetAll", true);
+	/** Film reflections' gate (F x k x gloss; 0 = off): on wherever the puddles reflect (puddleSsr: not on performance). */
+	static final float WET_SSR = PUDDLE_SSR ? 0.06f : 0f;
 
 	/** ShadeResources entries (shade_look.metal): last frame's linear view depth (TAA history), the coloured-shadow map. */
 	public static final int RES_PREV_DEPTH = 5, RES_SHADOW_TINT = 6, RES_NOISE = 4;
@@ -175,9 +190,10 @@ public final class ShadeWeather {
 			rain = approach(rain, rainTarget, dt, 1.5f, 3f);
 			snowfall = approach(snowfall, snowTarget > 0.05f ? 1f : 0f, dt, 1.5f, 1.5f);
 		}
-		if (FORCE_WET >= 0f) {
-			wetness = Math.min(FORCE_WET, 1f);
-			puddles = Math.min(FORCE_WET, 1f);
+		float forceWet = floatFlag("mcopt.shade.wetness", FORCE_WET); // (M3.3: read every frame, for A/B shots after the rain)
+		if (forceWet >= 0f) {
+			wetness = Math.min(forceWet, 1f);
+			puddles = Math.min(forceWet, 1f);
 		}
 		if (FORCE_SNOW >= 0f) snow = Math.min(FORCE_SNOW, 1f);
 		// wind: a direction per day that wanders slowly; storms lean the rain more and gust
@@ -199,8 +215,19 @@ public final class ShadeWeather {
 			put4(b, ShadeLook.WET, 0f, 0f, 0f, 0f);
 			put4(b, ShadeLook.WIND, 1f, 0f, 0f, 0f);
 			put4(b, ShadeLook.FLASH, 0f, 1f, 0f, 0f);
+			put4(b, ShadeLook.WATER, 0f, 0f, 0f, 0f);
+			put4(b, ShadeLook.WATER_ABS, 0f, 0.55f, 0f, 0.12f);
 			return;
 		}
+		// M3.3 wet ground: ShadeLook.water (576, reserved for the water module, unused by it) = (on, soaked film roughness,
+		// vegetation's extra roughness, film reflections' gate), waterAbs (592) = (extra darkening, vegetation's film share, texel height
+		// proxy strength, rim band width in puddle-field units); read
+		// every frame, so a bench can switch them live (mcbench WetShots / MiscShots ab phases)
+		boolean wetAll = WET_ALL && flag("mcopt.shade.wetAll", true);
+		put4(b, ShadeLook.WATER, wetAll ? 1f : 0f, floatFlag("mcopt.shade.wetRough", 0.2f), floatFlag("mcopt.shade.wetVeg", 0.18f),
+			wetAll ? Math.max(floatFlag("mcopt.shade.wetSsr", WET_SSR), 0f) : 0f);
+		put4(b, ShadeLook.WATER_ABS, floatFlag("mcopt.shade.wetDark", 0.2f), floatFlag("mcopt.shade.wetVegFilm", 0.55f), floatFlag("mcopt.shade.wetTex", 0f),
+			Math.max(floatFlag("mcopt.shade.wetRim", 0.12f), 0.005f));
 		put4(b, ShadeLook.WET, wetness, PUDDLES ? puddles : 0f, SNOW ? snow : 0f, rain);
 		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, snowfall); // w: snowfall (gust only shapes the slant)
 		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], LIGHTNING ? flash : 0f);
@@ -273,6 +300,8 @@ public final class ShadeWeather {
 		if (B_RIPPLE) s.append("#define SHADE_WX_B_RIPPLE\n");
 		if (B_STEPS) s.append("#define SHADE_WX_B_STEPS\n");
 		if (B_DEV) s.append("#define SHADE_WX_B_DEV\n");
+		// (M3.3 wet ground; not in the translucent fragment: that pipeline is at the edge of what the Metal compiler builds)
+		if (WET_ALL && !translucent) s.append("#define SHADE_WET_ALL\n");
 		if (PUDDLES && !translucent) s.append("#define SHADE_PUDDLES\n");
 		if (PUDDLE_SSR && !translucent) s.append("#define SHADE_PUDDLE_SSR\n#define SHADE_PUDDLE_STEPS ").append(PUDDLE_STEPS).append('\n')
 			.append("#define SHADE_PUDDLE_DIST ").append(String.format(Locale.ROOT, "%.1f", PUDDLE_DIST)).append('\n')
@@ -290,7 +319,7 @@ public final class ShadeWeather {
 	}
 
 	static String describe() {
-		return (LITE ? "lite, " : "") + (RAIN_BUDGET.isEmpty() ? "" : "rain budget " + RAIN_BUDGET + ", ") + "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
+		return (LITE ? "lite, " : "") + (WET_ALL ? "wet all, " : "") + (RAIN_BUDGET.isEmpty() ? "" : "rain budget " + RAIN_BUDGET + ", ") + "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
 			+ ", lightning " + LIGHTNING + ", coloured shadows " + (COLOR_SHADOWS ? COLOR_SHADOW_RES + "^2" : "off");
 	}
 }

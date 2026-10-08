@@ -293,6 +293,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
         ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, skyLut, false);
 #endif
+#ifdef SHADE_WET_ALL
+        // M3.3 wet ground: the film gathers in the texture's darker texels (a height proxy: the texel against its sprite's mean,
+        // the atlas' coarsest mip; far away the texture's own mip evens it out) instead of lying on the block like varnish
+        if (wet.film > 0.0h && wet.omega > 0.05h && sl.waterAbs.z > 0.0)
+            wet.tex = shadeWetTexHeight(half3(texel.rgb), half3(u_BlockTex.sample(u_BlockTexSmplr, uv, level(4.0)).rgb), sl);
+#endif
         half3 wetAlbedo = debug == 3 ? albedo : shadeWetAlbedo(albedo, wet);
 #else
         half3 wetAlbedo = albedo;

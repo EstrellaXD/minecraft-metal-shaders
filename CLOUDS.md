@@ -1,23 +1,26 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## Status (2026-10-07 19:50)
+## Status (2026-10-07 20:15) - module finished for this phase; integration into m3 is the next workflow
 
-Done this session (resume after the 15:06 pause):
-- WIP finished and kept: finer steps near the camera inside the cloud layer (no more checkerboard there); shadow map every
-  4th frame, which now keeps its own frame (origin, plane, light) between updates (a moving camera no longer shifts the
-  shadows by a texel).
-- Fixed: from above the clouds the deck was flat grey haze (horizon fade now only for a camera below the layer).
-- Distant Horizons: DH's own LOD clouds are switched off through DH's API while ours draw (verified in DEV-DH: log line
-  and shots, run c13); clouds now also composite over DH's LODs from above (run c17).
-- All 13 cloud scenes looked at (section 7.1); video of the spin (7.2); in-session price (7.3).
-- `mcopt.shade.clouds.motionBlend` (default 0 = off) added as a candidate cure for the comb on moving edges.
+Done this session (resume after the 15:06 pause), all committed:
+- WIP finished and kept: finer steps near the camera inside the cloud layer (the checkerboard seen from inside is gone);
+  shadow map every 4th frame, which now keeps its own frame (origin, plane, light) between updates (a moving camera no
+  longer shifts the shadows by a texel).
+- Fixed: from above the clouds the deck was flat grey haze (horizon fade only for a camera below the layer).
+- Distant Horizons: DH's own LOD clouds are switched off through DH's config API while ours draw (verified in DEV-DH, runs
+  c13/c17); clouds also composite over DH's LODs when the camera is above them.
+- VL: the cloud shadow per VL step is cheaper (affine along the ray, skipped inside terrain shadow).
+- Balanced: 20 march steps (was 24).
+- All 13 cloud scenes reviewed (7.1), a video of the spin (7.2), in-session prices (7.3), per-pass timer (5).
 
-Next (open):
-- **Comb / hatching on cloud edges while turning** (7.2): confirmed to come from the 3x3 checkerboard reconstruction
-  (checker=1 is clean, run c22). Candidate: `motionBlend` (run c24 recording, verdict in 7.2); real fix to find.
-- **Over budget**: +0.5-0.9 ms vs 0.30-0.45 (7.3). March steps are the lever (16 steps: +0.22 ms in one clean phase);
-  runs c23 (steps 20 and 16 with shots) decide the balanced default.
-- Sunset away from the sun looks taupe (7.1); art pass later.
+Open (next):
+1. **Comb / hatching on cloud edges while turning** (7.2): needs the 3x3 checkerboard (checker=1 is clean); history clamp
+   and motion blend did not help (tried, reverted). Suspect: the reprojection is off by ~a pixel per frame while turning;
+   check `prevViewProj` / jitter with a debug output.
+2. **Over budget**: +0.6-0.9 ms vs 0.30-0.45 (7.3); cloud shadows are the biggest identifiable part; ideas in 7.3.
+3. Sunset away from the sun looks taupe (7.1); art pass.
+4. Minor: speckle on far clouds seen from inside the layer; in DEV-DH from above, DH's near LOD square is unfogged (FT0/DH
+   fog, not clouds).
 
 ## 1. Files
 
@@ -226,7 +229,7 @@ GPU ms (`gpu.gpuMsPerFrame`).
 | c23 (19:56, AC) | same, `steps=20` | 8.28 | 7.69 | 8.36 | **+0.58 / +0.66** | yes (101-141 %) |
 | c23 (20:08, AC) | same, `steps=16` | 9.20 | 8.31 | 9.19 | **+0.89 / +0.89** | yes (106-189 %) |
 | c26 (20:07, AC) | + VL cloud-shadow fetch along the ray / skipped in terrain shadow, `steps=24` | 8.64 | 7.97 | 8.67 | **+0.67 / +0.70** | yes (102-147 %) |
-| c26 (CHECK, AC) | branch head (+ VL change, 20 steps) | | | | | |
+| c26 (20:12, AC) | **branch head** (+ VL change, 20 steps) | 9.13 | 8.24 | 8.86 | **+0.89 / +0.63** | yes (85-116 %) |
 
 Reading, in plain words: the volumetric clouds cost **about 0.6-0.9 ms of GPU per frame at balanced** on this scene
 (about 7-10 % of the frame; ~115 instead of ~125 fps here), against the bible's E05 budget of 0.30-0.45 ms: **over

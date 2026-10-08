@@ -106,7 +106,7 @@ public final class DynLights {
 		final long key;
 		double x, y, z;
 		float reach, r, g, b, spec;
-		boolean fire, seen, hand;
+		boolean fire, seen, hand, selected;
 		float cur, target, seed, score;
 		int slab = -1, volGen;
 		boolean wantVolume;
@@ -194,7 +194,11 @@ public final class DynLights {
 				continue;
 			}
 			double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
-			s.score = s.cur * s.reach / (1f + (float) (dx * dx + dy * dy + dz * dz) / 256f) + (s.hand ? 1000f : 0f);
+			// rank by what the light is (a visible one at full weight even while it fades in), with hysteresis: lights already
+			// in the list (x1.15) and those holding a visibility slab (x1.15 more) keep their place against a near tie, so
+			// lights around the 64-light or 16-slab cut don't flip in and out (or between occluded and not) as the camera moves
+			s.score = (s.seen ? 1f : s.cur) * s.reach / (1f + (float) (dx * dx + dy * dy + dz * dz) / 256f) * (s.selected ? 1.15f : 1f)
+				* (s.slab >= 0 ? 1.15f : 1f) + (s.hand ? 1000f : 0f);
 			s.wantVolume = false;
 			ACTIVE.add(s);
 		}
@@ -202,6 +206,11 @@ public final class DynLights {
 		// -Dmcopt.shade.dynLights.pause (read every frame; the bench sets it at run time for an A/B in one session): no lights
 		if (Boolean.getBoolean("mcopt.shade.dynLights.pause")) ACTIVE.clear();
 		int count = Math.min(ACTIVE.size(), DynLightConfig.MAX);
+		for (int i = 0; i < ACTIVE.size(); i++) {
+			Src s = ACTIVE.get(i);
+			s.selected = i < count;
+			if (!s.selected) s.cur = 0f; // left out (past the cap): fades in again when it makes the list, no pop at full strength
+		}
 
 		// visibility volumes: the strongest lights near enough for the occupancy window keep a slab of the 3D texture while
 		// they stay selected; a slab is recomputed only when its light moved, changed reach or the occupancy changed

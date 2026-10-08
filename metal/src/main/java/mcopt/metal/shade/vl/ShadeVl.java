@@ -60,7 +60,8 @@ public final class ShadeVl {
 	 * compressing it, so the shafts are scaled down (air, under water), the canopy mist's grey veil and its extinction are
 	 * lighter, and more of the open air's unshadowed glow is left to the base haze (shafts = structure, not a milky veil).
 	 */
-	private static final float HDR_AIR = 0.6f, HDR_WATER = 0.6f, HDR_VEIL = 0.1f, HDR_EXT = 0.35f, HDR_OPEN_CUT = 0.7f, HDR_CARVE = 0.6f, HDR_CARVE_WATER = 0.62f;
+	private static final float HDR_AIR = 0.6f, HDR_WATER = VlConfig.WATER_M3 ? 0.6f : 0.45f, HDR_VEIL = 0.1f, HDR_EXT = 0.35f, HDR_OPEN_CUT = 0.7f, HDR_CARVE = 0.6f,
+		HDR_CARVE_WATER = VlConfig.WATER_M3 ? 0.62f : 0.55f; // M3 under water (mcopt.shade.vl.waterM3; false = M2.1: 0.45, 0.55)
 
 	private static long state;
 	private static boolean failed, logged;
@@ -385,7 +386,8 @@ public final class ShadeVl {
 		// M3: the caustic curtains run on the water's clock (real time since M2.1: ShadeFrame.waterTime). On the game time the
 		// integrated server's once-a-second time corrections jumped their phase, and the 0.9 history smeared the curtains into a
 		// uniform glow (weaker shafts than M2); under water the history also follows them faster (they sway with the waves).
-		put(b, VlConfig.TEMPORAL ? (f.underwater ? 0.8f : 0.9f) : 0f, reset ? 1f : 0f, frame & 1023, f.waterTime); // temporal
+		// mcopt.shade.vl.waterM3=false: M2.1's 0.9 and game time.
+		put(b, VlConfig.TEMPORAL ? (VlConfig.WATER_M3 && f.underwater ? 0.8f : 0.9f) : 0f, reset ? 1f : 0f, frame & 1023, VlConfig.WATER_M3 ? f.waterTime : f.gameTimeSeconds); // temporal
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
 		put(b, 0.7f, hdr ? 2.4f : 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps

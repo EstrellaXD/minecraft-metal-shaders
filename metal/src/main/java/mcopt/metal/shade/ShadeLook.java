@@ -76,6 +76,13 @@ public final class ShadeLook {
 	public float skyRose;
 	/** Rose strength per look (epic, storybook, natural). */
 	private static final float[] ROSE_LOOK = {1f, 1.15f, 0.6f};
+	/**
+	 * mcopt.shade.skyRose (default true; false = M2.1's evening sky, skyRose 0). Read every frame, so a bench can shoot the
+	 * same sunset with and without it in one session (mcbench EntityShots "rose").
+	 */
+	private static boolean roseOn() {
+		return ShadeConfig.flag("mcopt.shade.skyRose", true);
+	}
 	private static final int K_GAMMA = 1, K_LIGHT = 2, K_AMB = 3, K_SAT = 6, K_CONTRAST = 7, K_BLOOM = 8, K_VL = 9, K_MIST = 10, K_WB = 11;
 
 	// ---- look presets (bible §3.6): epic, storybook, natural -------------------------------------------------------------
@@ -167,7 +174,7 @@ public final class ShadeLook {
 				break;
 			}
 		}
-		this.skyRose = rose * goldK * ROSE_LOOK[ShadeConfig.LOOK];
+		this.skyRose = roseOn() ? rose * goldK * ROSE_LOOK[ShadeConfig.LOOK] : 0f;
 		// night: the keyframes' desaturation would grey the torch-lit pools too; the dim parts get the Purkinje shift (final
 		// pass, luminance-gated) instead, so the grade keeps colour where there is light
 		float night = 1f - smooth(-10f, -2f, this.elevation);

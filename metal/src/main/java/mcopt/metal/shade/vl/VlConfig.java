@@ -36,6 +36,8 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.extinction} (true): the canopy mist also dims what is behind it (off: light is only added).</li>
  * <li>{@code mcopt.shade.vl.moon} (1): moon shafts relative to sun shafts (they're dim anyway).</li>
  * <li>{@code mcopt.shade.vl.underwater} (true): caustic shafts under water.</li>
+ * <li>{@code mcopt.shade.vl.waterM3} (true, M3): the under-water retune: stronger shafts (HDR 0.6, carve 0.62), history 0.8
+ * under water, caustics on the water's clock; false = M2.1 (0.45, 0.55, 0.9, the game time).</li>
  * <li>{@code mcopt.shade.vl.temporal} (true): temporal accumulation (off: raw noisy march, for comparisons).</li>
  * <li>{@code mcopt.shade.vl.canopy} (-1): force the canopy factor 0..1 (debug); negative = measured on the GPU.</li>
  * <li>{@code mcopt.shade.vl.lossy} (false): lossy-compressed VL targets.</li>
@@ -63,6 +65,8 @@ public final class VlConfig {
 	public static final boolean EXTINCTION = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.extinction", "true"));
 	public static final float MOON = Math.max(0f, floatProperty("mcopt.shade.vl.moon", 1f));
 	public static final boolean UNDERWATER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.underwater", "true"));
+	/** M3: the under-water retune (stronger, less history, caustics on the water's clock); false = M2.1. */
+	public static final boolean WATER_M3 = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.waterM3", "true"));
 	public static final boolean TEMPORAL = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.temporal", "true"));
 	public static final float CANOPY = floatProperty("mcopt.shade.vl.canopy", -1f);
 	public static final boolean LOSSY = Boolean.getBoolean("mcopt.shade.vl.lossy");

@@ -130,12 +130,14 @@ static inline half vlCausticWeb(half2 p, half4 tp, half tp4) {
 	return r * r;
 }
 static inline void vlCausticPhases(float t, thread half4 &a, thread half &a4, thread half4 &b, thread half &b4) {
+	// t = the water's clock (ShadeFrame.waterTime: real time, wrapped every 4096 s); every speed is a whole number of turns per
+	// 4096 s (about 0.83, 0.71, 0.9, 1.05, 0.6 rad/s and 1.3x those), so the wrap is seamless
 	const float TAU = 6.2831853;
-	float4 k = float4(0.83, 0.71, 0.9, 1.05);
-	a = half4(fmod(t * k, TAU));
-	a4 = half(fmod(t * 0.6, TAU));
-	b = half4(fmod(t * 1.3 * k, TAU));
-	b4 = half(fmod(t * 0.78, TAU));
+	float s = t * (1.0 / 4096.0);
+	a = half4(TAU * fract(s * float4(541.0, 463.0, 587.0, 684.0)));
+	a4 = half(TAU * fract(s * 391.0));
+	b = half4(TAU * fract(s * float4(703.0, 602.0, 763.0, 890.0)));
+	b4 = half(TAU * fract(s * 508.0));
 }
 static inline half vlCaustic(float2 q, half4 ta, half ta4, half4 tb, half tb4) {
 	half broad = 0.25h + 3.6h * vlCausticWeb(half2(q * 0.22), ta, ta4);

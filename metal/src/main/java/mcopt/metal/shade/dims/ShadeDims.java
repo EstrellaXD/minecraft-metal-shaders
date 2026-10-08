@@ -187,9 +187,11 @@ public final class ShadeDims {
 		endDropsBlob = dimsLit && f.dimension == ShadeFrame.DIM_END && DimsConfig.END_SHADOWS && !"false".equals(System.getProperty("mcopt.shade.dims.endBlob"));
 		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
 			overworld(f, level, camera, dt, snap || changed);
+			ShadeAurora.decide(aurora); // M3.3: the reduced-resolution aurora pass this frame (mcopt.shade.aurora.half)
 			return;
 		}
 		aurora = 0f;
+		ShadeAurora.off();
 		if (!dimsLit) return;
 		fogEnd += (Math.max(vanillaFogEnd, 8f) - fogEnd) * k;
 		if (f.fogType == ShadeFrame.FOG_AIR) f.fogColor[3] = 0f; // our fog (final pass) instead of vanilla's colour
@@ -328,7 +330,7 @@ public final class ShadeDims {
 		L.putFloat(ShadeLook.NIGHT + 8, aurora);
 		// M3.3: dimTint.w = kind + 4 x these bits (shade_dims.metal SHADE_DIMS_*), live per frame
 		int dimBits = (!"false".equals(System.getProperty("mcopt.shade.dims.motes")) ? 1 : 0)
-			| ("false".equals(System.getProperty("mcopt.shade.aurora.lean")) ? 2 : 0) | (DimsDebug.dhClear() ? 4 : 0);
+			| (ShadeAurora.active() ? 2 : 0) | (DimsDebug.dhClear() ? 4 : 0);
 		if (dimsLit) {
 			boolean nether = dimension == ShadeFrame.DIM_NETHER;
 			// M3.3: the vanilla-light Nether (mcopt.shade.dims.netherLight=vanilla) keeps vanilla's lightmapped colours (no

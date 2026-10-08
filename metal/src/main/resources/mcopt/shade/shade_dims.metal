@@ -37,7 +37,7 @@
 static inline bool shadeDimsLit(constant ShadeFrame &f) { return (int(f.sunPath.z) & SHADE_FLAG_DIMS_LIT) != 0; }
 // M3.3: ShadeLook.dimTint.w = kind + 4 x bits (an exact small float)
 #define SHADE_DIMS_MOTES 1        // Nether: dark suspended particles lifted to a luminance floor (mcopt.shade.dims.motes)
-#define SHADE_DIMS_AURORA_OLD 2   // overworld: M3.2's aurora (every sky pixel pays it in the sky pass; mcopt.shade.aurora.lean=false)
+#define SHADE_DIMS_AURORA_TEX 2   // overworld: the sky pass samples the reduced-resolution aurora (ShadeResources.aurora; mcopt.shade.aurora.half)
 #define SHADE_DIMS_DH_SKY 4       // End + Distant Horizons: the final pass paints the End sky where the clear colour still shows (mcopt.shade.dhClear)
 static inline int shadeDimKind(constant ShadeLook &L) { return int(L.dimTint.w) & 3; }
 static inline bool shadeDimsBit(constant ShadeLook &L, int b) { return ((int(L.dimTint.w) >> 2) & b) != 0; }
@@ -201,44 +201,11 @@ constant float3 SHADE_AURORA_LAYERS[6] = {
 	float3(0.2093, 0.0466, 0.0735),
 	float3(0.1119, 0.0246, 0.0392)};
 
-// M3.3 (mcopt.shade.aurora.lean, default true; ShadeLook bit SHADE_DIMS_AURORA_OLD = M3.2's shadeAurora below): the same
-// curtains with the eight noise taps shared by the 2x2 pixel quad (quad_shuffle_xor, as the water and weather modules do):
-// one lane takes the domain warp, one the vertical rays (both vary slowly), and the six shell layers are dealt out two,
-// two, one, one; the quad's sum is the aurora of all four pixels (the lane roles rotate every frame and the layer heights
-// stay dithered per pixel, so TAA integrates the 2x2 blocks away). ~3 taps per pixel instead of 8. Every lane of the quad
-// must call it (no early exit that varies inside a quad: below the horizon it runs and returns 0).
-static float3 shadeAuroraQuad(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
-	const float h0 = 1.0, h1 = 1.9;
-	float dy = max(dir.y, 0.05);
-	float k0 = h0 / dy * 0.55, k1 = h1 / dy * 0.55;
-	float t = f.sunPath.w;
-	float jitter = shadeNoise(pixel, f.flags2.x);
-	float2 drift = float2(t * 0.0021, t * 0.0009);
-	float2 mid = dir.xz * (0.5 * (k0 + k1)) + drift;
-	uint r = (((uint(pixel.x) & 1u) | ((uint(pixel.y) & 1u) << 1)) + uint(f.flags2.x)) & 3u; // this pixel's role in its quad
-	float own = r == 0u ? shadeDimsNoise(mw, mid * 0.6 + float2(t * 0.0031, 0.0)) : r == 1u ? shadeDimsNoise(mw, mid * 9.0 + float2(0.0, t * 0.012)) : 0.0;
-	float2 wr = float2(r == 0u ? own : 0.0, r == 1u ? own : 0.0);
-	wr += quad_shuffle_xor(wr, 1);
-	wr += quad_shuffle_xor(wr, 2);
-	float warp = wr.x * 0.9, rays = 0.35 + 0.65 * wr.y;
-	float2 step = dir.xz * ((k1 - k0) * 0.9 / 6.0);
-	float2 p = dir.xz * (k0 * 0.9) + drift * 0.9 + warp + step * (jitter + float(r));
-	float c = shadeDimsNoise(mw, p) - 0.5;
-	float3 sum = SHADE_AURORA_LAYERS[r] * exp(-c * c * 380.0);
-	if (r < 2u) {
-		c = shadeDimsNoise(mw, p + step * 4.0) - 0.5;
-		sum += SHADE_AURORA_LAYERS[r + 4u] * exp(-c * c * 380.0);
-	}
-	sum += quad_shuffle_xor(sum, 1);
-	sum += quad_shuffle_xor(sum, 2);
-	float horizon = smoothstep(0.02, 0.18, dir.y);
-	return sum * (rays * L.night.z * horizon * 0.12);
-}
-
-// M3.2's aurora (every pixel takes all eight taps)
-static float3 shadeAuroraFull(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
+// M3.2's aurora, unchanged: evaluated per pixel in the sky pass (mcopt.shade.aurora.half=false), or by the M3.3
+// reduced-resolution pass (aurora.metal, ShadeAurora) for the texel's direction.
+static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
 	float s = L.night.z;
-	if (dir.y < 0.02) return float3(0.0);
+	if (s <= 0.002 || dir.y < 0.02) return float3(0.0);
 	// 6 layers through the shell, the sample height dithered per pixel and frame (TAA integrates it)
 	const float h0 = 1.0, h1 = 1.9;
 	float dy = max(dir.y, 0.05);
@@ -262,9 +229,14 @@ static float3 shadeAuroraFull(float3 dir, constant ShadeFrame &f, constant Shade
 	return sum * (rays * s * horizon * 0.12);
 }
 
-static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
-	if (L.night.z <= 0.002) return float3(0.0);
-	return shadeDimsBit(L, SHADE_DIMS_AURORA_OLD) ? shadeAuroraFull(dir, f, L, mw, pixel) : shadeAuroraQuad(dir, f, L, mw, pixel);
+// M3.3 (mcopt.shade.aurora.half, default true; ShadeLook bit SHADE_DIMS_AURORA_TEX, set only in frames whose aurora pass
+// ran): the sky pass, a full-screen triangle that every pixel pays before the terrain covers most of it, takes the aurora
+// from ShadeResources.aurora (aurora.metal: shadeAurora at a fraction of the output resolution, this frame's jittered view)
+// with one bilinear tap at the pixel's screen position, instead of evaluating it per pixel. pixel: the render-target pixel.
+static inline float3 shadeAuroraTex(float3 dir, constant ShadeFrame &f, constant ShadeResources &sr, float2 pixel) {
+	if (dir.y < 0.02) return float3(0.0);
+	constexpr sampler auroraClamp(filter::linear, address::clamp_to_edge);
+	return float3(sr.aurora.sample(auroraClamp, pixel * f.screen.zw, level(0.0)).rgb);
 }
 
 // ---- fog in the Nether and the End (final pass, from depth) ----------------------------------------------------------------

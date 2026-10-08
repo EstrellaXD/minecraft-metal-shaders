@@ -271,6 +271,7 @@ public final class ShadeFrameUpdater {
 		if (mcopt.metal.shade.dims.ShadeXdr.active()) mcopt.metal.shade.dims.ShadeXdr.frame(Math.min(dt, 0.25f));
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
+		mcopt.metal.shade.dims.ShadeAurora.render(enc); // M3.3 (dims): the reduced-resolution aurora the sky pass reads
 		// M3 clouds: shadow map, march, resolve and reflection dome before the sky pass composites them (needs the LUT)
 		if (mcopt.metal.shade.clouds.ShadeClouds.ON && ShadeConfig.HDR && !ShadeBindings.fallback()) {
 			mcopt.metal.shade.clouds.ShadeClouds.update(ShadeBindings.ctx(), enc, f, ShadeBindings.currentLook());

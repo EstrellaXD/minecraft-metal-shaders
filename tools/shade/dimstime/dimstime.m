@@ -56,8 +56,8 @@ int main(int argc, const char **argv) {
 		L[672 / 4 + 2] = 1.0;           // aurora strength
 		L[752 / 4] = 0.02; L[752 / 4 + 1] = 31; L[752 / 4 + 2] = 256; L[752 / 4 + 3] = 1 + 4; // dimTint (Nether; + 4 x bit 1: motes)
 		((int *) L)[800 / 4] = 1;        // tier balanced
-		const char *names[] = {"t_empty", "t_aurora", "t_aurora_old", "t_endsky", "t_netherfog", "t_media"};
-		for (int k = 0; k < 6; k++) {
+		const char *names[] = {"t_empty", "t_aurora", "t_endsky", "t_netherfog", "t_media"};
+		for (int k = 0; k < 5; k++) {
 			MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
 			pd.vertexFunction = [lib newFunctionWithName:@"shade_fs_vs"];
 			pd.fragmentFunction = [lib newFunctionWithName:[NSString stringWithUTF8String:names[k]]];

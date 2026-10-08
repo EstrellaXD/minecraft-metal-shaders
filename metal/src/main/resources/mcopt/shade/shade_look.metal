@@ -104,7 +104,7 @@ struct ShadeResources {
 	texture2d<half> reserved8;
 	texture2d<half> reserved9;
 	texture2d<half> reserved10;
-	texture2d<half> reserved11;
+	texture2d<half> aurora;      // 11 (M3.3 dims) RGBA16F the aurora for this frame's view at a fraction of the output size (aurora.metal; read when ShadeLook bit SHADE_DIMS_AURORA_TEX)
 	texture2d<half> cloudShadow; // 12 M3 clouds: R16F cumulus transmittance toward the light (ShadeLook.cloudShadowVP), 256^2
 	texture2d<half> cloudDome;   // 13 M3 clouds: RGBA16F (scattered light before exposure, transmittance) by direction, upper hemisphere
 	texture2d<half> cloudScreen; // 14 M3 clouds: RGBA16F the same for this frame's view (no TAA jitter), reconstructed history

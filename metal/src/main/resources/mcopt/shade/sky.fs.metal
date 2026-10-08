@@ -22,9 +22,14 @@ static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSm
 	float pixelAngle = 2.0 * atan(1.0 / max(abs(sf.proj[1][1]), 1e-3)) * sf.screen.w;
 	float3 sky = shadeSkyRadiance2(dir, skyLut, skyLutSmplr, sf, sl, sr.milkyWay, pixelAngle);
 	// M3 aurora (shade_dims.metal; ShadeLook.night.z, 0 unless it shows tonight): emission over the night sky
+	// M3.3 (mcopt.shade.aurora.half): one tap of the reduced-resolution aurora pass; compiled into both variants (the lean
+	// one draws while the pass runs, so the per-pixel aurora code is not in the shader then)
+	if (sl.night.z > 0.002) {
+		if (shadeDimsBit(sl, SHADE_DIMS_AURORA_TEX)) sky += shadeAuroraTex(dir, sf, sr, pixel);
 #ifndef SHADE_LEAN_NOAURORA // M3.1: the sky's lean variant while no aurora shows (ShadeLean)
-	if (sl.night.z > 0.002) sky += shadeAurora(dir, sf, sl, sr.milkyWay, pixel);
+		else sky += shadeAurora(dir, sf, sl, sr.milkyWay, pixel);
 #endif
+	}
 	// M3 weather: a lightning flash lights the clouds (the whole overcast sky glows, most toward the bolt)
 	if (sl.flash.w > 0.0) sky += float3(0.78, 0.86, 1.0) * (sl.flash.w * 0.35 * (0.35 + 0.65 * pow(saturate(dot(dir, sl.flash.xyz) * 0.5 + 0.5), 3.0)));
 #ifdef MCOPT_HDR

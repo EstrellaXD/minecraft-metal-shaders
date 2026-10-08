@@ -52,7 +52,11 @@ public class ShadeMslDump {
 			Files.writeString(out.resolve("sky" + i + ".fs.metal"), s + ShadeMsl.skyStage("sky.fs.metal"));
 			Files.writeString(out.resolve("hdrsky" + i + ".vs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("sky.vs.metal"));
 			Files.writeString(out.resolve("hdrsky" + i + ".fs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("sky.fs.metal"));
+			// M3.1 / M3.3: the sky's lean variant (no per-pixel aurora; still reads the reduced-resolution aurora texture)
+			Files.writeString(out.resolve("hdrskylean" + i + ".fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_NOAURORA\n" + s + ShadeMsl.skyStage("sky.fs.metal"));
 		}
+		// M3.3 (dims): the reduced-resolution aurora pass (ShadeAurora)
+		Files.writeString(out.resolve("aurora_pass.metal"), mcopt.metal.shade.ShadeRender.prelude() + "\n" + mcopt.metal.shade.ShadeRender.postSource() + "\n" + ShadeMsl.resource("aurora.metal"));
 		String s2 = MetalShaderRegistry.slotDefines(List.of("Projection", "DynamicTransforms", "Sampler0"));
 		Files.writeString(out.resolve("celestial.vs.metal"), s2 + ShadeMsl.skyStage("celestial.vs.metal"));
 		String s3 = MetalShaderRegistry.slotDefines(List.of("DynamicTransforms", "Projection"));

@@ -40,7 +40,9 @@ public final class ShadeLean {
 		if (dimension == ShadeFrame.DIM_NETHER && mcopt.metal.shade.dims.ShadeDims.netherLean()) t |= ShadeMsl.LEAN_NETHER; // M3.3 (dims)
 		if (!mcopt.metal.shade.weather.ShadeWeather.ON || mcopt.metal.shade.weather.ShadeWeather.dry()) t |= ShadeMsl.LEAN_DRY;
 		if (!mcopt.metal.shade.light.DynLights.ON || mcopt.metal.shade.light.DynLights.activeCount() == 0) t |= ShadeMsl.LEAN_NODL;
-		if (mcopt.metal.shade.dims.DimsConfig.AURORA == 0 || mcopt.metal.shade.dims.ShadeDims.aurora() <= 0.002f) t |= ShadeMsl.LEAN_NOAURORA;
+		// (M3.3 dims: also while the reduced-resolution aurora pass runs: the sky then only reads its texture)
+		if (mcopt.metal.shade.dims.DimsConfig.AURORA == 0 || mcopt.metal.shade.dims.ShadeDims.aurora() <= 0.002f
+			|| mcopt.metal.shade.dims.ShadeAurora.active()) t |= ShadeMsl.LEAN_NOAURORA;
 		tag = t;
 	}
 }

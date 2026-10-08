@@ -73,7 +73,7 @@ final class UiShots {
 	private static void press(Minecraft mc) {
 		if (mc.gui.screen() == null) return;
 		for (GuiEventListener l : mc.gui.screen().children()) {
-			if (l instanceof Button b && b.getMessage().getString().startsWith("Resolución del mundo")) {
+			if (l instanceof Button b && b.getMessage().getString().startsWith("Resolución:")) {
 				b.onPress(null);
 				return;
 			}

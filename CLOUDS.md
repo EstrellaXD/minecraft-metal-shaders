@@ -22,12 +22,13 @@ crops `ab_*.jpg` in that folder, scripts `prefix-scripts/clouds-fx/`):
    `3n+4` iterations running out in dense far cloud, the start offset t0 + jitter*dt aliasing per row). Result (runs fx4-budget /
    fx4-steps60 22:16, crop `gael-report-sunset-lines/fix3_horizon_clouds_fogfix_budget_steps60.jpg`): a bigger loop budget
    changed nothing (reverted), `steps=60` removed most stripes = step-size aliasing (100-200-block steps on long stretches).
-   **Fix e9fe3a0 (built, validate OK, NOT yet shot in game)**: steps on long stretches capped at ~48 blocks (n up to 3x
-   steps; only the horizon band pays). Next: shoot sunset_west + noon_south + perf (`-Dmcbench.clouds=perf,...`) to see
-   the look and the price; if too dear, try 64 blocks.
+   **Fix e9fe3a0 (in game run fx5-dtcap 22:18)**: steps on long stretches capped at ~48 blocks (n up to 3x steps; only the
+   horizon band pays). Most see-through stripes gone, like steps=60 (`fix3_horizon_clouds_before_after.jpg`); a softer
+   layering remains in the farthest band. Price NOT measured yet: next run `-Dmcbench.clouds=perf` A/B (e9fe3a0 vs 210a644).
 
-Next steps (in order): item 2 (pin the water path, describe/fix); fix item 3 (`steps=60` test; loop cap / remaining-path
-extrapolation in cloudMarch); then the check findings (comb with a still camera: diagnose with wind=0/checker=1 crops at
+Next steps (in order): price of e9fe3a0 (perf A/B); item 2 (pin the water path with `-Dmcopt.shade.debug` water views
+5/6 = SSR hits+Fresnel / path+depth+floor; suspect `bottom` refraction of a shallow sunlit floor or the prev-frame sky
+path; shared code -> integration note); then the check findings (comb with a still camera: diagnose with wind=0/checker=1 crops at
 noon_south; inside/above re-shoot at 20 steps); then Status/Results + price. Previous status (20:15) below.
 
 ### Status (2026-10-07 20:15)

@@ -159,7 +159,11 @@ is not in these numbers.
 - **Where it goes above SDR** (`MCOPT_XDR_DUMP`, 24 frames of run `sdr-r1`, analysed with `tools/shade/xdrdump/xdrdump.py`):
   with the first knee (3) nothing went above 1.2x SDR white in the Nether, the End, the aurora, lava or at noon, except
   one world-join frame while auto exposure was still adapting (27 % of the screen at up to 1.29x). That was too timid:
-  lava, glowstone and torches never glowed. Knee lowered to 2 (3.5 octaves); see 6.4 for the check of the new knee.
+  lava, glowstone and torches never glowed. Knee lowered to 2 (3.5 octaves). Check (run `sdr-flip`, 9 dumps): at noon and
+  in the evening fields nothing but small spots exceeds SDR white (lit snow, grass, sky stay at 0.5-0.66 of it); in the
+  night-torches view the torch flames, and only they, go up to 2.8x (`work/release/M3-skydims-screenshots/xdr_map_night_torches.png`:
+  left the SDR image, right the map of what is brighter than SDR white). The world-join frame (auto exposure still
+  adapting) reaches 1.2x on a quarter of the screen for a moment; harmless.
 - **GUI stays SDR**: main's alpha is the GUI coverage; while a screen is open no excess is written at all (the menu
   blur would otherwise show unblurred highlights). Screenshots read main: always SDR.
 - **Frame generation**: run `sdr-fg` (`-Dmcopt.metal.framegen=true`, auto): log says "XDR output off (... frame
@@ -168,8 +172,8 @@ is not in these numbers.
   when any screen can show EDR (the built-in panel), then every 0.25 s checks the window's own screen; on an SDR-only
   screen the final pass goes back to the plain SDR variant (no excess written; the present is a plain conversion into the
   RGBA16F drawable, which an SDR screen shows exactly like the RGBA8 one). `mcopt.shade.xdrTest=sdr|flip` fakes it; the
-  log shows "XDR paused (this screen is SDR only ...)" / "XDR resumed". Run `sdr-flip` flips every 10 s through perf +
-  shots (6.4). If the game starts with only the external monitor (lid closed), `auto` finds no EDR screen and the layer is
+  log shows "XDR paused (this screen is SDR only ...)" / "XDR resumed". Run `sdr-flip` flipped it every 10 s through
+  the perf route and the shots: 8 transitions, no error, no hitch tied to them (spin 93 fps, flight 101 fps, normal). If the game starts with only the external monitor (lid closed), `auto` finds no EDR screen and the layer is
   the plain RGBA8 one from the start.
 - **Never breaks presenting**: the EDR layer is used only when its compose/present pipelines built; otherwise the layer
   stays RGBA8 and the Java side turns XDR off.

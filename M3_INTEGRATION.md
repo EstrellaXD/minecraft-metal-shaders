@@ -35,3 +35,12 @@ working on `m3`, `m3-clouds` and `m3-weather`. When everything is merged and tes
   once and not overexposed at night (lower half +11 % brighter than m3's own ent_night: dynamic lights of the zoo's
   dropped items), the hand with torch + soul lantern fine, Nether particles now light grey ash instead of dark specks (a
   few dark dots left in nether_warped: check which pipeline), End fine, blazes lit in dl_nether.
+
+## Sunset art (Gael 2026-10-07 22:24: "se ve puro color naranja, plano")
+`mcopt.shade.sunsetArt` (default on, read every frame; off = M2's grade): a6b1a42 azimuth-aware golden-hour grade
+(`shadeSunsetGrade` + `ShadeSky.radiance` mirror + LUT gold gain fading away from the sun), 80e1134 horizon stretch
+(Photon-style, LUT only) + halo, f70be59 softer peach gold / weaker halo / smaller stretch. A/B in one session (mcbench
+`-Dmcbench.entities=rose -Dmcbench.roseProp=mcopt.shade.sunsetArt`, ticks frozen): runs `*-art1`, `*-art2`, `*-art3`;
+images `work/release/M3-sky-screenshots/`. art3: broad warm gradient toward the sun, no orange ring opposite it.
+**Open:** crepuscular-ray contrast in the `rose_*_sky` view 7.23 -> 5.94 (high-pass std of luma, -18 %): re-measure after
+the clouds merge (volumetric clouds drive the rays there) and compensate (e.g. VL strength in the golden hour) if still lower.

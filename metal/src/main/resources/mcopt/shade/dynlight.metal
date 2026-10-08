@@ -27,8 +27,8 @@
 // soul fire, red for redstone, ...), times a wrapped N.L (so faces turned toward the light catch it and the far side of a
 // pillar falls off), times the visibility volume (no light through walls). Lights whose cell list doesn't name a pixel cost
 // nothing there: the grid (8-block cells, 64-bit light masks) keeps the per-pixel loop to the few lights that can reach it.
-#ifndef MCOPT_SHADE_DYNLIGHT
-#define MCOPT_SHADE_DYNLIGHT
+#ifndef MCOPT_SHADE_DYNLIGHT_MODULE // not MCOPT_SHADE_DYNLIGHT: that is the m3 seam file's (shade_dynlight.metal) guard
+#define MCOPT_SHADE_DYNLIGHT_MODULE
 #include <metal_stdlib>
 using namespace metal;
 

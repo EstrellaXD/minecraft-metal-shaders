@@ -75,6 +75,11 @@ final class CloudShots {
 	 * sky), with the volumetric clouds paused in the middle phase (system property mcopt.shade.clouds.pause, read by
 	 * mcopt-shade every frame: vanilla's clouds as with mcopt.shade.clouds=false): the clouds' whole cost in one session,
 	 * bracketed so drift shows (results.json perf.* / gpu.*).
+	 * <p>
+	 * {@code -Dmcbench.cloudsDev=<bits>,<bits>,...} (M3.1 price breakdown, up to 8): after "clouds", one more phase per entry,
+	 * "clouds_d1", "clouds_d2"..., each with the system property mcopt.shade.clouds.dev set to its bits (read by mcopt-shade
+	 * every frame: passes or consumers switched off, or an optimisation switched back to the old way; see CLOUDS.md "M3.1
+	 * performance"); the mapping goes to results.json "cloudsDev".
 	 */
 	private static void perf(java.util.Deque<BenchDriver.Step> steps) {
 		double sec = Double.parseDouble(System.getProperty("mcbench.cloudsSeconds", "12"));
@@ -82,12 +87,27 @@ final class CloudShots {
 		steps.add(new WeatherScene("clouds_perf", 6000, "clear", at(o, 0, 0f, -8f)));
 		steps.add(new BenchDriver.Settle("clouds_perf", false, 3, 120));
 		steps.add(new BenchDriver.Hold("clouds_perf", 3));
-		for (String phase : new String[] {"clouds", "clouds_off", "clouds2"}) {
+		List<String> phases = new java.util.ArrayList<>(List.of("clouds"));
+		Map<String, String> devs = new LinkedHashMap<>();
+		String devSpec = System.getProperty("mcbench.cloudsDev", "").trim();
+		if (!devSpec.isEmpty()) {
+			String[] bits = devSpec.split(",");
+			for (int i = 0; i < bits.length && i < 8; i++) {
+				String name = "clouds_d" + (i + 1);
+				devs.put(name, Integer.toString(Integer.parseInt(bits[i].trim())));
+				phases.add(name);
+			}
+			BenchDriver.results.put("cloudsDev", devs);
+		}
+		phases.add("clouds_off");
+		phases.add("clouds2");
+		for (String phase : phases) {
 			steps.add(new BenchDriver.Step(phase, 0) {
 				@Override
 				void start(Minecraft mc, long now) {
 					BenchDriver.setPhase(phase.toUpperCase(java.util.Locale.ROOT));
 					System.setProperty("mcopt.shade.clouds.pause", Boolean.toString(phase.equals("clouds_off")));
+					System.setProperty("mcopt.shade.clouds.dev", devs.getOrDefault(phase, "0"));
 					Pose p = o.get();
 					long t0 = now;
 					BenchDriver.pose = t -> new Pose(p.x(), p.y(), p.z(), (float) (360.0 * Math.min(1.0, BenchDriver.secs(t - t0) / sec)), -8f);
@@ -102,6 +122,7 @@ final class CloudShots {
 					BenchDriver.recPhase = -1;
 					BenchDriver.phaseRanges.get(phase)[1] = now;
 					System.setProperty("mcopt.shade.clouds.pause", "false");
+					System.setProperty("mcopt.shade.clouds.dev", "0");
 					return true;
 				}
 			});

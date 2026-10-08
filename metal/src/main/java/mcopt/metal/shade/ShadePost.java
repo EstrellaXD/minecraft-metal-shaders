@@ -114,6 +114,9 @@ public final class ShadePost {
 	/** This frame's live render size (the TAAU sub-rect of the HDR targets; = width x height without TAAU) and world depth. */
 	private static int liveWidth, liveHeight;
 	private static @Nullable GpuTexture worldDepth;
+	/** M2.2: under TAAU the final pass reads depth and the volumetric light where this frame's jittered raster shows the pixel's
+	 * scene point (mcopt.shade.vl.unjitter, default true; false = at the output uv, M2/M2.1: they moved by the jitter). */
+	private static final boolean VL_UNJITTER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.unjitter", "true"));
 	/** Bloom's first level: xy the part of its source's uv range that holds the image (the TAAU sub-rect). */
 	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
@@ -458,8 +461,10 @@ public final class ShadePost {
 		boolean vl = vlLight != 0 && vlDist != 0;
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0).putFloat(0f).putFloat(0f).putFloat(0f);
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
-		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
-		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(0f).flip();
+		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU), w bits
+		// (TAAU): 2 depth and the volumetric light read at the jittered raster's position of the pixel's scene point
+		// (mcopt.shade.vl.unjitter)
+		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(taa != null && depth != 0 && VL_UNJITTER ? 2f : 0f).flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
 		pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, new long[] {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene,

@@ -96,7 +96,8 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 // v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks), zw the live part of the
 // VL textures (uv scale);
 // r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
-// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off)
+// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w bits (TAAU,
+// M2.2; 0 = M2.1): 2 depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point
 struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; };
 
 // Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
@@ -181,11 +182,16 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	// air only (under water / in lava the game's fog owns it), not the sky (the atmosphere has its own) nor Distant Horizons'
 	// LODs (not in this depth; DH fogs them). Depth may be smaller than the image (a resolver's output over the internal world).
 	float2 dsize = P.r.x > 0.0 ? P.r.xy : float2(depth.get_width(), depth.get_height());
-	uint2 dpx = min(uint2(in.uv * dsize), uint2(dsize) - 1u);
+	int rw = int(P.r.w);
+	// M2.2 (r.w bit 2, TAAU): depth and the volumetric light are this frame's jittered raster, which shows this output pixel's
+	// scene point jitter.xy / 2 (uv) further on; reading them at in.uv moved them against the steady resolved image by up to
+	// half a render pixel every frame (god rays wobbling at their edges and at the leaves)
+	float2 uv = (rw & 2) != 0 ? clamp(in.uv + 0.5 * f.jitter.xy, 0.0, 1.0) : in.uv;
+	uint2 dpx = min(uint2(uv * dsize), uint2(dsize) - 1u);
 	float d = depth.read(dpx);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
-	float3 wp = d > 0.0 ? shadeWorldFromDepth(in.uv, d, f) : float3(0.0);
+	float3 wp = d > 0.0 ? shadeWorldFromDepth(uv, d, f) : float3(0.0);
 	if (d > 0.0 && hazeOn) {
 		if (dot(wp, wp) > 4.0) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
@@ -195,7 +201,8 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	// volumetric light (god rays, canopy mist; VL module): its medium is the air near the camera, in front of the haze
 	float tv = 1.0;
 	if (P.v.x > 0.5) {
-		half4 v = shadeVlUpsample(vlT, vlD, in.uv, d > 0.0 ? length(wp) : 1e4, P.v.y, P.v.z > 0.0 ? P.v.zw : float2(1.0));
+		float2 vlScale = P.v.z > 0.0 ? P.v.zw : float2(1.0);
+		half4 v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale);
 		tv = float(v.a);
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
 		float3 lit = c * tv;

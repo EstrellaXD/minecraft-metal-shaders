@@ -379,7 +379,11 @@ public final class ShadeVl {
 		put(b, lr, lg, lb, canopyMist);                                                  // light
 		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
 		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) : 0f, VlConfig.SS_TAPS, onScreen, 6f);
-		put(b, sx, sy, 0f, 0f);                                                          // sunPx
+		// sunPx; z the still view's clamp allowance, w bits: 1 the 3x3 clamp box, 2 the history at this point's distance,
+		// 4 per-texel crepuscular taps over a bilinear sky mask, 8 per-texel offsets of the canopy mist's own steps, 16 of the
+		// march under water
+		put(b, sx, sy, VlConfig.TEMPORAL ? VlConfig.STILL : 0f, (VlConfig.BOX3 ? 1 : 0) + (VlConfig.HIST_DEPTH ? 2 : 0)
+			+ (VlConfig.CREP_SMOOTH ? 4 : 0) + (VlConfig.NEAR_DITHER ? 8 : 0) + (VlConfig.WATER_DITHER ? 16 : 0));
 		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		// M3: the caustic curtains run on the water's clock (real time since M2.1: ShadeFrame.waterTime). On the game time the

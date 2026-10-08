@@ -195,7 +195,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
 #ifdef MCOPT_HDR
     // M3: the volumetric clouds' shadows (shade_clouds.metal; 1 when they are off); overworld only
-    if (!dims && in.v_Light.y > 0.3h) shadow *= half(shadeCloudShadow(p, sl, sr.cloudShadow));
+    // (only where the sun or moon still reaches: a pixel already in terrain shadow needs no cloud-map fetch)
+    if (!dims && in.v_Light.y > 0.3h && shadow > 0.0h) shadow *= half(shadeCloudShadow(p, sl, sr.cloudShadow));
 #endif
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT

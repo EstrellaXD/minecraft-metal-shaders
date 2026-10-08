@@ -27,7 +27,7 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.clouds.scale}: history resolution relative to the output (P 0.4, B 0.45, Q 0.5, U 0.67).</li>
  * <li>{@code mcopt.shade.clouds.checker} (P 3, B 3, Q 2, U 2): march one pixel of each N x N block per frame, the rest
  * from the reprojected history (1 = every pixel every frame).</li>
- * <li>{@code mcopt.shade.clouds.steps} / {@code .lightSteps}: primary and light samples (P 20/3, B 24/3, Q 40/4, U 56/5).</li>
+ * <li>{@code mcopt.shade.clouds.steps} / {@code .lightSteps}: primary and light samples (P 20/3, B 20/3, Q 40/4, U 56/5).</li>
  * <li>{@code mcopt.shade.clouds.shadows} (true) / {@code .shadowStrength} (0.8): cloud shadows on terrain, water and
  * god rays.</li>
  * <li>{@code mcopt.shade.clouds.dome} (true): the reflection dome (clouds in water reflections of directions off
@@ -50,7 +50,7 @@ public final class CloudConfig {
 	public static final float SCALE = clamp(floatProperty("mcopt.shade.clouds.scale", new float[] {0.4f, 0.45f, 0.5f, 0.67f}[TIER]), 0.2f, 1f);
 	/** Checkerboard N: one pixel of each N x N block is marched per frame (P 3, B 3, Q 2, U 2; 1 = every pixel). */
 	public static final int CHECKER = clampInt(Integer.getInteger("mcopt.shade.clouds.checker", new int[] {3, 3, 2, 2}[TIER]), 1, 3);
-	public static final int STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.steps", new int[] {20, 24, 40, 56}[TIER]), 6, 128);
+	public static final int STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.steps", new int[] {20, 20, 40, 56}[TIER]), 6, 128);
 	public static final int LIGHT_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.lightSteps", new int[] {3, 3, 4, 5}[TIER]), 1, 8);
 	public static final boolean SHADOWS = flag("mcopt.shade.clouds.shadows", true);
 	public static final float SHADOW_STRENGTH = clamp(floatProperty("mcopt.shade.clouds.shadowStrength", 0.8f), 0f, 1f);

@@ -82,7 +82,7 @@ render3dHud -> ShadePost.beforeHand hooks:
 | `.style` | volumetric (`blocky` with `mcopt.shade.look=storybook`) | `blocky`: vanilla-style 12-block cells, `.blockThickness` (8) |
 | `.scale` | P 0.4, B 0.45, Q 0.5, U 0.67 | history size relative to the output (window framebuffer; independent of TAAU's render scale) |
 | `.checker` | P 3, B 3, Q 2, U 2 | N: one pixel of each N x N block marched per frame |
-| `.steps` / `.lightSteps` | P 20/3, B 24/3, Q 40/4, U 56/5 | primary / light samples (empty air crossed with double steps on the 2D footprint) |
+| `.steps` / `.lightSteps` | P 20/3, B 20/3 (was 24 until the 2026-10-07 evening pricing), Q 40/4, U 56/5 | primary / light samples (empty air crossed with double steps on the 2D footprint) |
 | `.maxAge` | 10 (N=3), 12 | most march samples a history pixel averages |
 | `.shadows` / `.shadowStrength` / `.shadowExtent` | true / 0.8 / 1024 | cloud shadow map (256^2 over the extent, oblique projection along the light onto the layer) |
 | `.dome` / `.domeSteps` | true / P 8, B 10, Q 12, U 16 | reflection dome |

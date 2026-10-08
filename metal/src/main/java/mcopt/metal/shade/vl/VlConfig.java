@@ -62,6 +62,9 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.unjitter} (true, M2.2; read by ShadePost): under TAAU the final pass reads depth and the light where
  * this frame's jittered raster shows the pixel's scene point; false: at the output uv (M2/M2.1: they moved by the jitter
  * against the steady resolved image).</li>
+ * <li>{@code mcopt.shade.vl.sunsetRays} (M3.3, read every frame; 1 or false = M3.2): gain of the sky's dark crepuscular rays in
+ * the golden hour while the sunset art is on ({@link #sunsetRays}); {@code mcopt.shade.vl.skyRays} (dev, 1): their gain at any
+ * time (0 = none).</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
  * <li>{@code mcopt.shade.vl.gpuTimer} (false): GPU timestamps around each pass; the log line (forced on) gets their
@@ -104,6 +107,15 @@ public final class VlConfig {
 	/** M2.2: the march under water offset per texel; false = the march's per-frame offset (M2/M2.1). */
 	public static final boolean WATER_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.waterDither", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
+	/**
+	 * M3.3: the default golden-hour gain of the sky's dark rays over the open sky while the sunset art is on (see
+	 * {@link #sunsetRays}): 2 (M33_MISC.md: the cloud shadows fan out across the clear gaps near the sun as visible shafts; the
+	 * clouds keep M3.2's shading; frame-to-frame noise unchanged; 3-4 tint the shafts blue-violet and darken soft cloud edges).
+	 */
+	public static final float SUNSET_RAYS_DEFAULT = 2f;
+	/** M3.3: defaults of {@link #sunsetFar} and {@link #sunsetFall} (pending run mx5: false / 0 = the first version). */
+	public static final boolean SUNSET_FAR_DEFAULT = false;
+	public static final float SUNSET_FALL_DEFAULT = 0f;
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
 	private VlConfig() {
@@ -112,6 +124,44 @@ public final class VlConfig {
 	/** The MSL the passes compile from: ShadeMsl.prelude() (shade_look + shade_common + shade_m2) + vl.metal (mcvl.m; validate.sh). */
 	public static String source() {
 		return mcopt.metal.shade.ShadeMsl.prelude() + "\n" + mcopt.metal.shade.ShadeMsl.resource("vl.metal");
+	}
+
+	/**
+	 * M3.3, read every frame (bench A/B in one session): mcopt.shade.vl.sunsetRays, the gain of the sky's dark crepuscular rays over
+	 * the open sky (vl.metal weights it by the pixel's own cloud transmittance squared) in the golden hour while the sunset art
+	 * (mcopt.shade.sunsetArt) is on. Its brighter, warmer aureole had made the rays ~18 % weaker before the volumetric clouds
+	 * (M3_INTEGRATION.md); with them the sky's contrast is back at M2.2's, but the clouds' soft shadows read faintly across the
+	 * clear gaps near the sun (M33_MISC.md). 1 (or false) = M3.2; true = the default.
+	 */
+	public static float sunsetRays() {
+		String v = System.getProperty("mcopt.shade.vl.sunsetRays");
+		if (v == null) return SUNSET_RAYS_DEFAULT;
+		v = v.trim();
+		if (v.equalsIgnoreCase("false") || v.equalsIgnoreCase("off")) return 1f;
+		if (v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on")) return SUNSET_RAYS_DEFAULT;
+		return clamp(floatProperty("mcopt.shade.vl.sunsetRays", SUNSET_RAYS_DEFAULT), 0f, 4f);
+	}
+
+	/**
+	 * M3.3, read every frame: mcopt.shade.vl.sunsetFar, the golden-hour gain (sunsetRays) measured from the crepuscular taps past
+	 * the pixel's own neighbourhood (vl.metal openFar): a clear pixel's own open mask no longer dilutes the shadow of a cloud
+	 * between it and the sun, so the shadow shafts read across the clear sky (M33_MISC.md). Default {@link #SUNSET_FAR_DEFAULT}.
+	 */
+	public static boolean sunsetFar() {
+		String v = System.getProperty("mcopt.shade.vl.sunsetFar");
+		return v == null ? SUNSET_FAR_DEFAULT : Boolean.parseBoolean(v.trim());
+	}
+
+	/** M3.3, read every frame: mcopt.shade.vl.sunsetFall, the falloff exponent of that gain around the sun (0 = the streaks' own, 6). */
+	public static float sunsetFall() {
+		String v = System.getProperty("mcopt.shade.vl.sunsetFall");
+		return v == null ? SUNSET_FALL_DEFAULT : clamp(floatProperty("mcopt.shade.vl.sunsetFall", SUNSET_FALL_DEFAULT), 0f, 16f);
+	}
+
+	/** M3.3 dev, read every frame: mcopt.shade.vl.skyRays, a gain on the sky's dark rays at any time (1; 0 = none: the ray-only metric). */
+	public static float skyRays() {
+		String v = System.getProperty("mcopt.shade.vl.skyRays");
+		return v == null ? 1f : clamp(floatProperty("mcopt.shade.vl.skyRays", 1f), 0f, 4f);
 	}
 
 	static float floatProperty(String key, float def) {

@@ -46,6 +46,31 @@
 #endif
 #endif
 
+// M3.3 rain budget options (mcopt.shade.rainBudget: ShadeWeather defines SHADE_WX_B_GATE / _RIPPLE / _STEPS). For pricing in
+// one session (mcopt.shade.rainBudget.dev: SHADE_WX_B_DEV) each is also switched by its dev bit; without either the options
+// are constant false, so the compiled shader is M3.2's.
+#if defined(SHADE_WX_B_GATE)
+#define SHADE_WX_B_GATE_ON(f) true
+#elif defined(SHADE_WX_B_DEV)
+#define SHADE_WX_B_GATE_ON(f) shadeDev(f, SHADE_DEV_WX_SSR_GATE3)
+#else
+#define SHADE_WX_B_GATE_ON(f) false
+#endif
+#if defined(SHADE_WX_B_RIPPLE)
+#define SHADE_WX_B_RIPPLE_ON(f) true
+#elif defined(SHADE_WX_B_DEV)
+#define SHADE_WX_B_RIPPLE_ON(f) shadeDev(f, SHADE_DEV_WX_RIPPLE_NEAR)
+#else
+#define SHADE_WX_B_RIPPLE_ON(f) false
+#endif
+#if defined(SHADE_WX_B_STEPS)
+#define SHADE_WX_B_STEPS_ON(f) true
+#elif defined(SHADE_WX_B_DEV)
+#define SHADE_WX_B_STEPS_ON(f) shadeDev(f, SHADE_DEV_WX_SSR_STEPS8)
+#else
+#define SHADE_WX_B_STEPS_ON(f) false
+#endif
+
 constexpr sampler shadeWxLinear(filter::linear, address::clamp_to_edge, coord::normalized);
 constexpr sampler shadeWxNearest(filter::nearest, address::clamp_to_edge, coord::normalized);
 
@@ -205,7 +230,9 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
-		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
+		// (M3.3 SHADE_WX_B_RIPPLE: the rings fade out nearer, over 0.02-0.045 blocks per pixel: none beyond ~10 blocks)
+		float2 rippleFade = SHADE_WX_B_RIPPLE_ON(f) ? float2(0.02, 0.045) : float2(0.03, 0.06);
+		float fade = 1.0 - smoothstep(rippleFade.x, rippleFade.y, footprint);
 		if (SHADE_WX_BUDGET(f, SHADE_DEV_WX_RIPPLE_GATE)) {
 			// rings show in what the puddle mirrors: where the flat water's Fresnel x P is ~2 % (looking down near the feet)
 			// they only stir a uniform overcast sky; fade them in over F*P 0.02-0.035 (the march's gate starts at 0.035)
@@ -258,6 +285,8 @@ static inline float shadeWxGgx(float3 n, float3 v, float3 l, float alpha) {
 // (radiance before exposure, weight); weight 0 = no hit (callers keep their sky reflection).
 // One chunk (of `chunks` equal parts) of the march: n steps with a nonlinear spacing (dense near the start), the first crossing
 // refined by 3 bisection steps and checked for thickness. Returns (uv, fade, 1) or w < 0; hitPoint = the camera-relative hit.
+// (M3.3: N = the steps per lane as a template parameter, so SHADE_WX_B_STEPS' shorter march is a second unrolled copy)
+template <int N>
 static float4 shadeWxHistMarch(float3 p, float3 r, float maxDist, int chunk, int chunks, float jitter, constant ShadeLook &L,
                                texture2d<half> histDepth, thread float3 &hitPoint) {
 	float4 c0 = L.prevViewProjNoJitter * float4(p, 1.0);
@@ -274,7 +303,7 @@ static float4 shadeWxHistMarch(float3 p, float3 r, float maxDist, int chunk, int
 	float tEnd = min(1.0, min(tx, ty));
 	if (tEnd <= 0.0) return float4(0.0, 0.0, 0.0, -1.0);
 	bool screenEnd = tEnd < 1.0;
-	const int n = SHADE_PUDDLE_N;
+	const int n = N;
 	float inv = 1.0 / float(n * chunks);
 	float u0 = max(float(chunk * n) - jitter, 0.0) * inv;
 	float tPrev = u0 * (0.3 + 0.7 * u0) * tEnd;
@@ -333,7 +362,10 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 	float3 rq = normalize(shadeWxQuadSum(r));
 	uint2 q = uint2(pixel);
 	int chunk = int(q.x & 1u) + 2 * int(q.y & 1u);
-	float4 h = shadeWxHistMarch(pq, rq, maxDist, chunk, 4, shadeNoise(floor(pixel * 0.5), f.flags2.x), L, histDepth, hp);
+	float jq = shadeNoise(floor(pixel * 0.5), f.flags2.x);
+	// (M3.3 SHADE_WX_B_STEPS: 8 steps, 2 per lane; quad-uniform: a per-frame setting)
+	float4 h = SHADE_WX_B_STEPS_ON(f) ? shadeWxHistMarch<2>(pq, rq, maxDist, chunk, 4, jq, L, histDepth, hp)
+	                                  : shadeWxHistMarch<SHADE_PUDDLE_N>(pq, rq, maxDist, chunk, 4, jq, L, histDepth, hp);
 	float key = h.w > 0.0 ? float(chunk) : 4.0;
 	float best = shadeWxQuadMin(key);
 	if (best > 3.5) return float4(0.0);
@@ -342,7 +374,9 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 	hp = shadeWxQuadSum(mine ? hp : float3(0.0));
 	h = float4(a, 1.0);
 #else
-	float4 h = shadeWxHistMarch(p, r, maxDist, 0, 1, shadeNoise(pixel, f.flags2.x), L, histDepth, hp);
+	float jp = shadeNoise(pixel, f.flags2.x);
+	float4 h = SHADE_WX_B_STEPS_ON(f) ? shadeWxHistMarch<8>(p, r, maxDist, 0, 1, jp, L, histDepth, hp)
+	                                  : shadeWxHistMarch<SHADE_PUDDLE_N>(p, r, maxDist, 0, 1, jp, L, histDepth, hp);
 	if (h.w < 0.0) return float4(0.0);
 #endif
 	float3 c = float3(hist.sample(shadeWxLinear, h.xy, level(0.0)).rgb) / prevExposure;
@@ -427,6 +461,8 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// (SHADE_DEV_WX_SSR_GATE2: from F * P 0.05, ramp to 0.09: puddles within ~4.5 blocks of the feet reflect 2-5 % and keep
 	// the sky reflection alone; the grazing views where the mirror shows are marched as before)
 	float2 gate = SHADE_WX_BUDGET(f, SHADE_DEV_WX_SSR_GATE2) ? float2(0.05, 0.09) : float2(0.035, 0.07);
+	// (M3.3 SHADE_WX_B_GATE: from F * P 0.06, ramp to 0.10: puddles within ~3 blocks of the feet lose a ~5 % reflection)
+	if (SHADE_WX_B_GATE_ON(f)) gate = float2(0.06, 0.10);
 	float ssrW = shadeDev(f, SHADE_DEV_WX_NO_SSR_GATE) ? (P > 0.02 ? 1.0 : 0.0) : smoothstep(gate.x, gate.y, F * P);
 #ifdef SHADE_PUDDLE_QUAD
 	// quadPuddle first: lanes of a quad without puddles may have returned above, and shuffles must not read them

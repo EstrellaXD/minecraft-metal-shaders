@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 256;
+	private static final int PARAM_BYTES = 272; // VlParams (vl.metal), 17 x float4 since M3.3
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -399,6 +399,12 @@ public final class ShadeVl {
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, hdr ? HDR_OPEN_CUT : 0.5f); // mistAmb, open glow left out
 		put(b, hdr ? HDR_CARVE : 0f, hdr ? HDR_CARVE_WATER : 0f, histU, histV);           // carve; zw: the history's live part (uv scale)
+		// M3.3 art: x the gain of the sky's dark rays (mcopt.shade.vl.skyRays, dev; 1), y their extra gain over the open sky:
+		// mcopt.shade.vl.sunsetRays - 1 in the golden hour while the sunset art is on (its brighter, warmer aureole had weakened
+		// them); z that extra from the taps past the pixel's own neighbourhood (sunsetFar), w its falloff (sunsetFall); y = 0 is
+		// M3.2
+		float sunsetArt = mcopt.metal.shade.ShadeSky.sunsetArt ? golden : 0f;
+		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, VlConfig.sunsetFar() ? 1f : 0f, VlConfig.sunsetFall()); // art
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

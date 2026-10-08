@@ -109,6 +109,10 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_RAIN_TINT 256     // coloured shadows fade out in heavy rain (the direct sun they colour is <= 32 % there)
 #define SHADE_DEV_WX_FILM_SKY 512      // heavy rain: wet films off the puddles reflect the overcast sky's mean light (no LUT lookup)
 #define SHADE_DEV_WX_SSR_GATE2 131072  // puddle reflections marched where F x P >= 0.05 (ramp to 0.09) instead of 0.035 (to 0.07)
+// M3.3 rain budget options (weather_surface.metal; on by mcopt.shade.rainBudget at startup, or by these bits for pricing)
+#define SHADE_DEV_WX_SSR_GATE3 262144   // puddle reflections marched where F x P >= 0.06 (ramp to 0.10) instead of 0.05 (to 0.09)
+#define SHADE_DEV_WX_RIPPLE_NEAR 524288 // raindrop rings fade out over 0.02-0.045 blocks per pixel (~10 blocks) instead of 0.03-0.06
+#define SHADE_DEV_WX_SSR_STEPS8 1048576 // puddle reflections: 8 march steps (2 per quad lane) instead of SHADE_PUDDLE_STEPS
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

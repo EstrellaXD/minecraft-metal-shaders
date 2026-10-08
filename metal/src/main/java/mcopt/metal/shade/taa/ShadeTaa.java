@@ -123,6 +123,7 @@ public final class ShadeTaa {
 			if (taa == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			instance = new ShadeTaa(encoder, taa);
 			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe()
+				+ (TaaConfig.DRS && DynamicResolution.hold() ? String.format(java.util.Locale.ROOT, "; hold controller (M3.3), floor %.2f on performance/balanced", DynamicResolution.HOLD_FLOOR) : "")
 				+ (FIXED_FOR_DH ? "; Distant Horizons loaded: fixed scale " + TaaConfig.SCALE + " (no dynamic resolution)" : ""));
 		} catch (Throwable e) {
 			failed = true;
@@ -154,8 +155,22 @@ public final class ShadeTaa {
 		// M3.1: a resolution the player fixed in the pause menu (ShadeResolution) wins over the preset's dynamic resolution
 		float chosen = mcopt.metal.shade.ShadeResolution.scale(this.outHeight);
 		if (chosen > 0f) this.scale = FIXED_FOR_DH ? Math.min(chosen, this.allocScale) : chosen;
-		else if (TaaConfig.DRS && !FIXED_FOR_DH) this.scale = DRS.update();
-		else this.scale = FIXED_FOR_DH ? Math.min(TaaConfig.SCALE, this.allocScale) : TaaConfig.SCALE;
+		else if (TaaConfig.DRS && !FIXED_FOR_DH) {
+			// M3.3 dev (mcbench A/B phases, read every frame): mcopt.shade.drs.pause=true holds the preset's start scale (as
+			// mcopt.shade.drs=false), =<number> holds that scale (0.4-1); mcopt.shade.drs.restart (any value, cleared here) starts
+			// the controller over at the start scale
+			float paused = pausedScale();
+			if (paused > 0f) {
+				DRS.restart(TaaConfig.SCALE);
+				this.scale = paused;
+			} else {
+				if (System.getProperty("mcopt.shade.drs.restart") != null) {
+					System.clearProperty("mcopt.shade.drs.restart");
+					DRS.restart(TaaConfig.SCALE);
+				}
+				this.scale = DRS.update();
+			}
+		} else this.scale = FIXED_FOR_DH ? Math.min(TaaConfig.SCALE, this.allocScale) : TaaConfig.SCALE;
 		this.updateSize();
 		int phases = Math.clamp(Math.round(8 / (this.scale * this.scale)), 8, 32); // ~8 samples per output pixel (MetalFX/FSR guidance)
 		this.frame = this.frame % phases + 1;
@@ -163,6 +178,18 @@ public final class ShadeTaa {
 		this.jitterY = halton(this.frame, 3) - 0.5f;
 		new Matrix4f().translation(2 * this.jitterX / this.width, 2 * this.jitterY / this.height, 0).mul(projection, projection);
 		this.jittered = true;
+	}
+
+	/** M3.3 dev: the scale mcopt.shade.drs.pause holds (true: the preset's start scale; a number: that scale), 0 = not paused. */
+	private static float pausedScale() {
+		String v = System.getProperty("mcopt.shade.drs.pause");
+		if (v == null || v.equalsIgnoreCase("false")) return 0f;
+		if (v.equalsIgnoreCase("true")) return TaaConfig.SCALE;
+		try {
+			return Math.clamp(Float.parseFloat(v.trim()), 0.4f, 1f);
+		} catch (NumberFormatException e) {
+			return 0f;
+		}
 	}
 
 	private void updateSize() {

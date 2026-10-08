@@ -42,6 +42,7 @@ using namespace metal;
 #define SHADE_DL_IRR_Y 64      // contribution fades out over the outer SHADE_DL_IRR_FADE voxels (full within +-40 / +-24
 #define SHADE_DL_IRR_Z 96      // blocks, gone at +-48 / +-32: no hard plane where the volume ends)
 #define SHADE_DL_IRR_FADE 8.0
+#define SHADE_DL_WARM float3(2.4, 1.2, 0.48) // ShadeFrame.blockLight: the colour the lights' tints are relative to
 
 struct ShadeDynLight {
 	float4 pos;    // xyz camera-relative position, w reach in blocks (the light level; the light is l - d at distance d)
@@ -230,9 +231,12 @@ static float3 shadeDynamicLightsSpec(constant ShadeDynLights &D, texture3d<half>
 // in any channel. The colour is display-referred (it multiplies the texture into the game's RGBA8 colour, which the HDR
 // variant then lifts through the inverse tone map), so a sum over several lights, or a saturated tint (soul fire's blue is
 // ~3x its luminance), would clip to white and land at the HDR target's ceiling: a mob among nine lights rendered as a flat
-// white shape with a bloom halo and black smoke particles turned cream (2026-10-07 skeptic check). The tint is the
-// excess-weighted mean of the lights' tints; where it pushes a channel past the ceiling the whole addition is scaled down
-// (hue kept: a soul lantern alone stays cyan, only dimmer than a torch, as on vanilla's curve).
+// white shape with a bloom halo and black smoke particles turned cream (2026-10-07 skeptic check).
+// Colour: the tints are relative to the terrain's warm block-light colour (ShadeFrame.blockLight, SHADE_DL_WARM), which the
+// lightmap does not have (it is near white at level 15), so a tint applied to the lightmap as is turns soul fire deep blue.
+// Here each light's absolute colour (tint x SHADE_DL_WARM) is scaled to a peak channel of 1 and taken 60 % toward white:
+// a torch is a light warm white, a soul lantern a pale cyan, redstone a pink red, and no channel exceeds the lightmap
+// excess it multiplies (no clipping). The lights' colours are averaged weighted by their excess.
 static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2d<float> lightMap, sampler lightSampler, constant ShadeDynLights &D,
                                texture3d<half> vis) {
 	uint2 m = shadeDlMask(D, p);
@@ -261,7 +265,8 @@ static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2
 			if (y <= 1e-5) continue;
 			best = max(best, ex);
 			sum += ex;
-			tints += (L.color.rgb / max(a, 1e-3)) * y;
+			float3 c = L.color.rgb * SHADE_DL_WARM;
+			tints += mix(float3(1.0), c / max(max(c.r, c.g), max(c.b, 1e-4)), 0.6) * y;
 			weight += y;
 		}
 	}
@@ -269,11 +274,7 @@ static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2
 	// vanilla's brightest colour at this sky light: the ceiling for the sum and for every channel of the result
 	float3 top = lightMap.sample(lightSampler, float2(0.96875, sky), level(0.0)).rgb;
 	float3 add = min(best + 0.25 * (sum - best), max(top - lm.rgb, 0.0)) * (tints / weight) * D.params.w;
-	float cap = max(max(top.r, top.g), max(top.b, max(max(lm.r, lm.g), lm.b)));
-	float3 room = max(cap - lm.rgb, 0.0);
-	float3 k3 = select(float3(1.0), room / max(add, 1e-6), add > room);
-	add *= saturate(min(min(k3.x, k3.y), k3.z));
-	return float4(lm.rgb + add, lm.a);
+	return float4(min(lm.rgb + add, max(top, lm.rgb)), lm.a);
 }
 
 #endif

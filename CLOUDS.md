@@ -141,8 +141,12 @@ needed) the passes scale with: march ~ rays x in-cloud samples; resolve ~ histor
 - **Rain/wetness** (m3-weather): `CloudWeather` already darkens/thickens with `f.rain`/`f.thunder`; puddles could read
   `ShadeLook.clouds0` / the shadow map. A shared "weather state" could replace the rain smoothing here later.
 - **VL** reads the cloud shadow per step and uses the clouds' T as its sky mask (HDR only); with VL off nothing changes.
-- **Distant Horizons**: our clouds draw behind DH's LODs (sky pass). DH's own LOD clouds draw on top of everything: set
-  `enableCloudRendering = false` in DistantHorizons.toml (DH settings > Graphics > Clouds) when using these clouds (DH has
-  no API switch for it in 3.3.4). DH turns the game's Clouds option OFF; we ignore that while DH is loaded (`.withDh`).
+- **Distant Horizons**: our clouds draw behind DH's LODs (sky pass). DH's own LOD clouds would draw on top of everything:
+  while ours draw, `ShadeClouds.dhClouds` switches them off through DH's public config API (reflection:
+  `DhApi.Delayed.configs.graphics().genericRendering().cloudRenderingEnabled().setValue(false)`, an API override that
+  DistantHorizons.toml keeps nothing of; `clearValue()` when ours stop: pause, other dimension, failure). DH turns the
+  game's Clouds option OFF; we ignore that while DH is loaded (`.withDh`). DH's LODs are not in the world depth, so the
+  "clouds over the world" composite (camera above the layer) takes empty-depth pixels below the horizon as far terrain
+  when DH drew this frame (`mc_clouds_over` mode 1).
 - `mcopt.shade=false`: nothing of this runs (MetalRenderPass's skip is behind `ShadeClouds.ON`, a static final false).
   `mcopt.shade.clouds=false`: m2.1 behaviour (vanilla clouds, `clouds.fs.metal`), the prelude helpers return "no cloud".

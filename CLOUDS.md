@@ -221,10 +221,25 @@ GPU ms (`gpu.gpuMsPerFrame`).
 | c12 (18:30, AC) | + fixes, timer | 8.97 | 8.14 | 8.97 | **+0.83 / +0.83** | yes except the first seconds |
 | c12 (18:51, AC) | same, `scale=0.4` | 8.86 | 8.07 | 8.95 | +0.79 / +0.88 | partly (484 % at the start) |
 | c19 (19:14, AC) | branch head code, no timer | 9.34 | 8.42 | 9.17 | **+0.92 / +0.74** | yes (101-117 %) |
-| c19 (19:37, AC) | same, `steps=16` | (9.62) | 8.62 | 8.84 | (contaminated) / **+0.22** | clouds phase no (544-761 %), rest yes |
+| c19 (19:37, AC) | same, `steps=16` | (9.62) | 8.62 | 8.84 | (contaminated) / +0.22 | clouds phase no (544-761 %), rest yes |
+| c19 (19:53, AC) | same, `shadows=false` (no cloud shadow map, no shadow fetch in terrain/water/VL) | 8.63 | 8.11 | 8.49 | **+0.52 / +0.38** | yes (106-137 %) |
+| c23 (19:56, AC) | same, `steps=20` | 8.28 | 7.69 | 8.36 | **+0.58 / +0.66** | yes (101-141 %) |
+| c23 (20:08, AC) | same, `steps=16` | 9.20 | 8.31 | 9.19 | **+0.89 / +0.89** | yes (106-189 %) |
+| c26 (20:07, AC) | + VL cloud-shadow fetch along the ray / skipped in terrain shadow, `steps=24` | 8.64 | 7.97 | 8.67 | **+0.67 / +0.70** | yes (102-147 %) |
+| c26 (CHECK, AC) | branch head (+ VL change, 20 steps) | | | | | |
 
-Reading: the clouds cost **about +0.5-0.9 ms of GPU per frame at balanced** on this scene, against the bible's E05 budget of
-0.30-0.45 ms: **over budget**. The spread between sessions is large (the whole frame itself moved from 7.8 to 8.6 ms
-between the afternoon and the evening with nothing else changed: other agents, thermal state), so only same-run deltas
-mean anything. The history scale hardly matters (0.4 vs 0.45: same cost); the number of march steps does (16 instead of 24:
-+0.22 ms in the one clean phase).
+Reading, in plain words: the volumetric clouds cost **about 0.6-0.9 ms of GPU per frame at balanced** on this scene
+(about 7-10 % of the frame; ~115 instead of ~125 fps here), against the bible's E05 budget of 0.30-0.45 ms: **over
+budget, roughly by 2x**. Between runs the same build moves by +-0.15 ms (the whole frame itself drifted between 7.7 and
+8.6 ms this evening with nothing changed: other agents, thermal state), so only the bracketed in-run deltas mean anything,
+and differences under ~0.2 ms between runs are noise. What the variants say:
+- the march's size does not drive it: history scale 0.4 vs 0.45 and 16 / 20 / 24 steps all land in the same 0.6-0.9 band
+  (the one early "+0.22 ms at 16 steps" phase did not repeat: noise);
+- the cloud shadows (the map plus one fetch per lit pixel in terrain/water and per VL step) are the biggest identifiable
+  part: without them +0.38-0.52 ms. The VL fetch was made cheaper (no matrix, skipped inside terrain shadow; c26);
+- the timed passes add up to ~0.55 ms per frame (section 5), the rest is the consumers and the extra render passes.
+Balanced now marches 20 steps (same look in the shots, a little less work), but the saving is below the noise.
+Ways to reach the budget (not done, for the integration/next step): shadow fetch only where the sun term is non-zero in
+terrain (as done in VL), cloud shadow in VL every other step, the dome and shadow map in the same command encoder as the
+march (fewer render passes), resolve + march at checker 3 with a smaller history for balanced, or accept ~0.6 ms as the
+price (the sky is most of the screen in this scene: the worst case).

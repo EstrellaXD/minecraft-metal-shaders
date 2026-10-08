@@ -21,8 +21,10 @@ import java.util.List;
  * (ShadePauseScreenMixin, next to "Resolución") instead of a launch flag. It can't switch live (the window's present mode and
  * the frame pacing are set when the game starts), so the button saves the choice as {@code mcopt.metal.framegen} in
  * config/mcopt.properties (read at startup like every mcopt key; a -Dmcopt.metal.framegen on the command line still wins) and
- * says "(al reiniciar)" while the choice differs from what runs. Off by default. Without the button nothing changes: the key
- * absent = M3.2.
+ * says "(al reiniciar)" while the choice differs from what runs. Off by default, and the button itself only shows with
+ * {@code mcopt.shade.framegenButton=true}: measured with the native shading (M33_ROBUST.md section 3) frame generation halves
+ * the real frame rate to 30 at 3024x1964 (MetalFX interpolation ~12 ms of GPU per frame) for 60 shown fps and ~53 ms of
+ * latency, worse than the ~90 real fps without it. Without the button nothing changes: the key absent = M3.2.
  */
 public final class ShadeFrameGenOption {
 	/** The choice for the next start (initially what this one runs with). */

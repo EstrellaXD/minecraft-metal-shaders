@@ -25,7 +25,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * M3.1: a "Resolución del mundo" button at the bottom of the pause menu (with a world loaded): each click cycles the native
  * shading's render resolution (ShadeResolution: auto, native, 1800p ... 1080p), applied on the next frame and kept in
  * config/mcopt.properties. Only with the native shading's TAAU (it owns the render scale). M3.3: beside it "Gen. de cuadros"
- * (ShadeFrameGenOption: frame generation on/off from the next start).
+ * (ShadeFrameGenOption: frame generation on/off from the next start), hidden unless -Dmcopt.shade.framegenButton=true.
  */
 @Mixin(PauseScreen.class)
 abstract class ShadePauseScreenMixin extends Screen {
@@ -37,8 +37,10 @@ abstract class ShadePauseScreenMixin extends Screen {
 	private void mcopt$resolutionButton(CallbackInfo ci) {
 		Minecraft mc = Minecraft.getInstance();
 		if (mc.level == null) return;
-		// M3.3: frame generation's button next to it (mcopt.shade.framegenButton, default true; false = M3.2's single button)
-		boolean frameGen = !"false".equals(System.getProperty("mcopt.shade.framegenButton"));
+		// M3.3: frame generation's button next to it, only with mcopt.shade.framegenButton=true (default false = M3.2's single
+		// button): with the native shading, MetalFX frame interpolation costs ~12 ms of GPU per real frame at 3024x1964, so the
+		// game drops to 30 real + 30 generated fps with ~53 ms of latency instead of ~90 real fps (M33_ROBUST.md section 3)
+		boolean frameGen = Boolean.getBoolean("mcopt.shade.framegenButton");
 		boolean resolution = mcopt.metal.shade.taa.ShadeTaa.ON;
 		if (resolution) {
 			int w = mc.getWindow().getWidth(), h = mc.getWindow().getHeight();

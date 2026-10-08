@@ -56,6 +56,9 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * still (the dumps' settle), a fast turn (200 degrees/s, 3 s: "turn" dumps need 3+ degrees between real frames), a fast
  * straight move (40 blocks/s, 2 s: "move"), a slow pan (30 degrees/s, 4 s), a shot of the real frame ({@code rb_fg_<label>}).
  * FrameGen's own once-a-second report lines in the log fall between the bench's "framegen <label> ..." lines.</li>
+ * <li>{@code fgbutton}: the pause menu with mcopt-shade's "Gen. de cuadros" button ({@code rb_fgbutton_0}), pressed
+ * ({@code rb_fgbutton_1}, the config line logged), pressed again ({@code rb_fgbutton_2}); config/mcopt.properties is put back
+ * byte for byte afterwards (it is the dev instance's: a left-over frame generation key would reach every later run).</li>
  * </ul>
  */
 final class RobustShots {
@@ -81,6 +84,7 @@ final class RobustShots {
 				case "rejoin" -> rejoin(steps);
 				case "fail" -> fail(steps);
 				case "framegen" -> framegen(steps);
+				case "fgbutton" -> fgButton(steps);
 				default -> throw new IllegalArgumentException("mcbench.robust: unknown event " + e);
 			}
 		}
@@ -496,6 +500,50 @@ final class RobustShots {
 				return true;
 			}
 		};
+	}
+
+	// ---- fgbutton -----------------------------------------------------------------------------------------------------
+
+	static void fgButton(Deque<BenchDriver.Step> steps) {
+		final byte[][] saved = new byte[1][];
+		steps.add(new BenchDriver.Scene("rb_fgbutton", 6000, false, () -> BenchDriver.spot.overview));
+		steps.add(new BenchDriver.Settle("rb_fgbutton", false, 3, 120));
+		steps.add(step("rb-fgbutton-open", 0, mc -> {
+			Path cfg = mc.gameDirectory.toPath().resolve("config").resolve("mcopt.properties");
+			saved[0] = java.nio.file.Files.exists(cfg) ? java.nio.file.Files.readAllBytes(cfg) : null;
+			mc.gui.setScreen(new PauseScreen(true));
+		}, 1.5));
+		steps.add(new Snap("rb_fgbutton_0"));
+		for (int k = 1; k <= 2; k++) {
+			final int K = k;
+			steps.add(step("rb-fgbutton-press-" + k, 0, mc -> {
+				String label = pressStartingWith(mc, "Gen. de cuadros:");
+				Path cfg = mc.gameDirectory.toPath().resolve("config").resolve("mcopt.properties");
+				String line = java.nio.file.Files.exists(cfg) ? java.nio.file.Files.readAllLines(cfg).stream().filter(l -> l.startsWith("mcopt.metal.framegen=")).findFirst().orElse("(none)") : "(no file)";
+				note("fgbutton", "press " + K + ": label now '" + label + "', config " + line);
+			}, 1.5));
+			steps.add(new Snap("rb_fgbutton_" + k));
+		}
+		steps.add(step("rb-fgbutton-restore", 0, mc -> {
+			mc.gui.setScreen(null);
+			Path cfg = mc.gameDirectory.toPath().resolve("config").resolve("mcopt.properties");
+			if (saved[0] != null) java.nio.file.Files.write(cfg, saved[0]);
+			else java.nio.file.Files.deleteIfExists(cfg);
+			note("fgbutton", "config/mcopt.properties restored");
+		}, 1.0));
+	}
+
+	/** Presses the open screen's button whose label starts with prefix; returns its label afterwards (null: none). */
+	static String pressStartingWith(Minecraft mc, String prefix) {
+		if (mc.gui.screen() == null) return null;
+		for (var l : mc.gui.screen().children()) {
+			if (l instanceof net.minecraft.client.gui.components.Button b && b.getMessage().getString().startsWith(prefix)) {
+				b.onPress(null);
+				return b.getMessage().getString();
+			}
+		}
+		BenchDriver.log("robust: no button '" + prefix + "' on " + mc.gui.screen().getClass().getSimpleName());
+		return null;
 	}
 
 	// ---- fail ---------------------------------------------------------------------------------------------------------

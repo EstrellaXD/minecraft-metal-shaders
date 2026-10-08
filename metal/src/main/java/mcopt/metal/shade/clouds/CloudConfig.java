@@ -45,6 +45,11 @@ import mcopt.metal.shade.Shade;
  */
 public final class CloudConfig {
 	private static final int TIER = Shade.TIER;
+	/**
+	 * M3.3 master switch (mcopt.shade.clouds.m33, default true): false = every M3.3 change of the clouds off at once, exactly
+	 * M3.2 (mode bits 0, the M3.2 checkerboard defaults); each change also has its own flag (CLOUDS.md M3.3).
+	 */
+	public static final boolean M33 = flag("mcopt.shade.clouds.m33", true);
 	public static final boolean ENABLED = Shade.ENABLED && flag("mcopt.shade.clouds", true) && flag("mcopt.shade.hdr", true)
 		&& !Boolean.parseBoolean(System.getProperty("mcopt.lod", "false"));
 	public static final float SCALE = clamp(floatProperty("mcopt.shade.clouds.scale", new float[] {0.4f, 0.45f, 0.5f, 0.67f}[TIER]), 0.2f, 1f);
@@ -148,6 +153,7 @@ public final class CloudConfig {
 	 * mcbench's cloudsDev phases; 262144 = the empty-air tests one at a time).
 	 */
 	public static int modeBits() {
+		if (!M33) return 0;
 		int dev = Integer.getInteger("mcopt.shade.clouds.dev", 0);
 		return (flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0)
 			| (flag("mcopt.shade.clouds.halfLight", false) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)

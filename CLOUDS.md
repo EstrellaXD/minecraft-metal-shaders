@@ -481,6 +481,14 @@ mip_filter::linear (no gain: two levels), far light samples with the noise mean 
 | `mcopt.shade.clouds.pair` | true | 8 `CLOUD_MODE_PAIR` | 262144 | empty-air tests two at a time (both fetches together; same tests, same order, bit-exact) |
 All four off at once: `-Dmcopt.shade.clouds.dev=491520` (what the bench's "old" variants use).
 
+Added in the resumed session (all clouds-owned files):
+| Flag | Default | What |
+|---|---|---|
+| `mcopt.shade.clouds.m33` | true | master switch: false = every M3.3 change off at once (mode bits 0 and the M3.2 checkerboard defaults) = M3.2 exactly |
+| `mcopt.shade.clouds.checker` | P 3, B 3, Q 2, U 2 (see Status for the 4x4 decision) | now 1..4 (was 1..3); 4 = 4x4 Bayer slot order, visit cap 8 (`maxAge`), the noise mips of 3x3 |
+| `mcopt.shade.clouds.checkerAlt` + dev bit 524288 | 4 | in-session pricing: the dev bit switches the checkerboard to checkerAlt (the history is re-made once) |
+| `mcopt.shade.clouds.freeze` | false | read every frame: no wind displacement (clouds stand still): variant look shots inside one session (bench) |
+
 ### Shared files touched (integration)
 None of the shared list. Clouds-owned only: `clouds.metal` (passes), `native/mcclouds.m` (pipeline `cloud_resolve_st`,
 R16Uint data targets `dataSt[2]` next to the R8 ones, render flag 16), `CloudConfig.java` (flags, mode bits, dev bits),

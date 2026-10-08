@@ -58,7 +58,7 @@ struct CloudParams {
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
 	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3),
 	                       //     w radians a march sample covers (history pixel angle x N; the noise mip by distance)
-	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w motion blend (resolve)
+	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
 	                       //     extinction factor, w style (0 volumetric, 1 blocky: vanilla-style 12-block cells, ray-traced)
 	float4 shear;          // 432 xy horizontal offset of the 2D shape over the layer's height (blocks; wind shear: tops lean
@@ -735,16 +735,6 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		o.age = half(min(age + 1.0, c.frame.w) / 64.0);
 	} else if (valid && age > 0.5) {
 		o.color = h;
-		// a fast-moving view (turning): the other N^2 - 1 pixels of each block lean toward this frame's march upsampled
-		// (shadowDir.w = mcopt.shade.clouds.motionBlend; 0 = off): the resampled history grew a comb along moving cloud edges
-		float mb = c.shadowDir.w;
-		if (mb > 0.0) {
-			float k = mb * saturate((length((puv - uv) * c.size.xy) - 0.5) * 0.5);
-			if (k > 0.0) {
-				float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;
-				o.color = mix(h, cur.sample(cloudClamp, mpos / c.size.zw), half(k));
-			}
-		}
 		o.age = half(age / 64.0);
 	} else {
 		float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;

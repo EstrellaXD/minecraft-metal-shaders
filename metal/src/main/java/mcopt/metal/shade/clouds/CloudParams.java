@@ -37,8 +37,7 @@ public final class CloudParams {
 		AP_SUNSET = CloudConfig.floatProperty("mcopt.shade.clouds.apSunset", 1.5f),
 		LIGHT_STEP = CloudConfig.floatProperty("mcopt.shade.clouds.lightStep", 4f),
 		OD_STEP = CloudConfig.floatProperty("mcopt.shade.clouds.odStep", 2.5f),
-		OD_MIN = CloudConfig.floatProperty("mcopt.shade.clouds.odMin", 0.5f),
-		MOTION_BLEND = CloudConfig.floatProperty("mcopt.shade.clouds.motionBlend", 0f);
+		OD_MIN = CloudConfig.floatProperty("mcopt.shade.clouds.odMin", 0.5f);
 	/** World periods the noise textures tile with (blocks): the weather map's 4096 tile, the 3D noise's 120 and 30 tiles. */
 	static final double WEATHER_PERIOD = 16384.0, NOISE_PERIOD = 120.0 * 64.0;
 	static final float CURVATURE_RADIUS = 40000f;
@@ -159,7 +158,7 @@ public final class CloudParams {
 		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard
 		float fovY = (float) (2.0 * Math.atan(1.0 / Math.max(Math.abs(f.proj.m11()), 1e-3f)));
 		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, fovY / Math.max(this.histH, 1) * n);
-		put4(b, 400, sl[0], ly, sl[2], MOTION_BLEND);
+		put4(b, 400, sl[0], ly, sl[2], 0f);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
 		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
 		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, CloudConfig.BLOCKY ? 1f : 0f);

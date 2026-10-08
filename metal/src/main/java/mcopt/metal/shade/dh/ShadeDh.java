@@ -121,7 +121,7 @@ public final class ShadeDh {
 		try {
 			return Enum.valueOf((Class<? extends Enum>) type, v.toUpperCase(java.util.Locale.ROOT));
 		} catch (IllegalArgumentException e) {
-			return Enum.valueOf((Class<? extends Enum>) type, def);
+			return "dh".equalsIgnoreCase(def) ? null : Enum.valueOf((Class<? extends Enum>) type, def);
 		}
 	}
 

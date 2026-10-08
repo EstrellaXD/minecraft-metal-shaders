@@ -73,8 +73,10 @@ int main(int argc, const char **argv) {
 			o.mathMode = MTLMathModeFast;
 			id<MTLLibrary> lib = [dev newLibraryWithSource:src options:o error:&e];
 			if (!lib) { printf("compile %s: %s\n", argv[a], e.localizedDescription.UTF8String); return 1; }
-			for (int x = 0; x < 2; x++) {
-				const char *fn = x ? "shade_final_xdr" : "shade_final";
+			const char *fns[] = {"shade_final", "shade_final_xdr", "shade_final_dims", "shade_final_xdr_dims"};
+			for (int v = 0; v < 4; v++) {
+				const char *fn = fns[v];
+				int x = v & 1;
 				id<MTLFunction> ff = [lib newFunctionWithName:[NSString stringWithUTF8String:fn]];
 				if (!ff) continue;
 				MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];

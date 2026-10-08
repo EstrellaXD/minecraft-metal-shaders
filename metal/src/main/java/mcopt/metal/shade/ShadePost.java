@@ -98,6 +98,8 @@ public final class ShadePost {
 	private static long library, psoDown0, psoDown, psoUp, psoFinal, psoEncode, psoDecode, psoHistogram, psoExposure, milkyWay;
 	/** M3 XDR (mcopt.shade.xdr, dims.ShadeXdr): the final pass with a second target, the highlights' excess above SDR white. */
 	private static long psoFinalXdr, xdrExcess;
+	// M3: the final pass with the Nether/End fog, End sky, shimmer and camera media compiled in (the plain ones carry none of it)
+	private static long psoFinalDims, psoFinalXdrDims;
 	private static int xdrWidth, xdrHeight;
 	private static final long[] hdr = new long[2];
 	private static long[] bloomLevels = new long[0], bloomAccum = new long[0];
@@ -181,9 +183,13 @@ public final class ShadePost {
 			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RGBA16F, 0);
 			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RGBA16F, 0);
 			psoFinal = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final", ShadeRender.RGBA8, 0);
+			boolean dimsVariant = mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.MEDIA;
+			if (dimsVariant) psoFinalDims = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final_dims", ShadeRender.RGBA8, 0);
 			if (mcopt.metal.shade.dims.ShadeXdr.active()) {
 				psoFinalXdr = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr", ShadeRender.RGBA8,
 					ShadeRender.RG11B10F);
+				if (dimsVariant) psoFinalXdrDims = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr_dims",
+					ShadeRender.RGBA8, ShadeRender.RG11B10F);
 			}
 			psoEncode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_encode", ShadeRender.RGBA8, 0);
 			psoDecode = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bridge_decode", ShadeConfig.HDR_FORMAT, 0);
@@ -450,6 +456,8 @@ public final class ShadePost {
 		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(bridgeUsed ? 1f : 0f);
 		// x: XDR (M3): on, peak (x SDR white), knee, octaves to the peak
 		boolean xdr = psoFinalXdr != 0 && mcopt.metal.shade.dims.ShadeXdr.highlights();
+		// M3: the dims variant in the Nether / End and with the camera in lava or powder snow (anywhere)
+		boolean dimsPass = f.dimension != ShadeFrame.DIM_OVERWORLD || f.fogType == ShadeFrame.FOG_LAVA || f.fogType == ShadeFrame.FOG_POWDER_SNOW;
 		if (xdr) mcopt.metal.shade.dims.ShadeXdr.params(params);
 		else params.putFloat(0f).putFloat(1f).putFloat(1f).putFloat(1f);
 		params.flip();
@@ -465,9 +473,10 @@ public final class ShadePost {
 				xdrExcess = ShadeRender.texture(ShadeRender.RG11B10F, ow, oh, false, "mcopt shade: XDR excess");
 			}
 			if (encoder != null && MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'mcopt shade: final (XDR)'");
-			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, psoFinalXdr, mainHandle, xdrExcess, finalInputs, params, "mcopt shade: final (XDR)");
+			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, dimsPass && psoFinalXdrDims != 0 ? psoFinalXdrDims : psoFinalXdr, mainHandle, xdrExcess, finalInputs,
+				params, "mcopt shade: final (XDR)");
 		} else {
-			pass(psoFinal, mainHandle, ShadeRender.DONT_CARE, finalInputs, params, "mcopt shade: final");
+			pass(dimsPass && psoFinalDims != 0 ? psoFinalDims : psoFinal, mainHandle, ShadeRender.DONT_CARE, finalInputs, params, "mcopt shade: final");
 		}
 		// after the final pass: the kernel advances ShadeGpu.exposure.x to next frame's value, and everything this frame
 		// (world, TAA history, haze and VL in the final pass, Purkinje) must use this frame's

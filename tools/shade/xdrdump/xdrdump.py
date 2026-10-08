@@ -9,11 +9,11 @@ def load(path):
     m = re.search(r"-(\d+)x(\d+)\.(rgb9e5|rgba16f)$", path)
     w, h, kind = int(m.group(1)), int(m.group(2)), m.group(3)
     if kind == "rgb9e5":
-        v = np.fromfile(path, dtype=np.uint32).reshape(h, w)
+        v = np.memmap(path, dtype=np.uint32, mode="r").reshape(h, w)[::4, ::4]
         e = ((v >> 27) & 31).astype(np.int32) - 15 - 9
         s = np.ldexp(1.0, e).astype(np.float32)
         return np.stack([(v & 511) * s, ((v >> 9) & 511) * s, ((v >> 18) & 511) * s], -1)
-    return np.fromfile(path, dtype=np.float16).reshape(h, w, 4)[..., :3].astype(np.float32)
+    return np.memmap(path, dtype=np.float16, mode="r").reshape(h, w, 4)[::4, ::4, :3].astype(np.float32)
 
 def png(path, rgb8):
     h, w, _ = rgb8.shape
@@ -27,7 +27,7 @@ out = sys.argv[1]
 os.makedirs(out, exist_ok=True)
 print("dump | max (x SDR white) | % px > 1.05 | % px > 2 | p99.9 luminance")
 for p in sys.argv[2:]:
-    img = load(p)[::4, ::4]  # quarter resolution is plenty for statistics and the preview
+    img = load(p)  # read at quarter resolution: plenty for statistics and the preview
     lum = img @ np.array([0.2290, 0.6917, 0.0793], dtype=np.float32)  # Display P3 luminance weights
     print(f"{os.path.basename(p)} | {lum.max():.2f} | {100 * (lum > 1.05).mean():.2f} | {100 * (lum > 2).mean():.3f} | {np.percentile(lum, 99.9):.2f}")
     sdr = np.clip(img, 0, 1) ** (1 / 2.2)

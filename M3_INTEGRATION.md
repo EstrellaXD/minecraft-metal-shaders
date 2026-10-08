@@ -14,7 +14,9 @@ working on `m3`, `m3-clouds` and `m3-weather`. When everything is merged and tes
 
 ## Still to do
 
-1. Merge `m3` again (the base fix agent's commits after b32c170: flags `skyRose` / `vl.waterM3`, blob gate by UV2, caster
+0. (DONE eee84e3: m3 75bf608 merged; GPU blob patch gone, CPU EntityBlobShadowMixin. Note: dropBlob needs the sun, so
+   in the End the blob stays next to the End key light's entity shadows: minor, check end_island with mobs.)
+1. (was) Merge `m3` again (the base fix agent's commits after b32c170: flags `skyRose` / `vl.waterM3`, blob gate by UV2, caster
    resources, hand prewarm...). Then the blob row of 8.1: with End shadows, drop the blob where `flags.z != 0 &&
    flags.x != SHADE_DIM_NETHER` (combine with the base agent's UV2 gate).
 2. Merge `m3-clouds` (after its fix agent: Gael's sunset sea lines). Expected conflicts: `vl.metal` / `ShadeVl` (vl-stable's

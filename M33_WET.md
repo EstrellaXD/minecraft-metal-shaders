@@ -1,21 +1,24 @@
 # M3.3 wet ground: the whole open ground soaks in the rain (branch `m3.3-wet` from m3-int 397e241)
 
-## M3.3 Status (2026-10-08 10:10)
+## M3.3 Status (2026-10-08 10:40)
 
 **Done:**
-- 1cb8b14: `mcopt.shade.wetAll` (default true). Solid open ground soaks into a water film: darker (M3.2's porous law), a
-  Fresnel sheen of the sky on every wet floor, the sun's highlight on it, a wetter rim that blends into the puddles, film
-  reflections through the puddle march where F x k x gloss shows them (vertical streak), all read every frame from
-  `ShadeLook.water` / `waterAbs` (so one game session can A/B everything). `mcopt.shade.wetness` is read every frame too.
-  Build OK, validate.sh ALL OK.
-- mcbench 8e3bb62: `WetShots` (`-Dmcbench.wet=...`, frozen-tick A/B shots at ground / ground_low / sunset / night / storm /
-  path / sand / stone poses).
+- 1cb8b14 .. 077db60: `mcopt.shade.wetAll` (default true, read every frame; false at startup = M3.2's shaders). Solid open
+  ground soaks into a water film; vegetation keeps a share of it; a wetter rim into the puddles; film reflections on smooth
+  wet ground; knobs all live (`ShadeLook.water` / `waterAbs`). Build OK, validate.sh ALL OK at every commit.
+- mcbench 8e3bb62 + bcbb8eb: `WetShots` (A/B shots at frozen ticks; `-Dmcbench.wetPerf` recorded phases at its poses).
+- **wet1** (`20261008-102055-wet1-look`, jar 1cb8b14, AC): first look + price. Film shading itself is ~free (+0.02 ms), film
+  reflections on all wet ground +0.20 ms (too much). Look: the film at grass roughness 0.3 with k ~0.9 turned the meadow
+  into a flooded marsh (a uniform grey sky sheet in rain, a glassy lake at sunset), puddles no longer stood out. -> 077db60:
+  vegetation keeps 55 % of the film and a rougher one (~0.38: no film reflections on grass), extra darkening 0.2, the rim
+  only turns into standing water near the puddle's edge.
 
 **Running / next:**
-1. wet1-look (jar `m3.3-wet-1cb8b14`, queued 10:02): 6 look variants (m32, new, nossr, rough, glossy, dark) at 8 poses +
-   in-session price (ab phases on `wxrain`).
-2. wet2-tex (jar `m3.3-wet-1ba36fc`, queued 10:07): texel height proxy and rim width variants + price of the texel sample.
-3. Tune defaults by the screenshots, then a final run: M3.2 vs new side by side (`work/release/M3.3-screenshots/wet_*.jpg`) + price.
+1. wet2-tex (`m3.3-wet-1ba36fc`, launched 10:33 **on battery**): texel height proxy (wetTex 3/6), narrow rim, with wet1's
+   film settings.
+2. wet3-veg (`m3.3-wet-077db60`, queued 10:40): vegetation film share 0.4/0.55/0.7, wetTex 3, film reflections off;
+   prices: wxrain ab phases + rain over sand (wetPerf) for the film reflections on non-vegetation ground.
+3. Pick the defaults, then the final run (AC): M3.2 vs new at every pose (`work/release/M3.3-screenshots/wet_*.jpg`) + price.
 
 ## Gael's request
 
@@ -45,9 +48,10 @@ read as wet: matte dry-looking grass with mirror blobs.
 |---|---|---|---|
 | `mcopt.shade.wetAll` | true | startup + every frame | false at startup: weather_surface.metal compiles without the new code (M3.2's shaders); true: the property is read again every frame (false = M3.2's look, for in-session A/B) |
 | `mcopt.shade.wetRough` | 0.2 | every frame | soaked film roughness of stone, paths, wood, sand |
-| `mcopt.shade.wetVeg` | 0.1 | every frame | extra roughness on vegetation (grass tops) |
+| `mcopt.shade.wetVeg` | 0.18 | every frame | extra roughness on vegetation (grass tops: ~0.38, so no film reflections there) |
+| `mcopt.shade.wetVegFilm` | 0.55 | every frame | vegetation's share of the film (k), by hue: grass blades stand out of the water |
 | `mcopt.shade.wetSsr` | 0.06 where puddle reflections are on (balanced+), else 0 | every frame | film reflections' gate on F x k x gloss (0 = no film reflections) |
-| `mcopt.shade.wetDark`, `mcopt.shade.wetSheen` | 0, 1 | every frame | look development: extra darkening exponent of the film, film weight scale |
+| `mcopt.shade.wetDark` | 0.2 | every frame | extra darkening exponent of the film surfaces (albedo^(1 + 0.2 wetness) on top of M3.2's law) |
 | `mcopt.shade.wetTex` | 0 (being tuned) | every frame | texel height proxy: the texel's luminance against its sprite's mean (atlas mip 4) x this, -1..1: raised texels rougher (+0.18) and partly dry (k -35 %), crevices smoother; one extra texture sample per soaked pixel |
 | `mcopt.shade.wetRim` | 0.12 | every frame | width of the wetter rim below the puddle threshold (puddle-field units; 0.12 = ~33 % of open ground in the band, 0.06 = ~17 %) |
 | `mcopt.shade.wetness` | -1 | every frame (was: startup) | force wetness + puddles (bench: the wet sunset A/B) |
@@ -72,7 +76,12 @@ All edits are local to the weather module except where noted. The m3.3-misc bran
 
 ## Prices
 
-(pending: wet1)
+GPU ms per frame, in-session (MiscShots ab phases on WeatherShots' rain pan: 2.6 blocks above the meadow beside the torch
+grid, +-25 degrees, 10 s each), balanced, TAAU 0.80, DRS off, drift-fitted (`work/notes/m33-2026-10-08/wet/wetprice.py`).
+
+| Run | Power | M3.2 rain (vs terrain dry) | wetAll vs M3.2 | of which film reflections | Note |
+|---|---|---|---|---|---|
+| wet1 `20261008-102055-wet1-look` (1cb8b14) | AC | 0.70 | +0.22 | +0.20 | film shading alone +0.02; residual rms 0.017 ms |
 
 ## Screenshots
 

@@ -190,9 +190,22 @@ that move across the screen show a **comb / hatching pattern** (teeth ~6 history
 visible on bright edges against blue sky (frames `giro_peine_*.png`). The vanilla clouds in the same video are clean, so it
 comes from our checkerboard reconstruction. Tried this session: clamping the reprojected history to this frame's march
 range while the view moves (the usual TAA cure for resampling build-up): no visible change in the same frames (run c20),
-so it was reverted. Under a pure rotation the reprojection is exact whatever the distance, so the next suspects are the
-previous-frame matrix the resolve gets (is it the frame the history was made with?) and the slot order x motion beat. A
-diagnostic recording with `checker=1` (no checkerboard) is in run c22 (see Status).
+so it was reverted. Diagnostics (same spin, same frame of the video, crops in `work/release/M3-clouds-screenshots/`):
+
+| Run | Setting | Moving cloud edge |
+|---|---|---|
+| c16 / c20 | default (3x3 checkerboard) / + history clamp while moving | comb (`giro_peine_zoom.png`) / same comb |
+| c22 | `checker=1` (every history pixel marched every frame) | **clean**, a little soft |
+| c24 | non-marched pixels lean 60 % toward this frame's upsampled march while turning (tried, reverted) | same comb, hatching spreads inside the clouds |
+
+Reading: the comb needs the checkerboard, and neither clamping nor feeding the current march into the history removes it.
+That points at the **reprojection itself being off by a pixel or so per frame while turning** (under a pure rotation it
+should be exact at any distance): each pixel is corrected only when it is marched (10 % weight, once every 9 frames), so
+the error piles up differently per checkerboard slot = teeth; with checker=1 every pixel is corrected every frame, the
+error stays small and uniform (soft edge instead of a comb). To check next: whether `prevViewProj` (ShadeFrameUpdater:
+last frame's matrix shifted by the camera motion; with the TAA jitter removed in CloudParams.pack) really is the matrix
+the history was rendered with on every frame (e.g. a frame where the level renders twice, or the jitter not being in
+`f.viewProj`), e.g. with a debug mode that outputs |puv - true previous uv| while the bench turns.
 
 ### 7.3 Cost (in-session A/B: phases `clouds` / `clouds_off` / `clouds2`)
 

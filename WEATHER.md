@@ -4,6 +4,17 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 `mcopt.shade=true` and the module flag `mcopt.shade.weather` (default on); with `mcopt.shade.weather=false` the shaders
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
+
+## Status (2026-10-07 18:15)
+
+Resumed after the account pause. Done since the pause: the WIP commit (baked puddle/snow noise tile, ShadeResources 4) is
+finished and kept (`3c93d58`); the puddle SSR now marches only where the Fresnel term makes it visible (`d7c5823`); new dev
+bits `WX_ANALYTIC` (32768) and `WX_NO_SSR_GATE` (65536) and the `NO_TINT` bit also skips the tint pass, so mcbench's
+`price` phases (now `wxdry`, `wxdry_notint`, `wxrain`, `wxrain_nossr`, `wxrain_nogate`, `wxrain_analytic`,
+`wxrain_noripple`, `wxrain_plainrain`, `wxrain_dry`, `wxrain2`) price every part inside one session.
+Next: run `wx8-price-shots` (build d7c5823), read prices, cut cost toward the budget (0.1 ms dry, 0.5 ms rain at
+balanced), judge the shots, fill Results.
+
 ## What it does (in game)
 
 | Effect | How |

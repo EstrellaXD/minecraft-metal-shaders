@@ -87,7 +87,7 @@ camera, lightning bolts).
 
 | Where | Change |
 |---|---|
-| `shade_look.metal` | `ShadeLook.wet` (x wetness, y puddles, z snow, w rain intensity), `wind` (xy dir, z slant, w gust), `flash` (xyz dir, w light) now documented and written; `ssr.y` = 1 when `ShadeResources.prevDepth` is valid, `ssr.z` = 1 when the noise tile is baked, `ssr.w` = 1 when the tint map has casters (one frame late). `ShadeResources` entries **4 = `weatherNoise`** (baked puddle/snow tile), **5 = `prevDepth`** (TAA history linear view depth, R16F, output size) and **6 = `shadowTint`** (were `reserved4/5/6`). Entry 7 stays free. **Merge note:** BASE.md offered slots 4-7 to the dynamic-lights module; if it takes one, move the weather noise (any free slot works, it is only read through `sr.weatherNoise`). |
+| `shade_look.metal` | `ShadeLook.wet` (x wetness, y puddles, z snow, w rain intensity), `wind` (xy dir, z slant, w snowfall at the camera), `flash` (xyz dir, w light) now documented and written; `ssr.y` = 1 when `ShadeResources.prevDepth` is valid, `ssr.z` = 1 when the noise tile is baked, `ssr.w` = 1 when the tint map has casters and **608 `tintRect`** (was `heldLight`, reserved and unused by every branch) = their rectangle in the near cascade's light clip space, both written **after the shadow pass, the same frame** (`ShadeBindings.setShadowTint`; `ShadeWeather.pack` writes "none" first). `ShadeResources` entries **4 = `weatherNoise`** (baked puddle/snow tile), **5 = `prevDepth`** (TAA history linear view depth, R16F, output size) and **6 = `shadowTint`** (were `reserved4/5/6`). Entry 7 stays free. **Merge note:** m3-lights took none of these (its data is `buffer(24)` / `texture(23-25)`, BASE.md 8.3), so 4-6 stay weather's; with clouds' 12-14 the struct has 16 entries. If a later module needs slot 4, move the weather noise (it is only read through `sr.weatherNoise`). |
 | `ShadeLook.pack` | calls `ShadeWeather.pack(b)` at the end (zeros when the module is off). |
 | `ShadeFrameUpdater.update` | `WeatherFrame.update(...)` after `LOOK.update`, before packing; `ShadeWeather.bakeNoise(enc)` (once, HDR only) after the water bake; the `mcopt.shade.log` line gets the weather state. |
 | `ShadePost.beginWorld` | publishes `ShadeResources.prevDepth` (5) = `taa.historyDepth()` when the history is valid, and `ShadeBindings.setPrevDepthValid` (`ssr.y`). General infrastructure: any pass can march last frame's image with it. |
@@ -97,7 +97,9 @@ camera, lightning bolts).
 | `water.metal` | ripples added to the top-face wave normal in `shadeWaterAbove` (`#if SHADE_WEATHER && SHADE_RIPPLES`). |
 | `sky.fs.metal` | the flash lights the sky (`sl.flash`). |
 | `weather.metal` | `shadeWeather3`, `shadeRainSlant` (M2's `shadeWeather` kept for the module off). |
-| `shadow.metal`, `mcshadow.m`, `ShadowNative`, `ShadowCasters`, `ShadowPass` | coloured shadows: `shadow_tint_vs/fs`, `mc_shadow_tint_init/texture/render`; `ShadowCasters.KIND_TRANSLUCENT` lists (near cascade only); `ShadowPass` draws them after cascade 0, publishes the map as ShadeResources 6 and sets `ShadeWeather.tintCasters` when any were drawn (the terrain skips the lookup otherwise). |
+| `shadow.metal`, `mcshadow.m`, `ShadowNative`, `ShadowCasters`, `ShadowPass` | coloured shadows: `shadow_tint_vs/fs`, `mc_shadow_tint_init/texture/render`; `ShadowCasters.KIND_TRANSLUCENT` lists (near cascade only); `ShadowPass` draws them after cascade 0, publishes the map as ShadeResources 6 and, via `publishTint`, ssr.w + `tintRect` (the listed sections' boxes through cascade 0's matrix): receivers outside the rectangle skip the lookup. With the water module on, the tint pass leaves water out (`ShadowTintParams.mode.x`, 48 B) and `ShadowCasters` skips sections whose palette has no translucent block model (`LevelChunkSection.maybeHas`, `BakedQuad.FLAG_TRANSLUCENT`: plain water draws nothing). |
+| `ShadeBindings` | `setPrevDepthValid` (ssr.y), `setShadowTint` (ssr.w, tintRect): both write this frame's ShadeLook slot after the pack. |
+| `ShadeLook.java` | `HELD_LIGHT` (608) renamed `TINT_RECT` (m3's `shade_dynlight.metal` comment still names heldLight as reserved: update it at the merge). |
 | `WaterFrame.rects` | the water sprites' atlas rectangles (for the tint pass). |
 | `tools/shade` | `ShadeMslDump` writes the weather vertex, HDR weather and lightning variants (with `MCOPT_GEN_DIR`); `validate.sh` compiles them. The terrain variants include the weather prelude automatically. |
 
@@ -118,7 +120,7 @@ All numbers: GPU ms per frame (mcopt `gpuTimes`, the union of the frame's comman
 weather ground pose (2.6 blocks above a grassy plain with a 7x7 torch grid, panning +-25 degrees for 10 s), preset
 **balanced** (TAAU 0.80, DRS off), 3024x1964 fullscreen, M4 on **AC power**. Each run prices every part **inside one
 session** with the `mcopt.shade.dev` bits (`-Dmcbench.weather=price`): a phase with the part switched off, compared with
-`wxrain` / `wxdry` of the same session (drift check: `wxrain2` at the end). cpu-load.txt stayed at 90-200 % during the
+`wxrain` / `wxdry` of the same session (drift check: `wxrain2` at the end). cpu-load.txt stayed at 90-290 % during the
 perf phases of every run listed (clean; the >350 % samples are the world loading before them). Provisional: clean final
 numbers come after the M3 integration.
 
@@ -128,7 +130,8 @@ Method: each run prices every part **inside one session** with the `mcopt.shade.
 off, against `wxrain`/`wxdry` of the same session). Two biases showed up and are corrected with **a run of the same phases
 with the module off** (`wx14`, `mcopt.shade.weather=false`: the dev bits do nothing there, so any difference between its
 phases is pure bias): (1) the first phase (`wxdry`) is ~0.17 ms slower than the second in every run, module on or off
-(warm-up), so the "coloured shadows" price that looked like 0.10-0.18 ms is really **~0**; (2) the GPU drifts up
+(warm-up; in wx16 only 0.04 ms, so this correction is unreliable for the tint column: wx17's bracketed A/B/A later measured
+the coloured shadows at **0.19 ms**, see below); (2) the GPU drifts up
 0.0-0.3 ms through a session (wxrain2 - wxrain), more in some sessions than others. Corrected = in-session difference
 minus the same difference in the module-off run.
 
@@ -145,7 +148,7 @@ minus the same difference in the module-off run.
 | drift left after correction | 0.13 | -0.12 | -0.11 | +0.16 | +0.29 |
 
 **The module as a whole, on vs off** (four launches alternating on/off/on/off, wx13 / wx14 / wx15 / wx16, all on AC,
-cpu-load 90-200 % during the phases; the same 10 s pans; wx14 had no glass roof, the others did):
+cpu-load 90-290 % during the phases; the same 10 s pans; wx14 had no glass roof, the others did):
 
 | | on (wx13, wx15) | off = M2.1 (wx14, wx16) | module cost |
 |---|---|---|---|
@@ -172,7 +175,8 @@ translucent caster is in the near cascade); away from glass and water the lookup
 
 Reading: numbers move by ±0.1 ms between sessions on this shared machine (five agents, builds, thermal state), so trust
 the big items: the **baked noise saves ~0.75 ms**, the **Fresnel gate ~0.15 ms**, puddle **reflections cost ~0.25 ms**,
-coloured shadows **~0** at the receiver (the pass draws only the near cascade's glass/water), and **rain costs ~0.8-1.0 ms
+coloured shadows **~0.19 ms** whenever translucent casters (glass **or water**: before the 22:00 fix any water within 32
+blocks turned the lookup on for every sunlit pixel) were in the near cascade, and **rain costs ~0.8-1.0 ms
 over a dry frame with ~37 % of the ground in view under puddles** (less with fewer puddles: 0.8 in wx10 at ~22 %).
 
 ### Before / after this session (plain words)
@@ -189,7 +193,8 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
   is puddle; before the pause it measured 1.16 ms over a dry frame with the old pattern). **Dry: 0.19 ms** with the
   glass roof in the coloured-shadow range (wx17's bracketed A/B/A; the on/off launches agree within their ±0.1 ms noise).
 - **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met.** Rain is 0.3-0.4 ms over (0.80 ms in the
-  cleanest session, ~0.9 ms on/off); dry is 0.19 ms with glass in range (the lookup is skipped without).
+  cleanest session, ~0.9 ms on/off); dry is 0.19 ms with glass or water in range (the lookup was skipped only without either; since 22:00 water no longer
+  counts and the lookup is limited to the casters' rectangle: see the wx19 prices).
   What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
   (`mcopt.shade.puddleSsr=false`, the bible's plan for P/B: -0.1 to -0.3 ms, puddles then mirror only the sky),
   a deferred puddle pass at half resolution (new work, M4), coloured shadows only on quality+ (`mcopt.shade.colorShadows`,

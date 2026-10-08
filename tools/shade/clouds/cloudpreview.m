@@ -146,13 +146,20 @@ int main(int argc, const char **argv) {
 		int hw = (int) p0[32], hh = (int) p0[33], mw = (int) p0[34], mh = (int) p0[35];
 		int dw = (int) p0[88], dh = (int) p0[89];
 		id<MTLRenderPipelineState> march = pso(cl, @"cloud_vs", @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float);
-		id<MTLRenderPipelineState> resolve = pso(cl, @"cloud_vs", @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatR8Unorm);
+		// the resolve and its data target: M3.3 mode bit 1 (CloudParams.shadowDir.w) = cloud_resolve_st with R16Uint (age +
+		// distance), else cloud_resolve with R8 (age); CLOUDS_RESOLVE / CLOUDS_DATAFMT (rg16f, r16u, r16f, r8) override (experiments)
+		BOOL st = (((int) p0[103]) & 1) != 0;
+		const char *dfe = getenv("CLOUDS_DATAFMT");
+		MTLPixelFormat dfmt = dfe ? (strcmp(dfe, "rg16f") == 0 ? MTLPixelFormatRG16Float : strcmp(dfe, "r16u") == 0 ? MTLPixelFormatR16Uint
+			: strcmp(dfe, "r16f") == 0 ? MTLPixelFormatR16Float : MTLPixelFormatR8Unorm) : st ? MTLPixelFormatR16Uint : MTLPixelFormatR8Unorm;
+		const char *rfe = getenv("CLOUDS_RESOLVE");
+		id<MTLRenderPipelineState> resolve = pso(cl, @"cloud_vs", rfe ? @(rfe) : st ? @"cloud_resolve_st" : @"cloud_resolve", MTLPixelFormatRGBA16Float, dfmt);
 		id<MTLRenderPipelineState> domeP = pso(cl, @"cloud_vs", @"cloud_dome", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid);
 		id<MTLRenderPipelineState> shadowP = pso(cl, @"cloud_vs", @"cloud_shadow", MTLPixelFormatR16Float, MTLPixelFormatInvalid);
 		id<MTLRenderPipelineState> comp = pso(cl, @"cloudpreview_vs", @"cloudpreview_fs", MTLPixelFormatRGBA8Unorm, MTLPixelFormatInvalid);
 		id<MTLTexture> mc = tex(MTLPixelFormatRGBA16Float, mw, mh, NO), md = tex(MTLPixelFormatR32Float, mw, mh, NO);
 		id<MTLTexture> hist[2] = {tex(MTLPixelFormatRGBA16Float, hw, hh, NO), tex(MTLPixelFormatRGBA16Float, hw, hh, NO)};
-		id<MTLTexture> data[2] = {tex(MTLPixelFormatR8Unorm, hw, hh, NO), tex(MTLPixelFormatR8Unorm, hw, hh, NO)};
+		id<MTLTexture> data[2] = {tex(dfmt, hw, hh, NO), tex(dfmt, hw, hh, NO)};
 		id<MTLTexture> domeT[2] = {tex(MTLPixelFormatRGBA16Float, dw, dh, NO), tex(MTLPixelFormatRGBA16Float, dw, dh, NO)};
 		id<MTLTexture> shadow = tex(MTLPixelFormatR16Float, 256, 256, NO);
 		int cur = 0, dc = 0;

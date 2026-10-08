@@ -59,7 +59,8 @@ struct CloudParams {
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
 	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3),
 	                       //     w radians a march sample covers (history pixel angle x N; the noise mip by distance)
-	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
+	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w M3.3 mode bits
+	                       //     (CLOUD_MODE_*; CloudConfig.modeBits, read every frame; 0 = M3.2)
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
 	                       //     extinction factor, w style (0 volumetric, 1 blocky: vanilla-style 12-block cells, ray-traced)
 	float4 shear;          // 432 xy horizontal offset of the 2D shape over the layer's height (blocks; wind shear: tops lean
@@ -73,6 +74,11 @@ static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)
 #define CLOUD_DEV_OLD_MARCH 2048   // the march looks the sky up for every ray, cloud or not (M3)
 #define CLOUD_DEV_OLD_MIP 8192     // the billow noise from its full-size level at any distance (M3)
 static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.lightDir.w) & bit) != 0; }
+
+// M3.3 mode bits (CloudParams.shadowDir.w; CloudConfig.MODE_*): new behaviour, each bit off = M3.2's way
+#define CLOUD_MODE_STABLE 1 // the march's start offsets from a per-pixel hash (not interleaved gradient noise) and the resolve that
+                            // carries the clouds' distance in the history (cloud_resolve_st): no comb on soft edges in the wind
+static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
 // M3.1: the billow noise from the mip level of the sample's footprint, as cloudDensity's lod always meant (M3's cloudRep has
@@ -665,7 +671,14 @@ fragment CloudMarchOut cloud_march(CloudVsOut in [[stage_in]], constant ShadeFra
 	// a history pixel is marched every N^2 frames: its start offsets step by the golden ratio per visit (stepping per frame
 	// made N^2 x 0.618 = 0.56 per visit with N = 3, nearly periodic: a biased mean that showed the checkerboard as a grid)
 	float visit = floor(c.misc.x / (n * n));
-	float jitter = fract(shadeNoise(hp, 0) + visit * 0.6180339887);
+	// M3.3 (CLOUD_MODE_STABLE): the per-pixel offset from a hash instead of interleaved gradient noise. IGN is linear in the
+	// pixel (mod 1): a cloud the wind carries across the pixels met offsets that stepped by a near-constant amount per visit,
+	// which could cancel the golden-ratio step (e.g. one 3-pixel block in -x per 9 frames: -0.665 + 0.618 = -0.047), so it was
+	// marched at almost the same depth phase visit after visit and its step aliasing never averaged out: the comb / hatching
+	// on soft edges in the wind and while turning (CLOUDS.md M3.3). A hash has no such structure; still pixels keep their
+	// golden-ratio sequence
+	float seed = cloudMode(c, CLOUD_MODE_STABLE) ? shadeHash01(shadeHash3(int3(int2(hp), 0), 0x2c1b3c6du)) : shadeNoise(hp, 0);
+	float jitter = fract(seed + visit * 0.6180339887);
 	CloudResult r = cloudSky(dir, int(c.march.x), int(c.march.y), 2, jitter, f, c, weather, noise, lut, lutS);
 	CloudMarchOut o;
 	o.color = half4(half3(min(r.S, 60000.0)), half(r.T));
@@ -779,6 +792,105 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
 		o.age = 0.0h;
 	}
+	return o;
+}
+
+// ---- M3.3: the resolve that carries the clouds' distance (CLOUD_MODE_STABLE) ----------------------------------------------
+// Data target R16Uint per history pixel: bits 12-15 age (frames blended, 0..15), bits 0-11 the distance of the clouds the
+// pixel holds as log2(blocks) x 256 (0.27 % steps up to 65536 blocks; 4095 = holds no cloud).
+#define CLOUD_DIST_NONE 4095u
+static inline uint cloudDistCode(float d) { return uint(clamp(log2(max(d, 1.0)) * 256.0 + 0.5, 0.0, 4094.0)); }
+static inline float cloudDistDecode(uint q) { return exp2(float(q) * (1.0 / 256.0)); }
+
+struct CloudResolveStOut {
+	half4 color [[color(0)]]; // rgb scattered light (before exposure), a transmittance
+	ushort data [[color(1)]]; // R16Uint: age << 12 | distance code
+};
+
+// cloud_resolve with the history's own distance (CLOUD_MODE_STABLE, M3.3). M3.2 reprojected every pixel of a march block by
+// that block's one march distance, which jumps between visits wherever a soft cloud lets some rays through (the slab's entry
+// for a clear ray, the cloud's depth for a hit): in the wind the history slid at a different speed each frame, block by block
+// (combs along soft edges, a band where the jumps were large). Here each pixel carries the distance of what it shows,
+// averaged over its visits (1/distance, the parallax, blended like the colour), reprojects with the nearest cloud distance of
+// its 2x2 neighbourhood (the edge of a cloud moves with that cloud; as Photon's closest-distance reprojection), and a clear
+// sample does not move the distance of a pixel that still holds cloud.
+fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant CloudParams &c [[buffer(0)]],
+                                            texture2d<half> cur [[texture(0)]], texture2d<float> curDist [[texture(1)]],
+                                            texture2d<half> hist [[texture(2)]], texture2d<ushort> histData [[texture(3)]]) {
+	uint n = uint(c.windDir.z);
+	uint2 px = uint2(in.position.xy);
+	uint2 slot = uint2(c.frame.xy);
+	uint2 mp = min(px / n, uint2(c.size.zw) - 1u);
+	bool mine = all(px % n == slot);
+	float2 uv = (float2(px) + 0.5) / c.size.xy;
+	float3 dir = cloudDirection(uv, c);
+	half4 now = cur.read(mp);
+	constexpr sampler gatherS(filter::nearest, address::clamp_to_edge);
+	float2 msz = c.size.zw;
+	float4 g0 = curDist.gather(gatherS, float2(mp) / msz);
+	float dNow = max(g0.y, 1.0);
+	float3 wnd = float3(c.wind.x, 0.0, c.wind.y);
+	// first guess with this block's march distance (exact for a turning camera: rotation does not depend on the distance)
+	float4 pc = c.prevViewProj * float4(dir * dNow + wnd, 1.0);
+	float2 puv = pc.xy / max(pc.w, 1e-6) * 0.5 + 0.5;
+	bool valid = c.frame.z < 0.5 && pc.w > 1e-4 && all(puv >= 0.0) && all(puv <= 1.0);
+	half4 h = half4(0.0h, 0.0h, 0.0h, 1.0h);
+	float age = 0.0, dOwn = dNow;
+	uint qOwn = CLOUD_DIST_NONE;
+	bool ownCloud = false;
+	if (valid) {
+		// the 2x2 history texels around the first guess: (x0,y1) (x1,y1) (x1,y0) (x0,y0)
+		uint4 q = uint4(histData.gather(gatherS, puv));
+		float2 f = fract(puv * c.size.xy - 0.5);
+		float4 ages = float4(q >> 12u);
+		age = mix(mix(ages.w, ages.z, f.x), mix(ages.x, ages.y, f.x), f.y);
+		uint4 qd = q & 0xfffu;
+		qOwn = f.y < 0.5 ? (f.x < 0.5 ? qd.w : qd.z) : (f.x < 0.5 ? qd.x : qd.y);
+		ownCloud = qOwn != CLOUD_DIST_NONE;
+		if (ownCloud) dOwn = cloudDistDecode(qOwn);
+		uint qMin = min(min(qd.x, qd.y), min(qd.z, qd.w));
+		if (age > 0.5 && qMin != CLOUD_DIST_NONE) {
+			float4 pc2 = c.prevViewProj * float4(dir * cloudDistDecode(qMin) + wnd, 1.0);
+			float2 p2 = pc2.xy / max(pc2.w, 1e-6) * 0.5 + 0.5;
+			if (pc2.w > 1e-4 && all(p2 >= 0.0) && all(p2 <= 1.0)) puv = p2;
+		}
+		h = cloudCatmullRom(hist, puv, c.size.xy);
+		// (as cloud_resolve) where this frame's march distances jump, keep the history inside their colour range
+		int2 mi = int2(mp), ms = int2(c.size.zw) - 1;
+		int2 ax = int2(min(mi.x + 1, ms.x), mi.y), bx = int2(max(mi.x - 1, 0), mi.y);
+		int2 ay = int2(mi.x, min(mi.y + 1, ms.y)), by = int2(mi.x, max(mi.y - 1, 0));
+		float4 g1 = curDist.gather(gatherS, (float2(mp) + 1.0) / msz);
+		float d1 = g1.z, d2 = g0.x, d3 = g1.x, d4 = g0.z;
+		float dMin = min(min(min(d1, d2), min(d3, d4)), g0.y), dMax = max(max(max(d1, d2), max(d3, d4)), g0.y);
+		if (dMax > dMin * 1.3 + 4.0) {
+			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
+			half4 lo = min(min(min(c1, c2), min(c3, c4)), now), hi = max(max(max(c1, c2), max(c3, c4)), now);
+			half4 pad = (hi - lo) * 0.15h;
+			h = clamp(h, lo - pad, hi + pad);
+		}
+	}
+	const half clear = 0.995h; // transmittance above this: no cloud
+	bool histCloud = valid && age > 0.5 && ownCloud && h.a < clear;
+	CloudResolveStOut o;
+	uint ageOut, qOut;
+	float cap = min(c.frame.w, 15.0);
+	if (mine) {
+		float w = valid ? 1.0 / min(age + 1.0, cap) : 1.0;
+		o.color = valid ? mix(h, now, half(w)) : now;
+		ageOut = uint(min(age + 1.0, cap) + 0.5);
+		bool nowCloud = now.a < clear;
+		qOut = nowCloud ? cloudDistCode(histCloud ? 1.0 / mix(1.0 / dOwn, 1.0 / dNow, w) : dNow) : histCloud ? qOwn : CLOUD_DIST_NONE;
+	} else if (valid && age > 0.5) {
+		o.color = h;
+		ageOut = uint(age + 0.5);
+		qOut = histCloud ? qOwn : CLOUD_DIST_NONE;
+	} else {
+		float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;
+		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
+		ageOut = 0u;
+		qOut = o.color.a < clear ? cloudDistCode(dNow) : CLOUD_DIST_NONE;
+	}
+	o.data = ushort(min(ageOut, 15u) << 12u | qOut);
 	return o;
 }
 

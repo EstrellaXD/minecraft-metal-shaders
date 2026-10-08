@@ -21,7 +21,9 @@ CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$JOML:$JSPEC"
 rm -rf "$OUT/classes" "$OUT/frames" && mkdir -p "$OUT/classes" "$OUT/frames" "$OUT/png"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/CloudPreviewFrames.java" "$HERE/CloudPreviewSource.java"
 "${JAVA_BIN}java" -cp "$OUT/classes:$CP" CloudPreviewSource "$OUT/clouds_preview.metal" "$OUT/lut.metal" "$HERE/preview_composite.metal"
-"${JAVA_BIN}java" -Dclouds.dev="${CLOUDS_DEV:-0}" -cp "$OUT/classes:$CP" CloudPreviewFrames "$OUT/frames" "$W" "$H" "$SCALE" "$FRAMES" "$ONLY"
+# CLOUDS_DEFS="#define X 1 ...": extra MSL defines ahead of the passes (experiments)
+if [ -n "$CLOUDS_DEFS" ]; then printf '%b\n' "$CLOUDS_DEFS" | cat - "$OUT/clouds_preview.metal" > "$OUT/cp.tmp" && mv "$OUT/cp.tmp" "$OUT/clouds_preview.metal"; fi
+"${JAVA_BIN}java" -Dclouds.dev="${CLOUDS_DEV:-0}" -Dclouds.yawRate="${CLOUDS_YAWRATE:-0}" -Dclouds.wind="${CLOUDS_WIND:-1}" -cp "$OUT/classes:$CP" CloudPreviewFrames "$OUT/frames" "$W" "$H" "$SCALE" "$FRAMES" "$ONLY"
 clang -fobjc-arc -O1 -Wno-enum-conversion -framework Foundation -framework Metal -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers \
 	"$HERE/cloudpreview.m" -o "$OUT/cloudpreview"
 cd "$OUT"

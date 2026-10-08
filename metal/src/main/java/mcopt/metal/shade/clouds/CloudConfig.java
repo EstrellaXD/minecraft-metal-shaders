@@ -100,7 +100,7 @@ public final class CloudConfig {
 	/** Dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): price parts of the clouds inside one session. */
 	public static final int DEV_NO_SCREEN = 1, DEV_NO_MAPS = 2, DEV_NO_SKY = 4, DEV_NO_FOG = 8, DEV_NO_SHADOW_USE = 16, DEV_NO_VL = 32,
 		DEV_OLD_FOG = 256, DEV_OLD_VL = 512, DEV_OLD_RESOLVE = 1024, DEV_OLD_MARCH = 2048, DEV_SCALE_ALT = 4096, DEV_OLD_MIP = 8192,
-		DEV_OLD_DOME = 16384;
+		DEV_OLD_DOME = 16384, DEV_OLD_STABLE = 32768;
 	public static final int DEV_OLD_ALL = DEV_OLD_FOG | DEV_OLD_VL | DEV_OLD_RESOLVE | DEV_OLD_MARCH | DEV_OLD_MIP | DEV_OLD_DOME;
 	/** The history scale dev bit 4096 switches to (pricing another scale inside one session). */
 	public static final float SCALE_ALT = clamp(floatProperty("mcopt.shade.clouds.scaleAlt", 0.4f), 0.2f, 1f);
@@ -108,6 +108,21 @@ public final class CloudConfig {
 	/** This frame's dev bits: mcopt.shade.clouds.dev (read every frame: the bench's price phases set it), plus OLD_* without LEAN. */
 	public static int devBits() {
 		return Integer.getInteger("mcopt.shade.clouds.dev", 0) | (LEAN ? 0 : DEV_OLD_ALL);
+	}
+	/**
+	 * M3.3 mode bits (CloudParams.shadowDir.w, clouds.metal CLOUD_MODE_*; each off = M3.2's way). {@link #MODE_STABLE}
+	 * (mcopt.shade.clouds.stable, default true): the march's start offsets from a per-pixel hash and the resolve that carries
+	 * the clouds' distance in the history (no comb / hatching on soft edges in the wind or while turning; CLOUDS.md M3.3).
+	 */
+	public static final int MODE_STABLE = 1;
+
+	/**
+	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bit 32768 =
+	 * M3.2's march jitter and resolve, for pricing with mcbench's cloudsDev phases).
+	 */
+	public static int modeBits() {
+		int dev = Integer.getInteger("mcopt.shade.clouds.dev", 0);
+		return flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0;
 	}
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");

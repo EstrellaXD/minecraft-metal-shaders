@@ -65,7 +65,7 @@ final class CloudNative {
 		}
 	}
 
-	/** flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer. */
+	/** flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer, 16 the M3.3 resolve (cloud_resolve_st, R16Uint data). */
 	static void render(long enc, long state, long params, int bytes, int flags) {
 		try {
 			RENDER.invokeExact(enc, state, params, bytes, flags);

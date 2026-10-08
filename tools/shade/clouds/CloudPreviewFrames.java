@@ -75,18 +75,35 @@ public class CloudPreviewFrames {
 			hw = (hw + nc - 1) / nc * nc; hh = (hh + nc - 1) / nc * nc;
 			p.histW = hw; p.histH = hh; p.marchW = hw / nc; p.marchH = hh / nc; p.checker = nc;
 			p.dev = Integer.getInteger("clouds.dev", 0); // M3.1 dev bits (run.sh: CLOUDS_DEV), e.g. 3072 = M3's resolve and march
+			p.mode = CloudConfig.modeBits(); // M3.3 mode bits (-Dmcopt.shade.clouds.stable=false: M3.2's march jitter and resolve)
 			p.base = 200f; p.top = CloudConfig.BLOCKY ? 200f + CloudConfig.BLOCK_THICKNESS : 350f;
 			ByteBuffer pb = ByteBuffer.allocateDirect(CloudParams.SIZE * frames).order(ByteOrder.LITTLE_ENDIAN);
+			// -Dclouds.yawRate=<deg/s>: the camera turns at this rate (60 fps), ending at the scenario's yaw (turning tests)
+			float yawRate = Float.parseFloat(System.getProperty("clouds.yawRate", "0"));
+			float wind = Float.parseFloat(System.getProperty("clouds.wind", "1"));
+			org.joml.Matrix4f prevVP = new org.joml.Matrix4f(f.viewProj);
 			for (int i = 0; i < frames; i++) {
+				if (yawRate != 0f) {
+					float yi = yaw - (float) Math.toRadians(yawRate * (frames - 1 - i) / 60f);
+					f.view.identity().rotateX(-pitch).rotateY(yi);
+					f.proj.mul(f.view, f.viewProj);
+					f.viewProj.invert(f.invViewProj);
+					f.prevViewProj.set(i == 0 ? f.viewProj : prevVP);
+					prevVP.set(f.viewProj);
+				}
 				p.frame = i;
 				p.reset = i == 0;
 				p.domeValid = i > 0;
 				float dt = 1f / 60f;
-				p.windStepX = w.windX * w.windSpeed * dt; p.windStepZ = w.windZ * w.windSpeed * dt;
+				p.windStepX = w.windX * w.windSpeed * wind * dt; p.windStepZ = w.windZ * w.windSpeed * wind * dt;
 				p.windX += p.windStepX; p.windZ += p.windStepZ;
-				p.wind3X += p.windStepX * 0.82; p.wind3Z += p.windStepZ * 0.82;
+				p.wind3X += p.windStepX * CloudConfig.NOISE_DRIFT; p.wind3Z += p.windStepZ * CloudConfig.NOISE_DRIFT;
 				p.cirrusX += p.windStepX * 1.7; p.cirrusZ += p.windStepZ * 1.7;
 				p.pack(pb.slice(CloudParams.SIZE * i, CloudParams.SIZE), f, w);
+			}
+			if (yawRate != 0f) { // the composite sees the last frame's view
+				look.update(f, 0, 0.016f);
+				f.pack(fb.clear());
 			}
 			ByteBuffer lb = ByteBuffer.allocateDirect(ShadeLook.SIZE).order(ByteOrder.LITTLE_ENDIAN);
 			look.pack(lb, f);

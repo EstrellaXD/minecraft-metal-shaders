@@ -22,10 +22,11 @@ typedef struct {
 	id<MTLLibrary> lib;
 	id<MTLComputePipelineState> bakeNoise, bakeWeather;
 	id<MTLRenderPipelineState> march, resolve, dome, shadow;
+	id<MTLRenderPipelineState> resolveSt; // M3.3 cloud_resolve_st (flag 16): its data target is R16Uint (age + the clouds' distance)
 	id<MTLRenderPipelineState> over;  // cloud_over for the HDR scene's format (made on first use)
 	MTLPixelFormat overFormat;
 	id<MTLTexture> noise, weather, shadowMap;
-	id<MTLTexture> marchColor, marchDist, hist[2], data[2], domeTex[2];
+	id<MTLTexture> marchColor, marchDist, hist[2], data[2], dataSt[2], domeTex[2];
 	int hw, hh, mw, mh, dw, dh, cur, domeCur;
 	// GPU timer (flag 8): fragment start/end per pass, a ring of 4 frames
 	id<MTLCounterSampleBuffer> times;
@@ -155,9 +156,10 @@ CloudState *mc_clouds_new(Ctx *ctx, const char *source, char *err, int errCap) {
 		s->bakeWeather = cloudKernel(dev, s->lib, @"cloud_bake_weather", err, errCap);
 		s->march = cloudPso(dev, s->lib, @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float, err, errCap);
 		s->resolve = cloudPso(dev, s->lib, @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatR8Unorm, err, errCap);
+		s->resolveSt = cloudPso(dev, s->lib, @"cloud_resolve_st", MTLPixelFormatRGBA16Float, MTLPixelFormatR16Uint, err, errCap);
 		s->dome = cloudPso(dev, s->lib, @"cloud_dome", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, err, errCap);
 		s->shadow = cloudPso(dev, s->lib, @"cloud_shadow", MTLPixelFormatR16Float, MTLPixelFormatInvalid, err, errCap);
-		if (!s->bakeNoise || !s->bakeWeather || !s->march || !s->resolve || !s->dome || !s->shadow) {
+		if (!s->bakeNoise || !s->bakeWeather || !s->march || !s->resolve || !s->resolveSt || !s->dome || !s->shadow) {
 			mc_clouds_free(s);
 			return NULL;
 		}
@@ -207,6 +209,7 @@ void mc_clouds_free(CloudState *s) {
 	[s->bakeWeather release];
 	[s->march release];
 	[s->resolve release];
+	[s->resolveSt release];
 	[s->dome release];
 	[s->shadow release];
 	[s->over release];
@@ -218,6 +221,7 @@ void mc_clouds_free(CloudState *s) {
 	for (int i = 0; i < 2; i++) {
 		[s->hist[i] release];
 		[s->data[i] release];
+		[s->dataSt[i] release];
 		[s->domeTex[i] release];
 	}
 	[s->times release];
@@ -238,12 +242,14 @@ int mc_clouds_size(CloudState *s, Ctx *ctx, int hw, int hh, int mw, int mh, int 
 			for (int i = 0; i < 2; i++) {
 				[s->hist[i] release];
 				[s->data[i] release];
+				[s->dataSt[i] release];
 			}
 			s->marchColor = cloudTarget(dev, MTLPixelFormatRGBA16Float, mw, mh, @"mcopt shade: cloud march");
 			s->marchDist = cloudTarget(dev, MTLPixelFormatR32Float, mw, mh, @"mcopt shade: cloud march distance");
 			for (int i = 0; i < 2; i++) {
 				s->hist[i] = cloudTarget(dev, MTLPixelFormatRGBA16Float, hw, hh, i ? @"mcopt shade: cloud history B" : @"mcopt shade: cloud history A");
 				s->data[i] = cloudTarget(dev, MTLPixelFormatR8Unorm, hw, hh, i ? @"mcopt shade: cloud age B" : @"mcopt shade: cloud age A");
+				s->dataSt[i] = cloudTarget(dev, MTLPixelFormatR16Uint, hw, hh, i ? @"mcopt shade: cloud age+distance B" : @"mcopt shade: cloud age+distance A");
 			}
 			s->hw = hw;
 			s->hh = hh;
@@ -293,7 +299,8 @@ static void cloudPass(id<MTLCommandBuffer> cb, id<MTLRenderPipelineState> p, id<
 }
 
 // One frame of clouds on the frame's command buffer (ending any open render encoder; the backend reopens its own).
-// params: CloudParams (clouds.metal), bytes long. flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer.
+// params: CloudParams (clouds.metal), bytes long. flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer,
+// 16 the M3.3 resolve (cloud_resolve_st with its R16Uint data; the Java side drops the history when this changes).
 void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, int flags) {
 	if (!s || !s->hist[0]) return;
 	@autoreleasepool {
@@ -320,8 +327,10 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 			id<MTLTexture> in[2] = {s->weather, s->noise};
 			cloudPass(cb, s->march, s->marchColor, s->marchDist, @"mcopt shade: cloud march", params, bytes, in, 2, times, base + 2);
 			int next = s->cur ^ 1;
-			id<MTLTexture> in2[4] = {s->marchColor, s->marchDist, s->hist[s->cur], s->data[s->cur]};
-			cloudPass(cb, s->resolve, s->hist[next], s->data[next], @"mcopt shade: cloud resolve", params, bytes, in2, 4, times, base + 4);
+			BOOL st = (flags & 16) != 0;
+			id<MTLTexture> const *data = st ? s->dataSt : s->data;
+			id<MTLTexture> in2[4] = {s->marchColor, s->marchDist, s->hist[s->cur], data[s->cur]};
+			cloudPass(cb, st ? s->resolveSt : s->resolve, s->hist[next], data[next], @"mcopt shade: cloud resolve", params, bytes, in2, 4, times, base + 4);
 			s->cur = next;
 		}
 		if (flags & 4) {

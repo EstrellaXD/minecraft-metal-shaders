@@ -99,6 +99,8 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_DRY 4096         // terrain stays dry (no wet layer, puddles, snow)
 #define SHADE_DEV_WX_PLAIN_RAIN 8192  // rain streaks shaded the M2 way (no sky lookup)
 #define SHADE_DEV_WX_NO_TINT 16384    // no coloured shadows: no tint lookup on the terrain, no tint pass (ShadowPass)
+#define SHADE_DEV_WX_ANALYTIC 32768   // puddle/snow noise evaluated per pixel instead of the baked tile
+#define SHADE_DEV_WX_NO_SSR_GATE 65536 // puddle reflections marched on every puddle pixel (not only where Fresnel shows them)
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

@@ -78,10 +78,13 @@ static inline float shadeWxSnowDrift(float2 xa) {
 
 // The bake (ShadeWeather.bakeNoise, once): r = puddle field, g = snow drift over one 256-block tile, 4 texels per block
 // (RG16F 1024^2, 4 MB). The terrain samples it bilinearly (repeat) instead of evaluating 6 value noises (24 hashes) per pixel.
+// Only in the bake's own library (SHADE_WX_NOISE_BAKE): the terrain libraries don't carry the extra entry point.
+#ifdef SHADE_WX_NOISE_BAKE
 fragment half4 shade_wx_noise_fs(float4 pos [[position]]) {
 	float2 xa = pos.xy * (SHADE_WX_NOISE_TILE / float(SHADE_WX_NOISE_SIZE));
 	return half4(half(shadeWxPuddleField(xa)), half(shadeWxSnowDrift(xa)), 0.0h, 1.0h);
 }
+#endif
 
 constexpr sampler shadeWxRepeat(filter::linear, address::repeat, coord::normalized);
 
@@ -158,7 +161,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 #ifdef SHADE_PUDDLES
 	puddly = L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h;
 #endif
-	float2 fields = snowy || puddly ? shadeWxFields(xa, noise, baked) : float2(0.0);
+	float2 fields = snowy || puddly ? shadeWxFields(xa, noise, baked && !shadeDev(f, SHADE_DEV_WX_ANALYTIC)) : float2(0.0);
 #ifdef SHADE_SNOW_COVER
 	if (snowy) {
 		float drift = fields.y;
@@ -378,13 +381,17 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// rough films see a blurred sky: toward the sky's mean light (ambientSky ~ irradiance / pi)
 	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, saturate(rough * 1.6)) * open;
 #ifdef SHADE_PUDDLE_SSR
+	// The march only where the mirror shows: the film reflects F (2 % looking straight down, ~10 % at 65 degrees from the
+	// normal, all of it at grazing angles), so where F * P < 0.035 the sky reflection alone is within a few percent of what
+	// the march would add, and the march is skipped (most of the puddle pixels near the feet); a soft ramp up to 0.07.
+	float ssrW = shadeDev(f, SHADE_DEV_WX_NO_SSR_GATE) ? (P > 0.02 ? 1.0 : 0.0) : smoothstep(0.035, 0.07, F * P);
 #ifdef SHADE_PUDDLE_QUAD
-	if (quadPuddle && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (histOk, prevExposure, dev: per frame)
+	if (shadeWxQuadMax(ssrW) > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (histOk, prevExposure, dev: per frame)
 #else
-	if (P > 0.02 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) {
+	if (ssrW > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) {
 #endif
 		float4 hit = shadeWxHistSsr(in.p, r, in.pixel, SHADE_PUDDLE_DIST, in.prevExposure, f, L, hist, histDepth);
-		if (P > 0.02) refl = mix(refl, hit.rgb, hit.w);
+		refl = mix(refl, hit.rgb, hit.w * ssrW);
 	}
 #endif
 	if (wet <= 0.004h) return radiance;

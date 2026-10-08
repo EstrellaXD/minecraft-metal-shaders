@@ -59,6 +59,8 @@ public class ShadeMslDump {
 		Files.writeString(out.resolve("post.metal"), ShadeMsl.post());
 		// the water module's own passes (wave bake, SSR coarse depth): ShadeWater.library
 		Files.writeString(out.resolve("water_passes.metal"), ShadeMsl.post() + mcopt.metal.shade.water.ShadeWater.prelude());
+		// M3 weather: the puddle/snow noise bake (ShadeWeather.bakeNoise)
+		Files.writeString(out.resolve("weather_noise.metal"), ShadeMsl.post() + "#define SHADE_WX_NOISE_BAKE\n" + mcopt.metal.shade.weather.ShadeWeather.prelude());
 		Files.writeString(out.resolve("vl.metal"), mcopt.metal.shade.vl.VlConfig.source()); // volumetric light (mcvl.m)
 		// clouds: own fragment (CloudInfo slot from the defines); vanilla's generated vertex stage comes from a dump if given
 		String s4 = MetalShaderRegistry.slotDefines(List.of("CloudInfo", "Projection", "DynamicTransforms", "Fog"));

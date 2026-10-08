@@ -139,7 +139,7 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float nb = shadeDimsNoise(mw, q * float2(16.0, 12.0) + float2(w * 1.6, w * 0.9));
 	float band = exp(-abs(e - 0.35) / 0.55);
 	float neb = smoothstep(0.72, 1.0, nb * 0.75 + w * 0.4) * band;
-	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 0.9);
+	sky += mix(f.horizon[6].rgb, f.horizon[7].rgb, smoothstep(0.3, 0.75, w)) * (neb * 0.55);
 	// stars (the overworld's field, brighter and denser looking: no atmosphere)
 	float sigma = clamp(0.7 * pixelAngle / (1.5707963 / 420.0), 0.25, 0.8);
 	sky += shadeEndStars(dir, sigma) * (0.8 * (1.0 - 0.6 * neb));
@@ -148,9 +148,11 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float az = lon;
 	float r1 = shadeDimsNoise(mw, float2(az * 64.0, t * 0.02));
 	float r2 = shadeDimsNoise(mw, float2(az * 160.0, t * 0.035 + 3.0));
-	float beam = pow(saturate(1.0 - abs(2.0 * r1 - 1.0)), 12.0);
-	float fil = pow(saturate(1.0 - abs(2.0 * r2 - 1.0)), 24.0);
-	float rise = smoothstep(-0.3, -0.04, e) * exp(-max(e + 0.04, 0.0) / (0.08 + 0.10 * r1)) * (1.0 - smoothstep(0.1, 0.4, e));
+	// sparse: groups of beams where a slow azimuth noise is high (not a wall of stripes all around), low over the horizon
+	float groups = smoothstep(0.5, 0.75, shadeDimsNoise(mw, float2(az * 12.0, t * 0.006 + 7.0)));
+	float beam = pow(saturate(1.0 - abs(2.0 * r1 - 1.0)), 12.0) * groups;
+	float fil = pow(saturate(1.0 - abs(2.0 * r2 - 1.0)), 24.0) * groups;
+	float rise = smoothstep(-0.3, -0.04, e) * exp(-max(e + 0.04, 0.0) / (0.05 + 0.07 * r1)) * (1.0 - smoothstep(0.04, 0.25, e));
 	float calm = 1.0 + 1.5 * flash;
 	sky += (f.horizon[4].rgb * beam * 0.3 + f.horizon[5].rgb * fil * 0.2) * (rise * calm);
 	if (flash > 0.0) {
@@ -230,7 +232,7 @@ static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f
 	if (nether) {
 		float ym = yc + wp.y * 0.5;
 		float g = exp(-max(ym - L.dimTint.y, 0.0) / 30.0);
-		Sc = S * (0.8 + 0.4 * n) + lava * (0.09 * g);
+		Sc = S * (0.8 + 0.4 * n) + lava * (0.065 * g); // less lava glow in the haze: less of an orange wash over the lava sea
 	}
 	float3 o = c * T + Sc * ex * (1.0 - T);
 	if (L.dimTint.z > 0.0) {

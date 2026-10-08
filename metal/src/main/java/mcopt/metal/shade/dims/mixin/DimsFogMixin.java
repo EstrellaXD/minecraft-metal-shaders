@@ -53,7 +53,15 @@ abstract class DimsFogMixin {
 		FogData fog = cir.getReturnValue();
 		if (fog == null || fog.environmentalEnd < 24f) return; // blindness, darkness: vanilla's
 		ShadeDims.vanillaFog(fog.environmentalStart, fog.environmentalEnd);
-		fog.environmentalStart = 1e6f;
-		fog.environmentalEnd = 1e6f + 1f;
+		// the Nether: vanilla's fog only at the view distance's edge (entities, particles out there fade into the fog colour
+		// where our border fog is already opaque); its end is where Sodium stops drawing chunks (ShadeDims.netherCull)
+		float cull = dim == Level.NETHER ? ShadeDims.netherCull(fog.environmentalEnd) : 0f;
+		if (cull > 0f) {
+			fog.environmentalStart = cull * 0.96f;
+			fog.environmentalEnd = cull;
+		} else {
+			fog.environmentalStart = 1e6f;
+			fog.environmentalEnd = 1e6f + 1f;
+		}
 	}
 }

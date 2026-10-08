@@ -66,7 +66,7 @@ public final class ShadeDims {
 
 	// tuning (luminance after exposure E_REF: what a white surface / the fog shows)
 	static final float NETHER_AMBIENT = 0.26f, NETHER_FOG_GAIN = 3.0f, NETHER_LAVA_UP = 0.55f, NETHER_LAVA_Y = 31f, NETHER_SIGMA = 1.2f;
-	static final float END_KEY = 0.95f, END_AMBIENT = 0.2f, END_FOG = 0.05f, END_FOG_SIGMA = 0.0045f;
+	static final float END_KEY = 0.72f, END_AMBIENT = 0.17f, END_FOG = 0.05f, END_FOG_SIGMA = 0.0045f;
 	static final float END_ELEVATION = 55f, END_AZIMUTH = 30f;
 
 	private static final float[] netherW = {1f, 0f, 0f, 0f, 0f};
@@ -111,6 +111,24 @@ public final class ShadeDims {
 	/** Whether the Nether / End looks are on this frame (mcopt.shade.dims and not paused). */
 	public static boolean on() {
 		return DimsConfig.DIMS && !paused();
+	}
+
+	/**
+	 * How far terrain is drawn in the Nether, as a multiple of vanilla's environmental fog end (0 = the whole render
+	 * distance). Sodium stops drawing chunks at the fog's end ("fog occlusion"); pushing vanilla's fog away for ours drew
+	 * the whole render distance (~7x the area of vanilla's 96 blocks at render distance 16: +0.5 ms in the first A/B). Our
+	 * border fog closes the view at this distance instead. performance 1.3x, balanced 1.7x, quality/ultra: everything.
+	 * Override: mcopt.shade.netherView (a multiple; 0 = the render distance).
+	 */
+	static final float NETHER_VIEW = DimsConfig.floatFlag("mcopt.shade.netherView",
+		mcopt.metal.shade.Shade.TIER <= 0 ? 1.3f : mcopt.metal.shade.Shade.TIER == 1 ? 1.7f : 0f, 0f, 100f);
+	private static volatile float netherCull;
+
+	/** DimsFogMixin, Nether in open air: the distance vanilla's fog (and so Sodium's culling) should end at (0: none). */
+	public static float netherCull(float vanillaEnd) {
+		float c = NETHER_VIEW > 0f ? Math.max(vanillaEnd * NETHER_VIEW, 32f) : 0f;
+		netherCull = c;
+		return c;
 	}
 
 	/** Whether Nether/End fog is ours (vanilla's environmental fog is pushed away by DimsFogMixin). */
@@ -276,6 +294,8 @@ public final class ShadeDims {
 			// dimTint: x fog extinction (1/block), y lava sea level, z border fog radius (blocks), w 1 = Nether, 2 = End, 3 = End
 			// without a sky pass (the dragon fight's boss fog: the final pass paints the sky)
 			float border = f.fogRenderStart < f.fogRenderEnd && f.fogRenderEnd < 1e5f ? f.fogRenderEnd : 0f;
+			// the Nether's view distance (Sodium culls there): the border fog closes the view just before it
+			if (nether && netherCull > 0f) border = border > 0f ? Math.min(border, netherCull * 0.97f) : netherCull * 0.97f;
 			put4(L, ShadeLook.DIM_TINT, fogDensity, NETHER_LAVA_Y, border, nether ? 1f : bossFog ? 3f : 2f);
 			put4(L, ShadeLook.FLASH, flashDir.x, flashDir.y, flashDir.z, nether ? 0f : flash);
 			// stay moody: less metering (bible: Nether 0.3, End 0.4), no Purkinje shift, a little more bloom

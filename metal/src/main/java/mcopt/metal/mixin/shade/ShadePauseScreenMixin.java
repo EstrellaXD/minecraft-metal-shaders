@@ -41,7 +41,10 @@ abstract class ShadePauseScreenMixin extends Screen {
 		// button): with the native shading, MetalFX frame interpolation costs ~12 ms of GPU per real frame at 3024x1964, so the
 		// game drops to 30 real + 30 generated fps with ~53 ms of latency instead of ~90 real fps (M33_ROBUST.md section 3)
 		boolean frameGen = Boolean.getBoolean("mcopt.shade.framegenButton");
-		boolean resolution = mcopt.metal.shade.taa.ShadeTaa.ON;
+		// M3.3 robustness: not when TAAU failed to set up (no render scale to choose; the button did nothing, run rb4);
+		// mcopt.shade.robustFallback=false: M3.2 (shown anyway)
+		boolean resolution = mcopt.metal.shade.taa.ShadeTaa.ON
+			&& !(mcopt.metal.shade.taa.ShadeTaa.failed() && !"false".equals(System.getProperty("mcopt.shade.robustFallback")));
 		if (resolution) {
 			int w = mc.getWindow().getWidth(), h = mc.getWindow().getHeight();
 			this.addRenderableWidget(Button.builder(Component.literal(ShadeResolution.label(w, h)), button -> {

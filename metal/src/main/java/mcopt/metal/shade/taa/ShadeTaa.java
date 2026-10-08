@@ -108,6 +108,11 @@ public final class ShadeTaa {
 		this.taa = taa;
 	}
 
+	/** M3.3: whether TAAU's setup failed (it then never runs this session: the render resolution choice has no effect). */
+	public static boolean failed() {
+		return failed;
+	}
+
 	/** The TAA state, made on first use on the Metal backend; null when off, on another backend or after a setup failure. */
 	public static @Nullable ShadeTaa get() {
 		if (!ON || instance != null || failed) return instance;

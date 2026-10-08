@@ -75,7 +75,7 @@ public final class ShadeRobust {
 		} else if (skyFailed) {
 			skyFailed = false;
 			if (!postFailed) System.clearProperty("mcopt.shade.clouds.pause");
-			System.out.println("[mcopt] shade: the shaded sky built again: volumetric clouds back");
+			System.out.println("[mcopt] shade: the shaded sky built again" + (postFailed ? " (no HDR post chain: vanilla clouds stay)" : ": volumetric clouds back"));
 		}
 	}
 

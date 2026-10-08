@@ -562,6 +562,9 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	float3 s0 = 0.0, ds = 0.0;
 	bool screenEnd = false;
 #ifdef SHADE_SSR_QUAD
+#ifdef SHADE_SSR_LANE
+	float3 p0Own = p0, rOwn = r;
+#endif
 	p0 = shadeQuadSum(p0) * 0.25;
 	r = normalize(shadeQuadSum(r));
 	bool ok = shadeSsrSegment(p0, r, maxDist, f, s0, ds, screenEnd); // quad-uniform: same ray in all four lanes
@@ -577,6 +580,23 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	float3 h = shadeQuadSum(mine);
 #ifdef SHADE_WATER_EDGE_REFL
 	if (shadeSsrBelowStart(h.xy, p0, r, f, depth)) return 0.0; // quad-uniform (h, p0, r are)
+#endif
+#ifdef SHADE_SSR_LANE
+	// FT1.3: the quad marched one shared ray, and its one hit point drew the mirrored image in 2x2-pixel blocks (jagged shores and
+	// trees, mirrored clouds' edges in steps: "reflejos pixeleados"). Each lane reads the hit along its OWN ray at the shared
+	// hit's distance instead: one projection per pixel, no extra march (where the distance differs within the quad, e.g. at a
+	// mirrored silhouette, the lane lands on what its own ray sees there: a sharper edge)
+	{
+		float2 sz = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
+		float zh = depth.read(uint2(clamp(h.xy * sz, float2(0.0), sz - 1.0)));
+		float4 hp = f.invViewProj * float4(h.xy * 2.0 - 1.0, zh, 1.0);
+		float T = dot(hp.xyz / hp.w - p0, r);
+		float4 cl = f.viewProj * float4(p0Own + rOwn * max(T, 0.0), 1.0);
+		if (cl.w > 1e-4) {
+			float2 uvl = cl.xy / cl.w * 0.5 + 0.5;
+			if (uvl.y > 0.0 && uvl.y < 1.0) h.xy = float2(clamp(uvl.x, 0.5 / sz.x, 1.0 - 0.5 / sz.x), uvl.y);
+		}
+	}
 #endif
 	return float4(shadeWaterHitColor(h.xy, exposure, prevExposure, f, L, scene, depth, prev), h.z);
 #else
@@ -738,14 +758,14 @@ static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, 
 // x: the long swell's factor; y: the fine ripples' (they make the texture: they break the mirrored images into streaks and
 // the sun into sparkles, as on real water, while the calm swell keeps far shores and clouds readable).
 #ifndef SHADE_WATER_RIPPLE
-#define SHADE_WATER_RIPPLE 1.25 // the fine ripples' slopes in clear weather (x the M2.1 detail layer)
+#define SHADE_WATER_RIPPLE 2.0 // the fine ripples' slopes in clear weather (x the M2.1 detail layer)
 #endif
 static inline float2 shadeWaterCalm(float3 p, constant ShadeFrame &f, constant ShadeWaterParams &wp) {
 	float t = shadeWaterTime(f);
 	float2 x = shadeWaterXZ(p.xz, f);
 	float patch = shadeWaterValueNoise(x * (1.0 / 190.0) + float2(t * 0.011, t * 0.007));
 	float3 v = normalize(p - shadeEye(f.invViewProj));
-	float graze = 0.35 + 0.65 * smoothstep(0.0, 0.12, abs(v.y));
+	float graze = 0.55 + 0.45 * smoothstep(0.0, 0.1, abs(v.y));
 	float rain = saturate(wp.state.z);
 	return float2(mix(SHADE_WATER_CALM, 1.0, rain) * (0.6 + 0.8 * patch), mix(SHADE_WATER_RIPPLE, 1.3, rain) * (0.75 + 0.5 * patch)) * graze;
 }
@@ -758,7 +778,12 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 	pattern = 0.0;
 	float t = shadeWaterTime(f);
 	float2 x = shadeWaterXZ(w.p.xz, f) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED); // flowing water carries its waves downstream
-	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + 0.6 * length(w.flowDir)) * exp(-length(w.p) * (1.0 / 90.0));
+#ifdef SHADE_WATER_SMOOTH
+	const float fade = 1.0 / 170.0; // FT1.3: the ripples' texture carries farther (Gael's references: textured to the horizon)
+#else
+	const float fade = 1.0 / 90.0;
+#endif
+	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + 0.6 * length(w.flowDir)) * exp(-length(w.p) * fade);
 #ifdef SHADE_WAVE_BAKE
 	if (wp.state.w > 0.5) { // this frame's bake exists
 		half4 b = waves.sample(shadeWaveSampler, x * (1.0 / SHADE_WAVE_TILE), gradient2d(w.dxz.xy * (1.0 / SHADE_WAVE_TILE), w.dxz.zw * (1.0 / SHADE_WAVE_TILE)));

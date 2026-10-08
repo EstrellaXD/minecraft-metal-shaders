@@ -240,6 +240,7 @@ public final class ShadePost {
 		world = true;
 		bridgeOpen = false;
 		bridgeUsed = false;
+		mcopt.metal.shade.dims.DimsDebug.beginFrame(); // M3.3 dev: mcopt.shade.passLog (off unless set)
 		vlLight = vlDist = 0;
 		liveWidth = w;
 		liveHeight = h;
@@ -320,11 +321,12 @@ public final class ShadePost {
 	private static MetalHooks.@Nullable Redirect redirect(RenderPassDescriptor d) {
 		if (!world && ShadeEntity.HAND) return handRedirect(d);
 		if (!world || mainColor == null) return null;
+		if (mcopt.metal.shade.dims.DimsDebug.logging()) mcopt.metal.shade.dims.DimsDebug.pass(d, mainColor); // M3.3 dev
 		// Distant Horizons: every one of its passes (also those drawing into its own targets: its far fade samples the main
 		// colour) sees the display-referred image in main and composites there, as without shading
 		String label = d.label().get();
 		if (label != null && label.startsWith("distantHorizons:")) {
-			if (ShadeConfig.DH_BRIDGE && !bridgeOpen) openBridge();
+			if (ShadeConfig.DH_BRIDGE && !bridgeOpen && !mcopt.metal.shade.dims.DimsDebug.noBridge()) openBridge();
 			return null;
 		}
 		var colors = d.colorAttachments();
@@ -375,6 +377,7 @@ public final class ShadePost {
 			System.out.println("[mcopt] shade: Distant Horizons passes seen: bridging them through the HDR frame");
 		}
 		long main = MetalBridge.textureHandle(mainColor);
+		mcopt.metal.shade.dims.DimsDebug.note("bridge encode (HDR -> main)");
 		MetalBridge.takePendingColorClear(encoder, mainColor);
 		pass(psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
 	}
@@ -382,6 +385,7 @@ public final class ShadePost {
 	private static void closeBridge() {
 		bridgeOpen = false;
 		long main = MetalBridge.textureHandle(mainColor);
+		mcopt.metal.shade.dims.DimsDebug.note("bridge decode (main -> HDR)");
 		pass(psoDecode, hdr[frame & 1], ShadeRender.LOAD, new long[] {main}, null, "mcopt shade: DH bridge decode");
 	}
 
@@ -391,6 +395,7 @@ public final class ShadePost {
 		if (!world) return;
 		world = false;
 		if (bridgeOpen) closeBridge();
+		mcopt.metal.shade.dims.DimsDebug.endFrame(); // M3.3 dev
 		// M3: this frame's entity draws -> the next frame's near shadow cascade
 		if (mcopt.metal.shade.shadow.EntityCasters.ON) mcopt.metal.shade.shadow.EntityCasters.commit(enc);
 		if (mainColor == null) return;

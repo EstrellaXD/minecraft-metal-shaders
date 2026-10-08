@@ -315,7 +315,8 @@ public final class ShadeTaa {
 		long now = System.nanoTime();
 		Object level = Minecraft.getInstance().level;
 		boolean cut = this.reset || this.position == null || this.prevPosition == null || level != this.level || now - this.lastResolve > GAP_NANOS
-			|| this.position.distanceTo(this.prevPosition) > TELEPORT;
+			|| this.position.distanceTo(this.prevPosition) > TELEPORT
+			|| Boolean.getBoolean("mcopt.shade.taa.cut"); // M3.3 dev (live): no history at all, for diagnosing feedback
 		boolean still = false;
 		if (cut) {
 			this.reprojection.set(this.viewProj);

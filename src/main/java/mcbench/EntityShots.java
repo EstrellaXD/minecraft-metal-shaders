@@ -37,6 +37,12 @@ import net.minecraft.server.level.ServerLevel;
  * held-light (dynamic lights) case. Spectator mode and the hidden HUD come back afterwards.</li>
  * <li>{@code ent_motion} (6000): a villager, a horse and a pig teleported along x at 4-6 blocks/s every server tick while
  * the camera holds still, shot mid-motion: TAAU ghosting behind moving entities (per-object motion vectors).</li>
+ * <li>{@code cave} -> {@code ent_cave}: a pig and a villager with a torch beside them in LightShots' dark cave (sky light 0):
+ * vanilla's blob shadow must stay there (no real shadow can replace it). The torch is set back to air afterwards.</li>
+ * <li>{@code rose} -> {@code rose_off_water}, {@code rose_on_water}, {@code rose_off_sky}, {@code rose_on_sky}: the
+ * sunset_water pose (12400) and the same 25 degrees up, each shot with mcopt.shade.skyRose=false then true (read every
+ * frame by mcopt-shade) in one session, the ticks frozen around each pair (/tick freeze: the vanilla clouds, which follow
+ * the game time, keep their layout): a matched before/after of the evening rose.</li>
  * </ul>
  * Poses and the site go to results.json "entityShots".
  */
@@ -66,7 +72,7 @@ final class EntityShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (!(on("noon") || on("evening") || on("night") || on("hand") || on("motion") || on("perf"))) return;
+		if (!(on("noon") || on("evening") || on("night") || on("hand") || on("motion") || on("perf") || on("cave") || on("rose"))) return;
 		BenchDriver.results.put("entityShots", JSON);
 		// load the site (the torch grid) first: its chunks must exist on the server to read the ground and summon
 		steps.add(new BenchDriver.Scene("ent-site", 6000, false, () -> BenchDriver.spot.night));
@@ -95,6 +101,14 @@ final class EntityShots {
 		if (on("night")) shot(steps, "ent_night", 18000, () -> site.camera(9.5, 2.4, 9f));
 		if (on("hand")) hand(steps);
 		if (on("motion")) motion(steps);
+		if (on("cave")) cave(steps);
+		if (on("rose")) {
+			rose(steps, "water", () -> BenchDriver.spot.sunset);
+			rose(steps, "sky", () -> {
+				Pose o = BenchDriver.spot.sunset;
+				return new Pose(o.x(), o.y(), o.z(), o.yaw(), -25f);
+			});
+		}
 		steps.add(new BenchDriver.Step("ent-cleanup", 0) {
 			@Override
 			void start(Minecraft mc, long now) {
@@ -131,6 +145,12 @@ final class EntityShots {
 
 	static void cleanup(MinecraftServer s) {
 		cmd(s, "kill @e[tag=" + TAG + "]");
+		cmd(s, "tick unfreeze");
+		System.clearProperty("mcopt.shade.skyRose");
+		if (caveTorch != null) {
+			cmd(s, String.format(Locale.ROOT, "setblock %d %d %d air replace", caveTorch.getX(), caveTorch.getY(), caveTorch.getZ()));
+			caveTorch = null;
+		}
 		if (site != null) {
 			cmd(s, String.format(Locale.ROOT, "execute in minecraft:overworld positioned %d %d %d run kill @e[type=item,distance=..24]", site.x, site.y, site.z));
 			cmd(s, String.format(Locale.ROOT, "setblock %d %d %d air", site.x + 3, groundAt(site.x + 3), site.z + 3));
@@ -285,6 +305,110 @@ final class EntityShots {
 				return BenchDriver.secs(now - BenchDriver.curStart) >= 0.5;
 			}
 		});
+	}
+
+	/** A step that sets (value) or clears (null) a system property mcopt-shade reads every frame, and runs a command. */
+	private static BenchDriver.Step prop(String name, String key, String value, String command) {
+		return new BenchDriver.Step(name, 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				if (value == null) System.clearProperty(key);
+				else System.setProperty(key, value);
+				if (command != null) cmd(BenchDriver.server(mc), command);
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				return true;
+			}
+		};
+	}
+
+	/** The evening rose off then on at one pose, in one session, the ticks frozen around the pair. */
+	private static void rose(java.util.Deque<BenchDriver.Step> steps, String tag, java.util.function.Supplier<Pose> p) {
+		String off = "rose_off_" + tag, onName = "rose_on_" + tag;
+		steps.add(new BenchDriver.Scene(off, 12400, false, p));
+		steps.add(new BenchDriver.Settle(off, false, 3, 120));
+		steps.add(prop("rose-freeze-" + tag, "mcopt.shade.skyRose", "false", "tick freeze"));
+		steps.add(new BenchDriver.Hold(off, Math.max(BenchDriver.SHOT_WAIT, 2.5)));
+		steps.add(new BenchDriver.Shot(off));
+		steps.add(prop("rose-on-" + tag, "mcopt.shade.skyRose", "true", null));
+		steps.add(new BenchDriver.Hold(onName, Math.max(BenchDriver.SHOT_WAIT, 2.5)));
+		steps.add(new BenchDriver.Shot(onName));
+		steps.add(prop("rose-unfreeze-" + tag, "mcopt.shade.skyRose", null, "tick unfreeze"));
+		steps.add(new BenchDriver.Step("ent-record-rose-" + tag, 0) {
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				Map<String, Object> m = p.get().json();
+				m.put("time", 12400);
+				m.put("shots", off + " (mcopt.shade.skyRose=false), " + onName + " (true), ticks frozen");
+				JSON.put("rose_" + tag, m);
+				return true;
+			}
+		});
+	}
+
+	static BlockPos caveTorch;
+
+	/** A pig and a villager with a torch beside them in LightShots' dark cave: the blob shadow must stay there. */
+	private static void cave(java.util.Deque<BenchDriver.Step> steps) {
+		String name = "ent_cave";
+		Pose[] pose = new Pose[1];
+		steps.add(new BenchDriver.Step("ent-cave-setup", 120) {
+			CompletableFuture<Pose> f;
+
+			@Override
+			void start(Minecraft mc, long now) {
+				MinecraftServer s = BenchDriver.server(mc);
+				f = CompletableFuture.supplyAsync(() -> {
+					ServerLevel l = s.overworld();
+					if (LightShots.cave == null) LightShots.find(s, l);
+					Pose c = LightShots.cave;
+					if (c == null) return null;
+					double ux = LightShots.caveDx, uz = LightShots.caveDz;
+					BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+					String[] mobs = {"pig", "villager"};
+					double[] dist = {3.5, 5.5};
+					for (int i = 0; i < 2; i++) {
+						double x = c.x() + ux * dist[i] + uz * (i == 0 ? 0.6 : -0.6), z = c.z() + uz * dist[i] - ux * (i == 0 ? 0.6 : -0.6);
+						int y = floor(l, m, x, (int) c.y(), z);
+						run(s, String.format(Locale.ROOT, "summon minecraft:%s %.2f %d %.2f {NoAI:1b,Silent:1b,PersistenceRequired:1b,Invulnerable:1b,Tags:[\"%s\"],Rotation:[%.0ff,0f]}",
+							mobs[i], x, y, z, TAG, c.yaw() + 180f));
+					}
+					// the torch: beside the line, 4.5 blocks ahead (on the line if the side is not free)
+					for (double side : new double[] {1.6, -1.6, 0.0}) {
+						double x = c.x() + ux * 4.5 + uz * side, z = c.z() + uz * 4.5 - ux * side;
+						int y = floor(l, m, x, (int) c.y(), z);
+						BlockPos t = BlockPos.containing(x, y, z);
+						if (l.getBlockState(t).isAir() && l.getBlockState(t.below()).isSolidRender()) {
+							run(s, String.format(Locale.ROOT, "setblock %d %d %d minecraft:torch", t.getX(), t.getY(), t.getZ()));
+							caveTorch = t;
+							break;
+						}
+					}
+					return new Pose(c.x(), c.y() + 1.0, c.z(), c.yaw(), 22f);
+				}, s);
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) throws Exception {
+				if (!f.isDone()) return false;
+				pose[0] = f.get();
+				BenchDriver.log("entity cave " + pose[0] + ", torch " + caveTorch);
+				return true;
+			}
+		});
+		java.util.function.Supplier<Pose> p = () -> pose[0] != null ? pose[0] : site.camera(9.5, 2.4, 9f);
+		shot(steps, name, 6000, p);
+	}
+
+	/** The first y at or below y0 (down to y0 - 4) standing on a solid block. */
+	private static int floor(ServerLevel l, BlockPos.MutableBlockPos m, double x, int y0, double z) {
+		int bx = (int) Math.floor(x), bz = (int) Math.floor(z);
+		for (int y = y0 + 1; y >= y0 - 4; y--) {
+			if (l.getBlockState(m.set(bx, y, bz)).isAir() && l.getBlockState(m.set(bx, y - 1, bz)).isSolidRender()) return y;
+		}
+		return y0;
 	}
 
 	/** Three mobs teleported along x every server tick (4..6 blocks/s) while the camera holds still; shot mid-motion. */

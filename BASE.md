@@ -1,6 +1,6 @@
 # M3 base + entities (branch `m3`, the M3 integration branch)
 
-## Status (2026-10-07 22:11, fix round after the skeptic check `check:base`)
+## Status (2026-10-07 22:18, fix round after the skeptic check `check:base`)
 
 - **Done and committed (build OK, `validate.sh` ALL OK; not yet tested in game):**
   - 74e763b: `mcopt.shade.skyRose` (default true, read every frame; false = M2.1's evening sky) and `mcopt.shade.vl.waterM3`
@@ -18,8 +18,12 @@
   - BASE.md sections 1, 3, 4, 7.2 and 8 updated (f29afef, d01f123). mcbench 4017188: `EntityShots` `rose` (sunset_water pose
     and 25 degrees up, `mcopt.shade.skyRose` false then true, `tick freeze` around each pair) and `cave` (pig + villager + a
     torch in LightShots' dark cave).
-- **Running (22:10):** the game run below (label `m3fix-shots`, jar `notes/m3-2026-10-07/jars/m3-d01f123.jar`, dump to
-  `notes/m3-2026-10-07/dump-m3fix`, stdout in `notes/m3-2026-10-07/m3fix-run.txt`).
+- **Game run done (22:16):** `bench-results/20261007-221517-m3fix-shots2` (jar `notes/m3-2026-10-07/jars/m3-d01f123.jar`, dump in
+  the scratchpad `dump-m3fix`: copy it to `notes/m3-2026-10-07/dump-m3fix` before using). The mixin applies (no error), 8
+  shots: ent_noon, ent_night, ent_hand, ent_cave, rose_{off,on}_{water,sky}. (`-Dmcbench.godRays=true` with
+  `standardShots=false` gave no god-ray shots: vl_underwater still to shoot.) First look: **no blob is visible under the
+  cave mobs** (ent_cave, torch next to them): to check (full-res crop of the feet; is `dropBlob` false there? the blob's HDR
+  variant (M2 path) may be too faint; compare with an M2.1 jar at the same pose).
 - **Next (exact):**
   2. The game run, jar copied to `notes/m3-2026-10-07/jars/`: `--jvm "-Dmcopt.shade=true -Dmcbench.entities=noon,evening,night,hand,rose,cave
      -Dmcbench.godRays=true -Dmcbench.standardShots=false -Dmcopt.metal.dumpMsl=<dir>" --scenes shots`; check the log for

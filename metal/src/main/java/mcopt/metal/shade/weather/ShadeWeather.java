@@ -51,6 +51,8 @@ import mcopt.metal.shade.ShadeMsl;
  * <li>{@code mcopt.shade.weatherLite} (true on performance/balanced): budget gates that keep the look (no sun highlight on
  * wet surfaces in heavy rain, raindrop rings only where the puddle mirror shows them, rain streaks lit by the sky's mean
  * light, coloured shadows and the films' sky lookup off in heavy rain, puddle reflections marched from F x P 0.05).</li>
+ * <li>{@code mcopt.shade.rainBudget} (M3.3; empty = M3.2): comma list of gate, ripples, steps: the rain budget options
+ * ({@link #RAIN_BUDGET}).</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
  * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
  * <li>{@code mcopt.shade.lightning} (true): bolts light the scene and the sky, and glow (the game's "Hide Lightning Flashes"
@@ -86,6 +88,17 @@ public final class ShadeWeather {
 	 * (dev bits 32/64/128/256/512/131072 price each gate there).
 	 */
 	public static final boolean LITE = flag("mcopt.shade.weatherLite", Shade.TIER <= 1);
+	/**
+	 * M3.3 rain budget options (mcopt.shade.rainBudget: a comma list of gate, ripples, steps; empty or none = M3.2), each with
+	 * a small look cost: gate = puddle reflections marched from F x P 0.06 (puddles within ~3 blocks of the feet lose a ~5 %
+	 * reflection), ripples = raindrop rings fade out nearer (none beyond ~10 blocks), steps = 8 reflection steps (thin things
+	 * like torches can be missed in the reflection). With mcopt.shade.rainBudget.dev=true each is switched in one session by
+	 * its dev bit (262144, 524288, 1048576: pricing).
+	 */
+	public static final String RAIN_BUDGET = System.getProperty("mcopt.shade.rainBudget", "").trim().toLowerCase(Locale.ROOT);
+	public static final boolean B_GATE = budget("gate"), B_RIPPLE = budget("ripples"), B_STEPS = budget("steps");
+	/** M3.3 pricing: the options switchable by their dev bits (mcopt.shade.dev) in one session; off = the shaders of M3.2. */
+	public static final boolean B_DEV = flag("mcopt.shade.rainBudget.dev", false);
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);
 	public static final boolean SLANT = flag("mcopt.shade.rainSlant", true);
 	public static final boolean LIGHTNING = flag("mcopt.shade.lightning", true);
@@ -256,6 +269,10 @@ public final class ShadeWeather {
 		if (!MODULE) return "";
 		StringBuilder s = new StringBuilder("#define SHADE_WEATHER\n");
 		if (LITE) s.append("#define SHADE_WX_LITE\n");
+		if (B_GATE) s.append("#define SHADE_WX_B_GATE\n");
+		if (B_RIPPLE) s.append("#define SHADE_WX_B_RIPPLE\n");
+		if (B_STEPS) s.append("#define SHADE_WX_B_STEPS\n");
+		if (B_DEV) s.append("#define SHADE_WX_B_DEV\n");
 		if (PUDDLES && !translucent) s.append("#define SHADE_PUDDLES\n");
 		if (PUDDLE_SSR && !translucent) s.append("#define SHADE_PUDDLE_SSR\n#define SHADE_PUDDLE_STEPS ").append(PUDDLE_STEPS).append('\n')
 			.append("#define SHADE_PUDDLE_DIST ").append(String.format(Locale.ROOT, "%.1f", PUDDLE_DIST)).append('\n')
@@ -267,8 +284,13 @@ public final class ShadeWeather {
 		return s.append(ShadeMsl.resource("weather_surface.metal")).append('\n').toString();
 	}
 
+	private static boolean budget(String option) {
+		for (String o : RAIN_BUDGET.split(",")) if (o.trim().equals(option)) return true;
+		return false;
+	}
+
 	static String describe() {
-		return (LITE ? "lite, " : "") + "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
+		return (LITE ? "lite, " : "") + (RAIN_BUDGET.isEmpty() ? "" : "rain budget " + RAIN_BUDGET + ", ") + "puddles " + PUDDLES + (PUDDLE_SSR ? " (ssr " + PUDDLE_STEPS + " steps" + (PUDDLE_QUAD ? ", quad" : "") + ")" : "") + ", ripples " + RIPPLES + ", snow " + SNOW + ", slant " + SLANT
 			+ ", lightning " + LIGHTNING + ", coloured shadows " + (COLOR_SHADOWS ? COLOR_SHADOW_RES + "^2" : "off");
 	}
 }

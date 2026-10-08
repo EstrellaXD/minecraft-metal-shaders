@@ -200,6 +200,18 @@ quarter of a millisecond.** Both dimensions stay far faster than the overworld (
 at noon with everything on, DRS off), so nobody will feel it. The Nether is over the bible's line because the bible
 assumed its terrain was already lit per pixel; in M2.1 it still used vanilla's flat lightmap.
 
+### 6.6 Distant Horizons sanity (instance "mcopt DEV-DH", run `20261007-192932-sdr-dh`)
+
+- Overworld shots with DH (noon, forest, sunset, night torches, rain): normal, no change from M2.1.
+- **Nether with DH had no haze at all**: DH pushes vanilla's fog away itself, and our fog density followed vanilla's
+  (now huge) fog end, so it went to zero. Fixed (`59a6d0d`): the density uses vanilla's own Nether distance whatever
+  other mods did.
+- **End with DH was broken**: a grey checkerboard with coloured contours over the whole frame (both End shots). Not
+  diagnosed in time; probably the DH bridge (display-referred LODs/fog decoded back to HDR) meeting the End look's
+  sky/fog. For now the End look switches itself off when DH is loaded (`481492a`; M2.1's End, which was fine with DH in
+  FT0); `-Dmcopt.shade.dims.endWithDh=true` turns it back on for debugging. A baseline run with the End look off
+  (`sdr-dh-base`) and a check of both fixes (`sdr-dh2`) were queued at 19:38; see the Status section.
+
 ### 6.5 How it looks (work/release/M3-skydims-screenshots/)
 
 - **Nether**: each biome has its own air: orange glowing haze over the wastes and the lava sea, deep red in the crimson

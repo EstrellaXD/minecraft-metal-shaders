@@ -191,12 +191,19 @@ static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float2 mid = dir.xz * (0.5 * (k0 + k1)) + drift;
 	float warp = shadeDimsNoise(mw, mid * 0.6 + float2(t * 0.0031, 0.0)) * 0.9;
 	float rays = 0.35 + 0.65 * shadeDimsNoise(mw, mid * 9.0 + float2(0.0, t * 0.012));
-	float2 step = dir.xz * ((k1 - k0) * 0.9 / 6.0);
+	// performance / balanced: 4 layers through the same shell (colours interpolated from the 6-layer table; the dither and
+	// TAA hide the coarser steps), quality / ultra: 6
+	int n = L.tier.x >= 2 ? 6 : 4;
+	float2 step = dir.xz * ((k1 - k0) * 0.9 / float(n));
 	float2 p = dir.xz * (k0 * 0.9) + drift * 0.9 + warp + step * jitter;
 	float3 sum = float3(0.0);
-	for (int i = 0; i < 6; i++) {
+	float li = 6.0 / float(n);
+	for (int i = 0; i < n; i++) {
 		float c = shadeDimsNoise(mw, p) - 0.5;
-		sum += SHADE_AURORA_LAYERS[i] * exp(-c * c * 380.0);
+		float x = (float(i) + 0.5) * li - 0.5;
+		int a = clamp(int(floor(x)), 0, 5), b = min(a + 1, 5);
+		float3 col = mix(SHADE_AURORA_LAYERS[a], SHADE_AURORA_LAYERS[b], saturate(x - float(a)));
+		sum += col * (exp(-c * c * 380.0) * li);
 		p += step;
 	}
 	float horizon = smoothstep(0.02, 0.18, dir.y);

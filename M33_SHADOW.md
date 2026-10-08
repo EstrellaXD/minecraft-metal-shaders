@@ -54,6 +54,39 @@ What the flag does (read every frame; `false` = M3.2 exactly):
   whole redraw: the next map picks them up (the bound one is at most ~8 frames older than the light; < 0.01 degree).
 - Cost model: the same casters per 4 frames as M3.2, plus a depth load + store of the far slice on 3 of the 4 parts.
 
+### Measured (in-session A/B, balanced, DRS off, AC power)
+
+Method: MiscShots `-Dmcbench.ab` phases switching `mcopt.shade.shadowFarSpread` live, alternating off/on at one pose
+(overview spin 360 degrees, and the perf route spin + flight), `notes/m33-2026-10-08/shadow/framespread.py <run>`:
+per-frame GPU = end-to-end per command buffer (one per frame, GPU-bound); "spike" = the heaviest `submitIndex % 4` group
+minus the mean of the other three; "jit" = mean |frame-to-frame change| (GPU and CPU frame times). Saved tables:
+`notes/m33-2026-10-08/shadow/sh1-framespread.txt`, `sh2-framespread.txt`.
+
+| | run 1 off | run 1 on | run 2 off | run 2 on |
+|---|---|---|---|---|
+| spin: whole-frame GPU ms (mean of phases) | 11.351 | 11.303 | 12.014 | 11.984 |
+| spin: every-4th-frame spike, ms | 0.25, 0.20 | 0.04, 0.11 | 0.23, 0.51, 0.20 | 0.16, 0.05, 0.11 |
+| spin: GPU / CPU frame-to-frame jitter, ms | 0.22 / 0.27 | 0.17 / 0.19 | 0.30 / 0.63 | 0.24 / 0.56 |
+| spin: 1 % low fps | 69.6, 75.3 | 75.7, 75.8 | 69.1, 70.7, 70.5 | 71.5, 72.2, 68.7 |
+| route: whole-frame GPU ms | 10.882 | 10.917 | 10.474 | 10.484 |
+| route: spike, ms | 0.33, 0.30 | 0.10, 0.08 | 0.59, 0.34 | 0.06, 0.05 |
+| route: GPU / CPU jitter, ms | 0.26 / 0.30 | 0.23 / 0.25 | 0.33 / 0.35 | 0.21 / 0.24 |
+| route: 1 % low fps | 74.2, 76.1 | 73.5, 74.9 | 77.1, 78.1 | 80.0, 79.3 |
+
+Plain words: the frame that redrew the whole far cascade was 0.2-0.6 ms slower than its neighbours; with the spread it is
+0.05-0.15 ms (what is left is other periodic work: cloud passes every 4th / 8th frame). The average GPU time per frame does
+not change (differences -0.05 .. +0.04 ms, inside the session noise), frame-to-frame jitter drops 15-35 %, 1 % lows are
+equal or up to +3 fps. The far map is drawn with the same casters (overview spin: 310.5k quads whole = 4 x 77.6k parts).
+
+CPU (render thread, `-Dmcopt.shade.shadowStats`): the caster listing ran every frame instead of every 4th: 0.22 -> 0.42
+ms/frame in run 1; 0d872ba walks only the part's sections in far-only regions (run 2: 0.25-0.28 -> 0.36-0.43); 88326c8 reuses
+the draw lists and looks a region's list up only among its own (it scanned all lists per region: quadratic). Run 3 checks it.
+
+Looks (frozen ticks, same pose and time, off vs on: `sh_far_eve_*` still, `sh_far_strafe_*` strafing 8 blocks/s,
+`sh_far_turn_*` turning 30 degrees/s, shot mid-motion): the terrain shadows are the same; no seam, no missing part, no
+swimming. In runs 1-2 the volumetric clouds still moved between the shots (they follow real time), so their shadows differ;
+run 3 pauses them for a clean difference image.
+
 ## 2. Coloured shadows near glass
 
 Pricing tools (all read every frame):

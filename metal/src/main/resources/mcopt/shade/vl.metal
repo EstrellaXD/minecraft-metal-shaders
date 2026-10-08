@@ -73,8 +73,9 @@ struct VlParams {
 	                  //     shafts under water (relative to the light without caustics), zw the part of the history texture
 	                  //     last frame covered (uv scale; the targets are allocated for the largest render scale, size.xy is
 	                  //     this frame's live part)
-	float4 art;       // 256 M3.3: x gain of the sky's dark crepuscular rays (HDR; 1 = M3.2: ShadeVl, mcopt.shade.vl.sunsetRays in
-	                  //     the golden hour with the sunset art x mcopt.shade.vl.skyRays), yzw spare
+	float4 art;       // 256 M3.3 (HDR; 1, 0 = M3.2): x gain of the sky's dark crepuscular rays (mcopt.shade.vl.skyRays, dev), y their
+	                  //     extra gain over the open sky (ShadeVl: mcopt.shade.vl.sunsetRays - 1 in the golden hour with the sunset
+	                  //     art; weighted by the pixel's own cloud transmittance squared, so the clouds keep M3.2's shading), zw spare
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -360,6 +361,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		scatter = p.light.rgb * sum * (p.water.w * 3.14159265 * phase * p.shape.x) * float(L.y > 0.0);
 	}
 
+	// this pixel's own cloud transmittance where it shows sky (1 = clear; the sky mask for the next frame, below)
+	half skyT = d <= 0.0 ? (VL_HDR && !shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_VL) ? half(shadeCloudsScreen(dir, sl, sr.cloudScreen).a) : 1.0h) : 0.0h;
 	// Crepuscular streaks: march toward the light over last frame's sky mask (VL resolution, one byte per texel: a sixteenth
 	// of the bytes of the full-res depth, cache-friendly); sky seen along the way lets light through. Skipped on a reset.
 	if (p.crep.x > 0.0 && p.crep.z > 0.0 && !underwater && p.temporal.y < 0.5) {
@@ -391,8 +394,10 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			// the sky: the sky model already has the sun's glow; the streaks there are the shadows of the clouds and hills
 			// between the sun and the air (Photon's dark rays across the aureole). Negative light: the final pass subtracts it
 			// (floored at a share of the pixel), so open sky keeps its colour
-			// (M3.3: x art.x, the golden-hour gain that keeps them as strong against the brighter sunset-art sky as before it)
-			if (VL_HDR) scatter -= p.light.rgb * ((1.0 - open) * fall * p.crep.x * p.crep.z * 1.5 * p.art.x);
+			// (M3.3: x art.x (dev) and x (1 + art.y T^2): the golden-hour gain that keeps the rays across the open sky as strong
+			// against the brighter sunset-art aureole as before it; T, this pixel's own cloud transmittance, keeps it off the
+			// clouds, whose bodies this same term shades)
+			if (VL_HDR) scatter -= p.light.rgb * ((1.0 - open) * fall * p.crep.x * p.crep.z * 1.5 * p.art.x * (1.0 + p.art.y * float(skyT * skyT)));
 			else scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * 0.8);
 		} else {
 			// in front of near geometry (a trunk against the low sun gets streaks across it), fading in over the first blocks:
@@ -406,7 +411,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	o.light = half4(half3(clamp(scatter, -30000.0, 30000.0)), half(dist));
 	// the sky mask: how open the sky is here; M3: the volumetric clouds' transmittance there, so next frame's crepuscular
 	// taps toward the sun see the clouds (dark rays across the aureole from the clouds around the sun)
-	o.sky = d <= 0.0 ? (VL_HDR && !shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_VL) ? half(shadeCloudsScreen(dir, sl, sr.cloudScreen).a) : 1.0h) : 0.0h;
+	o.sky = skyT;
 	return o;
 }
 

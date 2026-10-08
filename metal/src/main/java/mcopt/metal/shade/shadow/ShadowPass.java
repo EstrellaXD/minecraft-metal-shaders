@@ -524,6 +524,7 @@ public final class ShadowPass {
 		}
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, 2048, 1);
+			mcopt.metal.shade.ShadeRobust.maybeFail("shadow"); // M3.3: dev-only injected failure; inert unset
 			long s = ShadowNative.create(ctx, MemoryUtil.memAddress(stack.UTF8(source)), ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS, err, 2048);
 			if (s == 0) throw new IllegalStateException("shadow pass setup: " + MemoryUtil.memUTF8(err));
 			this.shadow = s;

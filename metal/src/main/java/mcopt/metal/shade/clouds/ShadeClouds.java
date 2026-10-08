@@ -257,7 +257,7 @@ public final class ShadeClouds {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, ERR);
 			MemoryUtil.memPutByte(err, (byte) 0);
-			long s = CloudNative.create(ctx, MemoryUtil.memAddress(src), err, ERR);
+			long s = mcopt.metal.shade.ShadeRobust.failCompile("clouds") ? 0 : CloudNative.create(ctx, MemoryUtil.memAddress(src), err, ERR); // M3.3: dev-only injected failure
 			if (s == 0) {
 				failed = true;
 				System.out.println("[mcopt] shade: clouds setup failed, vanilla clouds: " + MemoryUtil.memUTF8(err));

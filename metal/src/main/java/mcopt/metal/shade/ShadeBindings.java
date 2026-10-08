@@ -87,6 +87,7 @@ public final class ShadeBindings {
 			return false;
 		}
 		try {
+			ShadeRobust.maybeFail("lut"); // M3.3: dev-only injected failure (-Dmcopt.shade.dev.failCompile); inert unset
 			ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.lut()); // too big for the thread's MemoryStack
 			try (MemoryStack stack = MemoryStack.stackPush()) {
 				long err = stack.nmalloc(1, 4096);

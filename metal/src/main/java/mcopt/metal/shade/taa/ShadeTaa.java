@@ -119,6 +119,7 @@ public final class ShadeTaa {
 		ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.resource("taa.metal"));
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
+			mcopt.metal.shade.ShadeRobust.maybeFail("taa"); // M3.3: dev-only injected failure; inert unset
 			long taa = TaaNative.create(MetalBridge.ctx(encoder), MemoryUtil.memAddress(source), (hdrInput ? 1 : 0) | (TaaConfig.LOSSY ? 2 : 0) | (TaaConfig.DEBUG != 0 ? 4 : 0), err, 4096);
 			if (taa == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			instance = new ShadeTaa(encoder, taa);

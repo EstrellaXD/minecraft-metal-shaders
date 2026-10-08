@@ -141,6 +141,8 @@ final class MetalPipeline implements BackendRenderPipeline {
 			}
 			MetalShaderRegistry.Variant registered = useRegistry ? registered(info) : null;
 			if (registered != null) {
+				// mcopt-shade M3.3: dev-only injected failure (-Dmcopt.shade.dev.failCompile), tests the fallback below; inert unset
+				if (mcopt.metal.shade.ShadeRobust.failCompile(info.name())) throw new IllegalStateException(info.name() + ": injected shader build failure (-Dmcopt.shade.dev.failCompile)");
 				v = apply(registered.vertex(), registered.vertexEntry(), v, info);
 				f = apply(registered.fragment(), registered.fragmentEntry(), f, info);
 			}

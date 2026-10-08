@@ -1,6 +1,6 @@
 # M3 base + entities (branch `m3`, the M3 integration branch)
 
-## Status (2026-10-07 22:10, fix round after the skeptic check `check:base`)
+## Status (2026-10-07 22:11, fix round after the skeptic check `check:base`)
 
 - **Done and committed (build OK, `validate.sh` ALL OK; not yet tested in game):**
   - 74e763b: `mcopt.shade.skyRose` (default true, read every frame; false = M2.1's evening sky) and `mcopt.shade.vl.waterM3`
@@ -15,11 +15,13 @@
   - 369441d: prewarm returns several format sets: `HAND_FORMAT` for `ShadeEntity.PIPELINES` + glint pipelines; fragment
     patching per variant (thread-local set by `ShadeEntity.vertex`, reset in `FORMAT_ADAPTER.vertex`); `-Dmcopt.metal.dumpMsl`
     writes same-named pipelines with other sources as `NAME~1`, `~2`, and `ShadeMslDump` builds them all.
+  - BASE.md sections 1, 3, 4, 7.2 and 8 updated (f29afef, d01f123). mcbench 4017188: `EntityShots` `rose` (sunset_water pose
+    and 25 degrees up, `mcopt.shade.skyRose` false then true, `tick freeze` around each pair) and `cave` (pig + villager + a
+    torch in LightShots' dark cave).
+- **Running (22:10):** the game run below (label `m3fix-shots`, jar `notes/m3-2026-10-07/jars/m3-d01f123.jar`, dump to
+  `notes/m3-2026-10-07/dump-m3fix`, stdout in `notes/m3-2026-10-07/m3fix-run.txt`).
 - **Next (exact):**
-  1. mcbench `EntityShots`: `rose` (sunset_water pose and the same 25 degrees up, `mcopt.shade.skyRose` false then true, one
-     session, `tick freeze` around the pair) and `cave` (pig + villager + a torch in LightShots' dark cave: the blob must
-     show). Rebuild mcbench, commit there.
-  2. One game run, jar copied to `notes/m3-2026-10-07/jars/`: `--jvm "-Dmcopt.shade=true -Dmcbench.entities=noon,evening,night,hand,rose,cave
+  2. The game run, jar copied to `notes/m3-2026-10-07/jars/`: `--jvm "-Dmcopt.shade=true -Dmcbench.entities=noon,evening,night,hand,rose,cave
      -Dmcbench.godRays=true -Dmcbench.standardShots=false -Dmcopt.metal.dumpMsl=<dir>" --scenes shots`; check the log for
      the mixin applying, "entity shadows off", "no ... variant"; look at ent_* (blob at night, in the cave; none on sunlit
      ground), vl_underwater, the rose pair. Then `MCOPT_GEN_DIR=<dir> validate.sh` (expects the plain item_cutout pair built).

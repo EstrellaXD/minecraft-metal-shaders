@@ -28,7 +28,7 @@ import net.minecraft.world.level.material.Fluids;
  * <li>{@code price}: the same pan as perf with parts of the weather switched off one at a time through the system property
  * mcopt.shade.dev (read by mcopt-shade every frame): wxdry, wxdry_notint (no tint pass/lookup), wxrain, wxrain_nossr, wxrain_nogate, wxrain_analytic, wxrain_noripple, wxrain_plainrain,
  * wxrain_dry (terrain dry, M2 rain), wxrain_c32 / c64 / c128 / c224 (budget candidates: dev bits 32, 64, 128, all three),
- * wxrain2 (all on again: drift).</li>
+ * wxrain_notint (rain without the coloured shadows), wxrain2 (all on again: drift).</li>
  * <li>{@code wx_rain_ground} (noon, rain): 2.6 blocks above the flat torch-grid site, looking across it toward the village
  * side: wet ground, puddles with reflections and raindrop ripples, slanted lit rain.</li>
  * <li>{@code wx_wet_sunset} (it rains for a while, then clears; shot at 12000): the same pose, the ground still wet after
@@ -138,6 +138,7 @@ final class WeatherShots {
 					price(extra, "wxrain_c64", true, p.ground, 64);
 					price(extra, "wxrain_c128", true, p.ground, 128);
 					price(extra, "wxrain_c224", true, p.ground, 32 | 64 | 128);
+					price(extra, "wxrain_notint", true, p.ground, 16384); // the coloured shadows' price in rain (glass roof in range)
 					price(extra, "wxrain2", true, p.ground, 0);
 				}
 				if (on("rain") && p.ground != null) shot(extra, "wx_rain_ground", 6000, true, p.ground);

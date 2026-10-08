@@ -208,6 +208,18 @@ int main(int argc, const char **argv) {
 			(void) ts; (void) tm; (void) tr; (void) td2; (void) counted;
 			return 0;
 		}
+		// CLOUDS_DUMP=<file>: the last march target (RGBA16F, march size) raw to a file (instrumented experiments)
+		const char *dump = getenv("CLOUDS_DUMP");
+		if (dump) {
+			id<MTLTexture> sh = tex(MTLPixelFormatRGBA16Float, mw, mh, YES);
+			id<MTLCommandBuffer> cb = [q commandBuffer];
+			id<MTLBlitCommandEncoder> bl = [cb blitCommandEncoder];
+			[bl copyFromTexture:mc toTexture:sh];
+			[bl endEncoding]; [cb commit]; [cb waitUntilCompleted];
+			NSMutableData *raw = [NSMutableData dataWithLength:mw * mh * 8];
+			[sh getBytes:raw.mutableBytes bytesPerRow:mw * 8 fromRegion:MTLRegionMake2D(0, 0, mw, mh) mipmapLevel:0];
+			[raw writeToFile:@(dump) atomically:NO];
+		}
 		// composite
 		float *fp = (float *) frameBuf.contents;
 		fp[848 / 4] = W; fp[848 / 4 + 1] = H; fp[848 / 4 + 2] = 1.0f / W; fp[848 / 4 + 3] = 1.0f / H;

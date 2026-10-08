@@ -148,7 +148,7 @@ public final class ShadeClouds {
 			int dev = CloudConfig.devBits();
 			// M3.3 mode bits (read every frame): switching the resolve drops the history once (its data target differs)
 			int mode = CloudConfig.modeBits();
-			boolean modeChanged = mode != lastMode;
+			boolean modeChanged = lastMode < 0 || ((mode ^ lastMode) & CloudConfig.MODE_STABLE) != 0;
 			lastMode = mode;
 			// sizes: a fraction of the output (window framebuffer), independent of TAAU's render scale
 			var window = mc.getWindow();

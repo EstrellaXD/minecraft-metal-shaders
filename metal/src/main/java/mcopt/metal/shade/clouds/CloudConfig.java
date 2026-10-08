@@ -100,7 +100,9 @@ public final class CloudConfig {
 	/** Dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): price parts of the clouds inside one session. */
 	public static final int DEV_NO_SCREEN = 1, DEV_NO_MAPS = 2, DEV_NO_SKY = 4, DEV_NO_FOG = 8, DEV_NO_SHADOW_USE = 16, DEV_NO_VL = 32,
 		DEV_OLD_FOG = 256, DEV_OLD_VL = 512, DEV_OLD_RESOLVE = 1024, DEV_OLD_MARCH = 2048, DEV_SCALE_ALT = 4096, DEV_OLD_MIP = 8192,
-		DEV_OLD_DOME = 16384, DEV_OLD_STABLE = 32768;
+		DEV_OLD_DOME = 16384, DEV_OLD_STABLE = 32768, DEV_OLD_LIGHT = 65536, DEV_OLD_BATCH = 131072, DEV_OLD_SKIP = 262144;
+	/** All M3.3 dev bits (the M3.2 way of every M3.3 change). */
+	public static final int DEV_OLD_M33 = DEV_OLD_STABLE | DEV_OLD_LIGHT | DEV_OLD_BATCH | DEV_OLD_SKIP;
 	public static final int DEV_OLD_ALL = DEV_OLD_FOG | DEV_OLD_VL | DEV_OLD_RESOLVE | DEV_OLD_MARCH | DEV_OLD_MIP | DEV_OLD_DOME;
 	/** The history scale dev bit 4096 switches to (pricing another scale inside one session). */
 	public static final float SCALE_ALT = clamp(floatProperty("mcopt.shade.clouds.scaleAlt", 0.4f), 0.2f, 1f);
@@ -115,14 +117,27 @@ public final class CloudConfig {
 	 * the clouds' distance in the history (no comb / hatching on soft edges in the wind or while turning; CLOUDS.md M3.3).
 	 */
 	public static final int MODE_STABLE = 1;
+	/**
+	 * {@link #MODE_LIGHT2} (mcopt.shade.clouds.halfLight, default true): the march's light march (and its sky-light sample)
+	 * on every other in-cloud sample, the samples between lit by the mean of their neighbours' (M3.3 price).
+	 */
+	public static final int MODE_LIGHT2 = 2;
+	/**
+	 * {@link #MODE_BATCH} (mcopt.shade.clouds.batch, default true): a march sample's texture fetches issued together instead of
+	 * one after the other (the march is latency-bound; same values: M3.3 price).
+	 */
+	public static final int MODE_BATCH = 4;
 
 	/**
-	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bit 32768 =
-	 * M3.2's march jitter and resolve, for pricing with mcbench's cloudsDev phases).
+	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bits 32768 /
+	 * 65536 / 131072 = M3.2's march jitter and resolve / light march on every sample / fetch chains, for pricing with
+	 * mcbench's cloudsDev phases; 262144 is reserved for an empty-space skip).
 	 */
 	public static int modeBits() {
 		int dev = Integer.getInteger("mcopt.shade.clouds.dev", 0);
-		return flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0;
+		return (flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0)
+			| (flag("mcopt.shade.clouds.halfLight", true) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)
+			| (flag("mcopt.shade.clouds.batch", true) && (dev & DEV_OLD_BATCH) == 0 ? MODE_BATCH : 0);
 	}
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");

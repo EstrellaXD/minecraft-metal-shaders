@@ -65,10 +65,27 @@ Pricing tools (all read every frame):
 | `mcopt.shade.tintDev` | 0 | pricing bits: 1 no lookup (pass kept), 2 no pass (the last map is looked up), 8 a 512^2 map |
 | `mcopt.shade.shadowTimes` | false | GPU timers (counter samples at the stage boundaries) on the near cascade, the far cascade (whole / part) and the tint pass; a line every ~2 s |
 
-## 3. Blob shadow
+## 3. Blob shadow: verified (no code change needed)
 
 `-Dmcopt.shade.entityShadows.log=true` now also counts `EntityCasters.dropBlob` decisions per 4 s (dropped / kept: no map,
-moon, sky light < 5 with the highest sky light seen).
+moon, sky light < 5, with the highest sky light seen). The decision itself is M3.2's, unchanged.
+
+A/B at the same poses, same world, same session settings (balanced, DRS off): this branch
+(`bench-results/20261008-095117-sh1-shadow`, jar c023d12) against `release/mcopt-shade-M2.1.jar`
+(`bench-results/20261008-101749-sh1-m21-ent`), `-Dmcbench.entities=cave,noon,evening,night`:
+
+- **Cave** (`ent_cave`, LightShots' dark cave, sky light 0, a torch beside a pig and a villager): the ground including both
+  blobs is the same as M2.1 (beside the pig, where its blob lies: mean |difference| 1.2/255, max 4; the ground away from the
+  mobs 1.2/255). Only the mobs differ (M3's entity lighting). The log during that shot: every piece kept, sky light < 5,
+  highest 0. `release/M3.3-screenshots/shadow_cave_blob_M21_vs_M33.jpg`.
+  The earlier "no blob visible" (BASE.md 22:21) was a reading problem: the blob is faint in that cave in M2.1 too (vanilla
+  scales it by the light, and the pig's body hides most of its own).
+- **Noon / evening** (sunlit grass, sky light 15): pieces dropped (log: ~28k dropped per 4 s), the mobs cast real shadows
+  instead (`shadow_noon_mobs_M21_blob_vs_M33_real.jpg`).
+- **Night**: every piece kept (log: "moon"), as M2.1; the moon's entity shadows are too faint to replace the blob (M3's
+  decision). Tall grass hides the blob in both at that pose.
+- Counting note: vanilla calls `extractShadowPiece` for the ground block itself too (sky light 0 inside it; vanilla drops
+  those by its own brightness test), so the "kept, sky light < 5" count includes those no-op pieces.
 
 ## Flags (all new; every one off = M3.2)
 

@@ -69,6 +69,7 @@ import net.minecraft.world.phys.Vec3;
  * <li>{@code -Dmcbench.dims=true|nether,end,aurora,lava,snow} (opt-in): Nether, End, aurora and camera-media screenshots (DimShots)</li>
  * <li>{@code -Dmcbench.entities=true} or {@code noon,evening,night,hand,motion} (opt-in): mobs, block entities, items, the hand (EntityShots)</li>
  * <li>{@code -Dmcbench.dynLights=true} or {@code field,mobs,perf,cave,walk,nether} (opt-in): held and entity dynamic lights, perf phase "lights" (LightShots)</li>
+ * <li>{@code -Dmcbench.robust=gui,transp,dims,resize,rejoin,fail} (opt-in): GUI over the world, improved transparency, dimension changes, window resize, leave and rejoin, injected shader failures (RobustShots)</li>
  * </ul>
  * Output: results.json, frametimes.csv, screenshots/*.png, gputimes.csv (with mcopt -Dmcopt.metal.gpuTimes=true),
  * error.txt on failure. The game then quits (Minecraft.stop).
@@ -254,6 +255,7 @@ public final class BenchDriver {
 			LightShots.plan(steps); // opt-in -Dmcbench.dynLights=true|field,mobs,perf,cave,walk,nether (M3 dynamic lights)
 			DimShots.plan(steps); // opt-in -Dmcbench.dims=true|nether,end,aurora,lava,snow (M3 sky/dimensions)
 			UiShots.plan(steps); // opt-in -Dmcbench.ui=true (M3.1: the pause menu's resolution button)
+			RobustShots.plan(steps); // opt-in -Dmcbench.robust=gui,transp,dims,resize,rejoin,fail (M3.3 robustness)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)

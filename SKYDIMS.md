@@ -127,14 +127,52 @@ other agents' load mostly cancel. GPU ms per frame (lower is better) and fps:
 | End (main island, spin) | 4.20 ms (238 fps) | 3.10 ms (322 fps) | 4.21 ms (238 fps) | **+1.10 ms** (End shadows + sky + light) |
 | Overworld noon, XDR highlights | 11.88 ms | 11.56 ms (SDR-screen mode) | 11.55 ms | **~0** (on-again equals paused; the first segment was still settling) |
 
-Why the Nether cost +0.5 ms: Sodium stops drawing chunks where vanilla's fog ends ("fog occlusion", ~96 blocks in the
-Nether). Our own fog replaced vanilla's, so Sodium drew the whole render distance (~7x the area). Fixed in `5d6b17f`:
-Sodium's cut is kept at 1.3x (performance) / 1.7x (balanced) vanilla's fog end and our border fog closes the view there;
-quality/ultra still draw everything (`mcopt.shade.netherView` overrides). The new price is in 6.2.
+Why the Nether costs +0.5 ms: M2.1 drew Nether terrain with vanilla's lightmapped colour (an early exit, almost free);
+the dims look lights it per pixel like the overworld (block light, the biome ambient, lava up-light, no shadows) and adds
+our fog in the final pass. First suspicion was Sodium's fog culling (it stops drawing chunks where vanilla's fog ends,
+~96 blocks in the Nether, and our fog replaced vanilla's): a cut at 1.7x vanilla's fog end measured no gain (run
+`sdr-r4`: on 4.54 / paused 4.02 / on 4.53 ms, the same +0.5 ms), so it stays off (`mcopt.shade.netherView` keeps it as an
+option). The +0.5 ms is the lighting itself: the price of the look. The Nether frame is still ~4.5 ms (~220 fps).
 
 The End's +1.1 ms buys what the overworld already pays for: a shadow-casting key light (cascades, far one cached), the
 sky (nebula, stars, beams) and per-pixel light. The End frame (4.2 ms, ~240 fps) stays far below the overworld's (~11.5 ms
 at noon with all M2 effects), and below the bible's End budget ("like the overworld minus clouds").
 
-### 6.2 (pending) after the fixes
+### 6.2 Final pass and XDR (GPU microbenchmark, `tools/shade/finaltime`, 3024x1964, every pixel on the haze path)
+
+Measured with no game running (between other agents' runs), best of 8 rounds:
+
+| Pass | m2.1 | this branch |
+|---|---|---|
+| final pass, overworld (`shade_final`) | 1.52 ms | 1.53 ms (+0.015) |
+| final pass with XDR highlights (`shade_final_xdr`) | - | 1.62 ms (+0.10) |
+| final pass in the Nether/End or inside lava/powder snow (`shade_final_dims`) | - | 1.68 ms (+0.16, worst case: every pixel fogged) |
+| present copy: plain RGBA8 blit vs XDR compose into RGB9E5 | 0.133 ms | 0.150 ms (+0.017) |
+
+Before the split into two variants the overworld final pass carried the dims code and cost +0.12 ms; now the overworld
+pays nothing for it. In game the XDR highlights' on/off A/B (6.1, `sdr-r4`: 11.73 / 11.34 / 11.43 ms) is within
++0.1-0.4 ms: about +0.15 ms, inside the bible's E23 budget (+0.2-0.4 ms). The RGBA16F drawable itself (compositor side)
+is not in these numbers.
+
+### 6.3 XDR checks
+
+- **Where it goes above SDR** (`MCOPT_XDR_DUMP`, 24 frames of run `sdr-r1`, analysed with `tools/shade/xdrdump/xdrdump.py`):
+  with the first knee (3) nothing went above 1.2x SDR white in the Nether, the End, the aurora, lava or at noon, except
+  one world-join frame while auto exposure was still adapting (27 % of the screen at up to 1.29x). That was too timid:
+  lava, glowstone and torches never glowed. Knee lowered to 2 (3.5 octaves); see 6.4 for the check of the new knee.
+- **GUI stays SDR**: main's alpha is the GUI coverage; while a screen is open no excess is written at all (the menu
+  blur would otherwise show unblurred highlights). Screenshots read main: always SDR.
+- **Frame generation**: run `sdr-fg` (`-Dmcopt.metal.framegen=true`, auto): log says "XDR output off (... frame
+  generation: off)", perf segments completed with no error.
+- **SDR-only screen** (Gael's XZ3020): no external monitor was connected today, so it was simulated: `auto` turns XDR on
+  when any screen can show EDR (the built-in panel), then every 0.25 s checks the window's own screen; on an SDR-only
+  screen the final pass goes back to the plain SDR variant (no excess written; the present is a plain conversion into the
+  RGBA16F drawable, which an SDR screen shows exactly like the RGBA8 one). `mcopt.shade.xdrTest=sdr|flip` fakes it; the
+  log shows "XDR paused (this screen is SDR only ...)" / "XDR resumed". Run `sdr-flip` flips every 10 s through perf +
+  shots (6.4). If the game starts with only the external monitor (lid closed), `auto` finds no EDR screen and the layer is
+  the plain RGBA8 one from the start.
+- **Never breaks presenting**: the EDR layer is used only when its compose/present pipelines built; otherwise the layer
+  stays RGBA8 and the Java side turns XDR off.
+
+### 6.4 (pending) final runs
 

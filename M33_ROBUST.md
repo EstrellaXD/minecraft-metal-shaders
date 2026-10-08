@@ -1,26 +1,23 @@
 # M3.3 robustness: never-tested paths and frame generation (branch `m3.3-robust`)
 
-## M3.3 Status (2026-10-08 09:50)
+## M3.3 Status (2026-10-08 11:00)
 
-Branch `m3.3-robust` from `m3-int` 397e241 (M3.2 + aurora-lean sky). ROOT = the project folder.
+Branch `m3.3-robust` from `m3-int` 397e241 (M3.2 + aurora-lean sky). ROOT = the project folder. Game runs so far: R1, R2, R3,
+R5 done; R4 + R6 were queued at 10:19/10:21 and killed with the previous session (never ran): requeued at 10:55 / 11:00.
 
 **Done:**
 - d41b119 dev probes (inert by default): `ShadeRobust` (`-Dmcopt.shade.dev.failCompile=<list>` injected build failures,
   `deviceAllocatedBytes()` = `MTLDevice.currentAllocatedSize` via new native `mc_device_allocated`).
-- mcbench 7ea09ed / 5fa8027 / (fgbutton) `RobustShots.java` (`-Dmcbench.robust=gui,transp,dims,resize,rejoin,fail,framegen,fgbutton`).
-- **Run R1** (current code = M3.2 + probes, jar `notes/m33-2026-10-08/jars/m3.3-robust-d41b119.jar`):
-  `bench-results/20261008-093244-rb1-robust` (27 shots, no crash, no exception besides the injected ones). Results in
-  section 1 below. Only (c) Improved Transparency was broken.
-- dab0821 fixes: (c) `ShadeOitMixin` (Improved Transparency kept off while shading, `mcopt.shade.oitOff`); (f) vanilla clouds
-  when the shaded sky fails (`ShadeRobust.registryBuilt`, `mcopt.shade.robustFallback`); frame generation under TAAU
-  (`ShadeFrameGen` + `mcframegen.m fg_motion_depth_sub`, `mcopt.shade.framegen.taau`); pause-menu button "Gen. de cuadros"
-  (`ShadeFrameGenOption`, `mcopt.shade.framegenButton`). Build OK, `validate.sh` ALL OK.
+- mcbench `RobustShots.java` (`-Dmcbench.robust=gui,transp,dims,resize,rejoin,fail,framegen,fgbutton,timejump`; timejump = 9ef7c0c).
+- R1 (section 1): only (c) Improved Transparency was broken. Fixes dab0821 / 056669f (sections 2, 3b), frame generation
+  measured and left off (section 3, ea80df6 hides the button).
+- **03e5b5c** clouds history dropped on a day-time jump (`mcopt.shade.clouds.timeSnap`, section 3c): the R2/R5 "smeared
+  clouds" are the volumetric clouds' history after `time set` (no reset on a time jump; ~11 s to clear at 30 real fps).
 
 **Running / next:**
-- R2 (`notes/m33-2026-10-08/robust/r2.sh`, jar dab0821): frame generation upstream-vs-fix in one session with FrameGen dumps,
-  the button, transparency fix check, GUI, "*" failure (clouds fallback).
-- R3: startup failure of the post chain (`failCompile=library:ShadePost`) and/or `*` at startup.
-- R4: final verification run (all events, final jar, no frame generation).
+- R4 (`robust/r4.sh`, jar ea80df6): TAA, VL, shadow and every `ShadeRender.library` failing at startup + in-session `*`.
+- R6 (`robust/r6.sh 03e5b5c`): final verification (all events, frame generation off) + the time-jump A/B (30 fps and free).
+- Then: review the shots, fill sections 3b/3c/6, contact sheets to `ROOT/work/release/M3.3-screenshots/robust_*.jpg`.
 
 ## 1. Never-tested paths (R1, before fixes)
 

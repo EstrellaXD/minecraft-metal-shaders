@@ -216,7 +216,10 @@ assumed its terrain was already lit per pixel; in M2.1 it still used vanilla's f
 - Overworld shots with DH (noon, forest, sunset, night torches, rain): normal, no change from M2.1.
 - **Nether with DH had no haze at all**: DH pushes vanilla's fog away itself, and our fog density followed vanilla's
   (now huge) fog end, so it went to zero. Fixed (`59a6d0d`): the density uses vanilla's own Nether distance whatever
-  other mods did.
+  other mods did. Checked in run `20261007-195108-sdr-dh2`: all six Nether shots with DH now look like the ones
+  without it. Remaining: DH's far LODs in the Nether are not fogged (our fog leaves the pixels DH drew, which have no
+  depth for us), so a few distant shapes show as dark unfogged silhouettes (`dh_nether_soul.jpg`). Fogging them needs
+  DH's depth: FT1 work.
 - **End with DH is broken, but not by this module**: a grey checkerboard / coloured noise over the whole frame. A baseline
   with the End look off (`-Dmcopt.shade.dims=false`, run `20261007-194816-sdr-dh-base`, i.e. M2.1's End) is just as
   broken (worse: coloured noise over the sky, the island olive-green), so it comes from the M2 base + Distant Horizons

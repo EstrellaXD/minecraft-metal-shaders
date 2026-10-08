@@ -180,6 +180,16 @@ public final class ShadeBindings {
 		return gpuView != null ? gpuView.getFloat(176) : 0f;
 	}
 
+	/**
+	 * M3.3 (dims, XDR skip): ShadeGpu.xdrHot (set by the bloom's first downsample when a pixel neared the XDR knee in a recent
+	 * frame), cleared as it is read. False before setup.
+	 */
+	public static boolean takeXdrHot() {
+		if (gpuView == null || gpuView.getInt(464) == 0) return false;
+		gpuView.putInt(464, 0);
+		return true;
+	}
+
 	/** The metered mean log2 scene luminance (ShadeGpu.scene.x), for logs. */
 	public static float gpuMeteredLog2() {
 		return gpuView != null ? gpuView.getFloat(192) : 0f;

@@ -60,7 +60,8 @@ static inline half3 shadeDown13(texture2d<half> src, float2 uv, float2 texel, bo
 // a few very bright texels (the sun, specular sparkles) can't flicker the whole bloom; the 13-tap filter takes over below.
 // p.xy: the part of src's uv range that holds the image (TAAU: the live sub-rect of the internal-resolution HDR world,
 // whose stale border must not bleed in; 1, 1 otherwise). Level 0 itself is half the output size.
-fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]], constant float4 &p [[buffer(0)]]) {
+fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]], constant float4 &p [[buffer(0)]],
+                                  device ShadeGpu &gw [[buffer(18)]]) {
 	float2 texel = 1.0 / float2(src.get_width(), src.get_height());
 	float2 uv = in.uv * p.xy, lo = texel, hi = p.xy - texel;
 	half3 a = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(-1, -1), lo, hi)).rgb, half3(30000.0h));
@@ -68,6 +69,12 @@ fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src
 	half3 c = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(-1, 1), lo, hi)).rgb, half3(30000.0h));
 	half3 d = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(1, 1), lo, hi)).rgb, half3(30000.0h));
 	half wa = 1.0h / (1.0h + shadeLumaH(a)), wb = 1.0h / (1.0h + shadeLumaH(b)), wc = 1.0h / (1.0h + shadeLumaH(c)), wd = 1.0h / (1.0h + shadeLumaH(d));
+	// M3.3 (mcopt.shade.xdrSkip): does any pixel come near the XDR knee this frame (p.z: the threshold, 0 = not asked)? One
+	// atomic per SIMD group that sees one; ShadeXdr reads ShadeGpu.xdrHot a frame or two later and keeps the XDR path on.
+	if (p.z > 0.0) {
+		float m = float(max(max(shadeLumaH(a), shadeLumaH(b)), max(shadeLumaH(c), shadeLumaH(d))));
+		if (simd_any(m > p.z) && simd_is_first()) atomic_fetch_or_explicit((device atomic_uint *) &gw.xdrHot, 1u, memory_order_relaxed);
+	}
 	return half4((a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd), 1.0h);
 }
 

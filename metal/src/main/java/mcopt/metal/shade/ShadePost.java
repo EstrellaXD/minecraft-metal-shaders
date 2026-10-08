@@ -465,7 +465,7 @@ public final class ShadePost {
 		int n = bloomLevels.length;
 		if (n > 0) {
 			downParams.clear();
-			downParams.putFloat(srcU).putFloat(srcV).putFloat(0f).putFloat(0f).flip();
+			downParams.putFloat(srcU).putFloat(srcV).putFloat(mcopt.metal.shade.dims.ShadeXdr.hotThreshold()).putFloat(0f).flip(); // z: M3.3 XDR skip
 			pass(psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {bloomSource}, downParams, "mcopt shade: bloom down 0");
 			for (int i = 1; i < n; i++) {
 				pass(psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");

@@ -86,7 +86,8 @@ struct ShadeGpu {
 	float4 exposure;       // 176  x exposure applied this frame (pre-exposure), y metered target, z last frame's, w log2 of x
 	float4 scene;          // 192  x mean log2 scene luminance (metered), y canopy factor (reserved), z sun visibility (reserved), w frames
 	uint histogram[64];    // 208  log-luminance histogram being accumulated this frame (cleared by the reduce)
-};                         // 464 bytes (the buffer is 512)
+	uint xdrHot;           // 464  M3.3 (dims, XDR skip): bloom's first downsample sets it when a pixel nears the XDR knee; the CPU reads and clears it
+};                         // 468 bytes (the buffer is 512)
 
 // buffer(19): an argument buffer (tier 2: each entry is the texture's MTLResourceID) with the textures shade keeps for the
 // whole session or the frame (mcshade.m, mc_shade_resource). Entries nobody filled hold a 1x1 dummy. Add new entries at the

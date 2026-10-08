@@ -14,6 +14,13 @@ Run 4 (`bench-results/20261008-105533-mx4-final`, jar e60aac8, AC; `ab_table.py`
 - **Sunset rays** gain 2 vs M3.2: hardly any visible difference at `west` / `rose_sky` (`run4/west_m32_g2.jpg`,
   `rays_m22_m32_g2.jpg`): the volumetric clouds hide most of the open sky where M2.2's streaks showed. Run 5 (`mx5-sunset`, in
   the resumed chain) tries the far taps / gain 3-4 / wider falloff; defaults pending it.
+- **Run 5** (`bench-results/20261008-114914-mx5-sunset`, jar b6e457a, battery; `rays_ab.py <run> <tag> --norays nr`): at west /
+  rose_sky / morning the high-pass contrast hp16 of every variant (M3.2, g2, far taps f2, f3, f3w, f4w) is within +-0.1 of
+  M3.2 (west 10.55-10.72, rose 4.93-5.08, morning 7.38-7.60); removing the sky's dark rays (nr) drops it by ~2: the rays are
+  there, but no gain makes them read more. The stronger variants only darken the frame by 1-2 luma levels. **Defaults kept:
+  sunsetRays 2, sunsetFar false, sunsetFall 0.** Real sunset shafts under the volumetric clouds need another technique (rays
+  marched against the clouds' shadow map in the VL pass), noted for after M3. Recording (3 GB, 80 Mbps) left in the session
+  scratchpad, not copied.
 
 ## M3.3 Status (2026-10-08 10:56)
 

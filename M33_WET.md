@@ -1,5 +1,16 @@
 # M3.3 wet ground: the whole open ground soaks in the rain (branch `m3.3-wet` from m3-int 397e241)
 
+## M3.3 Status (2026-10-08 11:35, resumed session, merged in m3-int) - DONE
+
+**wet3-veg** (`bench-results/20261008-112029-wet3-veg`, jar 077db60, AC): in-session price (wetprice.py, drift-corrected):
+rain pan `wxrain` M3.2 8.625 ms, wetAll 8.835 (**+0.21 ms**), wetAll without film reflections (`wetSsr=0`) 8.747 (+0.12),
+wetTex 3 +0.26, dry 8.154 (rain itself 0.47 ms in M3.2, 0.68 with wetAll); rain over sand `wetperf-sand`: +0.165 / -0.05.
+Look (`wet_*_m32/new/nossr/veg04/veg07/tex3`): the whole meadow, paths and sand are darker and carry a soft sheen, the
+puddles still stand out (deeper, mirror-like); without film reflections the ground shows a brighter, flatter sky sheen
+(less natural), so **defaults stay as 077db60** (wetAll true, wetSsr on, wetVegFilm 0.55, wetTex off). Release images:
+`work/release/M3.3-screenshots/wet_{ground,sand,storm}_antes_despues.jpg`, `wet_sunset_recorte_antes_despues.jpg`,
+`wet_noche_antes_despues.jpg`. Cheaper option if needed: `-Dmcopt.shade.wetSsr=0` (+0.12 ms instead of +0.21).
+
 ## M3.3 Status (2026-10-08 11:00, resumed after the 10:52 usage stop)
 
 **Done:**

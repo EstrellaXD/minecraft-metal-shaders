@@ -23,6 +23,7 @@ final class ShadowNative {
 		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT);
 	private static final MethodHandle ENT_RECORD = fn("mc_shadow_entity_record", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG,
 		JAVA_FLOAT);
+	private static final MethodHandle ENT_INIT = fn("mc_shadow_entity_init", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle ENT_COMMIT = fn("mc_shadow_entity_commit", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle ENT_RESET = fn("mc_shadow_entity_reset", null, JAVA_LONG);
 	private static final MethodHandle ENT_SHIFT = fn("mc_shadow_entity_shift", null, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
@@ -83,6 +84,14 @@ final class ShadowNative {
 	static int entityRecord(long shadow, long src, long srcOffset, int quads, int stride, int uvOffset, long texture, float cutoff) {
 		try {
 			return (int) ENT_RECORD.invokeExact(shadow, src, srcOffset, quads, stride, uvOffset, texture, cutoff);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static int entityInit(long shadow, long err, int errCap) {
+		try {
+			return (int) ENT_INIT.invokeExact(shadow, err, errCap);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

@@ -177,9 +177,6 @@ public final class ShadeMsl {
 		return colorFormats.length == 1 && (colorFormats[0] == ShadeRender.RGBA16F || colorFormats[0] == ShadeRender.RG11B10F);
 	}
 
-	private static final String ENTITY_BLOB = "minecraft:pipeline/entity_shadow", VERTEX_FLIP = "out.gl_Position.y = -(out.gl_Position.y);",
-		VERTEX_IN = "vertex main0_out main0(main0_in in [[stage_in]]";
-
 	/** MetalShaderRegistry's format adapter for the HDR world target (see the class comment). */
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
@@ -190,14 +187,8 @@ public final class ShadeMsl {
 			}
 			if (!hdrTarget(colorFormats)) return msl;
 			if (registry) return "#define MCOPT_HDR\n" + msl;
-			// M3: real entity shadows replace vanilla's blob under each mob (as Iris does with a shadow map): no triangles
-			// (only while this frame has a shadow map in the overworld: ShadeFrame.flags x dimension, z shadows; the Nether and
-			// caves without sky keep the blob)
-			if (pipelineName.equals(ENTITY_BLOB) && mcopt.metal.shade.shadow.EntityCasters.ON && msl.contains(VERTEX_FLIP) && msl.contains(VERTEX_IN)) {
-				return msl.replace(VERTEX_IN, VERTEX_IN + ", constant float4* mcoptShadeFrame [[buffer(16)]]")
-					.replace(VERTEX_FLIP, VERTEX_FLIP + "\n    int4 mcoptFlags = as_type<int4>(mcoptShadeFrame[60]); // ShadeFrame.flags (offset 960)\n"
-						+ "    if (mcoptFlags.z != 0 && mcoptFlags.x == 0) out.gl_Position = float4(0.0);");
-			}
+			// (M3: vanilla's blob shadow is left out per piece on the CPU where real entity shadows replace it:
+			// EntityCasters.dropBlob, EntityBlobShadowMixin)
 			String lit = ShadeEntity.vertex(pipelineName, msl); // M3: entities, items, moving blocks, particles lit by shade
 			return lit != null ? lit : msl;
 		}

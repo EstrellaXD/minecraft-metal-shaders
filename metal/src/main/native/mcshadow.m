@@ -79,12 +79,7 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 		s->library = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (s->library) s->solid = depthOnly(s, @"shadow_vs", nil, &e);
 		if (s->solid) s->cutout = depthOnly(s, @"shadow_cutout_vs", @"shadow_cutout_fs", &e);
-		if (s->cutout) s->entity = depthOnly(s, @"shadow_entity_vs", @"shadow_entity_fs", &e);
-		if (s->entity) {
-			s->casters = [ctx->device newBufferWithLength:ENT_BYTES options:MTLResourceStorageModePrivate];
-			s->casters.label = @"mcopt shadow: entity casters";
-		}
-		if (!s->entity || !s->casters) {
+		if (!s->cutout) {
 			copyErr(e, "shadow pipelines failed", err, errCap);
 			mc_shadow_free(s);
 			return NULL;
@@ -263,6 +258,31 @@ int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int ca
 }
 
 // ---- M3 entity casters ----------------------------------------------------------------------------------------------------
+// The entity casters' pipeline and 12 MB buffer, made only when entity shadows are on (EntityCasters.attach). 0 = ready,
+// 1 = failed (err filled; the terrain shadows are untouched and nothing is recorded).
+int mc_shadow_entity_init(Shadow *s, char *err, int errCap) {
+	if (!s) return 1;
+	if (s->entity && s->casters) return 0;
+	@autoreleasepool {
+		NSError *e = nil;
+		id<MTLRenderPipelineState> pso = depthOnly(s, @"shadow_entity_vs", @"shadow_entity_fs", &e);
+		if (!pso) {
+			copyErr(e, "shadow entity pipeline failed", err, errCap);
+			return 1;
+		}
+		id<MTLBuffer> buf = [s->device newBufferWithLength:ENT_BYTES options:MTLResourceStorageModePrivate];
+		if (!buf) {
+			[pso release];
+			strlcpy(err, "shadow entity casters buffer failed", errCap);
+			return 1;
+		}
+		buf.label = @"mcopt shadow: entity casters";
+		s->entity = pso;
+		s->casters = buf;
+	}
+	return 0;
+}
+
 // One entity draw of the main pass: quads x 4 vertices of `stride` bytes at src + srcOffset (position float3 at 0, uv float2 at
 // uvOffset), texture tex (alpha < cutoff: no shadow). Kept (retained) until mc_shadow_entity_commit copies them. 0 = recorded,
 // 1 = dropped (list or buffer full).

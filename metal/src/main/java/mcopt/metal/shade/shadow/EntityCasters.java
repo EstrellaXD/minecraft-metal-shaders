@@ -49,6 +49,8 @@ public final class EntityCasters {
 
 	private static long shadow;
 	private static int recorded, dropped;
+	/** This frame draws the near cascade (set in beginFrame): otherwise nothing is recorded or copied (Nether, End). */
+	private static boolean active;
 	/** mcopt.shade.entityShadows.pause, read every frame (mcbench's zoo_noshadow phase: the cost A/B in one session). */
 	private static boolean paused;
 	private static boolean installed;
@@ -59,14 +61,24 @@ public final class EntityCasters {
 	private static final MetalDrawTap.Listener TAP = (pipeline, vertexBuffer, firstVertex, quads, stride, uvOffset, texture) -> {
 		Float cutoff = CASTERS.get(pipeline);
 		long s = shadow;
-		if (paused || cutoff == null || s == 0 || quads <= 0 || texture == 0) return;
+		if (!active || paused || cutoff == null || s == 0 || quads <= 0 || texture == 0) return;
 		if (ShadowNative.entityRecord(s, vertexBuffer, firstVertex, quads, stride, uvOffset, texture, cutoff) == 0) recorded++;
 		else dropped++;
 	};
 
-	/** The shadow pass made its native state (ShadowPass.create): start listening. */
+	/**
+	 * The shadow pass made its native state (ShadowPass.create): make the casters' pipeline and buffer (only now, only with
+	 * entity shadows on) and start listening. A failure here leaves the terrain shadows as they are.
+	 */
 	static void attach(long nativeShadow) {
-		if (!ON) return;
+		if (!ON || nativeShadow == 0) return;
+		try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+			long err = stack.ncalloc(1, 1024, 1);
+			if (ShadowNative.entityInit(nativeShadow, err, 1024) != 0) {
+				System.out.println("[mcopt] shade: entity shadows off (" + org.lwjgl.system.MemoryUtil.memUTF8(err) + "); terrain shadows kept");
+				return;
+			}
+		}
 		shadow = nativeShadow;
 		if (!installed) {
 			installed = true;
@@ -83,11 +95,33 @@ public final class EntityCasters {
 	}
 
 	/** Before this frame's world passes: drop whatever a frame that never reached its commit recorded. */
-	static void beginFrame() {
+	static void beginFrame(ShadowPass p) {
 		paused = Boolean.getBoolean("mcopt.shade.entityShadows.pause");
 		if (shadow != 0 && recorded + dropped > 0) ShadowNative.entityReset(shadow);
 		recorded = dropped = 0;
+		boolean was = active;
+		active = shadow != 0 && p.nearThisFrame();
+		// no near cascade this frame (Nether, End): forget the ready casters once (their textures are released)
+		if (was && !active && shadow != 0) {
+			fresh = false;
+			ShadowNative.entityShift(shadow, 0f, 0f, 0f, 1);
+		}
 	}
+
+	/**
+	 * M3: vanilla's blob shadow piece at pos (EntityRenderer.extractShadowPiece) is dropped where a real shadow replaces it:
+	 * entity casters ready, a shadow map this frame, the sun casting (the moon's shadows are too faint to replace it), and
+	 * sky light >= 5 at the piece, the receivers' gate (terrain and entities skip the map at sky light <= 0.3). Caves, dark
+	 * interiors, the Nether, the End and the night keep the blob. (The blob's own vertex lightmap is always 15/15, so this
+	 * is decided here, not in its shader.)
+	 */
+	public static boolean dropBlob(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
+		return shadow != 0 && ShadowPass.enabled() && !ShadowPass.lightIsMoon()
+			&& level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) >= BLOB_SKY;
+	}
+
+	/** Sky light from which receivers use the shadow map (sky / 15 > 0.3). */
+	private static final int BLOB_SKY = 5;
 
 	// the camera the committed casters were recorded with; fresh: committed since the last cast
 	private static double camX, camY, camZ;
@@ -114,7 +148,7 @@ public final class EntityCasters {
 	/** End of the world (ShadePost.beforeHand): copy this frame's recorded casters for the next frame's near cascade. */
 	public static void commit(long enc) {
 		ShadowPass p = ShadowPass.instance();
-		if (shadow == 0 || p == null) return;
+		if (shadow == 0 || p == null || !active) return;
 		ShadowNative.entityCommit(enc, shadow);
 		camX = p.camX();
 		camY = p.camY();

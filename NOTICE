@@ -44,3 +44,11 @@ Native shading TAAU (metal/src/main/resources/mcopt/shade/taa.metal): the 5-tap 
 taps" (https://gist.github.com/TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1), MIT License, with the corner taps dropped
 as in Jimenez, "Filmic SMAA" (SIGGRAPH 2016). The rest of the resolve is original, after public techniques (Karis 2014,
 Salvi 2016, Yang et al. 2020).
+
+Native shading M3 volumetric clouds (metal/src/main/resources/mcopt/shade/clouds.metal): portions adapted from Photon
+Shaders (https://github.com/sixthsurge/photon), commit 26c2906e, Copyright (c) 2025 Benjamin Stott ("sixthsurge"), MIT
+License (full text: LICENSES/MIT-Photon.txt): the cumulus altitude shaping, the "powder" term, the cloud phase function
+as a mix of forward and backward lobes, the octave loop of the multiple-scattering approximation, the aerial perspective
+blend by the clouds' apparent distance, and the checkerboard + reprojected-history upscaling. The history's 5-tap
+Catmull-Rom fetch (cloudCatmullRom) is the MJP gist named under TAAU above, MIT License. The rest of the file is original
+(Apache-2.0).

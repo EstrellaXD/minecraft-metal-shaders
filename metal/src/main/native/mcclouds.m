@@ -122,7 +122,7 @@ static void timesCollect(CloudState *s, id<MTLDevice> device, int r) {
 }
 
 // Average GPU ms of shadow, march, resolve and dome per run of each since the last call (out[0..3]; the shadow map and the
-// dome run every other frame) and the frame count (out[4]). Fragment stage start to end: other work the GPU overlaps with
+// dome run every 4th frame) and the frame count (out[4]). Fragment stage start to end: other work the GPU overlaps with
 // a pass counts too, so these are upper bounds (compare whole-frame GPU time with the clouds on and off).
 void mc_clouds_times(CloudState *s, float *out) {
 	int n = s->timeCount;

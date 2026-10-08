@@ -21,14 +21,15 @@
 // Passes (all fragment passes into private textures; the bakes are compute, once):
 //   cloud_bake_noise   (compute, once)  64^3 RGBA8 tileable 3D noise: r Perlin-Worley (billows), g/b/a Worley fBm at 3 scales
 //   cloud_bake_weather (compute, once)  512^2 RGBA8 tileable 2D noise: r regional coverage, g cumulus cells, b cirrus, a detail
-//   cloud_shadow       (256^2 R16F)     transmittance of the cumulus layer toward the light, on the layer's plane (consumers:
+//   cloud_shadow       (256^2 R16F, every 4th frame) transmittance of the cumulus layer toward the light, on the layer's plane (consumers:
 //                                       terrain, water, volumetric light: shadeCloudShadow)
-//   cloud_march        (1/2 x 1/2 of the history: the 2x2 checkerboard slot of this frame) cumulus + cirrus: scattered
+//   cloud_march        (1/N x 1/N of the history: this frame's slot of the N x N checkerboard; N = 3 at potato/balanced,
+//                                       2 above) cumulus + cirrus: scattered
 //                                       light (rgb, before exposure, after aerial perspective) + transmittance, and the
 //                                       clouds' apparent distance (MRT)
 //   cloud_resolve      (history size)   reprojection (camera motion + wind) of last frame's history, this frame's slot blended
 //                                       in, the other slots from the history (or the march upsampled where it is invalid)
-//   cloud_dome         (upper hemisphere, 192x96 by default) a cheap march by direction, temporally blended: the clouds for
+//   cloud_dome         (upper hemisphere, 128x64; every 4th frame) a cheap march by direction, temporally blended: the clouds for
 //                                       reflections of directions off screen (water) and future environment lighting
 // The sky pass (sky.fs.metal) composites the history behind everything: sky * T + S (shade_clouds.metal).
 

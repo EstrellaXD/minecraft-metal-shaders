@@ -26,7 +26,7 @@ Open (next):
 
 | File | What |
 |---|---|
-| `metal/src/main/resources/mcopt/shade/clouds.metal` | All cloud MSL: `CloudParams` (432 B, `static_assert`ed), noise bakes (compute), density, light march, multiple scattering, cirrus, blocky style, aerial perspective, passes `cloud_march`, `cloud_resolve`, `cloud_dome`, `cloud_shadow`, `cloud_over` |
+| `metal/src/main/resources/mcopt/shade/clouds.metal` | All cloud MSL: `CloudParams` (448 B, `static_assert`ed), noise bakes (compute), density, light march, multiple scattering, cirrus, blocky style, aerial perspective, passes `cloud_march`, `cloud_resolve`, `cloud_dome`, `cloud_shadow`, `cloud_over` |
 | `metal/src/main/resources/mcopt/shade/shade_clouds.metal` | **New part of `ShadeMsl.prelude()`**: what every other shader reads: `shadeCloudShadow(p, L, map)`, `shadeCloudsScreen(dir, L, tex)`, `shadeCloudsDome(dir, L, dome)` |
 | `metal/src/main/native/mcclouds.m` | Pipelines, bakes (64^3 RGBA8 3D noise, 512^2 RGBA8 weather map; once, on their own command buffer), targets, per-frame encoding on the frame's command buffer, GPU timer, `mc_clouds_over` |
 | `metal/src/main/java/mcopt/metal/shade/clouds/ShadeClouds.java` | Module glue: per frame (from `ShadeFrameUpdater`, after the sky LUT, before the sky pass), weather/wind, params, native render, ShadeResources 12-14, ShadeLook fields; the before-tonemap hook (order 80) for clouds in front of the world |
@@ -64,7 +64,7 @@ LevelRenderer.render HEAD -> ShadeFrameUpdater.update
          rain/thunder on top, smoothed tau 4 s), wind accumulation (cumulus, 3D noise x0.82, cirrus x1.7), CloudParams,
          ShadeLook.cloudShadowVP/clouds0/clouds1/feature bit
     GPU (mcclouds.m, frame command buffer, before the shadow pass and the sky):
-      cloud_shadow  256^2 R16F   every other frame (even)  transmittance toward the light on the plane base + 0.35 thickness
+      cloud_shadow  256^2 R16F   every 4th frame (3 mod 4) transmittance toward the light on the plane base + 0.35 thickness
       cloud_march   hist/N       every frame               this frame's checkerboard slot: cumulus + cirrus, aerial perspective
                                                            -> (S, T) RGBA16F + apparent distance R32F
       cloud_resolve hist size    every frame               reprojection (camera + wind, Catmull-Rom) + blend (1/age, age <= 10..12) -> RGBA16F + R8 age

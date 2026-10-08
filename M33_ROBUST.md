@@ -58,19 +58,44 @@ Contact sheets: `ROOT/work/release/M3.3-screenshots/robust_*.jpg`.
   look alike; moving does: upstream's generated frame tears the sand terraces' edges into dark specks, the fix's is clean
   (`ROOT/work/release/M3.3-screenshots/robust_framegen_move_upstream_vs_fix_zoom.jpg`, dumps in
   `notes/m33-2026-10-08/robust/r2-framegen-dumps/`).
-- **The real frame rate halves to 30 fps.** FrameGen paces real frames to half the refresh (60 on the 120 Hz panel) only when a
-  frame fits in 85 % of 16.7 ms; with our shading plus MetalFX interpolation at 3024x1964 it doesn't, so it holds every image
-  two refreshes: 30 real + 30 generated = 60 shown fps (dumps: "33.3 ms between the real frames"), against ~88-95 real fps
-  without it at balanced. R5 measures it (FrameGen's report now reaches latest.log) at auto and at 1080p.
+- **The real frame rate halves to 30 fps: not worth it with our shaders (left off, button hidden).** R5
+  (`bench-results/20261008-101850-rb5-framegen-measure`, AC power, FrameGen's own once-a-second report, now in latest.log; averages
+  of 20 reports per variant, method: in-session variants, `notes/m33-2026-10-08/robust/r5-latest.log`):
+
+  | Balanced, 3024x1964, frame generation on | real fps | shown fps | real frame start -> shown (avg / p90) | frame GPU p90 |
+  |---|---|---|---|---|
+  | resolution auto (TAAU at its 0.6 floor) | 29.2 | 58.4 | 51.2 / 52.6 ms | 22.9 ms |
+  | resolution 1080p (pause-menu button) | 28.9 | 57.8 | 53.6 / 57.0 ms | 22.5 ms |
+  | (reference, same pacing on the loading screen: trivial frames) | 119 | 119 | 24.5 ms | 2.0 ms |
+
+  The frame's GPU time stays ~22.7 ms whatever the render resolution: MetalFX's interpolation at the 3024x1964 output (plus the
+  copies) costs ~12-15 ms per real frame on the M4's 10-core GPU. FrameGen only paces real frames at half the refresh (60) when a
+  frame fits 85 % of 16.7 ms, so it falls to a quarter: 30 real + 30 generated = 60 shown, ~51 ms from a frame's start to the
+  screen. Without it the same preset runs ~88-95 real fps (M3.2 notes), shown up to 120 Hz: smoother and more responsive.
+  So `mcopt.metal.framegen` stays off and the pause-menu button only appears with `-Dmcopt.shade.framegenButton=true`.
+  Untested: the external 1080p 144 Hz monitor (a 1920x1080 output makes the interpolation ~2.9x cheaper; 72 real fps might fit),
+  and quality/ultra presets below 60 fps, where 30 real + 30 generated could feel smoother than ~45 real.
+- With frame generation the clouds smear: R2 and R5 `rb_transp_off_water` both show smeared clouds with horizontal streaks
+  5 s after the jump (45 blocks, time 6000 -> 12400) that follows the fast camera moves and the pause menu; R1 (no frame
+  generation, no fast moves) was clean after the same kind of jump. R6 repeats the sequence without frame generation.
+
+## 3b. Startup shader failures (R3, R4)
+
+- R3 `bench-results/20261008-101627-rb3-failpost`, `-Dmcopt.shade.dev.failCompile=library:ShadePost` (the HDR post chain fails at
+  startup): log `HDR post chain failed, M1's tone curve instead`; the game runs M1's LDR way with everything else on (shadows,
+  water, VL "LDR", TAAU, GUI, hand): coherent, no crash, no garbage (standard shots + GUI). **But no clouds at all**: M1's sky has
+  no volumetric-cloud composite (`sky.fs.metal`, MCOPT_HDR only) and vanilla's stayed replaced. Fixed in 056669f
+  (`ShadeRobust.postFailed`: our clouds step back, vanilla's return; one line in ShadePost.init's catch).
+- R4 (queued): `taa,vl,shadow,library:` at startup + in-session `*`.
 
 ## 4. Flags added (all default = the fixed behaviour; the value in brackets = M3.2)
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `mcopt.shade.oitOff` | true (false) | Improved Transparency (OIT) kept off while shading; read every call. |
-| `mcopt.shade.robustFallback` | true (false) | Shaded sky failed to build -> volumetric clouds step back, vanilla clouds return. |
+| `mcopt.shade.robustFallback` | true (false) | Shaded sky failed to build, or the HDR post chain failed -> volumetric clouds step back, vanilla clouds return. |
 | `mcopt.shade.framegen.taau` | true (false) | Frame generation reads TAAU's live depth sub-rect with unjittered matrices; read every frame. Only matters with `mcopt.metal.framegen=true`. |
-| `mcopt.shade.framegenButton` | true (false) | "Gen. de cuadros" button next to "Resolución" in the pause menu (saves `mcopt.metal.framegen` in config/mcopt.properties, applies at the next start). |
+| `mcopt.shade.framegenButton` | false (= M3.2) | true: "Gen. de cuadros" button next to "Resolución" in the pause menu (saves `mcopt.metal.framegen` in config/mcopt.properties, applies at the next start). Hidden by default: frame generation doesn't pay with our shaders (section 3). |
 | `mcopt.shade.dev.failCompile` | empty | Dev only: inject shader build failures (see `ShadeRobust`). |
 | `mcopt.metal.framegen.dumpTag` | empty | Dev only: re-arms FrameGen's dumps (files prefixed with the tag). |
 
@@ -83,7 +108,10 @@ Contact sheets: `ROOT/work/release/M3.3-screenshots/robust_*.jpg`.
   `shadow/ShadowPass.java`: one `ShadeRobust.maybeFail/failCompile` line each before their native setup (dev, inert unset).
 - `FrameGen.java` (upstream) + `mcframegen.m` (upstream): TAAU branch in `recordLevel` (null = upstream path), new
   `motionSub`/`mcf_motion_sub`/`fg_motion_depth_sub`, dev `dumpTag`.
-- `mixin/shade/ShadePauseScreenMixin.java`: two buttons side by side (resolution left, frame generation right).
+- `mixin/shade/ShadePauseScreenMixin.java`: with `mcopt.shade.framegenButton=true` two buttons side by side (resolution left,
+  frame generation right); by default unchanged (one centred resolution button).
+- `ShadePost.java` (shared): one line in init's catch, `ShadeRobust.postFailed()`.
+- `FrameGen.java`: its three printf log lines now println(String.format(...)) (printf bypassed latest.log).
 - `resources/mcopt-metal-shade.mixins.json`: + `ShadeOitMixin`.
 - New files: `shade/ShadeRobust.java`, `shade/ShadeFrameGenOption.java`, `shade/taa/ShadeFrameGen.java`,
   `mixin/shade/ShadeOitMixin.java`.

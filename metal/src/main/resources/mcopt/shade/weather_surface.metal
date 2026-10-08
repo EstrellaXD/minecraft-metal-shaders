@@ -396,7 +396,8 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// the march would add, and the march is skipped (most of the puddle pixels near the feet); a soft ramp up to 0.07.
 	float ssrW = shadeDev(f, SHADE_DEV_WX_NO_SSR_GATE) ? (P > 0.02 ? 1.0 : 0.0) : smoothstep(0.035, 0.07, F * P);
 #ifdef SHADE_PUDDLE_QUAD
-	if (shadeWxQuadMax(ssrW) > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (histOk, prevExposure, dev: per frame)
+	// quadPuddle first: lanes of a quad without puddles may have returned above, and shuffles must not read them
+	if (quadPuddle && shadeWxQuadMax(ssrW) > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (quadPuddle, histOk, prevExposure, dev: per frame)
 #else
 	if (ssrW > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) {
 #endif

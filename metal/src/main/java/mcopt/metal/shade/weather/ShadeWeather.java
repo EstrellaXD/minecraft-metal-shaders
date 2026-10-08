@@ -77,7 +77,8 @@ public final class ShadeWeather {
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);
 	public static final boolean SLANT = flag("mcopt.shade.rainSlant", true);
 	public static final boolean LIGHTNING = flag("mcopt.shade.lightning", true);
-	public static final boolean COLOR_SHADOWS = ON && Shade.SHADOWS && flag("mcopt.shade.colorShadows", true);
+	/** HDR only: the terrain reads the tint map through ShadeResources (no reader in LDR, so no tint pass either). */
+	public static final boolean COLOR_SHADOWS = ON && Shade.SHADOWS && mcopt.metal.shade.ShadeConfig.HDR && flag("mcopt.shade.colorShadows", true);
 	public static final int COLOR_SHADOW_RES = Integer.getInteger("mcopt.shade.colorShadowRes", Shade.TIER >= 3 ? 2048 : 1024) >= 2048 ? 2048 : 1024;
 	public static final float TIME_SCALE = Math.clamp(floatFlag("mcopt.shade.weatherTime", 1f), 0.1f, 100f);
 	public static final float FORCE_WET = floatFlag("mcopt.shade.wetness", -1f);

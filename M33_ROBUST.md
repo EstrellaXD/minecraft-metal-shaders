@@ -83,7 +83,19 @@ Contact sheets: `ROOT/work/release/M3.3-screenshots/robust_*.jpg`.
   water, VL "LDR", TAAU, GUI, hand): coherent, no crash, no garbage (standard shots + GUI). **But no clouds at all**: M1's sky has
   no volumetric-cloud composite (`sky.fs.metal`, MCOPT_HDR only) and vanilla's stayed replaced. Fixed in 056669f
   (`ShadeRobust.postFailed`: our clouds step back, vanilla's return; one line in ShadePost.init's catch).
-- R4 (queued): `taa,vl,shadow,library:` at startup + in-session `*`.
+- R4 `bench-results/20261008-110500-rb4-failmodules` (jar ea80df6, AC power), `-Dmcopt.shade.dev.failCompile=taa,vl,shadow,library:`
+  at startup (TAAU, volumetric light, shadow maps and every `ShadeRender.library`: HDR post chain, water's coarse depth and wave
+  bake, weather noise bake), then the in-session `*` on top. **Each module fails alone with one log line and the rest runs**:
+  `TAA setup failed, rendering without it`, `water coarse depth failed, SSR finds nothing`, `water wave bake failed, per-pixel
+  waves from now on`, `weather noise bake failed, per-pixel noise from now on`, `HDR post chain failed, M1's tone curve
+  instead` + `no HDR post chain: volumetric clouds off, vanilla clouds instead`, `volumetric light off`, `shadow pass disabled
+  after an error`. 16 shots (5 standard, GUI, the 4 dimension changes, `*` and its restore): no crash, no exception besides the
+  injected ones, no black or garbage frame; the look is M1's LDR one without shadows, with shaded water (sun glint, sky
+  reflection), dynamic torch light and vanilla clouds (`ROOT/work/release/M3.3-screenshots/robust_startup_fail_taa_vl_shadow_post.jpg`).
+  Two small things found and fixed in 4b5fd35 (not in this jar): the pause menu still showed "Resolución: Auto (dinámica)"
+  although TAAU never ran (the button did nothing): now hidden when TAAU failed (`ShadeTaa.failed()`, under
+  `mcopt.shade.robustFallback`); and after `*`'s restore the log said `volumetric clouds back` while they correctly stay off
+  without the post chain (log text only).
 
 ## 4. Flags added (all default = the fixed behaviour; the value in brackets = M3.2)
 

@@ -153,3 +153,116 @@ against `-Dmcopt.shade.dynLights=false`. Validation: `tools/shade/validate.sh` (
   fences and panes not at all).
 - Without the HDR target (`mcopt.shade.hdr=false`) entities don't take the lights (no HDR variant to patch).
 - Distant Horizons LODs don't take the lights (drawn by DH's own shaders; far away anyway).
+
+## 9. Integration with the m3 base
+
+What m3 has (`wt/m3/BASE.md` sections 2-3): `shade_dynlight.metal` (the seam, last file of `ShadeMsl.prelude()`) with
+`shadeDynamicLights(ShadeDynIn d, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeResources *R)` returning
+radiance to add; called by the Sodium terrain (`SHADE_DYN_TERRAIN`, with `R = &sr` under `MCOPT_HDR`, `nullptr` otherwise),
+the water surface (`SHADE_DYN_WATER`, n = up, albedo 1, added to `wi.lit`) and `shade_entity.metal`
+(`SHADE_DYN_ENTITY` / `_HAND` / `_PARTICLE`) for every pipeline of `ShadeEntity.PIPELINES`, in the fragment.
+
+### 9.1 How this module plugs into the seam
+
+1. **Prelude order.** `ShadeMsl.prelude()` = shade_look, shade_common, shade_m2, then `DynLightMsl.prelude()`
+   (`#define SHADE_DYNLIGHT` + `dynlight.metal`, empty when off), then m3's `shade_dynlight.metal`. The two files have
+   different include guards (`MCOPT_SHADE_DYNLIGHT_MODULE` here, renamed in `8aa4a96`, vs the seam's `MCOPT_SHADE_DYNLIGHT`);
+   with the old shared name one of them would have been silently dropped.
+2. **Reaching the module's data from the seam (recommended: through `ShadeResources`, keeps the seam's signature).**
+   The seam only gets `f`, `L` and `R`, so the light list and the volumes must be reachable through `R` (buffer 19, a
+   Tier-2 argument buffer of 8-byte resource ids written by `mc_shade_resource`, made resident by `mc_shade_bind` with
+   `useResource`):
+   - `shade_look.metal` `ShadeResources`: `reserved4` -> `texture3d<half> dlVis` (the R8 visibility slabs, today
+     texture 23), `reserved5` -> `texture3d<half> dlIrr`, `reserved6` -> `texture3d<half> dlDir` (the irradiance volume,
+     today textures 24 / 25), `reserved7` -> `constant ShadeDynLights *dl` (this frame's ring slot of the light buffer).
+   - Java/native: after `DynLights.init`, `ShadeRender.resource(4..6, texture)` once (the textures are not ringed: the
+     compute rewrites them at the start of each frame, before the world passes). The light buffer is a ring of 4 shared
+     buffers: each frame, after `mc_shade_resources_advance`, write its GPU address
+     (`buffer.gpuAddress + offset`) into slot 7 with a new 3-line `mc_shade_resource_address(int index, id<MTLBuffer>, uint64_t
+     offset)` that also keeps the buffer for `useResource` (or keep `mc_dl_bind` binding it at buffer 24, which already
+     makes it resident in every encoder). The dummy texture is 2D: with the module off the seam is the stub and never
+     reads these slots; with it on, all four are set before the first shaded draw (`ShadeBindings.init`).
+   - Seam body:
+     ```metal
+     static inline float3 shadeDynamicLights(ShadeDynIn d, constant ShadeFrame &f, constant ShadeLook &L, constant ShadeResources *R) {
+     #ifdef SHADE_DYNLIGHT
+         if (R == nullptr) return float3(0.0);           // M1 / LDR terrain: no lights (as today without HDR)
+         constant ShadeDynLights &D = *R->dl;
+         if (D.info.x == 0u) return float3(0.0);          // no lights (or paused): one uniform branch
+         float3 k = d.albedo * f.ambientBlock.xyz;        // the units of shadeLit2's torch term
+         bool thin = d.kind == SHADE_DYN_PARTICLE;        // (terrain: pass `thin` through a ShadeDynIn field added at the end)
+         if (d.kind == SHADE_DYN_HAND)                    // near field: the exact per-light loop with visibility (2-5 lights)
+             return k * shadeDynamicLights(D, R->dlVis, d.p, d.n, false, d.block);
+         return k * shadeDynamicLightsVol(D, R->dlIrr, R->dlDir, d.p, d.n, thin, d.block); // terrain, entities, particles, water body
+     #else
+         return float3(0.0);
+     #endif
+     }
+     ```
+     Terrain needs one more input: two-sided plants use a different N.L (`thin`); add `bool thin` at the end of
+     `ShadeDynIn` (default false in `shadeDynIn()`), set it at the terrain call site.
+   - Alternative without touching `ShadeResources`: keep the direct bindings (below) and give `shadeEntityShade` four
+     more parameters that `ShadeEntity`'s fragment patch appends (`constant ShadeDynLights& mcoptDL [[buffer(24)]],
+     texture3d<half> mcoptDLVis [[texture(23)]], mcoptDLIrr [[texture(24)]], mcoptDLDir [[texture(25)]]`; free in those
+     stages: they use buffers 16-19 and textures 16-17); terrain keeps this branch's own call sites. This changes the seam's
+     signature, so it is the second choice.
+3. **Terrain.** Replace m3's terrain seam call with the seam above (or keep this branch's
+   `radiance += albedo * ambientBlock * shadeDynamicLightsVol(...)`: identical result). Keep this branch's two other
+   terrain additions, which m3 has no seam for: the **cutout-water branch** (`ALPHA_CUTOUT` `water`: `lit +=` the volume)
+   and the **Nether / End branch** (vanilla-lit colour raised toward the dynamic level before the early return).
+4. **Water and the per-light glint.** The seam returns one colour, but the water needs two: diffuse light on the body
+   (into `wi.lit`) and the glint (added to `radiance` after `shadeWaterSurface`, Fresnel-weighted, normal tilted by the fine
+   ripples `wi.detail`). So at the water call site keep this branch's block instead of the seam call: for the surface seen
+   from above `wi.lit += ambientBlock * shadeDynamicLightsSpec(D, vis, p, dlN, block, V, 160, dlSpec)` and
+   `radiance += dlSpec * ambientBlock * (0.25 + 3 fresnel)` after `shadeWaterSurface`; other water faces take the volume.
+   With the `R` route, `dl` / `dlVis` / `dlIrr` / `dlDir` there are `*sr.dl`, `sr.dlVis`, ... (the water pass has `sr`).
+5. **Entities, items, block entities, particles (m3's ShadeEntity) and the vertex patches.**
+   m3 replaces those fragments' colour with `shadeEntityShade` (our lighting from `UV2 / 240`, not the vanilla lightmap
+   colour), so in the **overworld** this branch's `DynLightMsl` vertex patch is **redundant** on every pipeline of
+   `ShadeEntity.PIPELINES` (entity_solid / _offset_forward, entity_cutout / _cull / _z_offset / _dissolve,
+   entity_translucent / _cull, armor_cutout_no_cull, armor_decal_cutout_no_cull, armor_translucent, banner_pattern,
+   item_cutout, item_translucent, solid_block, cutout_block, translucent_block, opaque_particle, translucent_particle): the
+   raised lightmap colour it computes is overwritten. Two choices:
+   - simplest (recommended for the merge): keep applying both patches (they are textually independent: `DynLightMsl`
+     rewrites `sample_lightmap(...)` calls and appends two entry parameters; `ShadeEntity` adds outputs at the projection
+     line). The cost in the overworld is a per-vertex loop over the few lights near the entity (negligible next to the
+     fragment), and **outside the overworld**, where `shadeEntityShade` keeps the game's colour (as terrain does), that
+     colour is exactly the raised lightmap: mobs in the Nether and the End are still lit by blazes and held torches;
+   - leaner: in `ShadeMsl.FORMAT_ADAPTER.vertex` run `DynLightMsl.patchVertex` only when `ShadeEntity` did not patch the
+     stage, and add a dynamic raise in `shadeEntityShade`'s non-overworld branch (as the terrain's Nether branch does).
+   Still needed in both cases, for the pipelines m3 leaves unpatched that sample the lightmap (from the 26.3 MSL dump):
+   `text`, `text_grayscale`, `text_polygon_offset`, `text_grayscale_polygon_offset` (signs, name tags), `leash`,
+   `breeze_wind`, `end_crystal_beam`, and the glint pipelines `entity_solid_glint`, `armor_cutout_no_cull_glint`,
+   `item_translucent_glint`. Emissive pipelines (eyes, energy swirl), lines, beacon and end portal don't sample the
+   lightmap and are skipped automatically (the patch only touches stages with `sample_lightmap`). Terrain, OIT, weather,
+   wireframe, GUI and lightning stay excluded by name (`DynLightMsl.wants`).
+6. **The hand.** m3 lights the first-person hand in its own tagged pass (`ShadeEntity.HAND_FORMAT`, `MCOPT_HAND`,
+   `SHADE_DYN_HAND`): the seam lights it in the fragment (per-light loop above: the hand's own torch at the 0.75-block cap,
+   so it is lit with the light's colour, soul lantern cyan included, which this branch could not do). This branch's
+   `DynLightEntityRendererMixin` (raises the local player's packed light to `DynLights.levelAt`) must then be **off in
+   the overworld when `ShadeEntity.HAND` / `ShadeEntity.ON`**: m3 reads that packed light as block light (`UV2 / 240`) and
+   `shadeLit2` would light the hand and the third-person body a second time (warm, uncoloured). Keep it outside the
+   overworld (m3 keeps the game's colour there, so the raised packed light is what lights the hand) and with
+   `mcopt.shade.handLight=false`. Check in game that the hand's `p` in `MCOPT_HAND` is camera-relative and world-oriented
+   (the hand's pose stack has no view rotation); if it is view-space, rotate it (and `n`) by the inverse view rotation
+   before the lookup, or the hand would sample the light list in the wrong place.
+7. **Bindings side by side.**
+
+   | Slot | m3 base | this module |
+   |---|---|---|
+   | buffer 16-19 | ShadeFrame, ShadeLook, ShadeGpu, ShadeResources (19, now bound in all terrain passes) | — |
+   | buffer 23 | water params (`ShadeWaterParams`) | — |
+   | buffer 24 | free | `ShadeDynLights` (vertex + fragment) |
+   | texture 16 / 17 | shadow map / sky LUT | — |
+   | texture 18-22 | water (scene copy, depth copy, waves, coarse, detail) | — |
+   | texture 23 | free | visibility slabs (vertex + fragment) |
+   | texture 24 / 25 | free | irradiance rgb / mean direction (fragment) |
+   | ShadeResources 4-7 | reserved (free) | with the `R` route: dlVis, dlIrr, dlDir, dl |
+   | ShadeLook 608 (`heldLight`) | reserved for the held light | not used (the hand is a light in the list) |
+
+   No overlap: entity fragments patched by m3 use buffers 16-19, textures 16-17 and samplers 12-13; the vertex patch here
+   uses buffer 24 and texture 23 in the vertex stage. `mc_dl_bind` already runs from `ShadeBindings.bind` / `rebind`
+   (every encoder the backend opens, the hand's redirected pass included) and the compute (`mc_dl_vis`, `mc_dl_irr`) from
+   `ShadeFrameUpdater` before the world passes, so nothing new is needed for the bindings on m3. Merge conflicts to expect:
+   `sodium_terrain.fs.metal` (both add code after `shadeLit2` and in the water block), `ShadeMsl.prelude()` (one more
+   file each), `ShadeMsl.FORMAT_ADAPTER.vertex` (both patch the HDR variants), `ShadeBindings` (two one-line hooks).

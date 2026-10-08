@@ -883,8 +883,7 @@ static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitt
 }
 
 static inline float3 cloudDirection(float2 uv, constant CloudParams &c) {
-	float4 w = c.invViewProj * float4(uv * 2.0 - 1.0, 0.5, 1.0);
-	return normalize(w.xyz / w.w);
+	return normalize(shadeViewRay(uv * 2.0 - 1.0, c.invViewProj)); // from the eye: view bobbing moves it (shade_common.metal)
 }
 
 // ---- passes --------------------------------------------------------------------------------------------------------------
@@ -1151,7 +1150,7 @@ fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[b
 	if (d <= 0.0 && mode == 0u) discard_fragment();
 	float2 ndc = in.position.xy * f.screen.zw * 2.0 - 1.0;
 	float4 w = f.invViewProj * float4(ndc, d > 0.0 ? d : 0.5, 1.0);
-	float3 p = w.xyz / w.w;
+	float3 p = w.xyz / w.w - shadeEye(f.invViewProj); // from the eye (view bobbing moves it): the ray cloudDirection holds
 	float dist = length(p);
 	float3 dir = p / max(dist, 1e-4);
 	if (d <= 0.0) {

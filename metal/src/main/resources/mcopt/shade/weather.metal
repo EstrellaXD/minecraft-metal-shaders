@@ -43,8 +43,7 @@ static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, cons
 	if (c.a < 0.004) return float4(0.0); // the rain texture is mostly clear: no lighting for the empty texels between streaks
 	// the view direction (GL row order: the pixel row counts from the bottom of the view) and the distance (reversed Z)
 	float2 ndc = float2(pixel.x * f.screen.z * 2.0 - 1.0, pixel.y * f.screen.w * 2.0 - 1.0);
-	float4 wp = f.invViewProj * float4(ndc, 0.5, 1.0);
-	float3 v = normalize(wp.xyz / wp.w);
+	float3 v = normalize(shadeViewRay(ndc, f.invViewProj));
 	float dist = f.proj[3][2] / max(pixel.z + f.proj[2][2], 1e-7);
 	float l = shadeLuma(c.rgb);
 	float3 skyMean = f.ambientSky.rgb;

@@ -31,8 +31,7 @@ vertex SkyOut main0(SkyIn in [[stage_in]], uint vid [[vertex_id]], constant Shad
 	}
 	uint corner = min(vid, 2u);
 	float2 ndc = float2(corner == 1u ? 3.0 : -1.0, corner == 2u ? 3.0 : -1.0);
-	float4 world = sf.invViewProj * float4(ndc, 0.5, 1.0);
-	out.dir = world.xyz / world.w;
+	out.dir = shadeViewRay(ndc, sf.invViewProj); // from the eye: view bobbing moves it (shade_common.metal)
 	out.position = float4(ndc.x, -ndc.y, 0.0, 1.0); // reversed Z: 0 is the far plane
 	out.vanilla = float3(0.0);
 	return out;

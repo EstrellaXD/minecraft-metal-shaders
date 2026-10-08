@@ -9,13 +9,12 @@
 // M3.3 (dims): the aurora at reduced resolution (mcopt.metal.shade.dims.ShadeAurora, mcopt.shade.aurora.half). One
 // full-screen pass into an RGBA16F texture a fraction of the output size, before the world pass: each texel takes
 // shadeAurora (shade_dims.metal, M3.2's function unchanged) for its direction in this frame's jittered view, the same
-// matrix the sky pass derives its directions from (sky.vs.metal: invViewProj of uv * 2 - 1). The sky pass then reads it with
+// rays the sky pass derives its directions from (sky.vs.metal: shadeViewRay of uv * 2 - 1). The sky pass then reads it with
 // one bilinear tap at the pixel's screen position (shadeAuroraTex). Pre-exposure radiance, like the sky it is added to.
 // Source order: ShadeRender.prelude() + shade_post.metal (shade_fs_vs) + this file.
 
 fragment half4 shade_aurora_pass(ShadeFsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]],
                                  constant ShadeResources &sr [[buffer(19)]]) {
-	float4 w = f.invViewProj * float4(in.uv * 2.0 - 1.0, 0.5, 1.0);
-	float3 dir = normalize(w.xyz / w.w);
+	float3 dir = normalize(shadeViewRay(in.uv * 2.0 - 1.0, f.invViewProj));
 	return half4(half3(shadeAurora(dir, f, L, sr.milkyWay, in.position.xy)), 1.0h);
 }

@@ -485,8 +485,9 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 #else
 	if (wet <= 0.004h) return radiance;
 #endif
-	float dist = length(in.p);
-	float3 v = in.p / max(dist, 1e-4);
+	float3 pe = in.p - shadeEye(f.invViewProj); // from the eye: view bobbing moves it (shade_common.metal)
+	float dist = length(pe);
+	float3 v = pe / max(dist, 1e-4);
 	float3 nf = float3(in.n);
 	float3 n = nf;
 	float P = float(w.puddle);

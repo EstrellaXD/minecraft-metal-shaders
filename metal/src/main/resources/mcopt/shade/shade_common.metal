@@ -115,6 +115,20 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_SSR_STEPS8 1048576 // puddle reflections: 8 march steps (2 per quad lane) instead of SHADE_PUDDLE_STEPS
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
+// ---- view rays ----------------------------------------------------------------------------------------------------------
+// The eye, camera-relative world (blocks) from an inverse view-projection: the camera's origin, except that view bobbing
+// (GameRenderer.bobView, multiplied into the projection) moves it by up to ~0.1 block. The projection's centre maps to clip
+// (0, 0, c, 0), so it is the inverse's third column (homogeneous); the TAA jitter (a clip-space shear) leaves it in place.
+static inline float3 shadeEye(float4x4 invViewProj) { float4 e = invViewProj[2]; return e.xyz / e.w; }
+// The view ray through NDC point ndc (camera-relative world, not normalized): from the eye through the pixel. The point at
+// NDC depth 0.5 alone (reversed Z, near 0.05) is only ~0.1 block in front of the eye: taken as a direction from the camera's
+// origin it swung by up to ~45 degrees with view bobbing (walking on the ground: the whole sky turned, Gael 2026-10-08).
+// Affine in ndc (a plane minus a constant): a vertex shader may interpolate it across a full-screen triangle.
+static inline float3 shadeViewRay(float2 ndc, float4x4 invViewProj) {
+	float4 w = invViewProj * float4(ndc, 0.5, 1.0);
+	return w.xyz / w.w - shadeEye(invViewProj);
+}
+
 #define SHADE_DIM_OVERWORLD 0
 #define SHADE_DIM_NETHER 1
 #define SHADE_DIM_END 2
@@ -442,8 +456,9 @@ static float3 shadeWaterNormal(float3 p, constant ShadeFrame &f) {
 // Fresnel weight. No terrain in the reflection (M2: SSR).
 static float4 shadeWater(float3 lit, half3 tint, half texLuma, float alpha, float3 p, half sky, half shadow, texture2d<half> lut, sampler s,
                          constant ShadeFrame &f) {
-	float d = length(p);
-	float3 v = p / max(d, 1e-4);
+	float3 pe = p - shadeEye(f.invViewProj); // from the eye: view bobbing moves it
+	float d = length(pe);
+	float3 v = pe / max(d, 1e-4);
 	float3 n = shadeWaterNormal(p, f);
 	float cosT = saturate(dot(-v, n));
 	float fr = 0.025 + 0.975 * pow(1.0 - cosT, 4.0);

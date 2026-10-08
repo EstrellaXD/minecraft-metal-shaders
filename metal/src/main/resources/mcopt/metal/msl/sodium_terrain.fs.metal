@@ -241,7 +241,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef SHADE_DYNLIGHT
         float3 dlSpec = float3(0.0);
         if (n.y > 0.5h) { // the surface seen from above: torchlight on the water body and its glint on the ripples
-            float3 V = -normalize(p);
+            float3 V = -normalize(p - shadeEye(sf.invViewProj)); // toward the eye (view bobbing moves it)
             float3 dlN = normalize(float3(0.0, 1.0, 0.0) + float3(wi.detail.x, 0.0, wi.detail.y) * 0.35);
             wi.lit += sf.ambientBlock.xyz * shadeDynamicLightsSpec(dl, dlVis, p, dlN, in.v_Light.x, V, 160.0, dlSpec);
             float fres = 0.02 + 0.98 * pow(1.0 - saturate(dot(dlN, V)), 5.0);

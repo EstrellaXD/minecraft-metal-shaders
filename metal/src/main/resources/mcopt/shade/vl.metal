@@ -106,8 +106,7 @@ static inline float vlPhase(float mu, constant VlParams &p) {
 
 // World direction (camera-relative, unit) and distance (blocks; 1e4 for the sky) of full-res pixel px with depth d.
 static inline float3 vlDirection(float2 ndc, constant ShadeFrame &f) {
-	float4 h = f.invViewProj * float4(ndc, 1.0, 1.0); // reversed Z: 1 = near plane
-	return normalize(h.xyz / h.w);
+	return normalize(shadeViewRay(ndc, f.invViewProj)); // from the eye: view bobbing moves it (shade_common.metal)
 }
 static inline float vlDistance(float2 ndc, float depth, constant ShadeFrame &f) {
 	if (depth <= 0.0) return 1e4;

@@ -739,8 +739,9 @@ static float shadeWaterCaustics(float3 pf, float dy, constant ShadeFrame &f, con
 // water itself (draw with alpha 1). Radiance before exposure, without air fog between the camera and the surface.
 static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
                               texture2d<half> scene, depth2d<float> depth, texture2d<half> prev, texture2d<half> waves, texture2d<float> hz) {
-	float dist = length(w.p);
-	float3 v = w.p / max(dist, 1e-4);
+	float3 pe = w.p - shadeEye(f.invViewProj); // from the eye: view bobbing moves it (shade_common.metal)
+	float dist = length(pe);
+	float3 v = pe / max(dist, 1e-4);
 	bool top = w.nFace.y > 0.5;
 	float height = 0.0, pattern = 0.0;
 	float3 n = w.nFace;
@@ -888,8 +889,9 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 // between the camera and the surface (shadeFinish).
 static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
                               texture2d<half> scene, depth2d<float> depth, texture2d<half> prev, texture2d<half> waves, texture2d<float> hz) {
-	float dist = length(w.p);
-	float3 v = w.p / max(dist, 1e-4);
+	float3 pe = w.p - shadeEye(f.invViewProj); // from the eye: view bobbing moves it (shade_common.metal)
+	float dist = length(pe);
+	float3 v = pe / max(dist, 1e-4);
 	float height;
 	float pattern;
 	// (M2.1: the fine ripples from below too, a bit calmer: the long swell alone made blobby clay edges at Snell's window)
@@ -945,8 +947,9 @@ static float3 shadeWaterSurface(ShadeWaterIn w, constant ShadeFrame &f, constant
 static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, float2 pixel, half sky, half shadow, float exposure,
                           float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, constant ShadeResources *R, constant ShadeWaterParams &wp,
                           texture2d<half> lut, sampler lutS, texture2d<half> scene, depth2d<float> depth, texture2d<half> prev, texture2d<float> hz) {
-	float dist = length(p);
-	float3 v = p / max(dist, 1e-4);
+	float3 pe = p - shadeEye(f.invViewProj); // from the eye: view bobbing moves it (shade_common.metal)
+	float dist = length(pe);
+	float3 v = pe / max(dist, 1e-4);
 	float cosV = saturate(dot(-v, n));
 	float m = 1.0 - cosV;
 	float m2 = m * m;

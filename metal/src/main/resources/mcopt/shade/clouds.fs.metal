@@ -36,8 +36,7 @@ fragment float4 main0(CloudIn in [[stage_in]], constant ShadeFrame& sf [[buffer(
 	if (sf.flags.x != SHADE_DIM_OVERWORLD || sf.fogColor.a > 0.5) return float4(shadeVanillaOut(in.vertexColor.rgb, sl), alpha);
 	// GL row order: the pixel's row counts from the bottom of the view, so NDC y = row / height * 2 - 1 (no flip)
 	float2 ndc = float2(in.position.x * sf.screen.z * 2.0 - 1.0, in.position.y * sf.screen.w * 2.0 - 1.0);
-	float4 wp = sf.invViewProj * float4(ndc, 0.5, 1.0);
-	float3 dir = normalize(wp.xyz / wp.w);
+	float3 dir = normalize(shadeViewRay(ndc, sf.invViewProj));
 	float k = in.vertexColor.g / max(ci.CloudColor.g, 1e-3);
 	float3 n = k > 0.95 ? float3(0.0, 1.0, 0.0) : k > 0.85 ? float3(-sign(dir.x), 0.0, 0.0) : k > 0.75 ? float3(0.0, 0.0, -sign(dir.z)) : float3(0.0, -1.0, 0.0);
 	float3 L = sf.lightDirWorld.xyz;

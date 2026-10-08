@@ -52,10 +52,13 @@ LevelRenderer.render HEAD (ShadeFrameUpdater, after the globals and the sky LUT)
                               light already in the list, or holding a slab, wins a near tie (x1.15 each), and one left
                               out past the cap fades in again when it comes back (no pop, no flip-flop at the cuts)
     visibility slabs ........ the 16 strongest within 40 blocks keep a 32^3 slab; recomputed only when the light moved,
-                              its reach changed or the occupancy changed (static mobs / items cost nothing after the first frame)
+                              its reach changed or a section within its reach changed (per-section change counters:
+                              static mobs / items cost nothing after the first frame, even while the window shifts)
+    occupancy copy .......... on frames that recompute a slab after the occupancy changed: the CPU's bits (256 KB) into the
+                              next slot of a ring of GPU buffers (a buffer a frame in flight still reads is never written)
     pack .................... lights + light grid into this frame's ring slot (buffer 24)
     mc_dl_vis ............... GPU compute, before the world passes: one thread per voxel of each slab to recompute
-    mc_dl_irr ............... GPU compute: the irradiance volume, 80 x 48 x 80 blocks around the camera, every light of
+    mc_dl_irr ............... GPU compute: the irradiance volume, 96 x 64 x 96 blocks around the camera, every light of
                               the voxel's grid cell (visibility read from its slab) -> rgb light + mean light direction;
                               dispatched only over the box the lights reach, united with last frame's box (which it clears)
   world passes .............. Sodium terrain (plain and pulled share the fragment), glass, the water body:
@@ -80,7 +83,9 @@ render3dHud ................. the first-person hand: its packed light raised by 
   Lights without a slab (17th and later, beyond 40 blocks, lightning) are unoccluded.
 - **Cost control: the irradiance volume.** Per-pixel loops over the lights (first version) cost ~1 ms at balanced with the
   hands + 9 lights, because grass and leaves overdraw and every fragment looped over every nearby light. Now a compute
-  pass evaluates every light once per block voxel (80 x 48 x 80 around the camera, RGBA16F rgb light + RGBA16F mean
+  pass evaluates every light once per block voxel (96 x 64 x 96 around the camera; its contribution fades out over the
+  outer 8 voxels, so it is full within +-40 blocks horizontally / +-24 vertically and gone at +-48 / +-32, matching the
+  48-block gather: no hard plane where the volume ends; RGBA16F rgb light + RGBA16F mean
   direction weighted by each light's luminance) and the terrain fragment does two trilinear fetches half a block in front of
   its face, with the wrapped N.L taken against the mean direction (its length < 1 where lights come from several sides:
   the term blends toward 0.6). Same model as the per-light loop for one light; cost independent of the light count. The
@@ -95,9 +100,15 @@ render3dHud ................. the first-person hand: its packed light raised by 
 - **Entities, items, block entities, particles, text** (`DynLightMsl.patch`, the HDR world variants only): every
   `sample_lightmap(Sampler2, Sampler2Smplr, uv)` in the game's vertex stage becomes
   `shadeDynLightmap(lm, uv, in.Position, in.Normal or 0, ...)`: per vertex, per light, the lightmap sampled at the
-  dynamic level, the excess over the vertex's own lightmap colour added, tinted, with a soft N.L and the same visibility.
-  It is the vanilla look of a mob standing in torchlight, coloured and directional, never doubled where placed torches
-  already light it. Skipped: terrain, OIT, weather, wireframe, GUI and lightning pipelines; the hand and the GUI keep the
+  dynamic level and its excess over the vertex's own lightmap colour, with a soft N.L and the same visibility. The lights
+  combine **the way vanilla combines block light**: the brightest excess wins, the others add a quarter of theirs, and the
+  result never passes vanilla's brightest lightmap colour at that sky light (block 15) in any channel. The colour is
+  display-referred (it multiplies the texture into an RGBA8-range colour that the HDR variant lifts through the inverse
+  tone map), so before this fix (2026-10-07 night) a mob among nine lights summed them past 1, clipped to flat white with a
+  bloom halo, and the blaze's black smoke turned cream. Colour: the tints are relative to the warm terrain block-light
+  colour (`ShadeFrame.blockLight`), not to the near-white lightmap, so each light's absolute colour (tint x that warm
+  colour) is scaled to a peak of 1 and blended from white toward it (half way for torch-coloured light, up to 90 % for
+  strongly coloured light): a torch is warm white, a soul lantern cyan, redstone red, and nothing clips. Skipped: terrain, OIT, weather, wireframe, GUI and lightning pipelines; the hand and the GUI keep the
   game's stages (they are not drawn into the HDR world target).
 - **The first-person hand** (and the local player's body): `DynLightEntityRendererMixin` raises the packed light that
   `EntityRenderer.getPackedLightCoords` returns for the local player to `DynLights.levelAt` at its light probe (the
@@ -107,15 +118,17 @@ render3dHud ................. the first-person hand: its packed light raised by 
 
 | Slot | Content | Writer |
 |---|---|---|
-| `buffer(24)` (vertex + fragment) | `ShadeDynLights`, 27712 B: header (count, volumes, frame; grid origin and 1/cell; slabs, strength, specular, entity strength; irradiance volume origin), 64 lights x 48 B (pos + reach, tint x intensity + specular, slab origin + slab index), 3072 cells x `uint2` | CPU, ring of 4 shared buffers (`mcdynlight.m`) |
+| `buffer(24)` (vertex + fragment) | `ShadeDynLights`, 27712 B: header (count, volumes, frame; grid origin and 1/cell; slabs, strength, specular, entity strength; irradiance volume origin), 64 lights x 48 B (pos + reach, tint x intensity + specular, slab origin + slab index), 3072 cells x `uint2` | CPU, ring of `clamp(inFlight + 2, 4, 8)` shared buffers (`mcdynlight.m`) |
 | `texture(23)` (vertex + fragment) | visibility, `texture3d<half>` R8Unorm 32 x 32 x (32 x volumes) | `shade_dl_vis` compute (`dynlight_vis.metal`) |
-| `texture(24)`, `texture(25)` (fragment) | irradiance volume: rgb light, mean light direction (`texture3d<half>` RGBA16F, 80 x 48 x 80, one voxel per block; origin in `ShadeDynLights.irr`) | `shade_dl_irr` compute (`dynlight.metal`, `SHADE_DL_KERNELS`) |
-| compute only | block occupancy, 256 KB shared buffer, 1 bit per block, toroidal 8^3 sections | CPU (`Occupancy`) |
+| `texture(24)`, `texture(25)` (fragment) | irradiance volume: rgb light, mean light direction (`texture3d<half>` RGBA16F, 96 x 64 x 96, one voxel per block; origin in `ShadeDynLights.irr`) | `shade_dl_irr` compute (`dynlight.metal`, `SHADE_DL_KERNELS`) |
+| compute only | block occupancy, 256 KB, 1 bit per block, toroidal 8^3 sections: kept in CPU memory, copied into the next slot of a ring of shared buffers (same size as the light ring) on frames that recompute a slab after it changed | CPU (`Occupancy`, `mc_dl_occupancy`) |
 
 Both slots are free in every pipeline that binds the shade globals: vanilla's uniforms and samplers count from 0, Sodium
 uses 20-22, 26 and vertex buffers 27-30, water 18-23; mcopt's own far terrain (mcopt.lod) uses 22-30 but rebinds shade
 after drawing. `mc_dl_bind` runs inside `ShadeBindings.bind/rebind` (every encoder the backend opens). The buffers exist from
-`ShadeBindings.init` (before any shaded draw), zeroed (no lights).
+`ShadeBindings.init` (before any shaded draw), zeroed (no lights). If the module fails to start (`mc_dl_new`, e.g. the
+kernels don't compile) the shaders still declare these slots (the prelude is fixed at startup), so `mc_dl_fallback` binds
+a zeroed light buffer and 1-voxel volumes instead: every shader leaves at its first test, nothing reads an unbound slot.
 
 Occupancy updates: `ClientLevel.sendBlockUpdated` sets one bit at once (dig a wall: light passes through the next
 frame), `setSectionDirtyWithNeighbors` / `setSectionRangeDirty` queue a refill (`DynLightClientLevelMixin`), the window

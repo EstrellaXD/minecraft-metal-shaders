@@ -30,10 +30,12 @@ import net.minecraft.server.MinecraftServer;
  * first. M3.2 phases set tintTight and tintSub false explicitly.</li>
  * <li>{@code glass}: with the roof in place, shots {@code sh_glass_<variant>} at WeatherShots' glass pose (noon) and
  * {@code sh_glasseve_<variant>} (11000) for variants m32, tight, sub, lite.</li>
- * <li>{@code far}: shots of the far cascade with mcopt.shade.shadowFarSpread false / true: {@code sh_far_eve_off|on} (overview
- * point at 11500 looking east: long shadows far away, still), {@code sh_far_strafe_off|on} (overview point, noon, strafing
- * right at 8 blocks/s, shot after 1.5 s), {@code sh_far_turn_off|on} (overview point at 11500, turning 30 degrees/s, shot
- * after 1.5 s).</li>
+ * <li>{@code far}: shots of the far cascade with mcopt.shade.shadowFarSpread false / true, ticks frozen, at the overview point
+ * looking along the perf route 14 degrees down at 11000 (long shadows 30-120 blocks away): {@code sh_far_eve_off|on} (still),
+ * {@code sh_far_strafe_off|on} (strafing right at 8 blocks/s, shot after 1.5 s), {@code sh_far_turn_off|on} (turning 30
+ * degrees/s, shot after 1.5 s).</li>
+ * <li>{@code -Dmcbench.shadowTintPhases=<label>:<k>=<v>,...;...}: the tint phases instead of the built-in list (recorded as
+ * shtint_p1..p16).</li>
  * </ul>
  * The roof is removed at the end of the block (WeatherShots.cleanup). Poses and the phase map go to results.json "shadowShots".
  */
@@ -63,20 +65,36 @@ final class ShadowShots {
 	// ---------------------------------------------------------------------------------------------- far cascade shots
 
 	private static void far(java.util.Deque<BenchDriver.Step> steps) {
-		Supplier<Pose> o = () -> BenchDriver.spot.overview;
-		Supplier<Pose> east = () -> {
-			Pose p = o.get();
-			return new Pose(p.x(), p.y(), p.z(), -90f, 14f);
+		// the overview point looking along the perf route (over forest, beach and the village) at 11000: the sun low in the west,
+		// long shadows 30-120 blocks away, where the far cascade answers; the ticks frozen so clouds and water hold still
+		Supplier<Pose> o = () -> {
+			Pose p = BenchDriver.spot.overview;
+			return new Pose(p.x(), p.y(), p.z(), p.yaw(), 14f);
 		};
+		steps.add(new BenchDriver.Scene("sh-far", 11000, false, o));
+		steps.add(new BenchDriver.Settle("sh-far", false, 3, 120));
+		steps.add(command("sh-far-freeze", "tick freeze"));
 		for (String v : new String[] {"off", "on"}) {
 			Map<String, String> props = Map.of(SPREAD, v.equals("on") ? "true" : "false");
-			still(steps, "sh_far_eve_" + v, 11500, east, props);
-			moving(steps, "sh_far_strafe_" + v, 6000, () -> {
-				Pose p = o.get();
-				return new Pose(p.x(), p.y(), p.z(), p.yaw(), 14f);
-			}, 8.0, 0f, props);
-			moving(steps, "sh_far_turn_" + v, 11500, east, 0.0, 30f, props);
+			still(steps, "sh_far_eve_" + v, 11000, o, props);
+			moving(steps, "sh_far_strafe_" + v, 11000, o, 8.0, 0f, props);
+			moving(steps, "sh_far_turn_" + v, 11000, o, 0.0, 30f, props);
 		}
+		steps.add(command("sh-far-unfreeze", "tick unfreeze"));
+	}
+
+	private static BenchDriver.Step command(String name, String c) {
+		return new BenchDriver.Step(name, 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				BenchDriver.cmd(BenchDriver.server(mc), c);
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				return BenchDriver.secs(now - BenchDriver.curStart) >= 0.3;
+			}
+		};
 	}
 
 	/** A still shot with properties set before the settle and restored after the shot. */
@@ -219,18 +237,42 @@ final class ShadowShots {
 		{"shtint_time", TIGHT + "=false", SUB + "=false", TIMES + "=true"},
 		{"shtint_time_t", TIGHT + "=true", SUB + "=true", TIMES + "=true"}};
 
+	/**
+	 * {@code -Dmcbench.shadowTintPhases=<label>:<k>=<v>,<k>=<v>;<label>:...} (up to 16) replaces the list above: recorded phases
+	 * {@code shtint_p1}..., the label and properties of each in results.json shadowShots.tint.phases.
+	 */
+	private static String[][] tintPhases() {
+		String spec = System.getProperty("mcbench.shadowTintPhases", "").trim();
+		if (spec.isEmpty()) return TINT_PHASES;
+		List<String[]> out = new ArrayList<>();
+		for (String ph : spec.split(";")) {
+			if (ph.isBlank()) continue;
+			int c = ph.indexOf(':');
+			List<String> row = new ArrayList<>();
+			row.add("shtint_p" + (out.size() + 1));
+			if (c >= 0) for (String kv : ph.substring(c + 1).split(",")) if (!kv.isBlank()) row.add(kv.trim());
+			row.add("label=" + (c >= 0 ? ph.substring(0, c) : ph).trim()); // read back by props() as a fake property: dropped there
+			out.add(row.toArray(new String[0]));
+			if (out.size() == 16) break;
+		}
+		return out.toArray(new String[0][]);
+	}
+
 	private static void tint(List<BenchDriver.Step> extra, Pose ground) {
 		double sec = Double.parseDouble(System.getProperty("mcbench.shadowTintSeconds", "10"));
+		String[][] list = tintPhases();
 		extra.add(new BenchDriver.Scene("shtint", 6000, false, () -> ground));
 		extra.add(new BenchDriver.Settle("shtint", false, 3, 120));
 		extra.add(new BenchDriver.Hold("shtint", 1));
 		extra.add(new BenchDriver.Warmup(1));
 		Map<String, Object> phases = new LinkedHashMap<>();
-		pan(extra, "shtint_warm", null, ground, sec, props(TINT_PHASES[0]));
-		for (String[] ph : TINT_PHASES) {
+		pan(extra, "shtint_warm", null, ground, sec, props(list[0]));
+		for (String[] ph : list) {
 			Map<String, String> pr = props(ph);
 			pan(extra, ph[0], ph[0], ground, sec, pr);
-			phases.put(ph[0], pr);
+			Map<String, Object> j = new LinkedHashMap<>(pr);
+			for (String kv : ph) if (kv.startsWith("label=")) j.put("label", kv.substring(6));
+			phases.put(ph[0], j);
 		}
 		Map<String, Object> m = ground.json();
 		m.put("seconds", sec);
@@ -241,6 +283,7 @@ final class ShadowShots {
 	private static Map<String, String> props(String[] ph) {
 		Map<String, String> m = new LinkedHashMap<>();
 		for (int i = 1; i < ph.length; i++) {
+			if (ph[i].startsWith("label=")) continue;
 			int e = ph[i].indexOf('=');
 			m.put(ph[i].substring(0, e), ph[i].substring(e + 1));
 		}

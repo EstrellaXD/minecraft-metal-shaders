@@ -200,3 +200,19 @@ diagnostic recording with `checker=1` (no checkerboard) is in run c22 (see Statu
 Balanced, DRS off, 3024x1964, noon, the overview point turning a full circle 8 degrees up in 12 s (about half the screen is
 sky); `clouds_off` = `mcopt.shade.clouds.pause`, i.e. m2.1's vanilla clouds (which cost a little themselves). Whole-frame
 GPU ms (`gpu.gpuMsPerFrame`).
+
+| Run (time, power) | Build / flags | clouds | clouds_off | clouds2 | Cost (on - off) | Clean? (cpu-load during the phases) |
+|---|---|---|---|---|---|---|
+| c9 (14:38, battery) | 3e78c47-era, balanced | 8.38 | 7.83 | 8.33 | **+0.55 / +0.50** | yes (108-166 %) |
+| c10 (14:58, AC) | same | 8.69 | 7.95 | 8.50 | **+0.74 / +0.54** | yes (112-195 %) |
+| c11 (18:08, AC) | WIP + timer | 8.75 | 8.22 | 8.70 | +0.53 / +0.48 | no: 433-794 % in clouds_off |
+| c12 (18:30, AC) | + fixes, timer | 8.97 | 8.14 | 8.97 | **+0.83 / +0.83** | yes except the first seconds |
+| c12 (18:51, AC) | same, `scale=0.4` | 8.86 | 8.07 | 8.95 | +0.79 / +0.88 | partly (484 % at the start) |
+| c19 (19:14, AC) | branch head code, no timer | 9.34 | 8.42 | 9.17 | **+0.92 / +0.74** | yes (101-117 %) |
+| c19 (19:37, AC) | same, `steps=16` | (9.62) | 8.62 | 8.84 | (contaminated) / **+0.22** | clouds phase no (544-761 %), rest yes |
+
+Reading: the clouds cost **about +0.5-0.9 ms of GPU per frame at balanced** on this scene, against the bible's E05 budget of
+0.30-0.45 ms: **over budget**. The spread between sessions is large (the whole frame itself moved from 7.8 to 8.6 ms
+between the afternoon and the evening with nothing else changed: other agents, thermal state), so only same-run deltas
+mean anything. The history scale hardly matters (0.4 vs 0.45: same cost); the number of march steps does (16 instead of 24:
++0.22 ms in the one clean phase).

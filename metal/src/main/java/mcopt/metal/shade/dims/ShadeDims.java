@@ -47,6 +47,8 @@ import org.joml.Vector3f;
 public final class ShadeDims {
 	/** The exposure the dimension palettes are authored for (a torch-lit white wall at ~1.2 after exposure, like the overworld at night). */
 	static final float E_REF = 0.86f;
+	/** The End's exposure relative to the palettes' reference: -0.4 EV, the island read pale lilac-white at E_REF (2026-10-07 shots). */
+	static final float END_EXPOSURE = 0.76f;
 	/** sunPath.z bit (ShadeFrame dev bits field): Nether/End terrain is lit per pixel (shade_dims.metal SHADE_FLAG_DIMS_LIT). */
 	public static final int FLAG_DIMS_LIT = 4096;
 	/** ShadeLook.tier.y feature bits of this module (high bits, clear of the M2/M3 feature bits counted up from 128). */
@@ -154,7 +156,7 @@ public final class ShadeDims {
 		if (!dimsLit) return;
 		fogEnd += (Math.max(vanillaFogEnd, 8f) - fogEnd) * k;
 		if (f.fogType == ShadeFrame.FOG_AIR) f.fogColor[3] = 0f; // our fog (final pass) instead of vanilla's colour
-		f.exposure = E_REF;
+		f.exposure = f.dimension == ShadeFrame.DIM_END ? E_REF * END_EXPOSURE : E_REF;
 		for (int i = 0; i < 8; i++) java.util.Arrays.fill(f.sky.horizon[i], 0f);
 		if (f.dimension == ShadeFrame.DIM_NETHER) nether(f, level, camera, k);
 		else end(f, sky, k);
@@ -231,8 +233,8 @@ public final class ShadeDims {
 		putSky(f.sky.horizon[3], 0x1C1230, 1f);
 		putSky(f.sky.horizon[4], 0x9A6AFF, 1f);
 		putSky(f.sky.horizon[5], 0x6AE0FF, 1f);
-		putSky(f.sky.horizon[6], 0x6A3FA0, 1f);
-		putSky(f.sky.horizon[7], 0x2F7F8F, 1f);
+		putSky(f.sky.horizon[6], 0x6A3FA0, 0.7f); // the nebula a little fainter: a hint in the void, not cyan smoke
+		putSky(f.sky.horizon[7], 0x2F7F8F, 0.6f);
 		// the dragon fight: vanilla draws no sky at all (boss fog); the final pass paints ours then, in a thicker haze
 		bossFog = net.minecraft.client.Minecraft.getInstance().gui.hud.getBossOverlay().shouldCreateWorldFog();
 		fogDensity = END_FOG_SIGMA * (bossFog ? 2.5f : 1f);
@@ -299,7 +301,7 @@ public final class ShadeDims {
 			put4(L, ShadeLook.DIM_TINT, fogDensity, NETHER_LAVA_Y, border, nether ? 1f : bossFog ? 3f : 2f);
 			put4(L, ShadeLook.FLASH, flashDir.x, flashDir.y, flashDir.z, nether ? 0f : flash);
 			// stay moody: less metering (bible: Nether 0.3, End 0.4), no Purkinje shift, a little more bloom
-			L.putFloat(ShadeLook.EXPOSURE_REF + 4, mcopt.metal.shade.ShadeConfig.AUTO_EXPOSURE ? (nether ? 0.3f : 0.4f) : 0f);
+			L.putFloat(ShadeLook.EXPOSURE_REF + 4, mcopt.metal.shade.ShadeConfig.AUTO_EXPOSURE ? 0.3f : 0f); // End: was 0.4 (dark void views were lifted into cyan smoke)
 			L.putFloat(ShadeLook.GRADE1 + 12, 0f);
 			L.putFloat(ShadeLook.BLOOM, L.getFloat(ShadeLook.BLOOM) + (nether ? 0.03f : 0.02f));
 		} else {

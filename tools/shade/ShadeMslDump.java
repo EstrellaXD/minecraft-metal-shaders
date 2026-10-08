@@ -85,14 +85,15 @@ public class ShadeMslDump {
 			// M3 entity lighting: the HDR variants of the game's entity / item / block / particle stages, patched (ShadeEntity)
 			Path ent = out.resolve("entity");
 			Files.createDirectories(ent);
-			for (String name : mcopt.metal.shade.ShadeEntityAccess.pipelines()) {
-				String file = name.replaceAll("[^A-Za-z0-9._-]", "_");
+			// (same-named pipelines with other sources are dumped as NAME~1, NAME~2...: e.g. the plain item_cutout and its glints)
+			for (String name : mcopt.metal.shade.ShadeEntityAccess.pipelines()) for (int k = 0; k < 8; k++) {
+				String file = name.replaceAll("[^A-Za-z0-9._-]", "_") + (k == 0 ? "" : "~" + k);
 				Path evs = Path.of(gen, file + ".vs.metal"), efs = Path.of(gen, file + ".fs.metal");
-				if (!Files.exists(evs) || !Files.exists(efs)) continue;
+				if (!Files.exists(evs) || !Files.exists(efs)) break;
 				String v = mcopt.metal.shade.ShadeEntityAccess.vertex(name, Files.readString(evs));
 				String f = mcopt.metal.shade.ShadeEntityAccess.fragment(name, Files.readString(efs));
 				if (v == null || f == null) {
-					System.out.println("entity lighting: not patched: " + name);
+					System.out.println("entity lighting: not patched: " + file);
 					continue;
 				}
 				Files.writeString(ent.resolve(file + ".vs.metal"), v);

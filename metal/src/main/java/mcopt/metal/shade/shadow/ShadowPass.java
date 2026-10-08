@@ -210,7 +210,7 @@ public final class ShadowPass {
 	/** Encodes the depth passes; called right before the level's frame graph runs (no render pass open). */
 	public static void renderFrame() {
 		ShadowPass p = instance;
-		if (p != null && EntityCasters.ON) EntityCasters.beginFrame();
+		if (p != null && EntityCasters.ON) EntityCasters.beginFrame(p);
 		if (p == null || !p.prepared || failed) return;
 		try {
 			p.render();
@@ -455,6 +455,11 @@ public final class ShadowPass {
 
 	double camZ() {
 		return this.camZ;
+	}
+
+	/** Whether this frame draws the near cascade (fitted in beginFrame; false in the Nether / End, after a failure). */
+	boolean nearThisFrame() {
+		return this.prepared && this.draw[0] && !failed;
 	}
 
 	/** Frame counter (endFrame advances it). */

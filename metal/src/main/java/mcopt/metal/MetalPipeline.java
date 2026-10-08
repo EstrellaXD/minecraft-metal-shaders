@@ -278,11 +278,25 @@ final class MetalPipeline implements BackendRenderPipeline {
 		return pipelineName.replaceAll("[^A-Za-z0-9._-]", "_");
 	}
 
-	private static void dump(String name, Translated v, Translated f) {
+	/** dump(): the sources already written per pipeline name (several pipelines can share one). */
+	private static final Map<String, java.util.List<Integer>> DUMPED = new java.util.HashMap<>();
+
+	/**
+	 * Writes NAME.{vs,fs}.metal; another pipeline with the same name but different sources (MC 26.3 registers three
+	 * "item_cutout": plain, glint, glint special) gets NAME~1, NAME~2... (a reload's identical sources write nothing new).
+	 */
+	private static synchronized void dump(String name, Translated v, Translated f) {
+		java.util.List<Integer> seen = DUMPED.computeIfAbsent(name, k -> new java.util.ArrayList<>());
+		int hash = (v.msl + "\u0000" + f.msl).hashCode(), k = seen.indexOf(hash);
+		if (k < 0) {
+			seen.add(hash);
+			k = seen.size() - 1;
+		}
+		String file = fileName(name) + (k == 0 ? "" : "~" + k);
 		try {
 			Files.createDirectories(Path.of(DUMP_DIR));
-			Files.writeString(Path.of(DUMP_DIR, fileName(name) + ".vs.metal"), v.msl);
-			Files.writeString(Path.of(DUMP_DIR, fileName(name) + ".fs.metal"), f.msl);
+			Files.writeString(Path.of(DUMP_DIR, file + ".vs.metal"), v.msl);
+			Files.writeString(Path.of(DUMP_DIR, file + ".fs.metal"), f.msl);
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
@@ -534,14 +548,17 @@ final class MetalPipeline implements BackendRenderPipeline {
 	 * frame that needs one doesn't stall the render thread compiling it.
 	 */
 	private void prewarm() {
-		int[] formats = MetalShaderRegistry.prewarmFormats(this.name);
-		if (formats == null || this.info == null || formats.length != this.colorTargets) return;
+		int[][] sets = MetalShaderRegistry.prewarmFormats(this.name);
+		if (sets == null || this.info == null) return;
 		for (ColorTargetState c : this.info.colorTargetStates()) {
 			if (c == null || MetalConst.pixelFormat(c.format()) != 70) return; // RGBA8Unorm targets only (what the game's main target is)
 		}
-		this.state(formats, true);
-		if (this.withoutDepth != 0) this.state(formats, false);
-		if (this.pulled != 0) this.pulledState(formats);
+		for (int[] formats : sets) {
+			if (formats == null || formats.length != this.colorTargets) continue;
+			this.state(formats, true);
+			if (this.withoutDepth != 0) this.state(formats, false);
+			if (this.pulled != 0) this.pulledState(formats);
+		}
 	}
 
 	@Override

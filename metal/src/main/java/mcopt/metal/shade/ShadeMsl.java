@@ -181,27 +181,19 @@ public final class ShadeMsl {
 		return colorFormats.length == 1 && (colorFormats[0] == ShadeRender.RGBA16F || colorFormats[0] == ShadeRender.RG11B10F);
 	}
 
-	private static final String ENTITY_BLOB = "minecraft:pipeline/entity_shadow", VERTEX_FLIP = "out.gl_Position.y = -(out.gl_Position.y);",
-		VERTEX_IN = "vertex main0_out main0(main0_in in [[stage_in]]";
-
 	/** MetalShaderRegistry's format adapter for the HDR world target (see the class comment). */
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
 		public String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats) {
+			ShadeEntity.beginVariant(); // M3: this variant's fragment follows its own vertex stage (MetalPipeline.variant)
 			if (handTarget(colorFormats)) { // M3: the lit first-person hand (ShadeEntity.HAND)
 				String lit = registry ? null : ShadeEntity.vertex(pipelineName, msl);
 				return lit != null ? lit : msl;
 			}
 			if (!hdrTarget(colorFormats)) return msl;
 			if (registry) return "#define MCOPT_HDR\n" + msl;
-			// M3: real entity shadows replace vanilla's blob under each mob (as Iris does with a shadow map): no triangles
-			// (only while this frame has a shadow map in the overworld: ShadeFrame.flags x dimension, z shadows; the Nether and
-			// caves without sky keep the blob)
-			if (pipelineName.equals(ENTITY_BLOB) && mcopt.metal.shade.shadow.EntityCasters.ON && msl.contains(VERTEX_FLIP) && msl.contains(VERTEX_IN)) {
-				return msl.replace(VERTEX_IN, VERTEX_IN + ", constant float4* mcoptShadeFrame [[buffer(16)]]")
-					.replace(VERTEX_FLIP, VERTEX_FLIP + "\n    int4 mcoptFlags = as_type<int4>(mcoptShadeFrame[60]); // ShadeFrame.flags (offset 960)\n"
-						+ "    if (mcoptFlags.z != 0 && mcoptFlags.x == 0) out.gl_Position = float4(0.0);");
-			}
+			// (M3: vanilla's blob shadow is left out per piece on the CPU where real entity shadows replace it:
+			// EntityCasters.dropBlob, EntityBlobShadowMixin)
 			// M3: the game's own world stages (entities, items, block entities, particles) take the dynamic lights in their lightmap
 			// (DynLightMsl, per vertex: the game's colour keeps them where ShadeEntity does not shade, outside the overworld and
 			// in the pipelines it leaves alone: glint, text, leash...), then ShadeEntity's per-pixel lighting (overworld)
@@ -227,12 +219,15 @@ public final class ShadeMsl {
 	 * Which pipelines get their HDR variant built as soon as they compile (on the frontend's compile worker), so the first
 	 * world frame that uses one doesn't compile it on the render thread: everything but the GUI and full-screen game passes.
 	 */
-	static int @org.jspecify.annotations.Nullable [] prewarm(String name) {
+	static int @org.jspecify.annotations.Nullable [] @org.jspecify.annotations.Nullable [] prewarm(String name) {
 		if (!ShadeConfig.HDR) return null;
 		String n = name.toLowerCase(java.util.Locale.ROOT);
 		if (n.contains("gui") || n.contains("panorama") || n.contains("lightmap") || n.contains("blit") || n.contains("blur") || n.contains("oit_")
 			|| n.contains("animate_sprite") || n.contains("crosshair") || n.contains("distanthorizons") || n.contains("post/")) return null;
-		return new int[] {ShadeConfig.HDR_FORMAT};
+		// M3: the lit hand's tagged variants too (the "Item in hand" pass: arm, held items and their glint), so its first frame
+		// doesn't compile ~80 KB fragments on the render thread
+		if (ShadeEntity.HAND && (ShadeEntity.PIPELINES.containsKey(name) || n.contains("glint"))) return new int[][] {{ShadeConfig.HDR_FORMAT}, {ShadeEntity.HAND_FORMAT}};
+		return new int[][] {{ShadeConfig.HDR_FORMAT}};
 	}
 
 	static void register() {

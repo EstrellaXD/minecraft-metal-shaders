@@ -34,7 +34,7 @@ import net.minecraft.server.MinecraftServer;
  * (mcopt.shade.clouds.pause: they move with real time), at the overview point
  * looking along the perf route 14 degrees down at 11000 (long shadows 30-120 blocks away): {@code sh_far_eve_off|on} (still),
  * {@code sh_far_strafe_off|on} (strafing right at 8 blocks/s, shot after 1.5 s), {@code sh_far_turn_off|on} (turning 30
- * degrees/s, shot after 1.5 s).</li>
+ * degrees/s, shot after 1.5 s; {@code -Dmcbench.shadowFarMove=<s>} moves longer, e.g. for a recording).</li>
  * <li>{@code -Dmcbench.shadowTintPhases=<label>:<k>=<v>,...;...}: the tint phases instead of the built-in list (recorded as
  * shtint_p1..p16).</li>
  * </ul>
@@ -43,6 +43,8 @@ import net.minecraft.server.MinecraftServer;
 final class ShadowShots {
 	static final String SPEC = System.getProperty("mcbench.shadow", "").trim();
 	static final Map<String, Object> JSON = new LinkedHashMap<>();
+	/** Seconds the far shots strafe / turn before the shot (-Dmcbench.shadowFarMove, default 1.5). */
+	static final double FAR_MOVE = Double.parseDouble(System.getProperty("mcbench.shadowFarMove", "1.5"));
 	static final String SPREAD = "mcopt.shade.shadowFarSpread", TIGHT = "mcopt.shade.tintTight", DEV = "mcopt.shade.tintDev", TIMES = "mcopt.shade.shadowTimes";
 
 	private ShadowShots() {
@@ -111,7 +113,7 @@ final class ShadowShots {
 		record(name, time, pose, props, 0, 0);
 	}
 
-	/** Settle at pose, hold, then move (blocks/s to the camera's right, degrees/s of yaw) and shoot after 1.5 s. */
+	/** Settle at pose, hold, then move (blocks/s to the camera's right, degrees/s of yaw) and shoot after FAR_MOVE (1.5) s. */
 	private static void moving(java.util.Deque<BenchDriver.Step> steps, String name, int time, Supplier<Pose> pose, double speed, float yawRate,
 		Map<String, String> props) {
 		Map<String, String> before = new LinkedHashMap<>();
@@ -134,7 +136,7 @@ final class ShadowShots {
 
 			@Override
 			boolean poll(Minecraft mc, long now) {
-				return BenchDriver.secs(now - BenchDriver.curStart) >= 1.5;
+				return BenchDriver.secs(now - BenchDriver.curStart) >= FAR_MOVE;
 			}
 		});
 		steps.add(new BenchDriver.Shot(name));
@@ -161,7 +163,7 @@ final class ShadowShots {
 		if (speed != 0 || yawRate != 0) {
 			m.put("rightBlocksPerSecond", speed);
 			m.put("yawDegPerSecond", yawRate);
-			m.put("shotAfterSeconds", 1.5);
+			m.put("shotAfterSeconds", FAR_MOVE);
 		}
 		JSON.put(name, m);
 	}

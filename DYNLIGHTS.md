@@ -155,7 +155,7 @@ same poses with `-Dmcopt.shade.dynLights=false`, i.e. M2.1's look).
 ### 7.1 Cost (in-session A/B: the `lights` / `lights_off` / `lights2` phases)
 
 The mobs scene (hands + 9 lights: 3 mobs holding lights, a burning zombie, a magma cube, a blaze, 3 dropped luminous
-items) panning +-15 degrees, 10 s per phase. In `lights_off` the module is paused at run time (no lights: every shader
+items) panning +-15 degrees, 10 s (r3, r4: 12 s) per phase. In `lights_off` the module is paused at run time (no lights: every shader
 leaves at its first test), so the difference is the module's whole GPU cost in one session, immune to launch-to-launch
 drift. GPU ms per frame:
 
@@ -174,7 +174,7 @@ in r3, whose phases drifted (its `lights2` alone is 0.4 ms above `lights`). Hist
 same measurement: the first version (per-pixel loop over the lights) cost **+1.06 ms** (`20261007-123517-dl-t3` and
 `-123726-dl-t4`, AC: 8.84 / 7.81 / 8.91 and 8.84 / 7.85 / 8.94); the irradiance volume computed over the whole 80 x 48 x 80
 blocks every frame **+0.27 ms** (`20261007-132040-dl-t5`, battery: 8.94 / 8.69 / 8.97); computed only over the box the
-lights reach (current) **~0.15 ms**.
+lights reach (current) **~0.2 ms**.
 
 CPU (the render thread, `-Dmcopt.shade.dynLights.log=true`, one line every 2 s, r1): occupancy + gather + packing
 **0.01-0.06 ms per frame** with 2-11 lights (median ~0.03 ms); 0.3 ms (the occupancy budget, 300 us) in the frames where

@@ -82,6 +82,14 @@ public final class ShadeTaa {
 	private @Nullable RenderTarget output;
 	private int outWidth, outHeight, allocWidth, allocHeight, width, height;
 	private float scale = TaaConfig.SCALE;
+	/** The scale the world targets were allocated at (M3.1: 1 without Distant Horizons; the live scale with it). */
+	private float allocScale = 1f;
+
+	/** With Distant Horizons (fixed scale, targets at exactly that size): the scale the player's choice or the preset asks for. */
+	private static float wantedDhScale(int outHeight) {
+		float chosen = mcopt.metal.shade.ShadeResolution.scale(outHeight);
+		return chosen > 0f ? chosen : TaaConfig.SCALE;
+	}
 	private int frame;
 	private float jitterX, jitterY;
 	private boolean jittered, swapped, reset = true;
@@ -143,7 +151,11 @@ public final class ShadeTaa {
 	public void jitter(Matrix4f projection) {
 		this.jittered = false;
 		if (this.outWidth == 0) return; // no world target yet: the first resolve starts the history anyway
-		if (TaaConfig.DRS && !FIXED_FOR_DH) this.scale = DRS.update();
+		// M3.1: a resolution the player fixed in the pause menu (ShadeResolution) wins over the preset's dynamic resolution
+		float chosen = mcopt.metal.shade.ShadeResolution.scale(this.outHeight);
+		if (chosen > 0f) this.scale = FIXED_FOR_DH ? Math.min(chosen, this.allocScale) : chosen;
+		else if (TaaConfig.DRS && !FIXED_FOR_DH) this.scale = DRS.update();
+		else this.scale = FIXED_FOR_DH ? Math.min(TaaConfig.SCALE, this.allocScale) : TaaConfig.SCALE;
 		this.updateSize();
 		int phases = Math.clamp(Math.round(8 / (this.scale * this.scale)), 8, 32); // ~8 samples per output pixel (MetalFX/FSR guidance)
 		this.frame = this.frame % phases + 1;
@@ -164,7 +176,12 @@ public final class ShadeTaa {
 
 	/** GameRenderer.render, first device call: the target the world draws into this frame (mainTarget's stand-in). */
 	public RenderTarget beginWorld(RenderTarget mainTarget) {
-		if (mainTarget.width != this.outWidth || mainTarget.height != this.outHeight) this.resize(mainTarget);
+		// (with Distant Horizons the world targets match the live scale exactly: a new resolution choice reallocates them)
+		float dhWant = FIXED_FOR_DH ? wantedDhScale(mainTarget.height) : 0f;
+		if (mainTarget.width != this.outWidth || mainTarget.height != this.outHeight || (FIXED_FOR_DH && dhWant != this.allocScale)) {
+			if (FIXED_FOR_DH) this.scale = dhWant;
+			this.resize(mainTarget);
+		}
 		if (!this.jittered) this.updateSize();
 		MetalBridge.setSubRect(this.encoder, this.world.getColorTexture(), this.world.getDepthTexture(),
 			this.width < this.allocWidth || this.height < this.allocHeight ? this.width : 0, this.height);
@@ -176,7 +193,9 @@ public final class ShadeTaa {
 	private void resize(RenderTarget mainTarget) {
 		this.outWidth = mainTarget.width;
 		this.outHeight = mainTarget.height;
-		float allocScale = FIXED_FOR_DH ? this.scale : TaaConfig.SCALE_MAX;
+		// M3.1: allocated for the native choice of the pause menu (ShadeResolution), so any choice is a sub-rect of them
+		float allocScale = FIXED_FOR_DH ? this.scale : 1f;
+		this.allocScale = allocScale;
 		this.allocWidth = Math.max(1, Math.round(this.outWidth * allocScale));
 		this.allocHeight = Math.max(1, Math.round(this.outHeight * allocScale));
 		this.world.resize(this.allocWidth, this.allocHeight);

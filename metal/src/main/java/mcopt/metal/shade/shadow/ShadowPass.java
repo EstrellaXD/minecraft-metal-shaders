@@ -80,6 +80,28 @@ public final class ShadowPass {
 	private long frames;
 	private @Nullable String lastProblem;
 
+	// ---- M3.3 far cascade spread (ShadowConfig.farSpread, read every frame) ----
+	/** The fit the back map is being drawn with, part by part; it becomes cascades[1] when the last part is drawn. */
+	private final ShadowCascade farBack = new ShadowCascade();
+	private final ShadowCascade[] castCascades = new ShadowCascade[2];
+	private final float[] backMatrix = new float[16];
+	/** The part of the back map drawn next (0..FAR_EVERY-1), -1: no back map under way. */
+	private int backPart = -1;
+	private long backLightKey;
+	/** This frame's far cascade: 0 not drawn, 1 whole into the bound map (M3.2), 2 one part into the back map, 3 the last part (the maps swap first). */
+	private int farMode;
+	private int farPartNow;
+	private boolean spreadReady, spreadFailed;
+	/** Light more than this far (cos) from the bound far map's: redraw it whole at once (a /time jump; the day's 0.1 degree steps never get there). */
+	private static final double SPREAD_LIGHT_COS = Math.cos(Math.toRadians(1.0));
+	private long statSwaps, statWhole;
+	// ---- M3.3 GPU timers (ShadowConfig.times) ----
+	private boolean timing;
+	private long timesPrinted;
+	private final long timesOut = MemoryUtil.nmemAlloc(9 * 4);
+	/** M3.3 coloured-shadow pricing / lite map (ShadowConfig.tintDev 8). */
+	private long tintLite;
+
 	private ShadowPass() {
 	}
 
@@ -280,10 +302,33 @@ public final class ShadowPass {
 		double dist = ShadowConfig.DIST;
 		double dx = x - far.cx, dy = y - far.cy, dz = z - far.cz;
 		boolean moved = dx * dx + dy * dy + dz * dz > (dist / 8) * (dist / 8);
-		if (!far.valid || this.framesSinceFar >= ShadowConfig.FAR_EVERY - 1 || this.farLightKey != this.lightKey || moved) {
+		// M3.3: spread the far redraw over FAR_EVERY frames (one part of the casters per frame into the back map, all parts with
+		// one fit, then the maps swap); off = M3.2. A camera jump or a big light jump still redraws it whole in this frame.
+		boolean spread = ShadowConfig.FAR_EVERY > 1 && !this.spreadFailed && ShadowConfig.farSpread();
+		if (!spread) this.backPart = -1;
+		this.farMode = 0;
+		boolean lightJump = spread ? far.z[0] * this.light[0] + far.z[1] * this.light[1] + far.z[2] * this.light[2] < SPREAD_LIGHT_COS
+			: this.farLightKey != this.lightKey;
+		if (!far.valid || moved || lightJump || !spread && this.framesSinceFar >= ShadowConfig.FAR_EVERY - 1) {
 			far.fit(this.light, x, y, z, dist, res, FAR_BACK, DEPTH_FRONT, CASTER_REACH);
-			this.draw[1] = true;
+			this.farMode = 1;
+			this.backPart = -1;
+		} else if (spread) {
+			if (this.backPart < 0) { // a new back map: fitted once, here, for all its parts
+				this.farBack.fit(this.light, x, y, z, dist, res, FAR_BACK, DEPTH_FRONT, CASTER_REACH);
+				this.backPart = 0;
+				this.backLightKey = this.lightKey;
+			}
+			this.farPartNow = this.backPart;
+			if (this.backPart >= ShadowConfig.FAR_EVERY - 1) {
+				far.copyFrom(this.farBack); // receivers read the back map (complete after this frame's part) from this frame on
+				this.farMode = 3;
+			} else {
+				this.farMode = 2;
+				this.farBack.matrix(x, y, z, this.backMatrix, 0);
+			}
 		}
+		this.draw[1] = this.farMode != 0;
 		this.cascades[0].matrix(x, y, z, this.matrices, 0);
 		far.matrix(x, y, z, this.matrices, 16);
 		this.prepared = true;
@@ -324,6 +369,7 @@ public final class ShadowPass {
 		this.prepared = false;
 		this.renderOk = false;
 		this.cascades[1].valid = false;
+		this.backPart = -1;
 		this.draw[0] = this.draw[1] = false;
 	}
 
@@ -331,27 +377,75 @@ public final class ShadowPass {
 		return step <= 0 ? angle : Math.round(angle / step) * step;
 	}
 
+	/** The tint map's resolution this frame (the receivers' rectangle pad is 8 of its texels). */
+	private int tintRes = mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES;
+
 	/**
-	 * M3 coloured shadows: the listed translucent sections' rectangle in cascade 0's light clip space (its matrix takes
-	 * camera-relative positions; orthographic, so a 16^3 box spans its centre +- 8 (|row x| + |row y| + |row z|)), widened by
+	 * M3 coloured shadows: the listed translucent casters' rectangle in cascade 0's light clip space (its matrix takes
+	 * camera-relative positions; orthographic, so a box of half extents h spans its centre +- h.|row|), widened by
 	 * 4 texels for the receivers' normal offset and bilinear taps; into this frame's ShadeLook (ssr.w, tintRect).
 	 */
 	private void publishTint(boolean any) {
+		boolean on = any && this.tintRect();
+		float[] r = this.tintRectNow;
+		mcopt.metal.shade.ShadeBindings.setShadowTint(on ? this.tintSubNow ? 2 : 1 : 0, r[0], r[1], r[2], r[3]);
+	}
+
+	/** This frame's tint rectangle (x0, y0, x1, y1 in cascade 0's light clip space, padded; clipped to [-1, 1] with tintSub). */
+	private final float[] tintRectNow = new float[4];
+	/** M3.3 mcopt.shade.tintSub: this frame's tint pass draws only the rectangle (tintSubMatrix), ssr.w = 2. */
+	private boolean tintSubNow;
+
+	/** Fills tintRectNow from the listed casters' boxes; false when none of them reaches the near cascade. */
+	private boolean tintRect() {
 		float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
 		float[] m = this.matrices;
-		float ex = 8f * (Math.abs(m[0]) + Math.abs(m[4]) + Math.abs(m[8])), ey = 8f * (Math.abs(m[1]) + Math.abs(m[5]) + Math.abs(m[9]));
 		int[] b = this.casters.tintBoxes;
-		for (int i = 0; any && i < this.casters.tintCount; i++) {
-			float px = (float) (b[i * 3] + 8 - this.camX), py = (float) (b[i * 3 + 1] + 8 - this.camY), pz = (float) (b[i * 3 + 2] + 8 - this.camZ);
+		for (int i = 0; i < this.casters.tintCount; i++) {
+			int o = i * 6; // world block box, max exclusive (a section's 16^3, or M3.3's tight box of its translucent blocks)
+			float hx = (b[o + 3] - b[o]) * 0.5f, hy = (b[o + 4] - b[o + 1]) * 0.5f, hz = (b[o + 5] - b[o + 2]) * 0.5f;
+			float px = (float) (b[o] + hx - this.camX), py = (float) (b[o + 1] + hy - this.camY), pz = (float) (b[o + 2] + hz - this.camZ);
 			float cx = m[0] * px + m[4] * py + m[8] * pz + m[12], cy = m[1] * px + m[5] * py + m[9] * pz + m[13];
-			x0 = Math.min(x0, cx - ex);
-			x1 = Math.max(x1, cx + ex);
-			y0 = Math.min(y0, cy - ey);
-			y1 = Math.max(y1, cy + ey);
+			float bx = hx * Math.abs(m[0]) + hy * Math.abs(m[4]) + hz * Math.abs(m[8]), by = hx * Math.abs(m[1]) + hy * Math.abs(m[5]) + hz * Math.abs(m[9]);
+			x0 = Math.min(x0, cx - bx);
+			x1 = Math.max(x1, cx + bx);
+			y0 = Math.min(y0, cy - by);
+			y1 = Math.max(y1, cy + by);
 		}
-		float pad = 8f / Math.max(mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES, 1);
-		boolean on = any && this.casters.tintCount > 0 && x0 - pad < 1f && x1 + pad > -1f && y0 - pad < 1f && y1 + pad > -1f;
-		mcopt.metal.shade.ShadeBindings.setShadowTint(on, x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+		float pad = 8f / Math.max(this.tintRes, 1);
+		float[] r = this.tintRectNow;
+		r[0] = x0 - pad;
+		r[1] = y0 - pad;
+		r[2] = x1 + pad;
+		r[3] = y1 + pad;
+		if (this.tintSubNow) { // receivers only look up inside the cascade's square: the drawn rectangle needs no more
+			r[0] = Math.max(r[0], -1f);
+			r[1] = Math.max(r[1], -1f);
+			r[2] = Math.min(r[2], 1f);
+			r[3] = Math.min(r[3], 1f);
+		}
+		return this.casters.tintCount > 0 && r[0] < 1f && r[2] > -1f && r[1] < 1f && r[3] > -1f && r[0] < r[2] && r[1] < r[3];
+	}
+
+	/**
+	 * M3.3 mcopt.shade.tintSub: cascade 0's matrix (at cascadeData) made to draw only the tint rectangle into the top-left
+	 * areaW x areaH texels of the map, at the same texel size as the whole map (texel column (c.x - x0) res / 2, row
+	 * (y1 - c.y) res / 2; weather_surface.metal reads it back that way when ssr.w = 2). Returns {areaW, areaH}.
+	 */
+	private int[] tintSubMatrix(long cascadeData, int res) {
+		float[] r = this.tintRectNow;
+		int w = Math.min(res, (int) Math.ceil(0.5 * (r[2] - r[0]) * res) + 2), h = Math.min(res, (int) Math.ceil(0.5 * (r[3] - r[1]) * res) + 2);
+		float sx = (float) res / w, sy = (float) res / h;
+		// clip x'' = sx (c.x - x0) - 1, y'' = 1 - sy (y1 - c.y): row x and row y of the column-major matrix scaled and shifted
+		for (int col = 0; col < 4; col++) {
+			long ax = cascadeData + (col * 4L) * 4L, ay = ax + 4;
+			MemoryUtil.memPutFloat(ax, sx * MemoryUtil.memGetFloat(ax));
+			MemoryUtil.memPutFloat(ay, sy * MemoryUtil.memGetFloat(ay));
+		}
+		long tx = cascadeData + 12 * 4L, ty = cascadeData + 13 * 4L;
+		MemoryUtil.memPutFloat(tx, MemoryUtil.memGetFloat(tx) - sx * r[0] - 1f);
+		MemoryUtil.memPutFloat(ty, MemoryUtil.memGetFloat(ty) + 1f - sy * r[3]);
+		return new int[] {w, h};
 	}
 
 	private void render() {
@@ -362,19 +456,44 @@ public final class ShadowPass {
 			return;
 		}
 		if (this.shadow == 0) this.create(MetalBridge.ctx(encoder));
+		if (this.farMode >= 2 && !this.spreadReady) { // M3.3: the back map, made on first use
+			if (ShadowNative.spreadInit(this.shadow) == 0) {
+				this.spreadReady = true;
+				System.out.println(String.format("[mcopt] shade: far cascade spread over %d frames (second map %.0f MB)", ShadowConfig.FAR_EVERY,
+					CASCADES * (ShadowConfig.DEPTH_BITS / 8.0) * ShadowConfig.RES * ShadowConfig.RES / (1 << 20)));
+			} else {
+				this.spreadFailed = true; // keep M3.2's way: the bound far map stays as it is this frame
+				System.out.println("[mcopt] shade: far cascade spread off: no memory for the second map");
+				this.farMode = 0;
+				this.draw[1] = false;
+				this.backPart = -1;
+			}
+		}
+		this.timing = ShadowConfig.times() && ShadowNative.timesFrame(this.shadow, this.frames) == 0;
 		if (this.draw[0]) EntityCasters.prepareCast(this.frames, this.camX, this.camY, this.camZ); // M3: last frame's entities, onto this camera
 		int faceMask = ShadowCasters.faceMask(this.light, ShadowConfig.ALL_FACES);
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
 		// SHADE_DEV_WX_NO_TINT (16384, mcopt.shade.dev, read per frame): skip the tint pass too, to price coloured shadows in one session
 		// in heavy rain on performance/balanced (ShadeWeather.tintHidden) the receivers' tint has faded out: no pass either
 		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0 && !mcopt.metal.shade.weather.ShadeWeather.tintHidden();
-		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint,
+		int tintDev = ShadowConfig.tintDev();
+		this.casters.tintTight = ShadowConfig.tintTight();
+		// M3.3 far spread: this frame's far casters are one part of them, cast into the back map's fit (mode 2) or the bound one's
+		this.casters.farPart = this.farMode >= 2 ? this.farPartNow : -1;
+		this.casters.farParts = ShadowConfig.FAR_EVERY;
+		this.castCascades[0] = this.cascades[0];
+		this.castCascades[1] = this.farMode == 2 ? this.farBack : this.cascades[1];
+		boolean built = this.casters.build(this.castCascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint,
 			mcopt.metal.shade.water.ShadeWater.ON);
 		if (ShadowConfig.STATS) this.statBuildNanos += System.nanoTime() - t0;
 		if (!built) {
 			this.problem(this.casters.problem);
 			this.unrendered();
 			return;
+		}
+		if (this.farMode == 3) { // the back map gets its last part this frame and is what receivers read from now on
+			ShadowNative.swap(this.shadow);
+			this.texture = ShadowNative.texture(this.shadow);
 		}
 		// Sodium geometry copies MetalTerrain holds back for its split must land before these passes read the arenas.
 		MetalBridge.flushHeldTerrainCopies(encoder);
@@ -411,14 +530,20 @@ public final class ShadowPass {
 					first += l.count;
 					if (translucent) nTint++; else n++;
 				}
-				ShadowCascade cascade = this.cascades[c];
+				ShadowCascade cascade = this.castCascades[c];
 				long cascadeData = stack.ncalloc(16, CASCADE_BYTES, 1);
-				for (int i = 0; i < 16; i++) MemoryUtil.memPutFloat(cascadeData + i * 4L, this.matrices[c * 16 + i]);
+				// M3.3: a part of the back map is drawn with the back map's fit (receivers still read the bound one this frame)
+				boolean back = c == 1 && this.farMode == 2;
+				for (int i = 0; i < 16; i++) MemoryUtil.memPutFloat(cascadeData + i * 4L, back ? this.backMatrix[i] : this.matrices[c * 16 + i]);
 				float depthPerTexel = (float) (cascade.texelWorld() / cascade.depthRange());
 				MemoryUtil.memPutFloat(cascadeData + 64, ShadowConfig.BIAS_TEXELS * depthPerTexel);
 				// slope-scaled raster bias, negative: reversed Z pushes casters away from the light by lowering depth
-				int gpuEncoder = ShadowNative.render(enc, this.shadow, c, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
-					regions.slice().offset(), draws, n, atlas, -ShadowConfig.BIAS_SLOPE, -8f * depthPerTexel);
+				// M3.3: far parts go into the back map (mode 2) or, the last one, into the just-swapped bound map (mode 3); every part after the
+				// first keeps what the slice holds
+				int load = c == 1 && this.farMode >= 2 && this.farPartNow > 0 ? 1 : 0;
+				int timer = !this.timing ? -1 : c == 0 ? 0 : this.farMode == 1 ? 1 : 2;
+				int gpuEncoder = ShadowNative.renderEx(enc, this.shadow, c, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
+					regions.slice().offset(), draws, n, atlas, -ShadowConfig.BIAS_SLOPE, -8f * depthPerTexel, back ? 1 : 0, load, timer);
 				if (c == 0 && tint) {
 					// M3 coloured shadows: the near cascade's translucent casters into the tint map (unbiased matrix: receivers compare their own depth)
 					MemoryUtil.memPutFloat(cascadeData + 64, 0f);
@@ -428,10 +553,20 @@ public final class ShadowPass {
 					// mode.x = 1: leave water out (the water module absorbs the light on its way down to the floor itself)
 					MemoryUtil.memPutFloat(params + 32, mcopt.metal.shade.water.ShadeWater.ON ? 1f : 0f);
 					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
-					ShadowNative.tintRender(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle, regions.slice().offset(),
-						tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES);
-					this.publishTint(nTint > 0);
-					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, this.tintMap);
+					// M3.3 pricing (mcopt.shade.tintDev, per frame): 8 = a 512^2 map, 2 = no pass (the last map is looked up), 1 = no lookup
+					boolean lite = (tintDev & 8) != 0;
+					if (lite && this.tintLite == 0) this.tintLite = ShadowNative.tintLiteInit(this.shadow, 512);
+					lite &= this.tintLite != 0;
+					this.tintRes = lite ? 512 : mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES;
+					// M3.3 mcopt.shade.tintSub: draw (clear, store) only the casters' rectangle, at the map's texel size, in its top-left corner
+					this.tintSubNow = ShadowConfig.tintSub() && nTint > 0 && (tintDev & 2) == 0;
+					int[] area = this.tintSubNow && this.tintRect() ? this.tintSubMatrix(cascadeData, this.tintRes) : new int[2];
+					if ((tintDev & 2) == 0) {
+						ShadowNative.tintRenderEx(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
+							regions.slice().offset(), tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES, lite ? 1 : 0, this.timing ? 3 : -1, area[0], area[1]);
+					}
+					this.publishTint(nTint > 0 && (tintDev & 1) == 0);
+					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, lite ? this.tintLite : this.tintMap);
 				}
 				if (tracing) {
 					System.out.println(String.format("[mcopt] shade trace: shadow cascade %d: %d sections, %d quads, %d chunks in %d draws%s", c, this.casters.sections[c],
@@ -445,15 +580,28 @@ public final class ShadowPass {
 				}
 			}
 		}
-		if (this.draw[1]) {
-			this.framesSinceFar = 0;
-			this.farLightKey = this.lightKey;
-		} else {
-			this.framesSinceFar++;
+		switch (this.farMode) {
+			case 1 -> { // whole (M3.2's redraw, or a jump in spread mode)
+				this.framesSinceFar = 0;
+				this.farLightKey = this.lightKey;
+				this.statWhole++;
+			}
+			case 2 -> { // one part of the back map
+				this.backPart++;
+				this.framesSinceFar++;
+			}
+			case 3 -> { // the back map is complete and bound: the next frame starts the next one
+				this.backPart = -1;
+				this.framesSinceFar = 0;
+				this.farLightKey = this.backLightKey;
+				this.statSwaps++;
+			}
+			default -> this.framesSinceFar++;
 		}
 		this.renderOk = true;
 		this.draw[0] = this.draw[1] = false;
 		if (ShadowConfig.STATS) this.stats();
+		if (this.timing || this.timesPrinted != 0) this.times();
 		if (this.lastProblem != null) {
 			System.out.println("[mcopt] shade: shadow pass running again");
 			this.lastProblem = null;
@@ -471,15 +619,36 @@ public final class ShadowPass {
 		this.statFrames++;
 		if (now - this.statStart < 5_000_000_000L) return;
 		System.out.println(String.format("[mcopt] shade stats: %d frames; near drawn %d x, avg %d sections / %d quads; far drawn %d x, avg %d sections / %d quads; "
-			+ "caster listing %.3f ms/frame CPU; casters: %s", this.statFrames, this.statDraws[0], this.statSections[0] / Math.max(1, this.statDraws[0]),
+			+ "caster listing %.3f ms/frame CPU; casters: %s; far spread %s (%d swaps, %d whole); tint boxes %d (tight %s, %d scans)", this.statFrames,
+			this.statDraws[0], this.statSections[0] / Math.max(1, this.statDraws[0]),
 			this.statQuads[0] / Math.max(1, this.statDraws[0]), this.statDraws[1], this.statSections[1] / Math.max(1, this.statDraws[1]),
-			this.statQuads[1] / Math.max(1, this.statDraws[1]), this.statBuildNanos / 1e6 / this.statFrames, ShadowConfig.CULL_LIGHT ? "light" : "camera"));
+			this.statQuads[1] / Math.max(1, this.statDraws[1]), this.statBuildNanos / 1e6 / this.statFrames, ShadowConfig.CULL_LIGHT ? "light" : "camera",
+			ShadowConfig.farSpread(), this.statSwaps, this.statWhole, this.casters.tintCount, this.casters.tintTight, this.casters.tightScans));
+		this.statSwaps = this.statWhole = 0;
 		java.util.Arrays.fill(this.statQuads, 0);
 		java.util.Arrays.fill(this.statSections, 0);
 		java.util.Arrays.fill(this.statDraws, 0);
 		this.statBuildNanos = 0;
 		this.statFrames = 0;
 		this.statStart = now;
+	}
+
+	/** M3.3 mcopt.shade.shadowTimes: the shadow passes' GPU timers every ~2 s (ms per run, runs). */
+	private void times() {
+		long now = System.nanoTime();
+		if (this.timesPrinted == 0) {
+			this.timesPrinted = now;
+			return;
+		}
+		if (now - this.timesPrinted < 2_000_000_000L) return;
+		this.timesPrinted = this.timing ? now : 0;
+		ShadowNative.times(this.shadow, this.timesOut);
+		float[] t = new float[9];
+		for (int i = 0; i < 9; i++) t[i] = MemoryUtil.memGetFloat(this.timesOut + i * 4L);
+		System.out.println(String.format(java.util.Locale.ROOT,
+			"[mcopt] shade: shadow gpu ms near %.3f (%d) far %.3f (%d) farPart %.3f (%d) tint %.3f (%d), %d frames; spread %s, tintTight %s, tintSub %s, tintDev %d",
+			t[0], (int) t[4], t[1], (int) t[5], t[2], (int) t[6], t[3], (int) t[7], (int) t[8], ShadowConfig.farSpread(), ShadowConfig.tintTight(),
+			ShadowConfig.tintSub(), ShadowConfig.tintDev()));
 	}
 
 	private void problem(@Nullable String why) {

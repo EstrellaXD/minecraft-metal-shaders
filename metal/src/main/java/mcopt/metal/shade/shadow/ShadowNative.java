@@ -33,6 +33,16 @@ final class ShadowNative {
 	private static final MethodHandle TINT_TEXTURE = fn("mc_shadow_tint_texture", JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle TINT_RENDER = fn("mc_shadow_tint_render", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
 		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT);
+	// M3.3: far cascade spread (second map, swap), the shadow passes' GPU timers, the lite tint map
+	private static final MethodHandle RENDER_EX = fn("mc_shadow_render_ex", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
+		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT, JAVA_INT, JAVA_INT);
+	private static final MethodHandle SPREAD_INIT = fn("mc_shadow_spread_init", JAVA_INT, JAVA_LONG);
+	private static final MethodHandle SWAP = fn("mc_shadow_swap", null, JAVA_LONG);
+	private static final MethodHandle TIMES_FRAME = fn("mc_shadow_times_frame", JAVA_INT, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle TIMES = fn("mc_shadow_times", null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle TINT_LITE_INIT = fn("mc_shadow_tint_lite_init", JAVA_LONG, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle TINT_RENDER_EX = fn("mc_shadow_tint_render_ex", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
+		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
 	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 
 	private ShadowNative() {
@@ -171,6 +181,75 @@ final class ShadowNative {
 		try {
 			return (int) TINT_RENDER.invokeExact(enc, shadow, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params,
 				paramBytes);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/**
+	 * M3.3: render with a target (0 the bound map, 1 the back map), load (1 keep the slice's content) and a GPU timer kind
+	 * (-1 none; 0 near, 1 far whole, 2 far part).
+	 */
+	static int renderEx(long enc, long shadow, int layer, long cascade, int cascadeBytes, long chunks, long chunksOffset, long regions, long regionsOffset,
+		long draws, int drawCount, long atlas, float slopeScale, float clamp, int target, int load, int timerKind) {
+		try {
+			return (int) RENDER_EX.invokeExact(enc, shadow, layer, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas,
+				slopeScale, clamp, target, load, timerKind);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** M3.3: makes the back map (0 ready, 1 failed). */
+	static int spreadInit(long shadow) {
+		try {
+			return (int) SPREAD_INIT.invokeExact(shadow);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** M3.3: the back map becomes the bound one (texture() changes). */
+	static void swap(long shadow) {
+		try {
+			SWAP.invokeExact(shadow);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** M3.3: starts a timed frame (0), or 1 when the GPU can't time passes. */
+	static int timesFrame(long shadow, long frame) {
+		try {
+			return (int) TIMES_FRAME.invokeExact(shadow, frame);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** M3.3: the timers since the last call into out (9 floats: ms per run x4, runs x4, frames read back). */
+	static void times(long shadow, long out) {
+		try {
+			TIMES.invokeExact(shadow, out);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** M3.3: the lite tint map (made on first call), 0 when it can't be made. */
+	static long tintLiteInit(long shadow, int resolution) {
+		try {
+			return (long) TINT_LITE_INIT.invokeExact(shadow, resolution);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static int tintRenderEx(long enc, long shadow, long cascade, int cascadeBytes, long chunks, long chunksOffset, long regions, long regionsOffset, long draws,
+		int drawCount, long atlas, long params, int paramBytes, int lite, int timerKind, int areaW, int areaH) {
+		try {
+			return (int) TINT_RENDER_EX.invokeExact(enc, shadow, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params,
+				paramBytes, lite, timerKind, areaW, areaH);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

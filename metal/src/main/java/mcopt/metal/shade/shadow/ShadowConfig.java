@@ -30,6 +30,22 @@ package mcopt.metal.shade.shadow;
  * left out; {@code test} alpha-tests them as the near cascade always does.</li>
  * <li>{@code mcopt.shade.shadowStats} (false): every ~5 s, print what each cascade drew and the CPU time spent listing it.</li>
  * <li>{@code mcopt.shade.debug} (0): 1 overlays both cascades in the top-right corner of the screen.</li>
+ * <li>M3.3, read every frame (so mcbench can switch them inside one session):
+ * <ul>
+ * <li>{@code mcopt.shade.shadowFarSpread} (true): the far cascade's redraw is spread over its {@code shadowFarEvery} frames:
+ * one part of its casters per frame into a second map, all parts with one fitted cascade (no seams, no swimming), which
+ * then becomes the map receivers read. false = M3.2: the whole far cascade every 4th frame (a 0.3-0.5 ms GPU spike on
+ * that frame). +16 MB (2048, Depth32) for the second map, made on first use.</li>
+ * <li>{@code mcopt.shade.shadowTimes} (false): GPU timers on the shadow passes, logged every ~2 s.</li>
+ * <li>{@code mcopt.shade.tintTight} (true): the coloured shadows' rectangle (receivers outside it skip the tint lookup) from
+ * the translucent blocks themselves instead of their whole 16^3 sections. false = M3.2.</li>
+ * <li>{@code mcopt.shade.tintSub} (true): the tint pass clears, draws and stores only the casters' rectangle (at the map's
+ * texel size, in its top-left corner; receivers map their position into it, ssr.w = 2), not the whole near cascade.
+ * false = M3.2.</li>
+ * <li>{@code mcopt.shade.tintDev} (0): coloured-shadow pricing bits: 1 no lookup (pass kept), 2 no pass (lookup of the last
+ * map kept), 8 a 512^2 map.</li>
+ * </ul>
+ * </li>
  * </ul>
  */
 public final class ShadowConfig {
@@ -52,6 +68,30 @@ public final class ShadowConfig {
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 	public static final boolean FAR_CUTOUT_OPAQUE = !"test".equals(System.getProperty("mcopt.shade.shadowFarCutout", "opaque"));
 	public static final boolean STATS = Boolean.getBoolean("mcopt.shade.shadowStats");
+
+	/** M3.3 defaults of the per-frame switches (see the class comment). */
+	static final String FAR_SPREAD_DEFAULT = "true", TINT_TIGHT_DEFAULT = "true", TINT_SUB_DEFAULT = "true";
+
+	static boolean farSpread() {
+		return !"false".equals(System.getProperty("mcopt.shade.shadowFarSpread", FAR_SPREAD_DEFAULT));
+	}
+
+	static boolean times() {
+		return Boolean.getBoolean("mcopt.shade.shadowTimes");
+	}
+
+	static boolean tintTight() {
+		return !"false".equals(System.getProperty("mcopt.shade.tintTight", TINT_TIGHT_DEFAULT));
+	}
+
+	/** M3.3 mcopt.shade.tintSub (true): the tint pass clears, draws and stores only the casters' rectangle. false = M3.2. */
+	static boolean tintSub() {
+		return !"false".equals(System.getProperty("mcopt.shade.tintSub", TINT_SUB_DEFAULT));
+	}
+
+	static int tintDev() {
+		return Integer.getInteger("mcopt.shade.tintDev", 0);
+	}
 
 	private static float floatProp(String key, float fallback) {
 		String v = System.getProperty(key);

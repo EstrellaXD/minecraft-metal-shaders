@@ -474,7 +474,10 @@ static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, constant
 	if (any(c.xy < L.tintRect.xy) || any(c.xy > L.tintRect.zw)) return half3(1.0h);
 	float m = max(abs(c.x), abs(c.y));
 	if (m >= 1.0 || c.z <= 0.0 || c.z >= 1.0) return half3(1.0h);
-	half4 t = tint.sample(shadeWxLinear, shadeShadowUV(c.xyz), level(0.0));
+	// M3.3 (ssr.w = 2, mcopt.shade.tintSub): the tint pass drew only the casters' rectangle, its top-left corner at texel (0, 0)
+	// and at the near cascade's texel size (ShadowPass.tintSubMatrix); 1 = M3.2: the map spans the whole near cascade
+	float2 tuv = L.ssr.w > 1.5 ? float2(0.5 * (c.x - L.tintRect.x), 0.5 * (L.tintRect.w - c.y)) : shadeShadowUV(c.xyz);
+	half4 t = tint.sample(shadeWxLinear, tuv, level(0.0));
 	float zBlocks = 1.0 / max(length(float3(f.shadowViewProj[0][0][2], f.shadowViewProj[0][1][2], f.shadowViewProj[0][2][2])), 1e-6);
 	float gate = saturate(((float(t.a) - c.z) * zBlocks - 0.25) * 4.0) * (1.0 - smoothstep(0.85, 1.0, m));
 	// coloured light keeps part of its brightness (a red pane lights the floor red, not dark brown): luminance pulled halfway

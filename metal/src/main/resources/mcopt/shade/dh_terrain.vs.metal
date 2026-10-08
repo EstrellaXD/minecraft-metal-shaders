@@ -41,12 +41,14 @@ struct DhOut {
 	float3 cell [[user(locn1)]];       // position in the buffer's block grid: the texture tile's coordinates
 	half4 color [[user(locn2)]];       // block colour (sRGB)
 	half2 light [[user(locn3), flat]]; // x block light, y sky light, 0..1
+	half3 lightmap [[user(locn6), flat]]; // the game's lightmap at those levels: the look where the shade model does not light
 	uint face [[user(locn4), flat]];
 	uint tile [[user(locn5), flat]];
 };
 
 vertex DhOut main0(DhIn in [[stage_in]], constant DhShared &u [[buffer(MCOPT_SLOT_vertSharedUniformBlock)]],
-                   constant DhUnique &m [[buffer(MCOPT_SLOT_vertUniqueUniformBlock)]], constant ShadeFrame &sf [[buffer(16)]]) {
+                   constant DhUnique &m [[buffer(MCOPT_SLOT_vertUniqueUniformBlock)]], constant ShadeFrame &sf [[buffer(16)]],
+                   texture2d<float> lightMap [[texture(MCOPT_SLOT_uLightMap)]], sampler lightMapSmplr [[sampler(MCOPT_SLOT_uLightMap)]]) {
 	DhOut o;
 	float3 cell = float3(in.position);
 	float3 p = cell + (m.modelOffset - u.cameraPos);
@@ -81,6 +83,8 @@ vertex DhOut main0(DhIn in [[stage_in]], constant DhShared &u [[buffer(MCOPT_SLO
 #else
 	o.light = half2(half(l >> 4), half(l & 15u)) / 15.0h;
 #endif
+	// (u = block light, v = sky light, texel centres; Nether / End without the dims module, the setup fallback)
+	o.lightmap = half3(lightMap.sample(lightMapSmplr, (float2(o.light) * 15.0 + 0.5) / 16.0, level(0.0)).rgb);
 	o.face = in.face;
 	o.tile = in.tile;
 	return o;

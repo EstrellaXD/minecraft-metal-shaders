@@ -26,6 +26,7 @@ struct DhIn {
 	float3 cell [[user(locn1)]];
 	half4 color [[user(locn2)]];
 	half2 light [[user(locn3), flat]];
+	half3 lightmap [[user(locn6), flat]];
 	uint face [[user(locn4), flat]];
 	uint tile [[user(locn5), flat]];
 };
@@ -79,6 +80,13 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		float4 t = atlas.sample(atlasSmplr, (cellOrigin + dhTileUv(in.cell, in.face) * 16.0) / float2(atlas.get_width(), atlas.get_height()));
 		srgb = mix(srgb, saturate(srgb * half3(t.rgb) * 2.0h), half(t.a));
 	}
+	// not lit by the shade model (Nether / End without the dims module's light, the setup fallback's vanilla frames): the
+	// game's lightmap, as DH draws it, and the game's fog colour over the environmental range
+	if (sf.flags.x > SHADE_DIM_END || (sf.flags.x != SHADE_DIM_OVERWORLD && !shadeDimsLit(sf))) {
+		float3 v = float3(srgb * in.lightmap);
+		float fa = saturate((d - sf.fogRange.x) / max(sf.fogRange.y - sf.fogRange.x, 1.0)) * sf.fogColor.a;
+		return float4(mix(v, sf.fogColor.rgb, fa), in.color.a);
+	}
 	half3 n = dhNormal(in.face);
 	half block = in.light.x, sky = in.light.y;
 	half3 albedo = shadeToLinear(srgb);
@@ -86,9 +94,9 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 	float ex = max(sg.exposure.x, 1e-6);
 	float3 radiance;
 	if (!overworld) {
-		// Nether / End: the dimension's own light (shade_dims.metal), as Sodium's terrain without sky light
+		// Nether / End with the dims module: the dimension's own light (shade_dims.metal), as Sodium's terrain without sky light
 		radiance = shadeLit2(albedo, n, half(0.0), block, half(0.0), false, false, sf, sl);
-		if (shadeDimsLit(sf)) radiance += shadeLitDimsExtra(albedo, n, half(1.0), false, false, p, sf, sl);
+		radiance += shadeLitDimsExtra(albedo, n, half(1.0), false, false, p, sf, sl);
 	} else {
 		// no terrain shadow map out here: direct light where the sky is open (shadeLit2 gates it by sky light), dimmed by
 		// the volumetric clouds' shadow

@@ -253,6 +253,7 @@ public final class BenchDriver {
 			WeatherShots.plan(steps); // opt-in -Dmcbench.weather=true|rain,sunset,night,water,storm,glass
 			LightShots.plan(steps); // opt-in -Dmcbench.dynLights=true|field,mobs,perf,cave,walk,nether (M3 dynamic lights)
 			DimShots.plan(steps); // opt-in -Dmcbench.dims=true|nether,end,aurora,lava,snow (M3 sky/dimensions)
+			UiShots.plan(steps); // opt-in -Dmcbench.ui=true (M3.1: the pause menu's resolution button)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)

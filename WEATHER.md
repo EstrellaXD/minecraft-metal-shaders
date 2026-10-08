@@ -5,13 +5,13 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 20:05)
+## Status (2026-10-07 20:14)
 
 **Done (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only
 where Fresnel shows it; terrain skips the coloured-shadow lookup when no translucent casters are near; rough films skip
 the sky lookup; balanced uses one raindrop grid and 12 reflection steps; puddle cover back to ~31 % (the 256-block lattice
 changed the pattern; the swell seed puts puddles in the bench view); dev bits and mcbench price phases for every part; a
-module-off baseline. Prices, on/off, looks and runs are in **Results** below. Screenshots:
+module-off baseline; a DH sanity run (wx18) is clean. Prices, on/off, looks and runs are in **Results** below. Screenshots:
 `work/release/M3-weather-screenshots/` (`final_*` = build ccaad51).
 
 **Next:** the budget is not met at balanced in heavy rain (~0.9 ms vs 0.5; see Results for the options); coloured shadows cost 0.19 ms near glass (wx17: limit the lookup to the casters' light-space rectangle); puddle edges in motion (video) not checked yet;
@@ -203,3 +203,4 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 | `20261007-193854-wx15-price` | ccaad51 | final balanced prices again (price + glass, no shots) |
 | `20261007-194245-wx16-off-price` | ccaad51 | `mcopt.shade.weather=false`, price + glass |
 | `20261007-195738-wx17-price` | ccaad51 | warm-up + dry A/B/A bracket of the coloured shadows (mcbench 6a2531f); cleanest session |
+| `20261007-201040-wx18-dh-sanity` | ccaad51 | DH sanity (mcopt DEV-DH + Distant Horizons 3.3.4): glass, rain, wet sunset shots render, no errors in the log |

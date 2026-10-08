@@ -239,8 +239,10 @@ static float3 shadeHazeInscatter(float3 p, constant ShadeFrame &f, constant Shad
 // haze and mist, then a chunk-shaped border fog into the sky's horizon (vanilla render distance only: when another mod
 // moves vanilla's fog away, e.g. Distant Horizons, fogMisc.z is 0 and M1's vanilla fog distance stays). vanillaFog: M1's
 // fog amount (environmental and render distance and the chunk fade-in); chunkFade: 1 - the chunk's fade-in alone.
+// M3: R (ShadeResources, may be nullptr): the sky behind includes the volumetric clouds there (distant terrain melts into the
+// cloudy sky the sky pass drew, not into a clear one).
 static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float chunkFade, texture2d<half> lut, sampler s,
-                           constant ShadeFrame &f, constant ShadeLook &L) {
+                           constant ShadeFrame &f, constant ShadeLook &L, constant ShadeResources *R = nullptr) {
 	if (!shadeFeature(L, SHADE_FEATURE_HAZE)) return shadeFogAir(radiance, p, vanillaFog, lut, s, f);
 	float d = length(p);
 	float3 v = p / max(d, 1e-4);
@@ -248,7 +250,23 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	float ap = (1.0 - exp(-d * f.fogSky.z)) * f.fogSky.w * (1.0 - f.fogColor.a);
 	float3 skyBehind = float3(0.0);
 	bool needSky = ap > 0.002 || L.fogMisc.z > 0.0;
-	if (needSky) skyBehind = shadeSkyLookup(float3(v.x, max(v.y, 0.0), v.z), lut, s, f);
+	if (needSky) {
+		float3 vs = float3(v.x, max(v.y, 0.0), v.z);
+		skyBehind = shadeSkyLookup(vs, lut, s, f);
+		if (R != nullptr && L.clouds0.w > 0.5) {
+			// the clouds the sky pass drew in this pixel's own direction v, not in the clamped one: below the horizon vs is the
+			// horizon at the same azimuth, so every pixel of land and sea under a horizon cloud (or gap) took that cloud's value
+			// = thin vertical streaks across the sea and bright columns over the far terrain at sunset (Gael, 2026-10-07).
+			// Below the horizon, from under the layer, the march has faded the clouds into the horizon haze already (nothing
+			// there to streak); from inside or above the layer the clouds below the horizon are in front of the terrain
+			// (cloud_over composites them), not behind it: none here.
+			float wc = v.y >= 0.0 ? 1.0 : smoothstep(0.0, 24.0, L.clouds0.x);
+			if (wc > 0.0) {
+				float4 cl = shadeCloudsScreen(v, L, R->cloudScreen);
+				skyBehind = skyBehind * mix(1.0, cl.a, wc) + cl.rgb * wc;
+			}
+		}
+	}
 	if (ap > 0.002) radiance = mix(radiance, skyBehind, ap * 0.6);
 #ifndef MCOPT_HDR
 	// (in the HDR target the final pass applies the haze once per pixel, from depth: no cost per overdrawn fragment)

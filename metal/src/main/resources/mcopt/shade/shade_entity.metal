@@ -96,6 +96,10 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 		radiance = shadeLitDims(albedo, hn, block, shadow, thin, false, p, f, L);
 	} else {
 		shadow = sky <= 0.3h ? half(1.0) : shadeShadow(shadowMap, cmp, f, p, hn, thin);
+#ifndef MCOPT_HAND
+		// M3 clouds: the volumetric clouds' shadow on mobs like on the terrain (1 when the clouds are off; not the hand: hand-space p)
+		if (sky > 0.3h) shadow *= half(shadeCloudShadow(p, L, R.cloudShadow));
+#endif
 		radiance = shadeLit2(albedo, hn, sky, block, shadow, thin, false, f, L);
 	}
 	int dynKind = kind == SHADE_ENT_PARTICLE ? SHADE_DYN_PARTICLE : kind == SHADE_ENT_HAND ? SHADE_DYN_HAND : SHADE_DYN_ENTITY;
@@ -110,7 +114,7 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 	float vanillaFog = 0.0; // the hand gets no fog
 #else
 	float vanillaFog = shadeVanillaFog(p, fog.xy, fog.zw);
-	if (!dimsLit) radiance = shadeFogAir2(radiance, p, vanillaFog, 0.0, lut, lutS, f, L); // Nether/End: the final pass fogs
+	if (!dimsLit) radiance = shadeFogAir2(radiance, p, vanillaFog, 0.0, lut, lutS, f, L, &R); // (with the clouds' aerial view) Nether/End: the final pass fogs
 #endif
 	float3 rgb = shadeFinish2(radiance, vanillaFog, f, L, ex);
 	if (debug == 2) rgb = shadeVanillaOut(n * 0.5 + 0.5, L);

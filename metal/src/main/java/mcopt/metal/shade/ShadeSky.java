@@ -209,6 +209,16 @@ public final class ShadeSky {
 		for (int k = 0; k < 3; k++) out[k] = (float) Math.exp(-(BETA_R[k] + BETA_O[k]) * cR - BETA_M_EXT * mie * cM);
 	}
 
+	/**
+	 * Transmittance of the atmosphere toward a light at cosine mu to the vertical, seen from altitudeKm above the camera's
+	 * reference altitude (M3 clouds: the light their layer gets, which stays warm and bright after the ground's has faded).
+	 */
+	public static void transmittanceAbove(float altitudeKm, float mu, float mie, float[] out) {
+		float r = R_GROUND + ALTITUDE + Math.max(altitudeKm, 0f);
+		float cR = column(r, mu, H_R), cM = column(r, mu, H_M);
+		for (int k = 0; k < 3; k++) out[k] = (float) Math.exp(-(BETA_R[k] + BETA_O[k]) * cR - BETA_M_EXT * mie * cM);
+	}
+
 	/** What the frame's light and fog get from the atmosphere; see ShadeFrame for where each lands. */
 	public static final class Result {
 		public final float[] lightDir = new float[3];

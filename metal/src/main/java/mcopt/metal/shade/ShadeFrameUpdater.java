@@ -265,6 +265,10 @@ public final class ShadeFrameUpdater {
 		if (mcopt.metal.shade.dims.ShadeXdr.active()) mcopt.metal.shade.dims.ShadeXdr.frame(Math.min(dt, 0.25f));
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
+		// M3 clouds: shadow map, march, resolve and reflection dome before the sky pass composites them (needs the LUT)
+		if (mcopt.metal.shade.clouds.ShadeClouds.ON && ShadeConfig.HDR && !ShadeBindings.fallback()) {
+			mcopt.metal.shade.clouds.ShadeClouds.update(ShadeBindings.ctx(), enc, f, ShadeBindings.currentLook());
+		}
 		// M3 dynamic lights: this frame's lights into their ring slot, occupancy refresh, visibility volumes (before the world)
 		if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.frame(ShadeBindings.ctx(), enc, camera, level, partial);
 		if (mcopt.metal.shade.water.ShadeWater.ON) mcopt.metal.shade.water.ShadeWater.bake(ShadeBindings.ctx(), enc);

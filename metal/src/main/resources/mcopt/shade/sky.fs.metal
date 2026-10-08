@@ -23,6 +23,11 @@ static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSm
 	float3 sky = shadeSkyRadiance2(dir, skyLut, skyLutSmplr, sf, sl, sr.milkyWay, pixelAngle);
 	// M3 aurora (shade_dims.metal; ShadeLook.night.z, 0 unless it shows tonight): emission over the night sky
 	if (sl.night.z > 0.002) sky += shadeAurora(dir, sf, sl, sr.milkyWay, pixel);
+#ifdef MCOPT_HDR
+	// M3 volumetric clouds (shade_clouds.metal): in front of the sky, sun, moon and stars, behind everything the world draws
+	float4 clouds = shadeCloudsScreen(dir, sl, sr.cloudScreen);
+	sky = sky * clouds.a + clouds.rgb;
+#endif
 	float vanillaSky = dir.y <= 0.0 ? 1.0 : saturate(min(16.0 / max(dir.y, 1e-3), 512.0) / max(sf.fogSky.x, 1.0));
 	return shadeFinish2(sky, vanillaSky, sf, sl, ex);
 }

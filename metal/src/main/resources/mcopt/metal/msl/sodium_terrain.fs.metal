@@ -178,6 +178,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half shadow = (in.v_Light.y <= 0.3h && !endLit) || sf.flags.x == SHADE_DIM_NETHER ? half(1.0)
         : waterFull ? shadeShadow(shadowMap, shadowCompare, sf, p, n, false)
         : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
+#ifdef MCOPT_HDR
+    // M3: the volumetric clouds' shadows (shade_clouds.metal; 1 when they are off); overworld only
+    if (!dims && in.v_Light.y > 0.3h) shadow *= half(shadeCloudShadow(p, sl, sr.cloudShadow));
+#endif
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
@@ -233,11 +237,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.prevExposure = 0.0;
         wi.look = nullptr;
 #endif
+        wi.res = &sr;
         wi.fog = sf.flags2.y != 0 ? shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6) : float3(0.0); // only read from below
         texture2d<half> prevScene = sr.prevScene;
 #else
         wi.prevExposure = 0.0;
         wi.look = nullptr;
+        wi.res = nullptr;
         wi.fog = sf.flags2.y != 0 ? shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex) : float3(0.0);
         texture2d<half> prevScene = sceneCopy;
 #endif
@@ -280,10 +286,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
             float prevEx = 0.0;
 #endif
-            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, prevEx, sf, &sl, wp, skyLut,
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, prevEx, sf, &sl, &sr, wp, skyLut,
                                     skyLutSmplr, sceneCopy, depthCopy, sr.prevScene, waterCoarse);
 #else
-            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, 0.0, sf, nullptr, wp, skyLut, skyLutSmplr,
+            float4 gl = shadeGlossy(radiance, alpha, p, float3(n), fragCoord.xy, in.v_Light.y, shadow, ex, 0.0, sf, nullptr, nullptr, wp, skyLut, skyLutSmplr,
                                     sceneCopy, depthCopy, sceneCopy, waterCoarse);
 #endif
             radiance = gl.rgb;
@@ -291,7 +297,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         }
 #endif
     }
-    if (!dims) radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl); // Nether/End: final pass
+    if (!dims) { // Nether/End: the final pass fogs
+#ifdef MCOPT_HDR
+        radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl, &sr);
+#else
+        radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl);
+#endif
+    }
     float3 rgb = shadeFinish2(radiance, fogValue, sf, sl, ex);
     if (debug == 2) rgb = shadeVanillaOut(float3(n) * 0.5 + 0.5, sl);
     if (debug == 1) {

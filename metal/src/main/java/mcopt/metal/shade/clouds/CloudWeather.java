@@ -1,0 +1,125 @@
+/*
+ * Copyright 2026 mcopt-shade contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package mcopt.metal.shade.clouds;
+
+/**
+ * The daily weather of the sky (bible E05, original): every Minecraft day gets its own humidity, warmth and wind from a
+ * hash of the day number (and mcopt.shade.clouds.seed), so some days are clear with a few small fair-weather cumulus,
+ * others crowded with tall ones, with streaky cirrus or without, calm or windy. The day's values hold from morning to
+ * evening and change overnight (smoothly, between dusk and the next sunrise). Rain and thunder take over on top: coverage
+ * closes in, bases darken, storms tower. Cosmetic and per client. Pure maths, no game types.
+ */
+public final class CloudWeather {
+	/** Smoothed values for this frame. */
+	public float coverage = 0.45f, type = 0.5f, cirrus = 0.4f, storm, windSpeed = 4f;
+	/** Unit wind direction (xz). */
+	public float windX = 1f, windZ = 0f;
+	private boolean started;
+
+	/** Day values: humidity, warmth, wind, cirrus, wind angle (radians). */
+	static float[] day(long day, long seed) {
+		long h = mix(day * 0x9E3779B97F4A7C15L + seed * 0xD1B54A32D192ED03L + 0x2545F4914F6CDD1DL);
+		float humidity = unit(h);
+		float warmth = unit(h = mix(h));
+		float wind = unit(h = mix(h));
+		float cirrus = unit(h = mix(h));
+		float angle = unit(mix(h)) * 6.2831853f;
+		return new float[] {humidity, warmth, wind, cirrus, angle};
+	}
+
+	/**
+	 * days: the world's clock in days (ticks / 24000; 0 = sunrise of day 0), rain/thunder 0..1, dt seconds since the last
+	 * frame, snap: jump to the target (first frame, teleports, a dimension change).
+	 */
+	public void update(double days, float rain, float thunder, float dt, boolean snap, long seed) {
+		long k = (long) Math.floor(days);
+		float u = (float) (days - Math.floor(days));
+		// the day's weather holds until evening (u 0.55 = 19:00), then turns into the next day's by sunrise
+		float w = smoothstep(0.55f, 1.0f, u);
+		float[] a = day(k, seed), b = day(k + 1, seed);
+		float humidity = lerp(a[0], b[0], w), warmth = lerp(a[1], b[1], w), wind = lerp(a[2], b[2], w), cir = lerp(a[3], b[3], w);
+		float ax = (float) Math.cos(a[4]), az = (float) Math.sin(a[4]), bx = (float) Math.cos(b[4]), bz = (float) Math.sin(b[4]);
+		float dx = lerp(ax, bx, w), dz = lerp(az, bz, w), dl = (float) Math.sqrt(dx * dx + dz * dz);
+		if (dl < 1e-3f) { dx = 1f; dz = 0f; dl = 1f; }
+		// fair-weather days stay open; humid ones crowd; warm humid windy days tower
+		float cov = 0.22f + 0.5f * humidity - (warmth > 0.7f && humidity < 0.35f ? 0.12f : 0f);
+		float typ = clamp01(0.15f + 0.75f * humidity * warmth + 0.35f * wind - 0.1f);
+		float cirrusAmount = clamp01(cir * 1.3f - 0.25f) * (1f - 0.5f * humidity) + 0.1f;
+		float speed = 2.5f + 7.5f * wind * wind;
+		// rain: overcast, darker; thunder: towering storm clouds
+		cov = cov + (0.92f - cov) * rain;
+		typ = lerp(typ, 0.9f, thunder);
+		typ = lerp(typ, Math.max(typ, 0.55f), rain);
+		float stormy = Math.max(rain * 0.75f, thunder);
+		speed *= 1f + 0.8f * rain + 0.6f * thunder;
+		if (CloudConfig.COVERAGE >= 0f) cov = clamp01(CloudConfig.COVERAGE);
+		if (CloudConfig.TYPE >= 0f) typ = clamp01(CloudConfig.TYPE);
+		speed *= CloudConfig.WIND;
+		cirrusAmount *= 1f - 0.7f * rain;
+		if (!this.started || snap) {
+			this.started = true;
+			this.coverage = cov;
+			this.type = typ;
+			this.cirrus = cirrusAmount;
+			this.storm = stormy;
+			this.windSpeed = speed;
+			this.windX = dx / dl;
+			this.windZ = dz / dl;
+			return;
+		}
+		// rain thickens the clouds over a few seconds (the game's rain level itself ramps over ~5 s)
+		float f = 1f - (float) Math.exp(-Math.max(dt, 0f) / 4f);
+		this.coverage += (cov - this.coverage) * f;
+		this.type += (typ - this.type) * f;
+		this.cirrus += (cirrusAmount - this.cirrus) * f;
+		this.storm += (stormy - this.storm) * f;
+		this.windSpeed += (speed - this.windSpeed) * f;
+		float nx = this.windX + (dx / dl - this.windX) * f, nz = this.windZ + (dz / dl - this.windZ) * f;
+		float nl = (float) Math.sqrt(nx * nx + nz * nz);
+		if (nl > 1e-3f) {
+			this.windX = nx / nl;
+			this.windZ = nz / nl;
+		}
+	}
+
+	private static long mix(long z) { // SplitMix64 finalizer (public domain)
+		z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+		z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+		return z ^ (z >>> 31);
+	}
+
+	private static float unit(long h) {
+		return (h >>> 40) / (float) (1L << 24);
+	}
+
+	static float lerp(float a, float b, float t) {
+		return a + (b - a) * t;
+	}
+
+	static float clamp01(float v) {
+		return Math.max(0f, Math.min(1f, v));
+	}
+
+	static float smoothstep(float e0, float e1, float x) {
+		float t = clamp01((x - e0) / (e1 - e0));
+		return t * t * (3f - 2f * t);
+	}
+
+	public String describe() {
+		return String.format(java.util.Locale.ROOT, "coverage %.2f type %.2f cirrus %.2f storm %.2f wind %.1f b/s (%.2f, %.2f)", this.coverage, this.type,
+			this.cirrus, this.storm, this.windSpeed, this.windX, this.windZ);
+	}
+}

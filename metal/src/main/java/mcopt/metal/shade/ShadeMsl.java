@@ -70,12 +70,15 @@ public final class ShadeMsl {
 	}
 
 	/**
-	 * "#define MCOPT_SHADE", shade_look.metal (M2 art layer, display transform), shade_common.metal (M1), shade_m2.metal (M2
-	 * shading) and shade_dynlight.metal (M3: the dynamic-lights seam, shadeDynamicLights): what goes in front of every shaded stage.
+	 * "#define MCOPT_SHADE", shade_look.metal (M2 art layer, display transform), shade_common.metal (M1), shade_clouds.metal
+	 * (M3: what shaders read of the volumetric clouds), shade_m2.metal (M2 shading), shade_dims.metal (M3 sky / dimensions),
+	 * the dynamic-lights module (M3, empty when off) and shade_dynlight.metal (M3: the dynamic-lights seam): what goes in front
+	 * of every shaded stage.
 	 */
 	public static String prelude() {
 		if (prelude == null) {
-			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
+			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_clouds.metal") + "\n"
+				+ resource("shade_m2.metal") + "\n"
 				+ resource("shade_dims.metal") + "\n" // M3 sky / dimensions (skydims)
 				+ mcopt.metal.shade.light.DynLightMsl.prelude() // M3 dynamic lights (empty when off)
 				+ resource("shade_dynlight.metal") + "\n";

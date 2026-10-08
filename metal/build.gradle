@@ -21,7 +21,7 @@ dependencies {
 def nativeOut = layout.buildDirectory.dir('natives/natives')
 
 tasks.register('compileNative', Exec) {
-	def sources = ['mcmetal.m', 'mcterrain.m', 'mcprobe.m', 'mcframegen.m', 'mclod.m', 'lodseam.m', 'lodmesh.c', 'lodnoise.c', 'rec.m', 'mcshade.m', 'mcshadow.m', 'mcwater.m', 'mcvl.m', 'mctaa.m', 'mcdynlight.m', 'mcxdr.m'].collect { file("src/main/native/$it") }
+	def sources = ['mcmetal.m', 'mcterrain.m', 'mcprobe.m', 'mcframegen.m', 'mclod.m', 'lodseam.m', 'lodmesh.c', 'lodnoise.c', 'rec.m', 'mcshade.m', 'mcshadow.m', 'mcwater.m', 'mcvl.m', 'mctaa.m', 'mcdynlight.m', 'mcxdr.m', 'mcclouds.m'].collect { file("src/main/native/$it") }
 	def output = nativeOut.get().file('libmcmetal.dylib').asFile
 	inputs.files sources, file('src/main/native/mcmetal.h'), file('src/main/native/lodmesh.h')
 	outputs.file output

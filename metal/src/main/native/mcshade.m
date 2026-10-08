@@ -49,7 +49,7 @@ static id<MTLBuffer> gpuBuffer;
 
 // ShadeGpu for passes encoded elsewhere (mctaa.m's resolve reads the exposure ratio from it); nil before mc_shade_set_m2.
 id<MTLBuffer> mc_shade_gpu_buffer(void) { return gpuBuffer; }
-#define SHADE_RESOURCES 8
+#define SHADE_RESOURCES 16  // entries of ShadeResources (shade_look.metal): M3 clouds use 12-14
 // ShadeResources is a ring like ShadeFrame (mc_shade_resources_advance moves to the next slot once per frame, in step with
 // ShadeBindings.nextSlot): a frame still in flight keeps reading the IDs it was encoded with, and the slot keeps its
 // textures retained (and so alive and resident on that frame's encoders) until the ring comes back to it, by which time

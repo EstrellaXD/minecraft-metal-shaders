@@ -529,6 +529,20 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 	return sky;
 }
 
+#ifdef SHADE_WATER_EDGE_REFL
+// FT1.2: a ray that rises from the surface cannot hit anything below where it started. SSR's edge-column hits past a side
+// could: below the horizon the edge column holds the bottom under the water (translucent, not in the opaque copy). Read from
+// last frame it showed the water drawn over that bottom; where last frame did not see it (turning) the opaque copy showed the
+// bare bottom: a light slanted streak along the water's side that swept along while turning (rf1-base / rf4-new).
+static inline bool shadeSsrBelowStart(float2 uv, float3 p0, float3 r, constant ShadeFrame &f, depth2d<float> depth) {
+	if (r.y <= 0.0) return false;
+	float2 size = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
+	float z = depth.read(uint2(clamp(uv * size, float2(0.0), size - 1.0)));
+	float4 h = f.invViewProj * float4(uv * 2.0 - 1.0, z, 1.0);
+	return h.y / h.w < p0.y - 0.3;
+}
+#endif
+
 // Radiance (before exposure) where the ray hits and a weight: 0 miss, fading to 0 toward the screen edges and the ray's far
 // end, so callers blend it over their sky reflection. pixel: the fragment position (quad lane order and jitter).
 static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float exposure, float prevExposure, constant ShadeFrame &f,
@@ -551,11 +565,17 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	if (best > 3.5) return 0.0;
 	float3 mine = key == best ? hit.xyz : float3(0.0); // exactly one lane holds the nearest hit
 	float3 h = shadeQuadSum(mine);
+#ifdef SHADE_WATER_EDGE_REFL
+	if (shadeSsrBelowStart(h.xy, p0, r, f, depth)) return 0.0; // quad-uniform (h, p0, r are)
+#endif
 	return float4(shadeWaterHitColor(h.xy, exposure, prevExposure, f, L, scene, depth, prev), h.z);
 #else
 	if (!shadeSsrSegment(p0, r, maxDist, f, s0, ds, screenEnd)) return 0.0;
 	float4 hit = shadeSsrMarch(s0, ds, screenEnd, 0, 1, shadeNoise(pixel, SHADE_WATER_NOISE_FRAME(f)), f, depth, hz);
 	if (hit.w < 0.0) return 0.0;
+#ifdef SHADE_WATER_EDGE_REFL
+	if (shadeSsrBelowStart(hit.xy, p0, r, f, depth)) return 0.0;
+#endif
 	return float4(shadeWaterHitColor(hit.xy, exposure, prevExposure, f, L, scene, depth, prev), hit.z);
 #endif
 }

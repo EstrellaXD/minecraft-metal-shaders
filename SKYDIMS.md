@@ -5,15 +5,26 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
-## Status (2026-10-07 18:42)
+## Status (2026-10-07 19:50)
 
-Done since the 15:06 pause: WIP terrain refactor finished (single `shadeLit2` call); XDR pauses highlights on SDR-only
-screens (+ `mcopt.shade.xdrTest=sdr|flip`); frame generation keeps XDR off (run `sdr-fg`: clean); live
-`mcopt.shade.dims.pause` + DimShots in-session A/B phases; first prices (6.1); Nether view-distance fix (Sodium fog
-culling), End beams sparser/lower, nebula softer, End key -25 %, less lava glow in the Nether haze; final pass split in an
-overworld variant (no dims code, m2.1 cost) and a `_dims` variant; XDR knee 3 -> 2 (the dumps showed nothing above 1.2x).
-Queued: `sdr-r4` (shots + A/B with all of the above), `sdr-flip` (XDR SDR/EDR flip every 10 s + dumps + standard shots).
-Next: check r4 shots/prices and the flip run's log + dumps, fill 6.2, copy shots to work/release/M3-skydims-screenshots.
+**Module finished** (pending the merge into m3, which is the next workflow). Done today after the pause: WIP terrain
+refactor completed; XDR: SDR-only-screen fallback (+ `mcopt.shade.xdrTest` dev switch), knee 3 -> 2 so torches/lava
+really use the headroom (verified with dumps), frame generation keeps it off (verified); final pass split into an
+overworld variant (no dims cost in the overworld) and a `_dims` variant; End toned down (-0.4 EV, sparse low beams,
+fainter nebula), less lava glow in the Nether haze; Nether fog now also works with Distant Horizons; live
+`mcopt.shade.dims.pause` + mcbench in-session price A/B; prices and looks in section 6; screenshots in
+`work/release/M3-skydims-screenshots/`.
+
+Open / next:
+- Two DH runs were queued at 19:38-19:50: `sdr-dh2` (checks the Nether haze with DH) and `sdr-dh-m21` (M2.1's jar in the
+  End with DH: confirms the End+DH breakage predates this branch). Look at their screenshots.
+- End + Distant Horizons is broken (6.6) - pre-existing, not this module; for FT1 / the integrator.
+- Aurora costs ~0.15-0.25 ms on aurora nights (bible: 0.06-0.12). A 4-layer variant gave no gain (reverted). Next idea:
+  evaluate it in the final pass only where depth is empty (the sky pass pays for pixels terrain covers later).
+- Nether +0.6 ms vs M2.1 (per-pixel lighting replacing vanilla's lightmap). Possible performance-preset option: keep the
+  lightmap path with our fog only.
+- Entities in the Nether/End: after the merge, light them like terrain (section 5).
+- XDR on a real SDR external monitor (XZ3020) not tested live (no monitor connected today); simulated with xdrTest.
 
 ## 1. Features
 

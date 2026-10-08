@@ -202,7 +202,13 @@ module; clean whole-frame numbers come after integration.
 ## 8. Known limits
 
 - Entities are lit per vertex (smooth over a mob's few quads; a torch right next to a big flat face shows no hot spot).
-- The local player's own hand takes the warm vanilla lightmap at the dynamic level (not the soul lantern's cyan).
+- The local player's own hand takes the warm vanilla lightmap at the dynamic level (not the soul lantern's cyan). On m3
+  this goes away: m3 shades the hand in the fragment through the seam with the light's own colour (section 9.1 item 6).
+- Next to a torch a soul lantern hardly shows (a level-14 torch is ~20x brighter at the same distance on vanilla's
+  curve); on its own it is clearly cyan.
+- The irradiance volume is one value per block, linearly interpolated: smooth (no steps), but a light within ~1 block
+  of a face lights it a little flatter than the exact per-pixel model would (no hot spot right under a torch held
+  against a wall).
 - No occlusion for lights past the 16th or beyond 40 blocks; occupancy is per block (slabs and stairs block fully,
   fences and panes not at all).
 - Without the HDR target (`mcopt.shade.hdr=false`) entities don't take the lights (no HDR variant to patch).

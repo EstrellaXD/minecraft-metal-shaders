@@ -50,6 +50,8 @@ public final class CloudParams {
 	/** Checkerboard N (1-3): one history pixel of each N x N block is marched per frame. */
 	public int checker = 3;
 	public boolean reset = true, domeValid;
+	/** The cloud shadow map is rendered this frame (else consumers keep reading the one rendered on an earlier frame). */
+	public boolean shadowUpdate = true;
 	public float base = 200f, top = 350f;
 	/** Accumulated wind displacement (blocks) of the cumulus (2D field), of the 3D noise, and of the cirrus. */
 	public double windX, windZ, wind3X, wind3Z, cirrusX, cirrusZ;
@@ -127,13 +129,28 @@ public final class CloudParams {
 		double cx = f.cameraX + this.cirrusX, cz = f.cameraZ + this.cirrusZ;
 		put4(b, 304, this.base + CloudConfig.CIRRUS_ABOVE, 0.45f, (float) wrap(cx * ca + cz * sa, WEATHER_PERIOD), (float) wrap(-cx * sa + cz * ca, WEATHER_PERIOD));
 		// cloud shadow map: on the plane yRef, centred on where the light through the camera crosses it, snapped to texels
-		float[] sl = f.sky.lightDir;
-		float ly = Math.max(sl[1], 0.05f);
-		float yRef = this.base + 0.35f * (this.top - this.base);
+		// The map is not rendered every frame: its frame (world origin, plane, light direction) is kept from the frame that
+		// rendered it, and the consumers' projection is built from that against this frame's camera (a moving camera would
+		// otherwise shift the shadows by a texel where the snapped origin steps, until the next update).
 		float extent = CloudConfig.SHADOW_EXTENT;
-		double texel = extent / 256.0;
-		double ccx = f.cameraX + sl[0] / ly * (yRef - camY), ccz = f.cameraZ + sl[2] / ly * (yRef - camY);
-		float relX = (float) (Math.floor(ccx / texel) * texel - f.cameraX), relZ = (float) (Math.floor(ccz / texel) * texel - f.cameraZ);
+		if (this.shadowUpdate || this.reset || !this.shadowValid) {
+			float[] sl = f.sky.lightDir;
+			float ly = Math.max(sl[1], 0.05f);
+			float yRef = this.base + 0.35f * (this.top - this.base);
+			double texel = extent / 256.0;
+			double ccx = f.cameraX + sl[0] / ly * (yRef - camY), ccz = f.cameraZ + sl[2] / ly * (yRef - camY);
+			this.shadowOriginX = Math.floor(ccx / texel) * texel;
+			this.shadowOriginZ = Math.floor(ccz / texel) * texel;
+			this.shadowRefY = yRef;
+			this.shadowDir[0] = sl[0];
+			this.shadowDir[1] = ly;
+			this.shadowDir[2] = sl[2];
+			this.shadowValid = true;
+		}
+		float[] sl = this.shadowDir;
+		float ly = sl[1];
+		float yRef = this.shadowRefY;
+		float relX = (float) (this.shadowOriginX - f.cameraX), relZ = (float) (this.shadowOriginZ - f.cameraZ);
 		put4(b, 320, extent, yRef, relX, relZ);
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
 		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.4f, CloudConfig.DOME_STEPS);
@@ -148,11 +165,10 @@ public final class CloudParams {
 		// wind shear: the tops lean downwind by ~40 blocks over the layer (more on windy days)
 		float shear = CloudConfig.BLOCKY ? 0f : 25f + 3f * w.windSpeed;
 		put4(b, 432, w.windX * shear, w.windZ * shear, OD_STEP, OD_MIN);
-		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, sl[1]) * this.opacity : 0f;
+		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, f.sky.lightDir[1]) * this.opacity : 0f;
 
 		// ---- ShadeLook ----
 		this.shadowExtent = extent;
-		this.shadowRefY = yRef;
 		this.shadowRelX = relX;
 		this.shadowRelZ = relZ;
 		this.shadowLx = sl[0] / ly;
@@ -161,6 +177,9 @@ public final class CloudParams {
 	}
 
 	private float shadowExtent = 1f, shadowRefY, shadowRelX, shadowRelZ, shadowLx, shadowLz, cameraY;
+	private double shadowOriginX, shadowOriginZ;
+	private final float[] shadowDir = new float[3];
+	private boolean shadowValid;
 
 	/**
 	 * The ShadeLook fields of the clouds (call after ShadeLook.pack, with pack above done for this frame): look = this frame's

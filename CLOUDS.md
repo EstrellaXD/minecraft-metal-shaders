@@ -1,5 +1,13 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
+## Status (2026-10-07 18:20)
+
+- Resumed after the 15:06 pause. The WIP commit (finer steps when the camera is inside the cloud layer; cloud shadow map
+  every 4th frame) is kept and finished: the shadow map now keeps its own frame (origin, plane, light) between updates so
+  a moving camera does not shift the shadows by a texel.
+- Running: in-game shots (all scenes) + in-session price A/B (clouds / clouds_off / clouds2), result `c11-all`.
+- Next: judge the shots, fix what is wrong, price at balanced vs budget (E05 0.30-0.45 ms), DEV-DH sanity, fill §7.
+
 Shader bible E05: volumetric cumulus (multiple scattering with powdery cores, silver linings, warm sides at sunset, dark
 storm bases), a cirrus layer, cloud shadows on terrain, water and god rays, a daily weather (coverage, cloud type, wind
 change from day to day; rain and thunder close the sky in), rendered at a fraction of the output resolution with a

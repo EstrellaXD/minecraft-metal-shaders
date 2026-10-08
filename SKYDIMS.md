@@ -5,7 +5,7 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
-## Status (2026-10-07 19:50)
+## Status (2026-10-07 20:07)
 
 **Module finished** (pending the merge into m3, which is the next workflow). Done today after the pause: WIP terrain
 refactor completed; XDR: SDR-only-screen fallback (+ `mcopt.shade.xdrTest` dev switch), knee 3 -> 2 so torches/lava
@@ -16,9 +16,8 @@ fainter nebula), less lava glow in the Nether haze; Nether fog now also works wi
 `work/release/M3-skydims-screenshots/`.
 
 Open / next:
-- Two DH runs were queued at 19:38-19:50: `sdr-dh2` (checks the Nether haze with DH) and `sdr-dh-m21` (M2.1's jar in the
-  End with DH: confirms the End+DH breakage predates this branch). Look at their screenshots.
-- End + Distant Horizons is broken (6.6) - pre-existing, not this module; for FT1 / the integrator.
+- End + Distant Horizons is broken (6.6): pre-existing (the M2.1 jar + DH shows the same), not this module; for FT1 /
+  the integrator. Nether + DH now works (haze fixed and checked), except DH's far LODs are not fogged.
 - Aurora costs ~0.15-0.25 ms on aurora nights (bible: 0.06-0.12). A 4-layer variant gave no gain (reverted). Next idea:
   evaluate it in the final pass only where depth is empty (the sky pass pays for pixels terrain covers later).
 - Nether +0.6 ms vs M2.1 (per-pixel lighting replacing vanilla's lightmap). Possible performance-preset option: keep the
@@ -223,7 +222,9 @@ assumed its terrain was already lit per pixel; in M2.1 it still used vanilla's f
 - **End with DH is broken, but not by this module**: a grey checkerboard / coloured noise over the whole frame. A baseline
   with the End look off (`-Dmcopt.shade.dims=false`, run `20261007-194816-sdr-dh-base`, i.e. M2.1's End) is just as
   broken (worse: coloured noise over the sky, the island olive-green), so it comes from the M2 base + Distant Horizons
-  in the End (FT0 only tested the overworld). A temporary "End look off with DH" guard was reverted for that reason.
+  in the End (FT0 only tested the overworld). Confirmed with the delivered M2.1 jar itself + DH (run
+  `20261007-200443-sdr-dh-m21`, `dh_end_island_BROKEN_m21.jpg`): identical breakage. Gael's M2/M2.1 instances have no
+  DH, so nobody sees it today. A temporary "End look off with DH" guard was reverted for that reason.
   Owner: the DH/FT1 work (or the M3 integrator). Repro: `mcbench-run --direct --instance "mcopt DEV-DH" ... --jvm
   "-Dmcopt.shade=true -Dmcbench.dims=end -Dmcbench.standardShots=false" --scenes shots`.
 

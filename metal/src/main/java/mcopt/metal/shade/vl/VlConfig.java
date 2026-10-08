@@ -107,8 +107,12 @@ public final class VlConfig {
 	/** M2.2: the march under water offset per texel; false = the march's per-frame offset (M2/M2.1). */
 	public static final boolean WATER_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.waterDither", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
-	/** M3.3: the default golden-hour gain of the sky's dark rays while the sunset art is on (see {@link #sunsetRays}). */
-	public static final float SUNSET_RAYS_DEFAULT = 1f;
+	/**
+	 * M3.3: the default golden-hour gain of the sky's dark rays over the open sky while the sunset art is on (see
+	 * {@link #sunsetRays}): 2 (M33_MISC.md: the cloud shadows fan out across the clear gaps near the sun as visible shafts; the
+	 * clouds keep M3.2's shading; frame-to-frame noise unchanged; 3-4 tint the shafts blue-violet and darken soft cloud edges).
+	 */
+	public static final float SUNSET_RAYS_DEFAULT = 2f;
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
 	private VlConfig() {

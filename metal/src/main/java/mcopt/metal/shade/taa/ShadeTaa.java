@@ -156,10 +156,12 @@ public final class ShadeTaa {
 		if (chosen > 0f) this.scale = FIXED_FOR_DH ? Math.min(chosen, this.allocScale) : chosen;
 		else if (TaaConfig.DRS && !FIXED_FOR_DH) {
 			// M3.3 dev (mcbench A/B phases, read every frame): mcopt.shade.drs.pause=true holds the preset's start scale (as
-			// mcopt.shade.drs=false); mcopt.shade.drs.restart (any value, cleared here) starts the controller over at it
-			if (Boolean.getBoolean("mcopt.shade.drs.pause")) {
+			// mcopt.shade.drs=false), =<number> holds that scale (0.4-1); mcopt.shade.drs.restart (any value, cleared here) starts
+			// the controller over at the start scale
+			float paused = pausedScale();
+			if (paused > 0f) {
 				DRS.restart(TaaConfig.SCALE);
-				this.scale = TaaConfig.SCALE;
+				this.scale = paused;
 			} else {
 				if (System.getProperty("mcopt.shade.drs.restart") != null) {
 					System.clearProperty("mcopt.shade.drs.restart");
@@ -175,6 +177,18 @@ public final class ShadeTaa {
 		this.jitterY = halton(this.frame, 3) - 0.5f;
 		new Matrix4f().translation(2 * this.jitterX / this.width, 2 * this.jitterY / this.height, 0).mul(projection, projection);
 		this.jittered = true;
+	}
+
+	/** M3.3 dev: the scale mcopt.shade.drs.pause holds (true: the preset's start scale; a number: that scale), 0 = not paused. */
+	private static float pausedScale() {
+		String v = System.getProperty("mcopt.shade.drs.pause");
+		if (v == null || v.equalsIgnoreCase("false")) return 0f;
+		if (v.equalsIgnoreCase("true")) return TaaConfig.SCALE;
+		try {
+			return Math.clamp(Float.parseFloat(v.trim()), 0.4f, 1f);
+		} catch (NumberFormatException e) {
+			return 0f;
+		}
 	}
 
 	private void updateSize() {

@@ -108,8 +108,9 @@ fragment void shadow_cutout_fs(ShadowCutoutOut in [[stage_in]], texture2d<float>
 // quarter block or more beyond that depth, i.e. below the glass. No depth attachment: the opaque cascade decides whether
 // light arrives at all. No raster bias: receivers compare their own depth.
 struct ShadowTintOut { float4 pos [[position]]; float2 uv; half4 color; };
-// Water sprite rectangles in the block atlas (ShadeWater: still, flowing; all 0 when unknown).
-struct ShadowTintParams { float4 still; float4 flow; };
+// Water sprite rectangles in the block atlas (ShadeWater: still, flowing; all 0 when unknown); mode.x = 1: leave water out
+// (the water module is on: M2.1 absorbs the light on its way down to the floor, a tint here would absorb it twice).
+struct ShadowTintParams { float4 still; float4 flow; float4 mode; };
 
 vertex ShadowTintOut shadow_tint_vs(uint vid [[vertex_id]], uint iid [[instance_id]], const device uint *arena [[buffer(0)]],
                                     const device ShadowChunk *chunks [[buffer(1)]], const device ShadowRegion *regions [[buffer(2)]],
@@ -139,6 +140,7 @@ fragment float4 shadow_tint_fs(ShadowTintOut in [[stage_in]], texture2d<float> a
     float3 vc = float3(in.color.rgb);
     bool water = tp.still.z > 0.0 && ((all(in.uv >= tp.still.xy) && all(in.uv <= tp.still.zw)) || (all(in.uv >= tp.flow.xy) && all(in.uv <= tp.flow.zw)));
     float3 T;
+    if (water && tp.mode.x > 0.5) discard_fragment();
     if (water) {
         // about two blocks of water from the biome's colour (the vertex tint): clear teal shallows, green swamps
         float3 tint = max(vc * vc, float3(0.004));

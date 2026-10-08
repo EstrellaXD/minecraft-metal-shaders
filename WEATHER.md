@@ -5,18 +5,37 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 20:14)
+## Status (2026-10-07 22:08)
 
-**Done (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only
+**Fix round 22:00 (pre-integration, from the skeptic check `check:weather` in `work/notes/m3-2026-10-07/prefix-checks.json`):**
+done and committed (builds, validate ALL OK, **not yet tested in game**):
+- Coloured shadows leave water out when the water module is on (`ShadeWater.ON`): `shadow_tint_fs` discards water
+  (`ShadowTintParams.mode.x`, params now 48 B), and `ShadowCasters` no longer lists translucent sections whose block palette
+  has no translucent model (`LevelChunkSection.maybeHas` + `BakedQuad.FLAG_TRANSLUCENT`), so near plain water the tint pass
+  draws nothing and the receivers skip the lookup (ssr.w = 0). Fixes the double absorption on lake floors (tint map + M2.1's
+  dy term). With the water module off, water still tints. `ShadowCasters.tintBoxes/tintCount` = the near cascade's listed
+  translucent sections (block coords), ready for the light-space rectangle (not used yet).
+
+**Next, in this order** (the 21:55 task list, items 1-7):
+1. Light-space rectangle: in `ShadowPass.render` after the tint pass, project `casters.tintBoxes` (16^3 boxes,
+   camera-relative = box - camX/Y/Z) through `matrices[0..15]` (column-major: x' = m0 x + m4 y + m8 z + m12, extent
+   8(|m0|+|m4|+|m8|)) into a clip-space rect; publish it the SAME frame into the current ShadeLook slot (ShadePost already
+   writes ssr.x/y there after the pack: add a public `ShadeBindings.setShadowTint(any, x0, y0, x1, y1)`), into ShadeLook 608
+   (rename `heldLight` -> `tintRect`, unused by every branch) and ssr.w; `ShadeWeather.pack` writes empty defaults; drop
+   `ShadeWeather.tintCasters`. Receivers (`shadeShadowTint`): return 1 before the sample outside the rect (+ a few texels).
+2. Budget in heavy rain at balanced (0.80 ms in wx17 incl. ~0.19 tint): price after item 1; candidates as dev bits 32-512.
+3. Quad guard (`quadPuddle &&` before the SSR block, weather_surface.metal), `COLOR_SHADOWS` needs `ShadeConfig.HDR`, LDR
+   puddles on a lite analytic noise (only the field needed, 2 octaves).
+4. Snowfall: own alpha (~0.55) and no torch heuristic for snow in `shadeWeather3` (pass wet.z / a snow flag); mcbench
+   WeatherShots `snowfall` pose (nearest snowy biome, like DimShots.aurora's search).
+5. Moving view: a `wxmove` phase (walk across the puddles) recorded with `-Dmcopt.rec=... -Dmcopt.rec.start=wxmove`.
+6. Integration notes (slot 4 vs lights, tint delta duplicate). 7. WEATHER.md prices and stale "~0" claims (skeptic finding 6).
+
+**Earlier (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only
 where Fresnel shows it; terrain skips the coloured-shadow lookup when no translucent casters are near; rough films skip
-the sky lookup; balanced uses one raindrop grid and 12 reflection steps; puddle cover back to ~31 % (the 256-block lattice
-changed the pattern; the swell seed puts puddles in the bench view); dev bits and mcbench price phases for every part; a
-module-off baseline; a DH sanity run (wx18) is clean. Prices, on/off, looks and runs are in **Results** below. Screenshots:
+the sky lookup; balanced uses one raindrop grid and 12 reflection steps; puddle cover back to ~31 %; dev bits and mcbench
+price phases for every part; a module-off baseline; a DH sanity run (wx18) is clean. Screenshots:
 `work/release/M3-weather-screenshots/` (`final_*` = build ccaad51).
-
-**Next:** the budget is not met at balanced in heavy rain (~0.9 ms vs 0.5; see Results for the options); coloured shadows cost 0.19 ms near glass (wx17: limit the lookup to the casters' light-space rectangle); puddle edges in motion (video) not checked yet;
-integration into m3 (ShadeResources slot 4 vs the lights module, `shadeLit2` direct term duplicated in
-`shadeShadowTintDelta`).
 
 ## What it does (in game)
 

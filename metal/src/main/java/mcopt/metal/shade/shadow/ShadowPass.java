@@ -62,7 +62,7 @@ public final class ShadowPass {
 	/** M3 coloured shadows: the tint map (0 = off), the water sprites for its pass. */
 	private long tintMap;
 	private final float[] waterRects = new float[8];
-	private static final int TINT_PARAM_BYTES = 32;
+	private static final int TINT_PARAM_BYTES = 48;
 	private final ShadowCascade[] cascades = {new ShadowCascade(), new ShadowCascade()};
 	private final ShadowCasters casters = new ShadowCasters();
 	/** This frame's camera-relative matrices (2 x 16, column-major) and their camera. */
@@ -331,7 +331,8 @@ public final class ShadowPass {
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
 		// SHADE_DEV_WX_NO_TINT (16384, mcopt.shade.dev, read per frame): skip the tint pass too, to price coloured shadows in one session
 		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0;
-		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint);
+		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint,
+			mcopt.metal.shade.water.ShadeWater.ON);
 		if (ShadowConfig.STATS) this.statBuildNanos += System.nanoTime() - t0;
 		if (!built) {
 			this.problem(this.casters.problem);
@@ -387,6 +388,8 @@ public final class ShadowPass {
 					long params = stack.ncalloc(16, TINT_PARAM_BYTES, 1);
 					mcopt.metal.shade.water.WaterFrame.rects(this.waterRects);
 					for (int i = 0; i < 8; i++) MemoryUtil.memPutFloat(params + i * 4L, this.waterRects[i]);
+					// mode.x = 1: leave water out (the water module absorbs the light on its way down to the floor itself)
+					MemoryUtil.memPutFloat(params + 32, mcopt.metal.shade.water.ShadeWater.ON ? 1f : 0f);
 					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
 					ShadowNative.tintRender(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle, regions.slice().offset(),
 						tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES);

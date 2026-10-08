@@ -15,6 +15,13 @@ import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.block.BlockStateModelSet;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
@@ -73,6 +80,12 @@ final class ShadowCasters {
 	final long[] quads = new long[2];
 	/** Why the last build found nothing to do, or null. */
 	@Nullable String problem;
+	/**
+	 * M3 coloured shadows: the near cascade's translucent sections listed for the tint pass this build (block coordinates of
+	 * each 16^3 box's minimum corner, x y z triples), for the casters' light-space rectangle (ShadowPass).
+	 */
+	int[] tintBoxes = new int[3 * 64];
+	int tintCount;
 
 	private static @Nullable Field rsmField() {
 		try {
@@ -89,8 +102,22 @@ final class ShadowCasters {
 	 * Builds this frame's lists for the cascades with draw[c] set. Camera at world (camX, camY, camZ), as this frame's
 	 * terrain uses it. faceMask[c]: Sodium ModelQuadFacing bits to draw. Returns false when Sodium has nothing to give.
 	 */
-	boolean build(ShadowCascade[] cascades, boolean[] draw, int faceMask, double camX, double camY, double camZ, boolean lightMode, boolean tint) {
+	boolean build(ShadowCascade[] cascades, boolean[] draw, int faceMask, double camX, double camY, double camZ, boolean lightMode, boolean tint,
+		boolean tintNoWater) {
 		this.tint = tint && draw[0];
+		this.tintCount = 0;
+		this.tintLevel = null;
+		this.tintModels = null;
+		if (this.tint && tintNoWater) {
+			// sections whose block palette has no translucent model (stained glass, ice, slime, honey...) hold only water there
+			Minecraft mc = Minecraft.getInstance();
+			this.tintLevel = mc.level;
+			try {
+				this.tintModels = mc.getModelManager().getBlockStateModelSet();
+			} catch (RuntimeException e) {
+				this.tintModels = null; // models not loaded yet: list every translucent section
+			}
+		}
 		for (int c = 0; c < 2; c++) {
 			this.lists[c].clear();
 			this.sections[c] = 0;
@@ -132,6 +159,37 @@ final class ShadowCasters {
 	private final boolean[] sectionIn = new boolean[2];
 	/** This build also lists the near cascade's translucent casters (KIND_TRANSLUCENT). */
 	private boolean tint;
+	/**
+	 * With the water module on (tintNoWater) the tint pass leaves water out (its light under water is the water module's: M2.1
+	 * absorbs it on the way down to the floor), so sections with nothing but water in the translucent pass are not listed:
+	 * the client level and its block models, to read a section's palette (null: list every translucent section).
+	 */
+	private @Nullable ClientLevel tintLevel;
+	private @Nullable BlockStateModelSet tintModels;
+	private final java.util.function.Predicate<BlockState> translucentModel = st -> !st.isAir() && this.tintModels != null
+		&& this.tintModels.get(st).hasMaterialFlag(BakedQuad.FLAG_TRANSLUCENT);
+
+	/**
+	 * Whether section (sx, sy, sz) (section coordinates) may hold a block with a translucent model: its palette's states (a
+	 * palette keeps states that were replaced until it is rebuilt, and the global palette answers yes: never a false no).
+	 */
+	private boolean maybeTranslucentBlocks(int sx, int sy, int sz) {
+		ClientLevel level = this.tintLevel;
+		if (level == null || this.tintModels == null) return true;
+		LevelChunk chunk = level.getChunkSource().getChunk(sx, sz, ChunkStatus.FULL, false);
+		if (chunk == null) return true;
+		int i = chunk.getSectionIndexFromSectionY(sy);
+		if (i < 0 || i >= chunk.getSectionsCount()) return true;
+		return chunk.getSection(i).maybeHas(this.translucentModel);
+	}
+
+	private void addTintBox(int x, int y, int z) {
+		if (this.tintCount * 3 == this.tintBoxes.length) this.tintBoxes = java.util.Arrays.copyOf(this.tintBoxes, this.tintBoxes.length * 2);
+		this.tintBoxes[this.tintCount * 3] = x;
+		this.tintBoxes[this.tintCount * 3 + 1] = y;
+		this.tintBoxes[this.tintCount * 3 + 2] = z;
+		this.tintCount++;
+	}
 
 	/** One region: its sections that cast into a cascade being drawn, from list (camera mode) or all of them (light mode). */
 	private void region(RenderRegion region, @Nullable ChunkRenderList list, ShadowCascade[] cascades, boolean[] draw, int faceMask, CameraTransform camera) {
@@ -172,6 +230,13 @@ final class ShadowCasters {
 				long ptr = storage.getDataPointer(section);
 				if ((SectionRenderDataUnsafe.getSliceMask(ptr) & faceMask) == 0) continue;
 				if (!this.sectionCasts(region, section, cascades, draw)) continue;
+				if (kind == KIND_TRANSLUCENT) {
+					// the tint pass draws the near cascade only; water-only sections are skipped when the water module is on
+					if (!this.sectionIn[0]) continue;
+					int sx = region.getChunkX() + (section >> 5 & 7), sy = region.getChunkY() + (section & 3), sz = region.getChunkZ() + (section >> 2 & 7);
+					if (this.tintLevel != null && !this.maybeTranslucentBlocks(sx, sy, sz)) continue;
+					this.addTintBox(sx * 16, sy * 16, sz * 16);
+				}
 				if (regionIndex < 0) regionIndex = this.addRegion(region, camera);
 				for (int c = 0; c < 2; c++) {
 					if (!this.sectionIn[c] || (kind == KIND_TRANSLUCENT && c != 0)) continue;

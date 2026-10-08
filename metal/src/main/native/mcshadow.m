@@ -328,8 +328,8 @@ id<MTLTexture> mc_shadow_tint_texture(Shadow *s) { return s->tintMap; }
 
 /*
  * The tint pass for the near cascade: clears the map to (1, 1, 1, 0) (no tint, no caster) and draws the translucent lists
- * (records as mc_shadow_render's; every record is drawn with the tint pipeline). params: the MSL ShadowTintParams (32 bytes:
- * the water sprites). With no draws the map is cleared only if it held casters. Returns 1 when it ran a pass.
+ * (records as mc_shadow_render's; every record is drawn with the tint pipeline). params: the MSL ShadowTintParams (48 bytes:
+ * the water sprites, mode). With no draws the map is cleared only if it held casters. Returns 1 when it ran a pass.
  */
 int mc_shadow_tint_render(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes) {

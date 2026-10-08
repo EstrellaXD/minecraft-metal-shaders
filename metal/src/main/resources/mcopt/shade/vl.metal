@@ -42,7 +42,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 16 x float4 = 256 bytes).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 17 x float4 = 272 bytes since M3.3).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -73,6 +73,8 @@ struct VlParams {
 	                  //     shafts under water (relative to the light without caustics), zw the part of the history texture
 	                  //     last frame covered (uv scale; the targets are allocated for the largest render scale, size.xy is
 	                  //     this frame's live part)
+	float4 art;       // 256 M3.3: x gain of the sky's dark crepuscular rays (HDR; 1 = M3.2: ShadeVl, mcopt.shade.vl.sunsetRays in
+	                  //     the golden hour with the sunset art x mcopt.shade.vl.skyRays), yzw spare
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -389,7 +391,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			// the sky: the sky model already has the sun's glow; the streaks there are the shadows of the clouds and hills
 			// between the sun and the air (Photon's dark rays across the aureole). Negative light: the final pass subtracts it
 			// (floored at a share of the pixel), so open sky keeps its colour
-			if (VL_HDR) scatter -= p.light.rgb * ((1.0 - open) * fall * p.crep.x * p.crep.z * 1.5);
+			// (M3.3: x art.x, the golden-hour gain that keeps them as strong against the brighter sunset-art sky as before it)
+			if (VL_HDR) scatter -= p.light.rgb * ((1.0 - open) * fall * p.crep.x * p.crep.z * 1.5 * p.art.x);
 			else scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * 0.8);
 		} else {
 			// in front of near geometry (a trunk against the low sun gets streaks across it), fading in over the first blocks:

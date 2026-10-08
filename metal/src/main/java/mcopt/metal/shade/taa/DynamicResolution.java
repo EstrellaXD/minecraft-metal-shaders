@@ -38,6 +38,10 @@ public final class DynamicResolution {
 	private float scale;
 	private double average, lastEnd;
 	private int samples, sinceChange, skip, pinned;
+	/** M3.3 (mcopt.shade.drsLog): a status line about once a second: what the controller sees, frames and changes since. */
+	private long statusStart;
+	private int statusFrames, statusChanges;
+	private float statusMin = Float.MAX_VALUE, statusMax;
 
 	public DynamicResolution(float start, float min, float max, int fps) {
 		this.min = min;
@@ -71,6 +75,7 @@ public final class DynamicResolution {
 
 	/** Called once per frame before it renders: the scale for this frame. */
 	public float update() {
+		if (TaaConfig.DRS_LOG) this.status();
 		this.sinceChange++;
 		if (this.samples < AVERAGE_FRAMES || this.sinceChange < SETTLE_FRAMES) return this.scale;
 		// at the floor and still over budget: the preset can't hold its target here (mcopt.shade.drsLog says so every ~5 s)
@@ -89,11 +94,42 @@ public final class DynamicResolution {
 		boolean toBound = (next == this.min || next == this.max) && next != this.scale;
 		if (Math.abs(next - this.scale) <= DEADBAND && !toBound) return this.scale;
 		this.scale = next;
+		this.statusChanges++;
 		// frames of the old scale are still in flight: skip them, then average afresh
 		this.sinceChange = 0;
 		this.samples = 0;
 		this.skip = IN_FLIGHT + 1;
 		return this.scale;
+	}
+
+	/**
+	 * M3.3 (mcbench A/B phases): starts over at a scale, as on the first frame (timing history dropped, the frames in flight
+	 * skipped).
+	 */
+	public void restart(float start) {
+		this.scale = TaaConfig.clamp(start, this.min, this.max);
+		this.samples = 0;
+		this.sinceChange = 0;
+		this.skip = IN_FLIGHT + 1;
+	}
+
+	/** mcopt.shade.drsLog: about once a second, the scale (and its range since the last line), the controller's GPU average and target, the frame rate. */
+	private void status() {
+		long now = System.nanoTime();
+		if (this.statusStart == 0) this.statusStart = now;
+		this.statusFrames++;
+		this.statusMin = Math.min(this.statusMin, this.scale);
+		this.statusMax = Math.max(this.statusMax, this.scale);
+		double secs = (now - this.statusStart) * 1e-9;
+		if (secs < 1.0) return;
+		System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: drs status scale %.3f (%.3f-%.3f) gpu %.2f ms target %.2f ms, %.1f fps, %d changes%s",
+			this.scale, this.statusMin, this.statusMax, this.average * 1e3, this.targetSeconds * 1e3, this.statusFrames / secs, this.statusChanges,
+			this.scale <= this.min && this.average > this.targetSeconds ? ", at its floor" : ""));
+		this.statusStart = now;
+		this.statusFrames = 0;
+		this.statusChanges = 0;
+		this.statusMin = Float.MAX_VALUE;
+		this.statusMax = 0f;
 	}
 
 	/** Forgets the timing history (e.g. after a pause or a world change). */

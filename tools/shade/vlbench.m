@@ -219,7 +219,7 @@ int main(int argc, const char **argv) {
 		id<MTLBuffer> frame = [dev newBufferWithBytes:F length:1008 options:MTLResourceStorageModeShared];
 
 		// VlParams: golden-hour forest, canopy 1
-		float Pv[64] = {
+		float Pv[68] = {
 			(float) vw, (float) vh, (float) W, (float) H, // size
 			1.0f, 160, (float) steps, 0.68f,              // shape
 			0.0012f, 0.005f, -10, 12,                     // medium
@@ -235,7 +235,8 @@ int main(int argc, const char **argv) {
 			0, 8, 0.004f, 0,                              // extra
 			16, 4, 1, 0.5f,                               // mist
 			0.05f, 0.06f, 0.08f, 0.5f,                    // mistAmb
-			0, 0, 0, 0};
+			0, 0, 0, 0,                                   // carve
+			1, 0, 0, 0};                                  // art (M3.3)
 		const float *P = Pv;
 		float G[128] = {0};
 		G[44] = 1.0f; // ShadeGpu.exposure.x (byte 176)
@@ -260,7 +261,7 @@ int main(int argc, const char **argv) {
 				[r setFragmentBuffer:frame offset:0 atIndex:16];
 				[r setFragmentTexture:shadow atIndex:16];
 				[r setFragmentSamplerState:cmp atIndex:12];
-				[r setFragmentBytes:P length:256 atIndex:0];
+				[r setFragmentBytes:P length:272 atIndex:0];
 				[r setFragmentBuffer:gpuBuf offset:0 atIndex:18];
 				if (st) [r setFragmentBuffer:st offset:0 atIndex:1];
 				if (t0) [r setFragmentTexture:t0 atIndex:0];
@@ -273,7 +274,7 @@ int main(int argc, const char **argv) {
 			[k setComputePipelineState:canopy];
 			[k setBuffer:frame offset:0 atIndex:16];
 			[k setTexture:shadow atIndex:16];
-			[k setBytes:P length:256 atIndex:0];
+			[k setBytes:P length:272 atIndex:0];
 			[k setBuffer:state offset:0 atIndex:1];
 			[k dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 			[k endEncoding];

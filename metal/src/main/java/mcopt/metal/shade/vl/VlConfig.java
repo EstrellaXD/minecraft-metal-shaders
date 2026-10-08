@@ -62,6 +62,9 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.unjitter} (true, M2.2; read by ShadePost): under TAAU the final pass reads depth and the light where
  * this frame's jittered raster shows the pixel's scene point; false: at the output uv (M2/M2.1: they moved by the jitter
  * against the steady resolved image).</li>
+ * <li>{@code mcopt.shade.vl.sunsetRays} (M3.3, read every frame; 1 or false = M3.2): gain of the sky's dark crepuscular rays in
+ * the golden hour while the sunset art is on ({@link #sunsetRays}); {@code mcopt.shade.vl.skyRays} (dev, 1): their gain at any
+ * time (0 = none).</li>
  * <li>{@code mcopt.shade.vl.debug} (0): 1 the light alone, 2 the marched distance, 3 the canopy mist's transmittance.</li>
  * <li>{@code mcopt.shade.vl.log} (false): a line every 2 s (canopy, density, strength).</li>
  * <li>{@code mcopt.shade.vl.gpuTimer} (false): GPU timestamps around each pass; the log line (forced on) gets their
@@ -104,6 +107,8 @@ public final class VlConfig {
 	/** M2.2: the march under water offset per texel; false = the march's per-frame offset (M2/M2.1). */
 	public static final boolean WATER_DITHER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.waterDither", "true"));
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.vl.gpuTimer");
+	/** M3.3: the default golden-hour gain of the sky's dark rays while the sunset art is on (see {@link #sunsetRays}). */
+	public static final float SUNSET_RAYS_DEFAULT = 1f;
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
 	private VlConfig() {
@@ -112,6 +117,26 @@ public final class VlConfig {
 	/** The MSL the passes compile from: ShadeMsl.prelude() (shade_look + shade_common + shade_m2) + vl.metal (mcvl.m; validate.sh). */
 	public static String source() {
 		return mcopt.metal.shade.ShadeMsl.prelude() + "\n" + mcopt.metal.shade.ShadeMsl.resource("vl.metal");
+	}
+
+	/**
+	 * M3.3, read every frame (bench A/B in one session): mcopt.shade.vl.sunsetRays, the gain of the sky's dark crepuscular rays in
+	 * the golden hour while the sunset art (mcopt.shade.sunsetArt) is on: its brighter, warmer sky around the sun had made them
+	 * ~18 % weaker than M2.2's. 1 (or false) = M3.2; true = the default.
+	 */
+	public static float sunsetRays() {
+		String v = System.getProperty("mcopt.shade.vl.sunsetRays");
+		if (v == null) return SUNSET_RAYS_DEFAULT;
+		v = v.trim();
+		if (v.equalsIgnoreCase("false") || v.equalsIgnoreCase("off")) return 1f;
+		if (v.equalsIgnoreCase("true") || v.equalsIgnoreCase("on")) return SUNSET_RAYS_DEFAULT;
+		return clamp(floatProperty("mcopt.shade.vl.sunsetRays", SUNSET_RAYS_DEFAULT), 0f, 4f);
+	}
+
+	/** M3.3 dev, read every frame: mcopt.shade.vl.skyRays, a gain on the sky's dark rays at any time (1; 0 = none: the ray-only metric). */
+	public static float skyRays() {
+		String v = System.getProperty("mcopt.shade.vl.skyRays");
+		return v == null ? 1f : clamp(floatProperty("mcopt.shade.vl.skyRays", 1f), 0f, 4f);
 	}
 
 	static float floatProperty(String key, float def) {

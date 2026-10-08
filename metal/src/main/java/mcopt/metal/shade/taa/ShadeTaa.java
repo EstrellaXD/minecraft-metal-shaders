@@ -154,8 +154,20 @@ public final class ShadeTaa {
 		// M3.1: a resolution the player fixed in the pause menu (ShadeResolution) wins over the preset's dynamic resolution
 		float chosen = mcopt.metal.shade.ShadeResolution.scale(this.outHeight);
 		if (chosen > 0f) this.scale = FIXED_FOR_DH ? Math.min(chosen, this.allocScale) : chosen;
-		else if (TaaConfig.DRS && !FIXED_FOR_DH) this.scale = DRS.update();
-		else this.scale = FIXED_FOR_DH ? Math.min(TaaConfig.SCALE, this.allocScale) : TaaConfig.SCALE;
+		else if (TaaConfig.DRS && !FIXED_FOR_DH) {
+			// M3.3 dev (mcbench A/B phases, read every frame): mcopt.shade.drs.pause=true holds the preset's start scale (as
+			// mcopt.shade.drs=false); mcopt.shade.drs.restart (any value, cleared here) starts the controller over at it
+			if (Boolean.getBoolean("mcopt.shade.drs.pause")) {
+				DRS.restart(TaaConfig.SCALE);
+				this.scale = TaaConfig.SCALE;
+			} else {
+				if (System.getProperty("mcopt.shade.drs.restart") != null) {
+					System.clearProperty("mcopt.shade.drs.restart");
+					DRS.restart(TaaConfig.SCALE);
+				}
+				this.scale = DRS.update();
+			}
+		} else this.scale = FIXED_FOR_DH ? Math.min(TaaConfig.SCALE, this.allocScale) : TaaConfig.SCALE;
 		this.updateSize();
 		int phases = Math.clamp(Math.round(8 / (this.scale * this.scale)), 8, 32); // ~8 samples per output pixel (MetalFX/FSR guidance)
 		this.frame = this.frame % phases + 1;

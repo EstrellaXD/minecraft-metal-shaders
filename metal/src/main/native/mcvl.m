@@ -273,7 +273,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			s->height = vlHeight;
 			reset = 1;
 		}
-		float local[64];
+		float local[80]; // VlParams (272 bytes since M3.3) and room to grow
 		if (paramBytes > (int) sizeof(local)) paramBytes = sizeof(local);
 		memcpy(local, params, paramBytes);
 		if (reset && paramBytes >= 38 * 4) local[37] = 1.0f; // VlParams.temporal.y: the temporal pass drops the history

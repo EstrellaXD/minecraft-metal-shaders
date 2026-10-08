@@ -5,6 +5,19 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
+## M3.3 Status (2026-10-08 09:50) — plan (agent "dims", branch `m3.3-dims` from m3-int 397e241)
+
+Items, in this order (each ends either done with in-game before/after evidence, or with a precise note):
+1. Nether dark specks left in `nether_warped` after the integration: find the pipeline that draws them, light it with
+   the dimension's light.
+2. End: vanilla blob shadow next to the End key light's entity shadows (`EntityCasters.dropBlob` needs the sun): drop
+   the blob where our entity shadows draw in the End.
+3. End + Distant Horizons broken (6.6): root cause + contained fix (not FT1 lighting).
+4. Aurora price (0.15-0.25 ms): evaluate only where it shows / cheaper buffer; measure in session; keep the look.
+5. Nether +0.6 ms vs M2.1: cheaper path or performance-preset lightmap option.
+6. XDR: skip MRT/compose when nothing is above the knee (with hysteresis); recheck `xdrTest=sdr`.
+Flags: every new behaviour behind a flag whose off = M3.2 (listed below as they land).
+
 ## Status (2026-10-07 22:10) — pre-merge fixes
 
 Fixes from the skeptic check (`work/notes/m3-2026-10-07/prefix-checks.json`, check:skydims), built + validate ALL OK:

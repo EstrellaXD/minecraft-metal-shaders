@@ -170,7 +170,7 @@ final class DimShots {
 
 	/**
 	 * M3.3: -Dmcbench.dimsAb=scene@a=1:b=2,scene@a=2,...: after that scene's shot (or "overview": the overworld spot at noon,
-	 * after the return), one recorded 360-degree spin per entry, in order, as phases dab1..dab12 (results.json perf / gpu), with
+	 * after the return), one recorded 360-degree spin per entry, in order, as phases dab1..dab16 (results.json perf / gpu), with
 	 * the entry's live properties set for it (2 s settle unrecorded) and cleared after; -Dmcbench.dimsAbSeconds (10) each.
 	 * An entry may repeat a scene (ABBA). Scene names: those of results.json dimShots.
 	 */
@@ -178,7 +178,7 @@ final class DimShots {
 	static final double AB_SECONDS = Double.parseDouble(System.getProperty("mcbench.dimsAbSeconds", "10"));
 
 	static void addAb(List<BenchDriver.Step> extra, String scene, Pose pose) {
-		for (int i = 0; i < AB.size() && i < 12; i++) {
+		for (int i = 0; i < AB.size() && i < 16; i++) {
 			String entry = AB.get(i);
 			int at = entry.indexOf('@');
 			if (at <= 0 || !entry.substring(0, at).equals(scene)) continue;

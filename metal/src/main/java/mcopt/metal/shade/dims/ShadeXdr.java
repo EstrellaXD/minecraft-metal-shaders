@@ -40,11 +40,12 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 public final class ShadeXdr {
 	private static final Linker LINKER = Linker.nativeLinker();
 	private static @Nullable MethodHandle enable, isOn, supported, headroom, frame, pso2, pass2;
-	private static boolean decided, on, confirmed;
+	private static boolean decided, on, confirmed, edrHere = true;
 	private static long layer;
 	private static float loggedHeadroom = -1f, peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
 	/** The scene luminance (pre-tonemap, exposed) where highlights start to use the headroom, and how many octaves above it they reach the peak. */
 	static final float KNEE = 3.0f, RANGE = 4.0f;
+	private static float testClock;
 
 	private ShadeXdr() {
 	}
@@ -108,18 +109,38 @@ public final class ShadeXdr {
 		sinceQuery += dt;
 		if (sinceQuery >= 0.25f) {
 			sinceQuery = 0f;
+			float here;
 			try {
 				headroomNow = (float) headroom.invokeExact(layer, 0);
+				here = (float) headroom.invokeExact(layer, 1);
 			} catch (Throwable t) {
 				headroomNow = 1f;
+				here = 1f;
 			}
-			target = Math.max(1f, Math.min(headroomNow, DimsConfig.XDR_PEAK));
+			// the window's screen can't show EDR at all (an SDR monitor such as a 1080p external one): the final pass goes back
+			// to the plain SDR variant (no excess written, the compose is a plain conversion) until it is on an EDR screen again
+			// dev test of the SDR-screen fallback without an SDR monitor (read live: the bench's in-session A/B sets it per phase):
+			// mcopt.shade.xdrTest = sdr (this screen counts as SDR only) or flip (SDR / EDR alternating every 10 s)
+			String test = System.getProperty("mcopt.shade.xdrTest", "");
+			testClock += 0.25f;
+			if (test.equals("sdr") || test.equals("flip") && ((int) (testClock / 10f) & 1) == 1) here = 1f;
+			boolean nowHere = here > 1.01f;
+			if (nowHere != edrHere) {
+				edrHere = nowHere;
+				System.out.println("[mcopt] shade: XDR " + (edrHere ? "resumed (EDR screen, potential " : "paused (this screen is SDR only, potential ") + here + ")");
+			}
+			target = edrHere ? Math.max(1f, Math.min(headroomNow, DimsConfig.XDR_PEAK)) : 1f;
 			if (Math.abs(headroomNow - loggedHeadroom) > 0.1f) {
 				loggedHeadroom = headroomNow;
 				System.out.println("[mcopt] shade: XDR headroom " + headroomNow + " (potential " + potential + "), highlight peak " + target);
 			}
 		}
 		peak += (target - peak) * (1f - (float) Math.exp(-dt / 0.5f));
+	}
+
+	/** Whether this frame's final pass writes highlights above SDR white (on, and the window's screen can show EDR). */
+	public static boolean highlights() {
+		return on && edrHere;
 	}
 
 	/** The highlight peak this frame, in multiples of SDR white (1 = SDR). */

@@ -46,7 +46,7 @@ abstract class DimsFogMixin {
 	@Inject(method = "setupFog", at = @At("RETURN"))
 	private void mcopt$dimsFog(Camera camera, int renderDistanceInChunks, DeltaTracker deltaTracker, float darkenWorldAmount, ClientLevel level,
 		CallbackInfoReturnable<FogData> cir) {
-		if (level == null || !mcopt.metal.shade.dims.DimsConfig.DIMS) return;
+		if (level == null || !mcopt.metal.shade.dims.ShadeDims.on()) return;
 		var dim = level.dimension();
 		if (dim != Level.NETHER && dim != Level.END) return;
 		if (this.getFogType(camera) != FogType.ATMOSPHERIC) return;

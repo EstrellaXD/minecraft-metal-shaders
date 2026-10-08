@@ -100,9 +100,22 @@ public final class ShadeDims {
 		vanillaFogEnd = end;
 	}
 
+	/**
+	 * Dev / bench: mcopt.shade.dims.pause=true (a system property read every frame) turns the Nether and End looks off live
+	 * (M2.1's look: vanilla fog and sky, lightmap lighting, no End shadows), for the bench's in-session price A/B.
+	 */
+	public static boolean paused() {
+		return Boolean.getBoolean("mcopt.shade.dims.pause");
+	}
+
+	/** Whether the Nether / End looks are on this frame (mcopt.shade.dims and not paused). */
+	public static boolean on() {
+		return DimsConfig.DIMS && !paused();
+	}
+
 	/** Whether Nether/End fog is ours (vanilla's environmental fog is pushed away by DimsFogMixin). */
 	public static boolean ownsFog(int dimension) {
-		return DimsConfig.DIMS && (dimension == ShadeFrame.DIM_NETHER || dimension == ShadeFrame.DIM_END);
+		return on() && (dimension == ShadeFrame.DIM_NETHER || dimension == ShadeFrame.DIM_END);
 	}
 
 	/**
@@ -114,7 +127,7 @@ public final class ShadeDims {
 		boolean changed = lastDim != f.dimension;
 		lastDim = f.dimension;
 		float k = snap || changed ? 1f : 1f - (float) Math.exp(-Math.max(dt, 0f) / 3f);
-		dimsLit = DimsConfig.DIMS && (f.dimension == ShadeFrame.DIM_NETHER || f.dimension == ShadeFrame.DIM_END);
+		dimsLit = on() && (f.dimension == ShadeFrame.DIM_NETHER || f.dimension == ShadeFrame.DIM_END);
 		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
 			overworld(f, level, camera, dt, snap || changed);
 			return;
@@ -250,9 +263,10 @@ public final class ShadeDims {
 		ByteBuffer L = look.duplicate().order(ByteOrder.LITTLE_ENDIAN);
 		ByteBuffer F = frame.duplicate().order(ByteOrder.LITTLE_ENDIAN);
 		int features = L.getInt(ShadeLook.TIER + 4);
-		if (DimsConfig.DIMS) features |= FEATURE_DIMS;
+		boolean on = on();
+		if (on) features |= FEATURE_DIMS;
 		if (DimsConfig.MEDIA) features |= FEATURE_MEDIA;
-		if (DimsConfig.NETHER_SHIMMER) features |= FEATURE_SHIMMER;
+		if (on && DimsConfig.NETHER_SHIMMER) features |= FEATURE_SHIMMER;
 		L.putInt(ShadeLook.TIER + 4, features);
 		L.putFloat(ShadeLook.NIGHT + 8, aurora);
 		if (dimsLit) {

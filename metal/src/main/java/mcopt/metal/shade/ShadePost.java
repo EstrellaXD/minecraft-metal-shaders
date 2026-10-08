@@ -449,7 +449,7 @@ public final class ShadePost {
 		// w: Distant Horizons drew into this frame (its LODs are where the depth is empty: the Nether's fog leaves them)
 		params.putFloat(liveWidth).putFloat(liveHeight).putFloat(sharpen).putFloat(bridgeUsed ? 1f : 0f);
 		// x: XDR (M3): on, peak (x SDR white), knee, octaves to the peak
-		boolean xdr = psoFinalXdr != 0;
+		boolean xdr = psoFinalXdr != 0 && mcopt.metal.shade.dims.ShadeXdr.highlights();
 		if (xdr) mcopt.metal.shade.dims.ShadeXdr.params(params);
 		else params.putFloat(0f).putFloat(1f).putFloat(1f).putFloat(1f);
 		params.flip();

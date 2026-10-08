@@ -5,43 +5,36 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 22:10)
+## Status (2026-10-07 23:20) — finished, ready to merge into M3
 
-**Fix round 22:00 (pre-integration, from the skeptic check `check:weather` in `work/notes/m3-2026-10-07/prefix-checks.json`):**
-done and committed (builds, validate ALL OK, **not yet tested in game**):
-- Coloured shadows leave water out when the water module is on (`ShadeWater.ON`): `shadow_tint_fs` discards water
-  (`ShadowTintParams.mode.x`, params now 48 B), and `ShadowCasters` no longer lists translucent sections whose block palette
-  has no translucent model (`LevelChunkSection.maybeHas` + `BakedQuad.FLAG_TRANSLUCENT`), so near plain water the tint pass
-  draws nothing and the receivers skip the lookup (ssr.w = 0). Fixes the double absorption on lake floors (tint map + M2.1's
-  dy term). With the water module off, water still tints. `ShadowCasters.tintBoxes/tintCount` = the near cascade's listed
-  translucent sections (block coords).
-- Light-space rectangle: `ShadowPass.publishTint` projects those section boxes through cascade 0's matrix into a clip-space
-  rectangle (+8 texels) and writes it, with ssr.w, into **this frame's** ShadeLook slot after the shadow pass
-  (`ShadeBindings.setShadowTint`; no longer one frame late; `ShadeWeather.tintCasters` is gone, `pack` writes "none").
-  ShadeLook 608 `heldLight` (reserved, unused by every branch) is now **`tintRect`** (`ShadeLook.TINT_RECT`). Receivers
-  (`shadeShadowTint`, now with `L`) return before the sample outside it, and `shadeShadowTintDelta` returns 0 for tint 1.
+**Done in the last round (22:45-23:20, head after this doc commit):**
+- The 22:22 WIP (2d55f33: dev bits 32/64/128 as budget candidates) was real work: built, validated, priced in game (wx19)
+  and kept (80c385e). mcbench e5eac1b records the candidate phases and adds `wxrain_notint`.
+- **Rain budget at balanced met within noise without touching the mirror:** new flag `mcopt.shade.weatherLite` (default on
+  for performance/balanced, off for quality/ultra) turns on six look-preserving gates (Flags table). In-session rain cost
+  (wxrain vs wxrain_dry, the bench's puddle-heavy ground pan, 37 % of the ground in view under puddles):
+  **0.86 ms (wx19, before) -> 0.60 (wx20, 4 gates) -> 0.56 ms (wx21, all 6 gates, AC power, drift 0.004 ms)**.
+  wx17 (AC, before any gate) was 0.80. Puddle reflections (SSR) are unchanged: still ~0.16-0.22 ms, still mirror-like at
+  grazing views, torches and sky reflected (`work/release/M3-weather-screenshots/lite_*`). Quality/ultra keep the full look.
+- The 22:00 fixes are now tested in game: coloured shadows still render (wx19/wx21 `wx_glass_noon`, `rect_wx_glass_noon.png`:
+  the tint rectangle clips nothing visible); snowfall looked at (`wx_snowfall.png`: white flakes, M2.1-like opacity, no warm
+  torch tint).
+- Checked by reading (already committed before this round): water out of the tint pass with the water module on (663e6e7),
+  quad-shuffle guard `quadPuddle &&` (ea7e071), `COLOR_SHADOWS` requires `ShadeConfig.HDR` (ea7e071), LDR lite field (756a5a6).
+- Build OK, `validate.sh` ALL OK (also with `MCOPT_GEN_DIR` = the 402-stage dump: weather/HDR weather/lightning variants).
 
-- Quad-shuffle guard: the quad-shared puddle SSR block now starts with `quadPuddle &&` (no shuffles over lanes that left).
-- `COLOR_SHADOWS` needs `ShadeConfig.HDR` (LDR has no reader: no tint pass there).
-- LDR variants (`mcopt.shade.hdr=false`, `mcopt.lod`: no ShadeResources, no baked tile) use a lite analytic field, only
-  the one needed (3 value noises for puddles, 2 for snow, instead of 9).
-- Snowfall: `ShadeLook.wind.w` is now the snowfall at the camera (0..1, smoothed 1.5 s; the gust only shaped the slant on
-  the CPU); `shadeWeather3` gives flakes M2.1's alpha 0.55 and no torch heuristic while it snows. Not looked at in game yet.
-
-**Next, in this order** (the 21:55 task list; item 3 done):
-1. Game test of the above (glass shots: tint still there; price wxdry / wxdry_notint near glass and near water).
-2. Budget in heavy rain at balanced (0.80 ms in wx17 incl. ~0.19 tint): price after item 1; candidates as dev bits 32-512.
-4. Snowfall shot: mcbench (commit "WeatherShots wx_snowfall ... wxmove") has `-Dmcbench.weather=...,snow` (`wx_snowfall`) and
-   `move` (phase `wxmove`); run them and look.
-5. Moving view: record `wxmove` with `-Dmcopt.rec=<scratch>/wxmove.mp4 -Dmcopt.rec.start=wxmove -Dmcopt.rec.duration=6
-   -Dmcopt.rec.size=1512x982` (a separate run from the price run).
-6. Integration notes (slot 4 vs lights, tint delta duplicate). 7. WEATHER.md prices and stale "~0" claims (skeptic finding 6).
-
-**Earlier (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only
-where Fresnel shows it; terrain skips the coloured-shadow lookup when no translucent casters are near; rough films skip
-the sky lookup; balanced uses one raindrop grid and 12 reflection steps; puddle cover back to ~31 %; dev bits and mcbench
-price phases for every part; a module-off baseline; a DH sanity run (wx18) is clean. Screenshots:
-`work/release/M3-weather-screenshots/` (`final_*` = build ccaad51).
+**What is left (not blocking the merge):**
+1. **Dry cost near glass: ~0.18 ms** (wx19 0.14, wx20 0.20, wx21 0.18; budget ~0.1). The light-space rectangle did not lower
+   it measurably in the bench view (the glass roof stands beside the pose; the tint pass itself, a separate render pass into
+   the 1024^2 RGBA16F map, is probably most of it). Away from stained glass, ice, slime and honey there are no casters
+   (plain water no longer counts with the water module on) and the receivers skip the lookup. Options: `mcopt.shade.colorShadows=false` on
+   balanced (-0.18 near glass), or fold the tint draw into the cascade-0 pass / a smaller map (M4).
+2. Rain 0.56 vs 0.50: within the ±0.05-0.1 session noise, in a worst-case view (37 % puddles; 31 % on average). Further
+   options, each with a small look cost, for Gael to choose: raise the SSR gate to F x P 0.06 (puddles within ~3 blocks of
+   the feet lose a 5 % reflection, ~-0.02), ripples fade out nearer (0.02-0.045 blocks/pixel: no rings beyond ~10 blocks,
+   ~-0.03), 8 SSR steps on balanced (thin things like torches can be missed in the reflection, ~-0.05).
+3. Not done: the moving-view video (`wxmove`, item 5 of the 21:55 list) and a DH re-run after this round (wx18 DH sanity
+   was clean; this round changed only weather shaders and `ShadowPass`'s tint condition).
 
 ## What it does (in game)
 
@@ -68,6 +61,7 @@ price phases for every part; a module-off baseline; a DH sanity run (wx18) is cl
 | `mcopt.shade.puddleDist` | 64 | max reflection ray length (blocks) |
 | `mcopt.shade.ripples` | true | raindrop rings on puddles and water |
 | `mcopt.shade.rippleLayers` | 1 (performance, balanced) / 2 | raindrop grids |
+| `mcopt.shade.weatherLite` | true on performance/balanced, false on quality/ultra | budget gates that keep the look: no sun highlight on wet surfaces in heavy rain (rain 0.5-0.8 fade; the sun is at <= 32 % there), raindrop rings only where the puddle mirror shows them (flat Fresnel x puddle >= 0.02-0.035), rain streaks lit by the sky's mean light (no sky-view LUT per streak fragment), coloured shadows fade out in heavy rain (rain 0.5-0.8) and the tint pass is skipped above 0.8, wet films off the puddles see the overcast sky's mean light in heavy rain (no LUT lookup; fades in over rain 0.6-0.8), puddle reflections marched from F x P 0.05 (ramp to 0.09) instead of 0.035 (to 0.07): puddles within ~4.5 blocks of the feet (they reflect 2-5 %) keep the sky reflection alone. **The mirror at grazing views is untouched** |
 | `mcopt.shade.snowCover` | true | snow on top faces while it snows |
 | `mcopt.shade.rainSlant` | true | rain leans with the wind |
 | `mcopt.shade.lightning` | true | flash light + HDR bolt |
@@ -76,7 +70,7 @@ price phases for every part; a module-off baseline; a DH sanity run (wx18) is cl
 | `mcopt.shade.wetness`, `mcopt.shade.snowAmount` | -1 | force wetness+puddles / snow cover (look development) |
 | `mcopt.shade.flashLight` | 5 | the flash's light (radiance on a white surface, before exposure) |
 | `mcopt.shade.debug=8` | | debug view: red = wetness, green = puddles, blue = snow |
-| `mcopt.shade.dev` bits (read every frame) | 0 | pricing: 1024 no puddle SSR, 2048 no ripples, 4096 dry terrain, 8192 M2 rain shading, 16384 no coloured shadows (tint pass and lookup), 32768 per-pixel noise instead of the baked tile, 65536 puddle SSR without the Fresnel gate |
+| `mcopt.shade.dev` bits (read every frame) | 0 | pricing: the weatherLite gates one by one where weatherLite is off (32 sun gate, 64 ripple gate, 128 lite rain streaks, 256 coloured shadows fade in heavy rain, 512 films' mean sky in heavy rain, 131072 SSR gate from F x P 0.05; with weatherLite they are always on), 1024 no puddle SSR, 2048 no ripples, 4096 dry terrain, 8192 M2 rain shading, 16384 no coloured shadows (tint pass and lookup), 32768 per-pixel noise instead of the baked tile, 65536 puddle SSR without the Fresnel gate |
 
 ## Integration (what changed outside the new files)
 
@@ -99,6 +93,10 @@ camera, lightning bolts).
 | `weather.metal` | `shadeWeather3`, `shadeRainSlant` (M2's `shadeWeather` kept for the module off). |
 | `shadow.metal`, `mcshadow.m`, `ShadowNative`, `ShadowCasters`, `ShadowPass` | coloured shadows: `shadow_tint_vs/fs`, `mc_shadow_tint_init/texture/render`; `ShadowCasters.KIND_TRANSLUCENT` lists (near cascade only); `ShadowPass` draws them after cascade 0, publishes the map as ShadeResources 6 and, via `publishTint`, ssr.w + `tintRect` (the listed sections' boxes through cascade 0's matrix): receivers outside the rectangle skip the lookup. With the water module on, the tint pass leaves water out (`ShadowTintParams.mode.x`, 48 B) and `ShadowCasters` skips sections whose palette has no translucent block model (`LevelChunkSection.maybeHas`, `BakedQuad.FLAG_TRANSLUCENT`: plain water draws nothing). |
 | `ShadeBindings` | `setPrevDepthValid` (ssr.y), `setShadowTint` (ssr.w, tintRect): both write this frame's ShadeLook slot after the pack. |
+| `ShadeLook.flash` (768) | **shared with m3-skydims** (`ShadeDims.pack` writes the End's flashes there, same meaning: xyz toward the flash, w its light). Order after the merge: `LOOK.pack` (ends with `ShadeWeather.pack`, which writes the lightning flash or 0) **then** `ShadeDims.pack` (overwrites it only while the Nether/End are lit): keep that order and both work. In the End the terrain's `shadeWxFlash` is gated by sky light (0 there) and `sky.fs.metal`'s weather flash term reads the same field. |
+| dev bits | weather uses `mcopt.shade.dev` 32, 64, 128, 256, 512, 131072 (weatherLite gates), 1024-65536 (prices); M2 uses 1-16; no other M3 branch defines dev bits (checked m3, m3-lights, m3-clouds, m3-skydims 22:50). |
+| `ShadowPass` (tint) | the tint pass is skipped while `ShadeWeather.tintHidden()` (weatherLite and rain >= 0.8). |
+| `ShadeMsl.weather` | with weatherLite the HDR weather fragment gets `#define SHADE_WX_LITE` after `#define SHADE_WEATHER` (the terrain gets it from `ShadeWeather.prelude`). |
 | `ShadeLook.java` | `HELD_LIGHT` (608) renamed `TINT_RECT` (m3's `shade_dynlight.metal` comment still names heldLight as reserved: update it at the merge). |
 | `WaterFrame.rects` | the water sprites' atlas rectangles (for the tint pass). |
 | `tools/shade` | `ShadeMslDump` writes the weather vertex, HDR weather and lightning variants (with `MCOPT_GEN_DIR`); `validate.sh` compiles them. The terrain variants include the weather prelude automatically. |
@@ -123,6 +121,34 @@ session** with the `mcopt.shade.dev` bits (`-Dmcbench.weather=price`): a phase w
 `wxrain` / `wxdry` of the same session (drift check: `wxrain2` at the end). cpu-load.txt stayed at 90-290 % during the
 perf phases of every run listed (clean; the >350 % samples are the world loading before them). Provisional: clean final
 numbers come after the M3 integration.
+
+### Budget round: weatherLite (2026-10-07 22:45-23:15, the final balanced prices)
+
+Same pose and phases as below (`-Dmcbench.weather=price,glass,...`, 10 s pans, glass roof in range, balanced, TAAU 0.80).
+Prices are in-session differences against the mean of `wxrain` and `wxrain2` (wx19: drift-adjusted linearly, its drift was
++0.12 ms; wx20 and wx21 drifted -0.01 and +0.004 ms). Script: `work/notes/m3-2026-10-07/weather/wxprice.py <run dir>`.
+
+| | wx19 22:49 (2d55f33, battery) | wx20 22:59 (80c385e, battery) | **wx21 23:08 (2799c87, AC)** |
+|---|---|---|---|
+| gates on at balanced | none (candidates priced by dev bit) | sun, ripple, lite rain, rain tint | **all six** |
+| **Rain, everything** (wxrain vs wxrain_dry) | 0.86 | 0.60 | **0.56** |
+| puddle reflections (SSR, quad, 12 steps) | 0.15 | 0.22 | 0.16 |
+| saved by the SSR Fresnel gate | 0.05 (noise) | 0.08 | 0.14 |
+| raindrop ripples (1 grid) | 0.12 | 0.08 | 0.08 |
+| lit, slanted rain streaks (vs M2 rain) | 0.11 | 0.06 | 0.06 |
+| coloured shadows in rain | 0.20 | 0 (skipped in heavy rain) | 0 |
+| candidate: sun gate (dev 32) | 0.10 | (on) | (on) |
+| candidate: ripple gate (dev 64) | 0.03 | (on) | (on) |
+| candidate: lite rain streaks (dev 128) | 0.11 | (on) | (on) |
+| **Dry: coloured shadows** (wxdry, wxdry2 vs wxdry_notint) | 0.14 | 0.20 | 0.18 |
+| saved by the baked noise | 0.80 | 0.77 | 0.74 |
+
+Plain words: in heavy rain at balanced the weather now costs **~0.56 ms** (was ~0.8-0.9) in a view where 37 % of the ground
+is puddle, and the puddles still mirror the sky, torches and grass. Where the savings came from: the sun's glint on wet
+ground (the sun is behind the clouds in heavy rain: ~0.1 ms), the rain streaks' per-pixel sky lookup (~0.1 ms), the coloured
+shadows (they fade out in heavy rain, where the sun they colour is at a third or less: ~0.2 ms near glass), the wet ground's
+sky lookup in heavy rain and a slightly later start of the puddle reflection near the feet (~0.04 ms together), the ripple
+gate (~0.03 ms). Quality/ultra keep all of it (their dev bits still price each gate).
 
 ### What each part costs (ms of GPU time per frame)
 
@@ -192,7 +218,9 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 - With all that, **rain at balanced costs ~0.9 ms more than M2.1** in this puddle-heavy view (37 % of the ground in view
   is puddle; before the pause it measured 1.16 ms over a dry frame with the old pattern). **Dry: 0.19 ms** with the
   glass roof in the coloured-shadow range (wx17's bracketed A/B/A; the on/off launches agree within their ±0.1 ms noise).
-- **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met.** Rain is 0.3-0.4 ms over (0.80 ms in the
+- **Update 23:15: the weatherLite gates bring rain at balanced to 0.56 ms (wx21; see "Budget round" above) with the
+  mirror untouched; dry near glass stays ~0.18 ms.** The paragraph below is the state before that round.
+- **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met (before weatherLite).** Rain is 0.3-0.4 ms over (0.80 ms in the
   cleanest session, ~0.9 ms on/off); dry is 0.19 ms with glass or water in range (the lookup was skipped only without either; since 22:00 water no longer
   counts and the lookup is limited to the casters' rectangle: see the wx19 prices).
   What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
@@ -234,3 +262,6 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 | `20261007-194245-wx16-off-price` | ccaad51 | `mcopt.shade.weather=false`, price + glass |
 | `20261007-195738-wx17-price` | ccaad51 | warm-up + dry A/B/A bracket of the coloured shadows (mcbench 6a2531f); cleanest session |
 | `20261007-201040-wx18-dh-sanity` | ccaad51 | DH sanity (mcopt DEV-DH + Distant Horizons 3.3.4): glass, rain, wet sunset shots render, no errors in the log |
+| `20261007-224923-wx19-price-cand` | 2d55f33 | prices of the budget candidates (dev 32/64/128/224) + coloured shadows in rain (mcbench e5eac1b); glass, rain, snowfall shots; battery |
+| `20261007-225903-wx20-price-lite` | 80c385e | weatherLite with 4 gates: rain 0.60; glass, rain, wet sunset shots; battery |
+| `20261007-230849-wx21-price-lite2` | 2799c87 | weatherLite with all 6 gates: **rain 0.56**, dry tint 0.18; glass, rain, wet sunset, night rain shots (`lite_*`); AC |

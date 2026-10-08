@@ -9,18 +9,21 @@ crops `ab_*.jpg` in that folder, scripts `prefix-scripts/clouds-fx/`):
    `vl=false`, `vl.ssTaps=0`), not the cloud shadow (`clouds.shadows=false` same), not SSR; gone with `clouds=false`.
    Cause: `shade_m2.metal shadeFogAir2` (m3-clouds code) looked the clouds up at the CLAMPED direction (horizon at the same
    azimuth) for terrain/water below the horizon, so every pixel under a horizon cloud/gap got its value = vertical streaks.
-   **Fix written (WIP commit 22:15, not yet built/tested in game)**: look up at the pixel's own direction v;
-   below the horizon only from under the layer (smoothstep(0,24, clouds0.x)).
+   **FIXED (81d0eb8, built, validate ALL OK, in game run fx3-fogfix 22:08)**: look up at the pixel's own direction v;
+   below the horizon only from under the layer (smoothstep(0,24, clouds0.x)). Lines and columns gone
+   (`gael-report-sunset-lines/fix1_full_before_after.jpg`, `fix1_sea_before_after_vanillawater.jpg`).
 2. **Bright rectangular patches on the water (bottom centre)**: identical with `ssr=false` and with `clouds=false` -> not
-   clouds, not SSR. Probably real sand blocks at/just below the surface lit by the low sun; to confirm with
-   `-Dmcopt.shade.water=false` (vanilla water) in the next batch.
+   clouds, not SSR, and NOT terrain: gone with `-Dmcopt.shade.water=false` (vanilla water, run fx3-vanillawater). So it is
+   M2.1's water shader (shared code, `water.metal`): suspects the "rendered sky" path of `shadeWaterSkyRefl` (far terrain
+   at the render-distance edge taken as sky, weight smoothstep(160, 320, linearW)) or the refraction of the bottom. Next:
+   `-Dmcopt.shade.waterReflect=...`/`mcopt.shade.debug` views to pin it; fix belongs on m3 after integration (shared).
 3. **Horizontal stripes in the far clouds near the horizon**: same with `checker=1` and `wind=0` -> not the checkerboard /
    reprojection: the march itself at grazing angles (long steps over a long path; suspects: the loop cap
    `3n+4` iterations running out in dense far cloud, the start offset t0 + jitter*dt aliasing per row). Next: test
    `steps=60`, and a larger iteration cap / per-row jitter decorrelation.
 
-Next steps (in order): build + validate; shot batch sunset_west,water with the fog fix (+ `water=false` for item 2,
-+ `steps=60`); fix item 3; then the check findings (comb with a still camera: diagnose with wind=0/checker=1 crops at
+Next steps (in order): item 2 (pin the water path, describe/fix); fix item 3 (`steps=60` test; loop cap / remaining-path
+extrapolation in cloudMarch); then the check findings (comb with a still camera: diagnose with wind=0/checker=1 crops at
 noon_south; inside/above re-shoot at 20 steps); then Status/Results + price. Previous status (20:15) below.
 
 ### Status (2026-10-07 20:15)

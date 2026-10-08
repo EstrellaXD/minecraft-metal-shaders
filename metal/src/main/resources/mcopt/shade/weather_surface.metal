@@ -158,12 +158,31 @@ static float2 shadeWxRipples(float2 xa, float t, float rate, float footprint) {
 	return g * (0.0055 / widen);
 }
 
+// M3.3 wet ground (mcopt.shade.wetAll; ShadeWeather defines SHADE_WET_ALL when it is on at startup, else this file is
+// M3.2's): in rain the whole open ground gets a water film (darker, a Fresnel sheen of the sky, the sun's highlight, film
+// reflections where they show), puddles are the deeper, mirror-like water in its low spots with a wetter rim around them.
+// Its per-frame state is ShadeLook.water (576, reserved for the water module and unused by it; ShadeWeather.pack writes it):
+//   x 1 = the wet-all look this frame (0 = M3.2's look: an in-session A/B), y soaked film roughness of stone, paths, wood and
+//   sand, z the extra roughness of vegetation (grass tops), w film reflections' gate on F x k x gloss (0 = no film reflections)
+#ifdef SHADE_WET_ALL
+#define SHADE_WET_ALL_ON(L) ((L).water.x > 0.5)
+#else
+#define SHADE_WET_ALL_ON(L) false
+#endif
+
 // ---- wet surfaces and puddles -----------------------------------------------------------------------------------------------
 struct ShadeWet {
 	half omega;   // wetness of this surface 0..1 (darkening, gloss)
 	half puddle;  // standing water 0..1
 	half snow;    // snow cover 0..1
 	float2 slope; // ripple height gradient on puddles (world xz)
+	// M3.3 wet ground (SHADE_WET_ALL_ON; 0 otherwise): film 1 = the surface takes the soaked-ground film (solid blocks, not
+	// crossed plants or leaves); low 0..1 = how near the puddle threshold the field is here (the wetter rim, film -> puddle);
+	// var = the puddle field's slow variation (-0.3..0.3: hollows hold a smoother film)
+	half film;
+	half low;
+	half var;
+	half dark; // extra darkening exponent of the film (ShadeLook.waterAbs.x, look development; 0)
 };
 
 // How wet the surface at camera-relative p is. n: snapped face normal (toward the camera); sky: sky light 0..1 (rain only
@@ -176,10 +195,19 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	w.puddle = 0.0h;
 	w.snow = 0.0h;
 	w.slope = float2(0.0);
+	w.film = 0.0h; // (M3.3 wet ground)
+	w.low = 0.0h;
+	w.var = 0.0h;
+	w.dark = 0.0h;
 	half open = smoothstep(0.90h, 0.995h, sky);
 	if (open <= 0.0h || shadeDev(f, SHADE_DEV_WX_DRY)) return w;
 	half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h; // walls get wet streaks, undersides stay dry
 	w.omega = half(L.wet.x) * open * face * (thin ? 0.45h : foliage ? 0.7h : 1.0h);
+	// (M3.3 wet ground: solid blocks take the soaked film; crossed plants and leaves keep M3.2's light film)
+	if (SHADE_WET_ALL_ON(L) && !thin && !foliage) {
+		w.film = 1.0h;
+		w.dark = half(L.waterAbs.x);
+	}
 	float2 xa = shadeWxXZ(p.xz, f);
 	bool snowy = false, puddly = false;
 #ifdef SHADE_SNOW_COVER
@@ -204,6 +232,13 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
 		w.puddle = P;
+		if (SHADE_WET_ALL_ON(L)) {
+			// (M3.3 wet ground) the film thickens toward the puddles over the field's last 0.12 below the threshold (about half a
+			// block to two blocks around each puddle: a smooth film -> standing water rim), and hollows of the field hold a
+			// smoother film than its rises (blocks-wide patches: no pixel noise)
+			w.low = half(smoothstep(t - 0.12, t, field)) * half(L.wet.y) * open * (1.0h - w.snow);
+			w.var = half(clamp(field - 0.5, -0.3, 0.3));
+		}
 #ifdef SHADE_RIPPLES
 		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
 		if (SHADE_WX_BUDGET(f, SHADE_DEV_WX_RIPPLE_GATE)) {
@@ -226,7 +261,12 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 static inline half3 shadeWetAlbedo(half3 albedo, ShadeWet w) {
 	half3 a = albedo;
 	if (w.omega > 0.0h) a = pow(max(a, half3(1e-4h)), half3(1.0h + 0.65h * w.omega)) * (1.0h - 0.08h * w.omega);
-	if (w.puddle > 0.0h) a *= 1.0h - 0.3h * w.puddle;
+	if (w.film > 0.0h) {
+		if (w.dark != 0.0h) a = pow(max(a, half3(1e-4h)), half3(1.0h + w.dark * w.omega));
+		// (M3.3 wet ground) the rim darkens on toward the puddle, which dims a little less on top of it: the same x0.7 at its
+		// middle as M3.2's puddle, reached gradually instead of at the puddle's edge
+		a *= (1.0h - 0.12h * w.low) * (1.0h - 0.2h * w.puddle);
+	} else if (w.puddle > 0.0h) a *= 1.0h - 0.3h * w.puddle;
 	if (w.snow > 0.0h) a = mix(a, half3(0.86h, 0.88h, 0.92h), w.snow);
 	return a;
 }
@@ -326,7 +366,7 @@ static inline float3 shadeWxQuadSum(float3 v) { v += quad_shuffle_xor(v, 1); ret
 // wobble and TAAU hide the 2x2 blocks). Must be reached in quad-uniform control flow when SHADE_PUDDLE_QUAD is defined.
 // Returns (radiance before exposure, weight); weight 0 = no hit (callers keep their sky reflection).
 static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, float prevExposure, constant ShadeFrame &f, constant ShadeLook &L,
-                             texture2d<half> hist, texture2d<half> histDepth) {
+                             texture2d<half> hist, texture2d<half> histDepth, float streak = 0.0) {
 	float3 hp = float3(0.0);
 #ifdef SHADE_PUDDLE_QUAD
 	float3 pq = shadeWxQuadSum(p) * 0.25;
@@ -346,6 +386,10 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 	if (h.w < 0.0) return float4(0.0);
 #endif
 	float3 c = float3(hist.sample(shadeWxLinear, h.xy, level(0.0)).rgb) / prevExposure;
+	if (streak > 0.0) { // (M3.3 film reflections: streak = uv half-length along the screen's vertical)
+		c = c * 0.5 + (float3(hist.sample(shadeWxLinear, h.xy + float2(0.0, streak), level(0.0)).rgb)
+			+ float3(hist.sample(shadeWxLinear, h.xy - float2(0.0, streak), level(0.0)).rgb)) * (0.25 / prevExposure);
+	}
 	// prevScene is taken before the final pass adds the haze: add it for the hit's distance, as the eye sees it on screen
 	if (shadeFeature(L, SHADE_FEATURE_HAZE) && f.fogColor.a < 0.5) {
 		float3 T;
@@ -393,7 +437,9 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 #if defined(SHADE_PUDDLE_SSR) && defined(SHADE_PUDDLE_QUAD)
 	// the quad-shared march needs all four lanes: only a quad without any puddle may leave early
 	bool quadPuddle = shadeWxQuadMax(float(w.puddle)) > 0.02;
-	if (wet <= 0.004h && !quadPuddle) return radiance;
+	// (M3.3 wet ground) film reflections share the march: a quad with a soaked up-facing film stays as well (per frame first)
+	bool quadFilm = SHADE_WET_ALL_ON(L) && L.water.w > 0.0 && shadeWxQuadMax(in.n.y > 0.5h ? float(w.film * w.omega) : 0.0) > 0.3;
+	if (wet <= 0.004h && !quadPuddle && !quadFilm) return radiance;
 #else
 	if (wet <= 0.004h) return radiance;
 #endif
@@ -407,6 +453,16 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// leaves: green albedo) holds less of a film than stone, wood or paths
 	float veg = saturate((float(albedo.g) - max(float(albedo.r), float(albedo.b))) * 8.0);
 	float rough = mix(min(mix(0.8, 0.38, float(w.omega)) + 0.25 * veg, 0.95), 0.03, P);
+	// (M3.3 wet ground) solid ground soaks into a smooth film (ShadeLook.water.y: ~0.2 on stone, paths, wood, sand; vegetation
+	// + water.z, so grass tops are glossy but a little rougher), smoother in the field's hollows and toward standing water
+	// over the rim (low), then the puddle's 0.03; the film covers the ground (k) as it soaks, a little less on vegetation
+	float film = 0.0;
+	if (w.film > 0.0h) {
+		float soak = saturate(float(w.omega) * 1.15);
+		float rS = clamp(L.water.y + L.water.z * veg - 0.25 * float(w.var), 0.06, 0.6);
+		rough = mix(mix(mix(0.8, rS, soak), 0.06, float(w.low)), 0.03, P);
+		film = max(soak * (1.0 - 0.12 * veg), float(w.low)) * L.waterAbs.y;
+	}
 	float cosV = max(dot(-v, n), 0.02);
 	float F = shadeWxFresnel(cosV, rough);
 	float3 r = reflect(v, n);
@@ -428,13 +484,20 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// the sky reflection alone; the grazing views where the mirror shows are marched as before)
 	float2 gate = SHADE_WX_BUDGET(f, SHADE_DEV_WX_SSR_GATE2) ? float2(0.05, 0.09) : float2(0.035, 0.07);
 	float ssrW = shadeDev(f, SHADE_DEV_WX_NO_SSR_GATE) ? (P > 0.02 ? 1.0 : 0.0) : smoothstep(gate.x, gate.y, F * P);
+	// (M3.3 wet ground) film reflections on up-facing soaked ground, only where the sheen shows them: F x k x gloss from
+	// ShadeLook.water.w (ramp to 1.8x), gloss fading them out on rough films (0.2: 0.88, grass ~0.3: 0.5, >= 0.42: none)
+	float filmW = 0.0;
+	if (film > 0.0 && L.water.w > 0.0 && nf.y > 0.5) filmW = smoothstep(L.water.w, L.water.w * 1.8, F * film * saturate((0.42 - rough) * 4.0)) * (1.0 - P);
+	ssrW = max(ssrW, filmW);
 #ifdef SHADE_PUDDLE_QUAD
 	// quadPuddle first: lanes of a quad without puddles may have returned above, and shuffles must not read them
-	if (quadPuddle && shadeWxQuadMax(ssrW) > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (quadPuddle, histOk, prevExposure, dev: per frame)
+	if ((quadPuddle || quadFilm) && shadeWxQuadMax(ssrW) > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (quadPuddle, histOk, prevExposure, dev: per frame)
 #else
 	if (ssrW > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) {
 #endif
-		float4 hit = shadeWxHistSsr(in.p, r, in.pixel, SHADE_PUDDLE_DIST, in.prevExposure, f, L, hist, histDepth);
+		// (M3.3: a film's rougher reflection is smeared along the screen's vertical, the plane of incidence of a floor)
+		float streak = filmW > 0.0 ? 0.014 * saturate(rough * 3.3) * (1.0 - P) : 0.0;
+		float4 hit = shadeWxHistSsr(in.p, r, in.pixel, SHADE_PUDDLE_DIST, in.prevExposure, f, L, hist, histDepth, streak);
 		refl = mix(refl, hit.rgb, hit.w * ssrW);
 	}
 #endif
@@ -447,7 +510,7 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	float sunW = SHADE_WX_BUDGET(f, SHADE_DEV_WX_SUN_GATE) ? 1.0 - smoothstep(0.5, 0.8, L.wet.w) : 1.0;
 	if (sunW > 0.0) sun = float3(f.sunColor.rgb) * (min(shadeWxGgx(n, v, f.lightDirWorld.xyz, a), 60.0) * float(in.shadow)
 		* float(smoothstep(0.3h, 0.8h, in.sky)) * sunW);
-	float k = mix(float(w.omega) * 0.65 * (1.0 - 0.5 * veg), 1.0, P);
+	float k = mix(w.film > 0.0h ? film : float(w.omega) * 0.65 * (1.0 - 0.5 * veg), 1.0, P); // (M3.3: the film's k)
 	return radiance * (1.0 - F * k) + (refl * F + sun * F) * k;
 }
 

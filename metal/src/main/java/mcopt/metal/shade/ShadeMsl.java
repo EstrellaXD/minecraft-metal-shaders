@@ -52,9 +52,11 @@ public final class ShadeMsl {
 	public static final List<String> TERRAIN = List.of("sodium:pipeline/solid_terrain", "sodium:pipeline/cutout_terrain", "sodium:pipeline/translucent_terrain");
 
 	public static final String WEATHER = "minecraft:pipeline/weather", STARS = "minecraft:pipeline/stars";
+	/** M3 (mcopt.shade.dims): the End sky box (end_sky.{vs,fs}.metal). */
+	public static final String END_SKY = "minecraft:pipeline/end_sky";
 	public static final List<String> CLOUDS = List.of("minecraft:pipeline/clouds", "minecraft:pipeline/flat_clouds");
 
-	private static volatile String prelude, look, skyVertex, skyFragment, celestialVertex, sunriseVertex, starsVertex, cloudFragment;
+	private static volatile String prelude, look, skyVertex, skyFragment, celestialVertex, sunriseVertex, starsVertex, cloudFragment, endSkyVertex, endSkyFragment;
 
 	private ShadeMsl() {
 	}
@@ -74,6 +76,7 @@ public final class ShadeMsl {
 	public static String prelude() {
 		if (prelude == null) {
 			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
+				+ resource("shade_dims.metal") + "\n" // M3 sky / dimensions (skydims)
 				+ mcopt.metal.shade.light.DynLightMsl.prelude() // M3 dynamic lights (empty when off)
 				+ resource("shade_dynlight.metal") + "\n";
 		}
@@ -239,6 +242,8 @@ public final class ShadeMsl {
 		sunriseVertex = skyStage("sunrise_sunset.vs.metal");
 		starsVertex = skyStage("stars.vs.metal");
 		cloudFragment = prelude() + resource("clouds.fs.metal");
+		endSkyVertex = skyStage("end_sky.vs.metal");
+		endSkyFragment = skyStage("end_sky.fs.metal");
 		for (String name : TERRAIN) MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(ShadeMsl::terrain, ShadeMsl::terrain, List.of()));
 		List<String> matrices = List.of("DynamicTransforms", "Projection");
 		MetalShaderRegistry.register(SKY, new MetalShaderRegistry.Variant(generated -> skyVertex, generated -> skyFragment,
@@ -248,6 +253,10 @@ public final class ShadeMsl {
 		for (String name : CLOUDS) MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(null, generated -> cloudFragment, List.of("CloudInfo")));
 		MetalShaderRegistry.register(WEATHER, new MetalShaderRegistry.Variant(null, ShadeMsl::weather, List.of()));
 		MetalShaderRegistry.register(STARS, new MetalShaderRegistry.Variant(generated -> starsVertex, null, matrices));
+		if (mcopt.metal.shade.dims.DimsConfig.DIMS) {
+			MetalShaderRegistry.register(END_SKY, new MetalShaderRegistry.Variant(generated -> endSkyVertex, generated -> endSkyFragment,
+				List.of("DynamicTransforms", "Projection", "Sampler0")));
+		}
 		if (ShadeConfig.HDR) {
 			MetalShaderRegistry.setFormatAdapter(FORMAT_ADAPTER);
 			MetalShaderRegistry.setPrewarm(ShadeMsl::prewarm);

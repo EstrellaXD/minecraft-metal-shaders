@@ -96,9 +96,11 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 // v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks), zw the live part of the
 // VL textures (uv scale);
 // r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
-// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w bits (TAAU,
-// M2.2; 0 = M2.1): 2 depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point
-struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; };
+// output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w bits (an exact
+// small float): 1 = Distant Horizons drew this frame (M3: the Nether fog leaves the pixels where depth is empty); 2 (TAAU,
+// M2.2; 0 = M2.1) depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point;
+// x (M3 XDR, shade_final_xdr): x on, y highlight peak (x SDR white), z knee (exposed scene luminance), w octaves to the peak
+struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; float4 x; };
 
 // Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
 // full-resolution pass less): an unsharp mask from the 4-neighbour cross, weaker where the local contrast is already high,
@@ -169,14 +171,15 @@ static inline float3 shadeWorldFromDepth(float2 uv, float d, constant ShadeFrame
 	return w.xyz / w.w;
 }
 
-fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], texture2d<half> bloom [[texture(1)]],
-                            depth2d<float> depth [[texture(2)]], texture2d<half> bloom0 [[texture(3)]],
-                            texture2d<half> vlT [[texture(4)]], texture2d<half> vlD [[texture(5)]], constant ShadeFinalParams &P [[buffer(0)]],
-                            constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]]) {
+// Everything of the final pass before the display transform: the exposed scene colour (haze, the dimension fogs, camera
+// media, VL, bloom, Purkinje, vignette, vibrance). lum: the scene luminance before exposure (debug view 4).
+// DIMS (M3): compiled with the Nether/End fog, End sky, heat shimmer and camera media; the overworld variant (DIMS false)
+// carries none of that code (ShadePost picks the variant per frame), so the overworld's final pass costs what it did in M2.1.
+template <bool DIMS>
+static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth, texture2d<half> bloom0,
+                              texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P, constant ShadeFrame &f,
+                              constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr, thread float &lum) {
 	uint2 px = uint2(in.position.xy);
-	half3 c0 = scene.read(px).rgb;
-	if (P.r.z > 0.0) c0 = shadeSharpen(scene, px, c0, half(P.r.z));
-	float3 c = float3(c0);
 	float ex = max(g.exposure.x, 1e-6);
 	// height haze and mist (E06) from depth, once per pixel (the shaded pipelines skip it in the HDR target): surfaces in the
 	// air only (under water / in lava the game's fog owns it), not the sky (the atmosphere has its own) nor Distant Horizons'
@@ -189,6 +192,17 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	float2 uv = (rw & 2) != 0 ? clamp(in.uv + 0.5 * f.jitter.xy, 0.0, 1.0) : in.uv;
 	uint2 dpx = min(uint2(uv * dsize), uint2(dsize) - 1u);
 	float d = depth.read(dpx);
+	bool dims = DIMS && (L.tier.y & SHADE_FEATURE_DIMS) != 0 && L.dimTint.x > 0.0 && f.flags.x != SHADE_DIM_OVERWORLD;
+	uint2 sp = px;
+	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && L.dimTint.w < 1.5 && d > 0.0) {
+		// M3 heat shimmer over distant Nether terrain (shade_dims.metal): this pixel shows a slightly displaced one (still
+		// sharpened below, like every other pixel: the shimmer must not soften the Nether next to the overworld)
+		float dist = length(shadeWorldFromDepth(in.uv, d, f));
+		sp = uint2(clamp(int2(px) + int2(round(shadeShimmer(in.uv, dist, f, sr.milkyWay))), int2(0), int2(scene.get_width(), scene.get_height()) - 1));
+	}
+	half3 c0 = scene.read(sp).rgb;
+	if (P.r.z > 0.0) c0 = shadeSharpen(scene, sp, c0, half(P.r.z));
+	float3 c = float3(c0);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
 	float3 wp = d > 0.0 ? shadeWorldFromDepth(uv, d, f) : float3(0.0);
@@ -198,6 +212,21 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 			c = c * T + S * ex;
 		}
 	}
+	// M3: the End's sky where vanilla drew none (the dragon fight), then the Nether's layered glowing haze / the End's violet
+	// haze (shade_dims.metal), in open air
+	// r.w is a bit field: 1 = Distant Horizons drew into this frame (its LODs sit where depth is empty), 2 = M2.2's VL unjitter
+	bool dhDrew = (int(P.r.w) & 1) != 0;
+	if (dims && d <= 0.0 && L.dimTint.w > 2.5 && f.flags.y == 0 && !dhDrew) {
+		float4 w4 = f.invViewProj * float4(in.uv * 2.0 - 1.0, 0.5, 1.0);
+		float pixelAngle = 2.0 * atan(1.0 / max(abs(f.proj[1][1]), 1e-3)) / float(scene.get_height());
+		c = shadeEndSky(normalize(w4.xyz / w4.w), f, L, sr.milkyWay, pixelAngle) * ex;
+	}
+	if (dims && f.flags.y == 0) {
+		c = shadeDimsFog(c, wp, d > 0.0, f, L, ex, dhDrew, sr.milkyWay);
+		T = float3(d > 0.0 ? exp(-L.dimTint.x * length(wp)) : 0.0);
+	}
+	// M3: the camera inside lava or powder snow (E26)
+	if (DIMS && (L.tier.y & SHADE_FEATURE_MEDIA) != 0 && (f.flags.y == 2 || f.flags.y == 3)) c = shadeMedia(c, in.uv, d > 0.0 ? length(wp) : 1e4, f, sr.milkyWay);
 	// volumetric light (god rays, canopy mist; VL module): its medium is the air near the camera, in front of the haze
 	float tv = 1.0;
 	if (P.v.x > 0.5) {
@@ -215,7 +244,7 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 		c = mix(c, b, saturate(m));
 	}
 	// Purkinje: dim light (scene luminance, not exposed) shifts toward the rods' cool grey
-	float lum = shadeLuma(c) / ex;
+	lum = shadeLuma(c) / ex;
 	float rods = (1.0 - smoothstep(0.004, 0.04, lum)) * L.grade1.w;
 	c = mix(c, float3(shadeLuma(c)) * float3(0.72, 0.88, 1.3), rods);
 	// vignette (sparing what is bright)
@@ -227,16 +256,63 @@ fragment float4 shade_final(ShadeFsOut in [[stage_in]], texture2d<half> scene [[
 	float mx = max(max(c.r, c.g), c.b), mn = min(min(c.r, c.g), c.b);
 	float chroma = (mx - mn) / max(mx, 1e-4);
 	c = max(Y + (c - Y) * (1.0 + L.grade0.z * (1.0 - saturate(chroma / 0.6))), 0.0);
-	float3 y = shadeDisplay(c, L);
+	return c;
+}
+
+// The SDR display value -> what main stores: black floor, sRGB, triangular dither (+-1 LSB), debug view 4.
+static inline float3 shadeFinalEncode(float3 y, float4 position, constant ShadeFinalParams &P, constant ShadeLook &L, float lum) {
 	float phi = L.grade2.w;
 	y += phi * exp(-3.0 * y / max(phi, 1e-6));
 	float3 srgb = shadeLinearToSrgbExact(saturate(y));
 	// triangular dither, +-1 LSB
-	float n0 = shadeNoise(in.position.xy, int(P.p.z)), n1 = shadeNoise(in.position.xy + 17.0, int(P.p.z) + 7);
+	float n0 = shadeNoise(position.xy, int(P.p.z)), n1 = shadeNoise(position.xy + 17.0, int(P.p.z) + 7);
 	srgb += (n0 + n1 - 1.0) * (L.output.z / 255.0);
 	if (P.p.w == 4.0) srgb = float3(saturate(log2(max(lum, 1e-6)) / 16.0 + 0.6)); // debug: luminance (log)
-	return float4(saturate(srgb), 1.0);
+	return saturate(srgb);
 }
+
+#define SHADE_FINAL_ARGS ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], texture2d<half> bloom [[texture(1)]], \
+	depth2d<float> depth [[texture(2)]], texture2d<half> bloom0 [[texture(3)]], texture2d<half> vlT [[texture(4)]], \
+	texture2d<half> vlD [[texture(5)]], constant ShadeFinalParams &P [[buffer(0)]], constant ShadeFrame &f [[buffer(16)]], \
+	constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]], constant ShadeResources &sr [[buffer(19)]]
+
+template <bool DIMS>
+static inline float4 shadeFinalSdr(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth, texture2d<half> bloom0,
+                                   texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P, constant ShadeFrame &f,
+                                   constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr) {
+	float lum;
+	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum);
+	return float4(shadeFinalEncode(shadeDisplay(c, L), in.position, P, L, lum), 1.0);
+}
+
+fragment float4 shade_final(SHADE_FINAL_ARGS) { return shadeFinalSdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
+fragment float4 shade_final_dims(SHADE_FINAL_ARGS) { return shadeFinalSdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
+
+// M3 XDR (E23; mcxdr.m composes at present): main gets the same SDR image with alpha 0 (what later draws -- hand, GUI --
+// cover gets alpha > 0), the second target the highlights' brightness above it, in linear Rec.709 (>= 0): the SDR curve
+// is kept up to a knee (white surfaces at noon, the sky: full-screen brightness stays where it is), and above it the luminance
+// rises toward the peak over P.x.w octaves (the sun, glints, lava, torches, bloom cores), in the SDR pixel's own hue.
+struct ShadeFinalXdrOut { float4 sdr [[color(0)]]; half4 excess [[color(1)]]; };
+
+template <bool DIMS>
+static inline ShadeFinalXdrOut shadeFinalXdr(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth,
+                                             texture2d<half> bloom0, texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P,
+                                             constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr) {
+	float lum;
+	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum);
+	float3 y = shadeDisplay(c, L);
+	float h = saturate(log2(max(shadeLuma(c), 1e-6) / P.x.z) / P.x.w);
+	float boost = (P.x.y - 1.0) * h * h * (3.0 - 2.0 * h);
+	float3 excess = y / max(shadeLuma(y), 0.05) * boost;
+	ShadeFinalXdrOut o;
+	o.sdr = float4(shadeFinalEncode(y, in.position, P, L, lum), 0.0);
+	if (P.p.w == 8.0) o.sdr = float4(saturate(float3(boost / max(P.x.y - 1.0, 1e-3), h, 0.0)), 0.0); // debug: XDR boost, knee
+	o.excess = half4(half3(min(max(excess, 0.0), 60000.0)), 1.0h);
+	return o;
+}
+
+fragment ShadeFinalXdrOut shade_final_xdr(SHADE_FINAL_ARGS) { return shadeFinalXdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
+fragment ShadeFinalXdrOut shade_final_xdr_dims(SHADE_FINAL_ARGS) { return shadeFinalXdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
 
 // ---- bridge for mods that draw display-referred colours over the HDR world (Distant Horizons) ---------------------------
 fragment float4 shade_bridge_encode(ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], constant ShadeLook &L [[buffer(17)]]) {
@@ -353,5 +429,7 @@ fragment half4 shade_milkyway_bake(ShadeFsOut in [[stage_in]]) {
 	float clouds = 0.3 * pow(shadeFbm(dir * 40.0, 2, 37u), 4.0) * exp(-b / 8.0);
 	float v = (disc + bulge) * dust + clouds;
 	float3 col = mix(float3(1.0, 0.86, 0.66), float3(0.74, 0.82, 1.0), saturate(l / 70.0));
-	return half4(half3(col * v * 0.035), 1.0h);
+	// alpha (M3): a tileable fbm over the texture for the sky effects (shade_dims.metal shadeDimsNoise: aurora, End nebula
+	// and beams, Nether fog, media), so they need no texture of their own
+	return half4(half3(col * v * 0.035), half(shadeDimsBakeNoise(in.uv)));
 }

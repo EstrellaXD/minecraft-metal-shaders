@@ -50,6 +50,8 @@ final class MetalSurface implements GpuSurfaceBackend {
 		// Frame generation schedules every present on the display's refresh grid, which needs vsync (FrameGen).
 		this.paced = !vsync && PACE && !FrameGen.ENABLED;
 		if (PACE_ADAPT) Native.paceAdapt(this.paced ? 1 : 0);
+		// native shading's XDR output (mcopt.shade.xdr): decided before the layer's format is set; a constant false without shading
+		if (mcopt.metal.shade.Shade.ENABLED) mcopt.metal.shade.dims.ShadeXdr.configure(this.layer, FrameGen.ENABLED);
 		Native.layerConfigure(this.ctx, this.layer, config.width(), config.height(), (vsync || FrameGen.ENABLED || PACE_SYNC && this.paced ? 1 : 0) | DRAWABLES << 8);
 	}
 

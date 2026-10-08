@@ -129,7 +129,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     bool thin = amax < 0.9h; // crossed plants and other slanted cutouts
     if (!thin) n = half3(a.x == amax ? sign(n.x) : 0.0h, a.x != amax && a.y == amax ? sign(n.y) : 0.0h, a.x != amax && a.y != amax ? sign(n.z) : 0.0h);
     main0_out out;
-    if (sf.flags.x != SHADE_DIM_OVERWORLD) {
+    // outside the overworld: vanilla's lightmapped colour, unless the dims module (M3, shade_dims.metal) lights it below
+    bool dims = sf.flags.x != SHADE_DIM_OVERWORLD;
+    if (dims && !shadeDimsLit(sf)) {
         color.rgb *= float(shadeVanillaFace(n, sf.flags.x)); // the face-shade-off mixins removed it from the vertices
 #ifdef SHADE_DYNLIGHT
         {
@@ -170,9 +172,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #endif
     // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4); the water
     // module only gates its glint and caustics with it: M1's 4-tap tent there instead of PCSS
-    half shadow = in.v_Light.y <= 0.3h ? half(1.0)
+    // (the End has no sky light: its key light's map is looked up everywhere, with full sky for the far fallback)
+    bool endLit = sf.flags.x == SHADE_DIM_END;
+    half shadowSky = endLit ? half(1.0) : in.v_Light.y;
+    half shadow = (in.v_Light.y <= 0.3h && !endLit) || sf.flags.x == SHADE_DIM_NETHER ? half(1.0)
         : waterFull ? shadeShadow(shadowMap, shadowCompare, sf, p, n, false)
-        : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, in.v_Light.y);
+        : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
     float alpha = color.w;
 #ifdef ALPHA_CUTOUT
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
@@ -255,14 +260,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         alpha = w.a;
 #endif
     } else {
-        radiance = shadeLit2(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
+        // Nether/End (dims module): shadeLit2 without sky light and sun, plus the dimension's own light (shadeLitDimsExtra)
+        radiance = shadeLit2(albedo, n, dims ? half(0.0) : in.v_Light.y, in.v_Light.x, dims ? half(0.0) : shadow, thin, foliage, sf, sl);
+        if (dims) radiance += shadeLitDimsExtra(albedo, n, shadow, thin, foliage, p, sf, sl);
 #ifdef SHADE_DYNLIGHT
         radiance += float3(albedo) * sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), thin, in.v_Light.x);
 #endif
         // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
-        // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
+        // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block (stronger in the Nether).
         half tl = shadeLumaH(half3(texel.rgb));
-        if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12) radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * 2.2;
+        if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12)
+            radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * (sf.flags.x == SHADE_DIM_NETHER ? 3.1 : 2.2);
 #if defined(SHADE_WATER) && defined(SHADE_GLOSSY)
         // the water module's glossy translucents (stained glass, ice, slime, honey): mirror reflection over the lit colour
         if (!thin && !shadeDev(sf, SHADE_DEV_NO_WATER)) {
@@ -283,7 +291,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         }
 #endif
     }
-    radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl);
+    if (!dims) radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl); // Nether/End: final pass
     float3 rgb = shadeFinish2(radiance, fogValue, sf, sl, ex);
     if (debug == 2) rgb = shadeVanillaOut(float3(n) * 0.5 + 0.5, sl);
     if (debug == 1) {

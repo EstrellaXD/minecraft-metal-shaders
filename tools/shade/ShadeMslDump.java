@@ -55,6 +55,15 @@ public class ShadeMslDump {
 		Files.writeString(out.resolve("sunrise.vs.metal"), s3 + ShadeMsl.skyStage("sunrise_sunset.vs.metal"));
 		Files.writeString(out.resolve("stars.vs.metal"), s3 + ShadeMsl.skyStage("stars.vs.metal"));
 		Files.writeString(out.resolve("sky_lut.metal"), ShadeMsl.lut());
+		// M3 End sky box (mcopt.shade.dims): two uniform orders, LDR and HDR
+		List<List<String>> endOrders = List.of(List.of("Projection", "DynamicTransforms", "Sampler0"), List.of("Sampler0", "DynamicTransforms", "Projection"));
+		for (int i = 0; i < endOrders.size(); i++) {
+			String s = MetalShaderRegistry.slotDefines(endOrders.get(i));
+			Files.writeString(out.resolve("endsky" + i + ".vs.metal"), s + ShadeMsl.skyStage("end_sky.vs.metal"));
+			Files.writeString(out.resolve("endsky" + i + ".fs.metal"), s + ShadeMsl.skyStage("end_sky.fs.metal"));
+			Files.writeString(out.resolve("hdrendsky" + i + ".vs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("end_sky.vs.metal"));
+			Files.writeString(out.resolve("hdrendsky" + i + ".fs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("end_sky.fs.metal"));
+		}
 		// M2 post chain (one library: bloom, final, bridge, exposure kernels, Milky Way bake)
 		Files.writeString(out.resolve("post.metal"), ShadeMsl.post());
 		// the water module's own passes (wave bake, SSR coarse depth): ShadeWater.library

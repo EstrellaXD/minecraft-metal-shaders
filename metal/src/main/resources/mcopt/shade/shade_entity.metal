@@ -16,7 +16,8 @@
 //               shadeEntityShade(): albedo = texture x raw colour x ColorModulator with the hurt / creeper overlay, lit by
 //               shadeLit2 (sun or moon N.L with the shadow map, directional sky light, warm fill, block light curve, cave
 //               minimum), + the dynamic lights (m3-lights' irradiance volume), fogged like terrain (shadeFogAir2) and exposed (shadeFinish2).
-// Outside the overworld the game's colour is kept (as terrain does), converted to scene-linear.
+// Outside the overworld the game's colour is kept (as terrain does), converted to scene-linear, unless the dims module lights
+// the Nether / End per pixel (shadeLitDims, like their terrain).
 #ifndef MCOPT_SHADE_ENTITY
 #define MCOPT_SHADE_ENTITY
 
@@ -58,8 +59,13 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 	float3 dpx = dfdx(p), dpy = dfdy(p);
 #ifdef MCOPT_HAND
 	if (f.flags.x != SHADE_DIM_OVERWORLD || shadeDev(f, SHADE_DEV_FLAT_LIGHT)) return vanilla;
+	const bool dimsLit = false;
 #else
-	if (f.flags.x != SHADE_DIM_OVERWORLD || shadeDev(f, SHADE_DEV_FLAT_LIGHT)) return float4(shadeVanillaOut(vanilla.rgb, L), vanilla.a);
+	// Nether / End: the game's colour, unless the dims module (M3 skydims) lights the terrain there per pixel: then entities
+	// and particles take the same light (shadeLitDims) and the final pass fogs them (else they read as dark, unfogged specks
+	// over the dimension's lit haze)
+	bool dimsLit = f.flags.x != SHADE_DIM_OVERWORLD && shadeDimsLit(f);
+	if ((f.flags.x != SHADE_DIM_OVERWORLD && !dimsLit) || shadeDev(f, SHADE_DEV_FLAT_LIGHT)) return float4(shadeVanillaOut(vanilla.rgb, L), vanilla.a);
 #endif
 	float3 n;
 	bool thin = kind == SHADE_ENT_PARTICLE;
@@ -83,8 +89,15 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 		return shadeEntityOut(shadeFinish2(rad, 0.0, f, L, ex), vanilla.a, L);
 	}
 	half3 hn = half3(n);
-	half shadow = sky <= 0.3h ? half(1.0) : shadeShadow(shadowMap, cmp, f, p, hn, thin);
-	float3 radiance = shadeLit2(albedo, hn, sky, block, shadow, thin, false, f, L);
+	half shadow;
+	float3 radiance;
+	if (dimsLit) { // the Nether (no shadows) / the End (its key light's shadow map)
+		shadow = f.flags.x == SHADE_DIM_END ? shadeShadow(shadowMap, cmp, f, p, hn, thin) : half(1.0);
+		radiance = shadeLitDims(albedo, hn, block, shadow, thin, false, p, f, L);
+	} else {
+		shadow = sky <= 0.3h ? half(1.0) : shadeShadow(shadowMap, cmp, f, p, hn, thin);
+		radiance = shadeLit2(albedo, hn, sky, block, shadow, thin, false, f, L);
+	}
 	int dynKind = kind == SHADE_ENT_PARTICLE ? SHADE_DYN_PARTICLE : kind == SHADE_ENT_HAND ? SHADE_DYN_HAND : SHADE_DYN_ENTITY;
 	radiance += shadeDynamicLights(shadeDynIn(p, n, float3(albedo), frag.xy, sky, block, dynKind), f, L, &R);
 #ifdef SHADE_DYNLIGHT
@@ -97,7 +110,7 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 	float vanillaFog = 0.0; // the hand gets no fog
 #else
 	float vanillaFog = shadeVanillaFog(p, fog.xy, fog.zw);
-	radiance = shadeFogAir2(radiance, p, vanillaFog, 0.0, lut, lutS, f, L);
+	if (!dimsLit) radiance = shadeFogAir2(radiance, p, vanillaFog, 0.0, lut, lutS, f, L); // Nether/End: the final pass fogs
 #endif
 	float3 rgb = shadeFinish2(radiance, vanillaFog, f, L, ex);
 	if (debug == 2) rgb = shadeVanillaOut(n * 0.5 + 0.5, L);

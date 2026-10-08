@@ -91,12 +91,23 @@ final class DimShots {
 					if (!x.teardown.isEmpty()) extra.add(new Cmd("teardown-" + e.getKey(), x.teardown));
 					// opt-in perf spin at the first Nether / End scene (-Dmcbench.dimsPerf=SECONDS): phases "nether" / "end"
 					String phase = e.getKey().equals("nether_wastes") ? "nether" : e.getKey().equals("end_island") ? "end" : null;
-					if (phase != null && PERF > 0) extra.add(new DimSpin(phase, x.pose, PERF));
+					// in-session price A/B: look on / paused (mcopt.shade.dims.pause, read live by the mod) / on again
+					if (phase != null && PERF > 0) {
+						extra.add(new DimSpin(phase, x.pose, PERF, "mcopt.shade.dims.pause", "false"));
+						extra.add(new DimSpin(phase + "_off", x.pose, PERF, "mcopt.shade.dims.pause", "true"));
+						extra.add(new DimSpin(phase + "2", x.pose, PERF, "mcopt.shade.dims.pause", "false"));
+					}
 				}
 				// back to the overworld spot (the saved world must not start the next run in another dimension)
 				Pose o = BenchDriver.spot.overview;
 				extra.add(new DimScene("dims-return", new Found("minecraft:overworld", o, 6000, "", "")));
 				extra.add(new BenchDriver.Settle("dims-return", false, 2, 60));
+				// XDR highlights price at the overworld spot (noon): on / as on an SDR-only screen (mcopt.shade.xdrTest=sdr) / on
+				if (PERF > 0) {
+					extra.add(new DimSpin("xdr", o, PERF, "mcopt.shade.xdrTest", ""));
+					extra.add(new DimSpin("xdr_off", o, PERF, "mcopt.shade.xdrTest", "sdr"));
+					extra.add(new DimSpin("xdr2", o, PERF, "mcopt.shade.xdrTest", ""));
+				}
 				BenchDriver.results.put("dimShots", json);
 				for (int i = extra.size() - 1; i >= 0; i--) steps.addFirst(extra.get(i));
 				return true;
@@ -137,32 +148,49 @@ final class DimShots {
 
 	static final double PERF = Double.parseDouble(System.getProperty("mcbench.dimsPerf", "0"));
 
-	/** A recorded perf segment at a dimension pose: 360 degrees of yaw over sec seconds (like the overworld spin). */
+	/**
+	 * A recorded perf segment at a dimension pose: 360 degrees of yaw over sec seconds (like the overworld spin). With a
+	 * property (the mod reads it live): set at the start, then 2 s unrecorded at the start pose before recording; cleared
+	 * ("") or reset to "false" by the next segment / at the end.
+	 */
 	static final class DimSpin extends BenchDriver.Step {
+		static final double WARM = 2.0;
 		final Pose o;
 		final double sec;
+		final String prop, value;
+		long t0;
 
-		DimSpin(String phase, Pose o, double sec) {
+		DimSpin(String phase, Pose o, double sec, String prop, String value) {
 			super(phase, 0);
 			this.o = o;
 			this.sec = sec;
+			this.prop = prop;
+			this.value = value;
 		}
 
 		@Override
 		void start(Minecraft mc, long now) {
 			BenchDriver.setPhase("SPIN");
-			long t0 = now;
-			BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 360.0 * Math.min(1, BenchDriver.secs(t - t0) / sec)), o.pitch());
-			BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(name);
-			BenchDriver.phaseRanges.put(name, new long[] {now, 0});
-			BenchDriver.log("perf " + name + " " + sec + " s");
+			System.setProperty(prop, value);
+			t0 = 0;
+			BenchDriver.pose = t -> o;
+			BenchDriver.log("perf " + name + " " + sec + " s (" + prop + "=" + value + ")");
 		}
 
 		@Override
 		boolean poll(Minecraft mc, long now) {
-			if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+			if (t0 == 0) {
+				if (BenchDriver.secs(now - BenchDriver.curStart) < WARM) return false;
+				long s0 = t0 = now;
+				BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 360.0 * Math.min(1, BenchDriver.secs(t - s0) / sec)), o.pitch());
+				BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(name);
+				BenchDriver.phaseRanges.put(name, new long[] {now, 0});
+				return false;
+			}
+			if (BenchDriver.secs(now - t0) < sec) return false;
 			BenchDriver.recPhase = -1;
 			BenchDriver.phaseRanges.get(name)[1] = now;
+			System.setProperty(prop, value.equals("true") ? "false" : value.equals("sdr") ? "" : value);
 			Pose last = BenchDriver.pose.apply(now);
 			BenchDriver.pose = t -> last;
 			return true;

@@ -115,11 +115,14 @@ final class MetalPipeline implements BackendRenderPipeline {
 	static @Nullable MetalPipeline compile(MetalEncoder encoder, CreateInfo info) {
 		if (MetalShaderRegistry.get(info.name()) == null) return compile(encoder, info, false);
 		try {
-			return compile(encoder, info, true);
+			MetalPipeline built = compile(encoder, info, true);
+			mcopt.metal.shade.ShadeRobust.registryBuilt(info.name(), true); // mcopt-shade M3.3 (no-op unless it failed before)
+			return built;
 		} catch (RuntimeException e) {
 			// A registry (native shading) variant that doesn't build, e.g. against a resource pack's own core shader: the
 			// game's shaders instead of a crash.
 			System.out.println("mcopt-metal: registry MSL for " + info.name() + " failed to build, using the game's shaders: " + String.valueOf(e.getMessage()).lines().findFirst().orElse(""));
+			mcopt.metal.shade.ShadeRobust.registryBuilt(info.name(), false); // mcopt-shade M3.3: what depends on it steps back too
 			return compile(encoder, info, false);
 		}
 	}
@@ -141,6 +144,8 @@ final class MetalPipeline implements BackendRenderPipeline {
 			}
 			MetalShaderRegistry.Variant registered = useRegistry ? registered(info) : null;
 			if (registered != null) {
+				// mcopt-shade M3.3: dev-only injected failure (-Dmcopt.shade.dev.failCompile), tests the fallback below; inert unset
+				if (mcopt.metal.shade.ShadeRobust.failCompile(info.name())) throw new IllegalStateException(info.name() + ": injected shader build failure (-Dmcopt.shade.dev.failCompile)");
 				v = apply(registered.vertex(), registered.vertexEntry(), v, info);
 				f = apply(registered.fragment(), registered.fragmentEntry(), f, info);
 			}

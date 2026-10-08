@@ -55,6 +55,12 @@ public final class ShadeRender {
 
 	/** Compiles a library (MSL 3.0, fast math); throws with the compiler's message. */
 	public static long library(String source) {
+		// M3.3: dev-only injected failure (ShadeRobust, -Dmcopt.shade.dev.failCompile=library:<caller class>); inert unset
+		if (System.getProperty("mcopt.shade.dev.failCompile") != null) {
+			String caller = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE).walk(s -> s.skip(1).findFirst())
+				.map(f -> f.getDeclaringClass().getSimpleName()).orElse("?");
+			ShadeRobust.maybeFail("library:" + caller);
+		}
 		long ctx = ShadeBindings.ctx();
 		ByteBuffer src = MemoryUtil.memUTF8(source);
 		try (MemoryStack stack = MemoryStack.stackPush()) {

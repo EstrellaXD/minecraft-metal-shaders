@@ -27,6 +27,7 @@ final class Native {
 
 	private static final MethodHandle CREATE = fn("mc_create", false, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle MAX_BUFFER_LENGTH = fn("mc_max_buffer_length", true, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle DEVICE_ALLOCATED = fn("mc_device_allocated", false, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle RELEASE = fn("mc_release", false, null, JAVA_LONG);
 	private static final MethodHandle BUFFER_NEW = fn("mc_buffer_new", false, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle BUFFER_PRIVATE = fn("mc_buffer_private", false, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
@@ -151,6 +152,7 @@ final class Native {
 
 	static long create(long name, int nameCap, long err, int errCap) { try { return (long) CREATE.invokeExact(name, nameCap, err, errCap); } catch (Throwable t) { throw rethrow(t); } }
 	static long maxBufferLength(long ctx) { try { return (long) MAX_BUFFER_LENGTH.invokeExact(ctx); } catch (Throwable t) { throw rethrow(t); } }
+	static long deviceAllocated(long ctx) { try { return (long) DEVICE_ALLOCATED.invokeExact(ctx); } catch (Throwable t) { throw rethrow(t); } }
 	static void release(long obj) { try { RELEASE.invokeExact(obj); } catch (Throwable t) { throw rethrow(t); } }
 	static long bufferNew(long ctx, long size) { try { return (long) BUFFER_NEW.invokeExact(ctx, size); } catch (Throwable t) { throw rethrow(t); } }
 	static long bufferPrivate(long ctx, long src, long size) { try { return (long) BUFFER_PRIVATE.invokeExact(ctx, src, size); } catch (Throwable t) { throw rethrow(t); } }

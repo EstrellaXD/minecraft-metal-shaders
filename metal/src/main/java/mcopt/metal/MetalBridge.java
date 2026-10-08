@@ -136,6 +136,11 @@ public final class MetalBridge {
 		return ((MetalEncoder) encoder).ctx;
 	}
 
+	/** MTLDevice.currentAllocatedSize of the device behind ctx (mcopt-shade M3.3: the rejoin leak check reads it). */
+	public static long deviceAllocated(long ctx) {
+		return Native.deviceAllocated(ctx);
+	}
+
 	/**
 	 * Opens (or continues) a render encoder on colors (0 = unused slot) and depth, like the backend's own passes: clears[i]
 	 * null loads, else clears to {r, g, b, a}. Returns mc_render_begin's result (0 new encoder, 1 or 2 continued).

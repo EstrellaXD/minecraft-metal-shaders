@@ -138,6 +138,7 @@ public final class FrameGen {
 	private long movingSeen, copiedSeen;
 	private boolean presentedTimes;
 	private final Set<String> dumped = new HashSet<>();
+	private String dumpTag = "";
 	private double firstPairAt, turningSince;
 	/** -Dmcopt.metal.framegen.dump=seq: frames of the recorded sequence so far (-1: not started). */
 	private int sequenceFrames = -1;
@@ -153,8 +154,8 @@ public final class FrameGen {
 		} catch (Throwable t) {
 			throw new IllegalStateException(t);
 		}
-		System.out.printf("mcopt-framegen: %s (refresh %.2f Hz, %s holds)%n", GENERATE ? "MetalFX frame interpolation on" : "paced baseline, no generated frames",
-			period() > 0 ? 1 / period() : 0, EVEN ? "even" : "uneven");
+		System.out.println(String.format("mcopt-framegen: %s (refresh %.2f Hz, %s holds)", GENERATE ? "MetalFX frame interpolation on" : "paced baseline, no generated frames",
+			period() > 0 ? 1 / period() : 0, EVEN ? "even" : "uneven")); // mcopt-shade M3.3: println (printf bypassed latest.log)
 	}
 
 	/** The frame generator on the Metal backend, created on first use; null otherwise. */
@@ -193,8 +194,12 @@ public final class FrameGen {
 
 	private void recordLevel(RenderTarget main, Matrix4fc projection, CameraRenderState camera) {
 		this.cameraSet = false;
-		if (!this.ensure(main)) return;
-		this.viewProjection.set(projection).mul(camera.viewRotationMatrix);
+		// mcopt-shade M3.3: under native shading's TAAU main is its world target here (ShadeFrameGen): size to the output,
+		// unjitter, and read the depth's live sub-rect. null (shade off, TAAU off, mcopt.shade.framegen.taau=false): upstream.
+		mcopt.metal.shade.taa.ShadeTaa taau = mcopt.metal.shade.Shade.ENABLED ? mcopt.metal.shade.taa.ShadeFrameGen.swapped() : null;
+		if (!this.ensure(taau != null ? taau.outputTarget() : main)) return;
+		if (taau != null) new Matrix4f().translation(-taau.jitterNdcX(), -taau.jitterNdcY(), 0).mul(projection, this.viewProjection).mul(camera.viewRotationMatrix);
+		else this.viewProjection.set(projection).mul(camera.viewRotationMatrix);
 		this.camera = camera.pos;
 		this.yaw = camera.yRot;
 		this.pitch = camera.xRot;
@@ -213,7 +218,32 @@ public final class FrameGen {
 			return;
 		}
 		this.encoder.flushClear(depth);
-		this.motion(depth.handle, false);
+		if (taau == null || !this.motionSub(depth.handle, taau.width(0), taau.height(0))) this.motion(depth.handle, false);
+	}
+
+	/** mcopt-shade M3.3: motion() from a depth whose live sub-rect is w x h (TAAU's world target); false if it can't. */
+	private boolean motionSub(long source, int w, int h) {
+		if (w <= 0 || h <= 0) return false;
+		boolean history = this.previousCamera != null && this.camera != null && this.previousLevel == this.level;
+		Matrix4f inverse = new Matrix4f(this.viewProjection).invert();
+		Matrix4f previous = new Matrix4f();
+		if (history) {
+			Vec3 d = this.camera.subtract(this.previousCamera);
+			previous.set(this.previousViewProjection).translate((float) d.x, (float) d.y, (float) d.z);
+		} else {
+			previous.set(this.viewProjection);
+		}
+		Matrix4f reproject = new Matrix4f(previous).mul(inverse);
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			long m = stack.nmalloc(16, 4 * 64);
+			reproject.getToAddress(m);
+			previous.getToAddress(m + 64);
+			this.viewProjection.getToAddress(m + 128);
+			inverse.getToAddress(m + 192);
+			return (int) N.MOTION_SUB.invokeExact(this.encoder.enc, this.fg, source, m, HAND_DEPTH, w, h) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
 	}
 
 	/** This frame's motion from source (the level's depth, or native shading's scene copy) and the two frames' cameras. */
@@ -330,7 +360,7 @@ public final class FrameGen {
 		this.width = main.width;
 		this.height = main.height;
 		this.previousCaptured = false;
-		System.out.printf("mcopt-framegen: interpolating %dx%d%n", this.width, this.height);
+		System.out.println(String.format("mcopt-framegen: interpolating %dx%d", this.width, this.height));
 		return true;
 	}
 
@@ -551,14 +581,14 @@ public final class FrameGen {
 		}
 		StringBuilder h = new StringBuilder();
 		for (int i = 0; i < holds.length; i++) if (holds[i] > 0) h.append(' ').append(i).append("x:").append(holds[i]);
-		System.out.printf("mcopt-framegen: %.1f real frames/s, %.1f shown/s (%d generated, %d dropped, %d late) | shown every %.2f ms (sd %.2f, min %.2f, max %.2f; refreshes held%s)"
+		System.out.println(String.format("mcopt-framegen: %.1f real frames/s, %.1f shown/s (%d generated, %d dropped, %d late) | shown every %.2f ms (sd %.2f, min %.2f, max %.2f; refreshes held%s)"
 				+ " | real frame start->shown %.1f ms (p90 %.1f) | frame work p90 %.1f ms, frame GPU p90 %.1f ms, %d refresh(es) per image | %s"
-				+ " | %d of %d generated frames between differing real frames were the newer one given back (not interpolated)%n",
+				+ " | %d of %d generated frames between differing real frames were the newer one given back (not interpolated)",
 			this.reportFrames / seconds, shown.size() / seconds, generated, dropped, late, mean * 1e3, sd * 1e3,
 			sorted.length > 0 ? sorted[0] * 1e3 : 0, sorted.length > 0 ? sorted[sorted.length - 1] * 1e3 : 0, h,
 			lat.length > 0 ? Arrays.stream(lat).average().orElse(0) * 1e3 : 0, lat.length > 0 ? lat[(int) (0.9 * (lat.length - 1))] * 1e3 : 0,
 			percentile(this.work, 0.9) * 1e3, percentile(this.gpu, 0.9) * 1e3, this.refreshes, this.presentedTimes ? "presentedTime" : "presented-handler time",
-			copied, moving);
+			copied, moving)); // mcopt-shade M3.3: println, so it reaches latest.log
 		this.reportFrames = this.reportGenerated = this.reportLate = 0;
 	}
 
@@ -567,6 +597,14 @@ public final class FrameGen {
 	/** The kind of dump this generated frame is (marked as done), or null. */
 	private @Nullable String dumpKind() {
 		if (DUMP.size() <= 1 && DUMP.contains("")) return null;
+		// mcopt-shade M3.3 (dev): a new -Dmcopt.metal.framegen.dumpTag (set live) re-arms the dumps, its files prefixed with it
+		String tag = System.getProperty("mcopt.metal.framegen.dumpTag", "");
+		if (!tag.equals(this.dumpTag)) {
+			this.dumpTag = tag;
+			this.dumped.clear();
+			this.firstPairAt = 0;
+			this.turningSince = 0;
+		}
 		double now = now();
 		if (this.firstPairAt == 0) this.firstPairAt = now;
 		String kind = null;
@@ -579,7 +617,7 @@ public final class FrameGen {
 		else if (DUMP.contains("move") && !this.dumped.contains("move") && settled && this.move >= 0.5 && this.turn < 1) kind = "move";
 		else if (DUMP.contains("first") && !this.dumped.contains("first") && now - this.firstPairAt > 3) kind = "first";
 		if (kind != null) this.dumped.add(kind);
-		return kind;
+		return kind == null || tag.isEmpty() ? kind : tag + "-" + kind;
 	}
 
 	/**
@@ -744,6 +782,7 @@ public final class FrameGen {
 		static final MethodHandle RESIZE = fn("mcf_resize", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 		static final MethodHandle TEXTURE = fn("mcf_texture", JAVA_LONG, JAVA_LONG, JAVA_INT);
 		static final MethodHandle MOTION = fn("mcf_motion", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT);
+		static final MethodHandle MOTION_SUB = fn("mcf_motion_sub", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_FLOAT, JAVA_INT, JAVA_INT); // mcopt-shade M3.3
 		static final MethodHandle CAPTURE = fn("mcf_capture", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 		static final MethodHandle INTERPOLATE = fn("mcf_interpolate", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
 		static final MethodHandle LAYER = fn("mcf_layer", null, JAVA_LONG);

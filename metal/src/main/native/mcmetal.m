@@ -95,6 +95,8 @@ Ctx *mc_create(char *name, int nameCap, char *err, int errCap) {
 }
 
 uint64_t mc_max_buffer_length(Ctx *ctx) { return ctx->device.maxBufferLength; }
+/* mcopt-shade M3.3 (robustness checks): bytes the device has allocated (MTLDevice.currentAllocatedSize), for the rejoin leak check. */
+uint64_t mc_device_allocated(Ctx *ctx) { return ctx->device.currentAllocatedSize; }
 static int poolRelease(id obj);
 void mc_release(id obj) {
 	if (!poolRelease(obj)) [obj release];

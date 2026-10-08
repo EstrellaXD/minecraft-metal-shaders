@@ -44,7 +44,9 @@ public final class ShadeXdr {
 	private static long layer;
 	private static float loggedHeadroom = -1f, peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
 	/** The scene luminance (pre-tonemap, exposed) where highlights start to use the headroom, and how many octaves above it they reach the peak. */
-	static final float KNEE = 3.0f, RANGE = 4.0f;
+	// knee 3 / 4 octaves (the first cut) left lava, glowstone and torches under SDR white in every dumped scene (max 1.2x):
+	// 2.0 / 3.5 lets emissive cores and the sun use the headroom while lit surfaces (snow at noon) stay within ~1.1x
+	static final float KNEE = DimsConfig.floatFlag("mcopt.shade.xdrKnee", 2.0f, 0.5f, 16f), RANGE = 3.5f;
 	private static float testClock;
 
 	private ShadeXdr() {

@@ -85,8 +85,8 @@ final pass (shade_final_xdr, MRT) --> main RGBA8: the same SDR image, alpha 0   
 present (mcmetal.m pqFill / mc_present): compose pass -> RGBA16F staging slot (or the drawable)
     out = M709->P3 * ( srgb->linear(main.rgb) + excess * (1 - main.a) )      layer: RGBA16Float, extendedLinearDisplayP3, EDR
 ```
-- The SDR curve is untouched up to a knee (exposed scene luminance 3: sunlit white walls, the sky); above it the brightness
-  rises smoothly over 4 octaves to the peak, in the pixel's SDR hue. Peak = the screen's live EDR headroom
+- The SDR curve is untouched up to a knee (exposed scene luminance 2, `mcopt.shade.xdrKnee`: lit white walls, the sky); above it the brightness
+  rises smoothly over 3.5 octaves to the peak, in the pixel's SDR hue. Peak = the screen's live EDR headroom
   (`NSScreen.maximumExtendedDynamicRangeColorComponentValue`, polled 4x/s, smoothed tau 0.5 s), capped by `mcopt.shade.xdrPeak`.
 - The excess counts only for the present of the frame whose final pass wrote it (same command buffer), so menus never
   show stale highlights. GUI coverage comes from main's alpha: no second GUI draw.

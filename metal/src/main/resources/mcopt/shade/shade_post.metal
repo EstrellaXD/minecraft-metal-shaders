@@ -194,7 +194,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float d = depth.read(dpx);
 	bool dims = DIMS && (L.tier.y & SHADE_FEATURE_DIMS) != 0 && L.dimTint.x > 0.0 && f.flags.x != SHADE_DIM_OVERWORLD;
 	uint2 sp = px;
-	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && L.dimTint.w < 1.5 && d > 0.0) {
+	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && shadeDimKind(L) == 1 && d > 0.0) {
 		// M3 heat shimmer over distant Nether terrain (shade_dims.metal): this pixel shows a slightly displaced one (still
 		// sharpened below, like every other pixel: the shimmer must not soften the Nether next to the overworld)
 		float dist = length(shadeWorldFromDepth(in.uv, d, f));
@@ -216,7 +216,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	// haze (shade_dims.metal), in open air
 	// r.w is a bit field: 1 = Distant Horizons drew into this frame (its LODs sit where depth is empty), 2 = M2.2's VL unjitter
 	bool dhDrew = (int(P.r.w) & 1) != 0;
-	if (dims && d <= 0.0 && L.dimTint.w > 2.5 && f.flags.y == 0 && !dhDrew) {
+	if (dims && d <= 0.0 && shadeDimKind(L) == 3 && f.flags.y == 0 && !dhDrew) {
 		float4 w4 = f.invViewProj * float4(in.uv * 2.0 - 1.0, 0.5, 1.0);
 		float pixelAngle = 2.0 * atan(1.0 / max(abs(f.proj[1][1]), 1e-3)) / float(scene.get_height());
 		c = shadeEndSky(normalize(w4.xyz / w4.w), f, L, sr.milkyWay, pixelAngle) * ex;

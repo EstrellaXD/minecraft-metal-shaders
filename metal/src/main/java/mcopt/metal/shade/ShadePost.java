@@ -378,7 +378,17 @@ public final class ShadePost {
 		}
 		long main = MetalBridge.textureHandle(mainColor);
 		mcopt.metal.shade.dims.DimsDebug.note("bridge encode (HDR -> main)");
-		MetalBridge.takePendingColorClear(encoder, mainColor);
+		float[] clear = MetalBridge.takePendingColorClear(encoder, mainColor);
+		// M3.3 (mcopt.shade.dhClear, live, default true; false = M3.2): when no world pass drew into main before Distant
+		// Horizons' first one (no sky pass: the Nether, the End's dragon fight, under water / lava / powder snow, blindness),
+		// the frame's clear of main is still pending and the HDR target still holds the last frame: apply the clear there
+		// first, as the redirect does for the first world pass. Without it DH's TAA + sharpen re-processed last frame's image
+		// every frame where nothing else draws (the End + DH grey checkerboard / coloured noise, SKYDIMS.md 6.6 and M3.3).
+		if (clear != null && mcopt.metal.shade.dims.DimsDebug.dhClear()) {
+			float[] h = ShadeFrameUpdater.LOOK.ldrToHdr(clear[0], clear[1], clear[2]);
+			MetalBridge.renderBegin(enc, new long[] {hdr[frame & 1]}, new float[][] {{h[0], h[1], h[2], clear[3]}}, 0, false, 0f, width, height);
+			mcopt.metal.shade.dims.DimsDebug.note("bridge: main's pending clear applied to the HDR target");
+		}
 		pass(psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
 	}
 

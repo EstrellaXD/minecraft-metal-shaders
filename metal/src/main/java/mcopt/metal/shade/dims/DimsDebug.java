@@ -84,6 +84,14 @@ public final class DimsDebug {
 		logging = false;
 	}
 
+	/**
+	 * mcopt.shade.dhClear (default true, read live; false = M3.2): ShadePost.openBridge applies main's pending clear to the HDR
+	 * target when Distant Horizons' first pass comes before any world pass (the End + DH fix). Not a dev switch: the fix's flag.
+	 */
+	public static boolean dhClear() {
+		return !"false".equals(System.getProperty("mcopt.shade.dhClear"));
+	}
+
 	/** mcopt.shade.dhDebug bit 1: keep Distant Horizons' passes out of the HDR bridge. */
 	public static boolean noBridge() {
 		return (Integer.getInteger("mcopt.shade.dhDebug", 0) & 1) != 0;

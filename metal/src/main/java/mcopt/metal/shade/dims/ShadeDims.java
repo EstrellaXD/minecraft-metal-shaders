@@ -114,6 +114,39 @@ public final class ShadeDims {
 		return Boolean.getBoolean("mcopt.shade.dims.pause");
 	}
 
+	/**
+	 * M3.3 (mcopt.shade.dims.endBlob, default true, read every frame; false = M3.2): in the End with its key light's shadows
+	 * on, vanilla's blob shadow under entities is dropped (EntityCasters.dropBlob), as on sunlit ground in the overworld: the
+	 * End's receivers look the map up everywhere (no sky-light gate there), so the real shadow is always drawn next to it.
+	 */
+	public static boolean endDropsBlob() {
+		return endDropsBlob;
+	}
+
+	private static volatile boolean endDropsBlob;
+
+	/**
+	 * M3.3 (mcopt.shade.dims.netherLean, default true, read every frame; false = M3.2): the Nether's terrain draws with its
+	 * lean variant (ShadeLean LEAN_NETHER, sodium_terrain.fs.metal SHADE_LEAN_NETHER: the shadow-map, cloud, overworld fog
+	 * and lightning code compiled out). Same image, fewer registers.
+	 */
+	public static boolean netherLean() {
+		return !"false".equals(System.getProperty("mcopt.shade.dims.netherLean"));
+	}
+
+	/**
+	 * M3.3 (mcopt.shade.dims.netherLight, read every frame): "full" = the Nether lit per pixel (M3.2); "vanilla" = vanilla's
+	 * lightmapped terrain, entities and particles (M2.1's, the cheap path) under our Nether fog and palette. Default: vanilla
+	 * at the performance preset, full otherwise. (Pricing: SKYDIMS.md, M3.3 Status.)
+	 */
+	private static boolean netherVanillaLight() {
+		String v = System.getProperty("mcopt.shade.dims.netherLight");
+		return v == null ? mcopt.metal.shade.Shade.TIER == 0 && NETHER_VANILLA_AT_PERFORMANCE : "vanilla".equalsIgnoreCase(v.trim());
+	}
+
+	/** Whether the performance preset defaults to the vanilla-light Nether (decided by the M3.3 price; see SKYDIMS.md). */
+	static final boolean NETHER_VANILLA_AT_PERFORMANCE = false;
+
 	/** Whether the Nether / End looks are on this frame (mcopt.shade.dims and not paused). */
 	public static boolean on() {
 		return DimsConfig.DIMS && !paused();
@@ -151,6 +184,7 @@ public final class ShadeDims {
 		lastDim = f.dimension;
 		float k = snap || changed ? 1f : 1f - (float) Math.exp(-Math.max(dt, 0f) / 3f);
 		dimsLit = on() && (f.dimension == ShadeFrame.DIM_NETHER || f.dimension == ShadeFrame.DIM_END);
+		endDropsBlob = dimsLit && f.dimension == ShadeFrame.DIM_END && DimsConfig.END_SHADOWS && !"false".equals(System.getProperty("mcopt.shade.dims.endBlob"));
 		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
 			overworld(f, level, camera, dt, snap || changed);
 			return;
@@ -251,7 +285,7 @@ public final class ShadeDims {
 	}
 
 	private static void overworld(ShadeFrame f, ClientLevel level, BlockPos camera, float dt, boolean snap) {
-		if (DimsConfig.AURORA == 0 || level == null) {
+		if (DimsConfig.AURORA == 0 || level == null || Boolean.getBoolean("mcopt.shade.aurora.pause")) { // (pause: M3.3 bench price, live)
 			aurora = 0f;
 			return;
 		}
@@ -292,16 +326,23 @@ public final class ShadeDims {
 		if (on && DimsConfig.NETHER_SHIMMER) features |= FEATURE_SHIMMER;
 		L.putInt(ShadeLook.TIER + 4, features);
 		L.putFloat(ShadeLook.NIGHT + 8, aurora);
+		// M3.3: dimTint.w = kind + 4 x these bits (shade_dims.metal SHADE_DIMS_*), live per frame
+		int dimBits = (!"false".equals(System.getProperty("mcopt.shade.dims.motes")) ? 1 : 0)
+			| ("false".equals(System.getProperty("mcopt.shade.aurora.lean")) ? 2 : 0);
 		if (dimsLit) {
-			int bits = (int) F.getFloat(ShadeFrame.SUN_PATH + 8) | FLAG_DIMS_LIT;
-			F.putFloat(ShadeFrame.SUN_PATH + 8, bits);
 			boolean nether = dimension == ShadeFrame.DIM_NETHER;
+			// M3.3: the vanilla-light Nether (mcopt.shade.dims.netherLight=vanilla) keeps vanilla's lightmapped colours (no
+			// FLAG_DIMS_LIT: terrain, entities and particles take their M2.1 path) under our fog
+			if (!(nether && netherVanillaLight())) {
+				int bits = (int) F.getFloat(ShadeFrame.SUN_PATH + 8) | FLAG_DIMS_LIT;
+				F.putFloat(ShadeFrame.SUN_PATH + 8, bits);
+			}
 			// dimTint: x fog extinction (1/block), y lava sea level, z border fog radius (blocks), w 1 = Nether, 2 = End, 3 = End
 			// without a sky pass (the dragon fight's boss fog: the final pass paints the sky)
 			float border = f.fogRenderStart < f.fogRenderEnd && f.fogRenderEnd < 1e5f ? f.fogRenderEnd : 0f;
 			// the Nether's view distance (Sodium culls there): the border fog closes the view just before it
 			if (nether && netherCull > 0f) border = border > 0f ? Math.min(border, netherCull * 0.97f) : netherCull * 0.97f;
-			put4(L, ShadeLook.DIM_TINT, fogDensity, NETHER_LAVA_Y, border, nether ? 1f : bossFog ? 3f : 2f);
+			put4(L, ShadeLook.DIM_TINT, fogDensity, NETHER_LAVA_Y, border, (nether ? 1 : bossFog ? 3 : 2) + 4 * dimBits);
 			put4(L, ShadeLook.FLASH, flashDir.x, flashDir.y, flashDir.z, nether ? 0f : flash);
 			// stay moody: less metering (bible: Nether 0.3, End 0.4), no Purkinje shift, a little more bloom
 			L.putFloat(ShadeLook.EXPOSURE_REF + 4, mcopt.metal.shade.ShadeConfig.AUTO_EXPOSURE ? 0.3f : 0f); // End: was 0.4 (dark void views were lifted into cyan smoke)
@@ -310,7 +351,7 @@ public final class ShadeDims {
 		} else {
 			// flash is not written here: in the overworld it belongs to the weather module (lightning, written by ShadeLook.pack
 			// before this call); its only consumers on this side (shadeLitDimsExtra, shadeEndSky) run with the dims lit
-			put4(L, ShadeLook.DIM_TINT, 0f, 0f, 0f, 0f);
+			put4(L, ShadeLook.DIM_TINT, 0f, 0f, 0f, 4 * dimBits);
 		}
 	}
 

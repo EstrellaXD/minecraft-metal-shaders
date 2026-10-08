@@ -79,6 +79,10 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 	}
 	half3 c = half3(saturate(mix(overlay.rgb, albedoSrgb.rgb, overlay.a)));
 	half3 albedo = shadeToLinear(c);
+#ifndef MCOPT_HAND
+	// M3.3 (mcopt.shade.dims.motes): the Nether's dark suspended particles (warped spores, ash) lifted to a luminance floor
+	if (kind == SHADE_ENT_PARTICLE && dimsLit && shadeDimKind(L) == 1 && shadeDimsBit(L, SHADE_DIMS_MOTES)) albedo = shadeDimsMote(albedo);
+#endif
 	int debug = f.flags.w;
 	if (debug == 3) albedo = half3(0.45h);
 	half block = half(saturate(light.x)), sky = half(saturate(light.y));

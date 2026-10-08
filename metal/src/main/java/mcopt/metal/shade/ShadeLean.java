@@ -28,7 +28,7 @@ public final class ShadeLean {
 	private ShadeLean() {
 	}
 
-	/** This frame's lean tag (ShadeMsl.LEAN_OW | LEAN_DRY | LEAN_NODL), 0 when off. */
+	/** This frame's lean tag (ShadeMsl.LEAN_OW | LEAN_DRY | LEAN_NODL | LEAN_NETHER), 0 when off. */
 	public static int tag() {
 		return (ON ? tag & ShadeMsl.LEAN_TERRAIN : 0) | (SKY ? tag & ShadeMsl.LEAN_NOAURORA : 0);
 	}
@@ -37,6 +37,7 @@ public final class ShadeLean {
 	static void update(int dimension) {
 		int t = 0;
 		if (dimension == ShadeFrame.DIM_OVERWORLD) t |= ShadeMsl.LEAN_OW;
+		if (dimension == ShadeFrame.DIM_NETHER && mcopt.metal.shade.dims.ShadeDims.netherLean()) t |= ShadeMsl.LEAN_NETHER; // M3.3 (dims)
 		if (!mcopt.metal.shade.weather.ShadeWeather.ON || mcopt.metal.shade.weather.ShadeWeather.dry()) t |= ShadeMsl.LEAN_DRY;
 		if (!mcopt.metal.shade.light.DynLights.ON || mcopt.metal.shade.light.DynLights.activeCount() == 0) t |= ShadeMsl.LEAN_NODL;
 		if (mcopt.metal.shade.dims.DimsConfig.AURORA == 0 || mcopt.metal.shade.dims.ShadeDims.aurora() <= 0.002f) t |= ShadeMsl.LEAN_NOAURORA;

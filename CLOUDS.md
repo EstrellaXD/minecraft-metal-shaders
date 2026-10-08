@@ -1,6 +1,23 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## M3.3 Status (2026-10-08 09:50) - branch `m3.3-clouds` from m3-int 397e241: plan
+## M3.3 Status (2026-10-08 10:05) - branch `m3.3-clouds` from m3-int 397e241
+
+Item 1 (comb): **cause found and fixed offline** (b4ece4e, flag `mcopt.shade.clouds.stable`, default true, read every
+frame; false = M3.2; dev bit 32768 = M3.2 way for in-session pricing). In-game confirmation: run 1 queued
+(`work/notes/m33-2026-10-08/clouds/run1.sh`, label m33c-1). Diagnosis (offline preview, which now turns / scales the
+wind: `CLOUDS_YAWRATE`, `CLOUDS_WIND`; experiment shader kept as `work/notes/m33-2026-10-08/clouds/clouds_experiments.metal`):
+- soft cloud parts are step-aliased: one march sample's result there depends almost entirely on its start offset (fixed
+  offsets 0.1/0.3/0.5/0.7/0.9 give five different sets of lobes); only the average over visits is the soft cloud;
+- the offset was IGN(pixel) + visit x golden ratio. IGN is linear in the pixel (mod 1), so a cloud carried across the
+  pixels (wind, turning) met offsets stepping by a near-constant amount per visit that can cancel the golden step (one
+  3-pixel block in -x per 9 frames: -0.665 + 0.618 = -0.047): it was marched at the same depth phase visit after visit,
+  never averaged = the comb. Fixed offsets (no jitter) remove the comb (but alias); a per-pixel hash removes it too;
+- the block's one march distance used to reproject all 9 pixels jumps between visits on soft clouds (slab entry for a
+  clear ray, cloud depth for a hit): a band of speckle where the jumps were large. Fixed by carrying each pixel's own
+  cloud distance in the history (as Photon's clouds_data) + nearest-cloud distance of the 2x2 footprint for reprojection;
+- not the cause: the resolve's distance-jump clamp, the empty-space skip, Catmull-Rom vs bilinear, noiseDrift.
+- what remains in motion is a fine random grain (the noise floor of 1/9-rate sampling under sub-pixel resampling; a
+  2D model `sim_checker.py`/`sim2.py` shows the error grows with speed for any jitter: blur vs noise trade-off).
 
 1. Comb / hatching on soft cloud edges (still camera + wind + 3x3 checkerboard). Reproduce offline first
    (`tools/shade/clouds/run.sh png` with a still camera over a few hundred frames, crops at full size), find the cause

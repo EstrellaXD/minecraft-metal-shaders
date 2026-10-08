@@ -123,10 +123,23 @@ render3dHud -> ShadePost.beforeHand hooks:
 
 ## 5. Cost (balanced, 3024x1964, M4 10-core GPU)
 
-See section 7 for the in-game A/B. GPU timer (upper bounds, other GPU work overlaps): march ~0.40-0.46 ms (454x295 rays),
-resolve ~0.19 ms (1361x884), shadow map ~0.03 ms every other frame, dome ~0.1-0.15 ms every 4th frame, sky composite one
-bilinear fetch per sky pixel, terrain one fetch per lit pixel. Offline (`tools/shade/clouds/run.sh time`, quiet GPU
-needed) the passes scale with: march ~ rays x in-cloud samples; resolve ~ history pixels (bandwidth).
+Whole-frame numbers are in section 7 (in-session A/B). Per pass, from `-Dmcopt.shade.clouds.gpuTimer=true` (counter samples
+at the passes' fragment start/end; upper bounds; runs c11 and c12, 2026-10-07 18:08-18:52, AC, the overview point at noon):
+
+| Pass | Size | How often | GPU ms when it runs | Per frame |
+|---|---|---|---|---|
+| march (`cloud_march`) | 454x295 rays (1/9 of the history) | every frame | 0.30-0.38 | 0.30-0.38 |
+| resolve (`cloud_resolve`) | 1362x885 | every frame | 0.18-0.22 | 0.18-0.22 |
+| shadow map (`cloud_shadow`) | 256x256 | every 4th frame | 0.03-0.04 | ~0.01 |
+| dome (`cloud_dome`) | 128x64 | every 4th frame | 0.10-0.17 | ~0.03 |
+| consumers: sky composite (1 fetch per sky pixel), terrain/water/VL cloud shadow (1 fetch per lit pixel / VL step), water dome | full res | every frame | (not timed separately) | |
+
+Notes: **the timer itself costs ~0.2-0.3 ms of whole frame** (counter sampling at stage boundaries serialises the passes):
+with it on, the A/B below read +0.83 ms; without it +0.5-0.65 ms. So price with the timer off. A history scale of 0.4
+instead of 0.45 (21 % fewer rays and history pixels) did not move the timed passes nor the whole frame measurably (c12:
++0.84 vs +0.83 ms, both with the timer): at this size the passes are not limited by their pixel count.
+Offline (`tools/shade/clouds/run.sh time`, needs a quiet GPU) the passes scale with: march ~ rays x in-cloud samples;
+resolve ~ history pixels (bandwidth).
 
 ## 6. Integration notes (for the M3 integrator)
 

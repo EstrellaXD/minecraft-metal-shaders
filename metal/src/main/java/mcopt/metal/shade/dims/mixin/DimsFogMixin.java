@@ -48,7 +48,7 @@ abstract class DimsFogMixin {
 		CallbackInfoReturnable<FogData> cir) {
 		if (level == null || !mcopt.metal.shade.dims.ShadeDims.on()) return;
 		var dim = level.dimension();
-		if (dim != Level.NETHER && dim != Level.END) return;
+		if (dim != Level.NETHER && (dim != Level.END || ShadeDims.END_OFF_WITH_DH)) return;
 		if (this.getFogType(camera) != FogType.ATMOSPHERIC) return;
 		FogData fog = cir.getReturnValue();
 		if (fog == null || fog.environmentalEnd < 24f) return; // blindness, darkness: vanilla's

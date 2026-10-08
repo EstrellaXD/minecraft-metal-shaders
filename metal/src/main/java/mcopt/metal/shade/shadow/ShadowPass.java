@@ -250,7 +250,7 @@ public final class ShadowPass {
 		if (sky.skybox == DimensionType.Skybox.NONE) return; // no sun: Nether
 		if (sky.skybox == DimensionType.Skybox.END) {
 			// M3 (mcopt.shade.endShadows): the End's fixed key light (ShadeDims), so the far cascade stays cached
-			if (!mcopt.metal.shade.dims.DimsConfig.END_SHADOWS || mcopt.metal.shade.dims.ShadeDims.paused()) return;
+			if (!mcopt.metal.shade.dims.DimsConfig.END_SHADOWS || mcopt.metal.shade.dims.ShadeDims.paused() || mcopt.metal.shade.dims.ShadeDims.END_OFF_WITH_DH) return;
 			float[] e = mcopt.metal.shade.dims.ShadeDims.endLight();
 			this.light[0] = e[0];
 			this.light[1] = e[1];

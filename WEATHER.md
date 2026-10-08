@@ -153,18 +153,19 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 ### Before / after this session (plain words)
 
 - **The puddle pattern is now baked** into a small texture once, instead of being computed for every pixel every frame:
-  that alone saves **0.77 ms** in rain (the biggest single win).
+  that alone saves **~0.75-0.9 ms** in rain (0.75 in the cleanest session; the biggest single win).
 - **Puddle reflections are only traced where you can actually see them** (looking across a puddle, not straight down
-  into it): saves **0.14 ms**, no visible change (where the trace is skipped the puddle reflects 2-4 % of the light).
+  into it): saves **~0.1-0.2 ms**, no visible change (where the trace is skipped the puddle reflects 2-4 % of the light).
 - **Soaked grass and damp ground no longer look up the sky** they would blur away anyway; with no glass or water near,
   the terrain skips the coloured-shadow lookup.
 - **Balanced** uses one raindrop grid (drops come faster, so about as many rings) and 12 reflection steps instead of 16;
   quality/ultra keep two grids and 20/24 steps.
 - With all that, **rain at balanced costs ~0.9 ms more than M2.1** in this puddle-heavy view (37 % of the ground in view
-  is puddle; before the pause it measured 1.16 ms over a dry frame with the old pattern). **Dry: +0.1-0.3 ms** with the
-  glass roof in the coloured-shadow range (too noisy on this shared Mac to pin down closer; see the bracketed run below).
+  is puddle; before the pause it measured 1.16 ms over a dry frame with the old pattern). **Dry: 0.19 ms** with the
+  glass roof in the coloured-shadow range (wx17's bracketed A/B/A; the on/off launches agree within their ±0.1 ms noise).
 - **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met.** Rain is 0.3-0.4 ms over (0.80 ms in the
-  cleanest session, ~0.9 ms on/off); dry is 0.19 ms with glass in range (~0 without). What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
+  cleanest session, ~0.9 ms on/off); dry is 0.19 ms with glass in range (the lookup is skipped without).
+  What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
   (`mcopt.shade.puddleSsr=false`, the bible's plan for P/B: -0.1 to -0.3 ms, puddles then mirror only the sky),
   a deferred puddle pass at half resolution (new work, M4), coloured shadows only on quality+ (`mcopt.shade.colorShadows`,
   -0.19 ms near glass) or a light-space rectangle of the casters so only receivers under them do the lookup (small change, untested).

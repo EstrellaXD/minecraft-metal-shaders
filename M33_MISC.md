@@ -1,6 +1,6 @@
 # M3.3 misc: god rays at sunset, dynamic resolution, rain budget (branch `m3.3-misc` from `m3-int` 397e241)
 
-## M3.3 Status (2026-10-08 09:55)
+## M3.3 Status (2026-10-08 10:56)
 
 Plan (in this order; nothing of M4 / FT1):
 
@@ -67,7 +67,11 @@ Run 3 (`bench-results/20261008-095925-mx3-hold`, jar abb535d, AC; 10:00-10:10):
   Gain 3-4 tint the shafts blue-violet and darken soft cloud edges a little; **gain 2 chosen as default** (23caaef).
   Note: the first shot after the freeze is not settled (pair noise 1.1-1.9 vs 0.2-0.4): run 4 takes a warm-up shot first.
 
-Next: run 4 (`mx4-final`, jar 23caaef): candidate defaults; DRS A/B repeat; rain all-vs-base x6; clean before/after shots
+Run 4, 10:55: the first attempt (`20261008-104950-mx4-final`, jar 23caaef) was cut at 10:52 when the previous session ended
+(SIGTERM, not a crash); relaunched with jar e60aac8 (= 23caaef + comments and the TAA startup line) as
+`bench-results/20261008-105533-mx4-final`.
+
+Next: run 4 (`mx4-final`, jar e60aac8): candidate defaults; DRS A/B repeat; rain all-vs-base x6; clean before/after shots
 (west, rose_sky, morning east), the look at render scale 0.80 / 0.60 / 0.50, rain at a low grazing pose.
 
 ## Flags (M3.3 misc)

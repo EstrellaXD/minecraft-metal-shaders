@@ -226,12 +226,12 @@ static inline float3 shadeSunsetGrade(float3 dir, float3 sun, float sunY, float 
 	float dl = dot(dir.xz, dir.xz), sl = dot(sun.xz, sun.xz);
 	float toward = dl > 1e-8 && sl > 1e-8 ? dot(dir.xz, sun.xz) * rsqrt(dl * sl) * 0.5 + 0.5 : 0.5;
 	float band = pow(max(h, 1e-4), mix(9.0, 2.0, toward * toward));
-	float3 col = toward > 0.5 ? mix(float3(1.42, 0.96, 0.80), float3(1.60, 0.93, 0.60), toward * 2.0 - 1.0)
-	                          : mix(float3(1.18, 0.90, 1.06), float3(1.42, 0.96, 0.80), toward * 2.0);
+	float3 col = toward > 0.5 ? mix(float3(1.40, 0.97, 0.82), float3(1.50, 0.96, 0.72), toward * 2.0 - 1.0)
+	                          : mix(float3(1.18, 0.90, 1.06), float3(1.40, 0.97, 0.82), toward * 2.0);
 	// a wide gold halo around the sun (the warm glow the studied packs wrap around a low sun)
 	float glow = pow(saturate(dot(dir, normalize(sun))), 10.0);
-	col = mix(col, float3(1.70, 0.98, 0.52), glow * 0.6);
-	return mix(float3(1.0), col, w * saturate(0.2 + 0.8 * band + 0.6 * glow));
+	col = mix(col, float3(1.55, 1.0, 0.70), glow * 0.4);
+	return mix(float3(1.0), col, w * saturate(0.2 + 0.8 * band + 0.4 * glow));
 }
 
 // M3 sunset art: the golden-hour sky's warm band reaches higher (Photon's "horizon stretch", mu <- mu^1.25, to admire the
@@ -241,7 +241,7 @@ static inline float3 shadeSunsetStretch(float3 dir, float3 sun, float sunY, floa
 	if (w <= 0.0 || dir.y <= 0.0) return dir;
 	float dl = dot(dir.xz, dir.xz), sl = dot(sun.xz, sun.xz);
 	float toward = dl > 1e-8 && sl > 1e-8 ? dot(dir.xz, sun.xz) * rsqrt(dl * sl) * 0.5 + 0.5 : 0.5;
-	float y = pow(dir.y, 1.0 + (mix(1.2, 1.75, toward * toward) - 1.0) * w);
+	float y = pow(dir.y, 1.0 + (mix(1.15, 1.45, toward * toward) - 1.0) * w);
 	return float3(dir.xz * sqrt(max(1.0 - y * y, 0.0) / max(dl, 1e-8)), y).xzy;
 }
 

@@ -61,7 +61,7 @@ public final class MetalShaderRegistry {
 	}
 
 	private static volatile @Nullable FormatAdapter adapter;
-	private static volatile java.util.function.@Nullable Function<String, int @Nullable []> prewarm;
+	private static volatile java.util.function.@Nullable Function<String, int @Nullable [] @Nullable []> prewarm;
 
 	public static void setFormatAdapter(@Nullable FormatAdapter a) {
 		adapter = a;
@@ -71,12 +71,12 @@ public final class MetalShaderRegistry {
 		return adapter;
 	}
 
-	/** Which format variants to build as soon as a pipeline compiles (pipeline name -> formats, or null for none). */
-	public static void setPrewarm(java.util.function.@Nullable Function<String, int @Nullable []> p) {
+	/** Which format variants to build as soon as a pipeline compiles (pipeline name -> one formats array per variant, or null for none). */
+	public static void setPrewarm(java.util.function.@Nullable Function<String, int @Nullable [] @Nullable []> p) {
 		prewarm = p;
 	}
 
-	static int @Nullable [] prewarmFormats(String pipelineName) {
+	static int @Nullable [] @Nullable [] prewarmFormats(String pipelineName) {
 		var p = prewarm;
 		return p == null ? null : p.apply(pipelineName);
 	}

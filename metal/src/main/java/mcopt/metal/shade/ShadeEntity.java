@@ -35,8 +35,8 @@ import org.jspecify.annotations.Nullable;
  * shadeEntityShade (the game's alpha, cutout discard and dissolve are kept).</li>
  * </ul>
  * Only pipelines named in {@link #PIPELINES} whose stages have the expected shape are patched; a fragment is patched only
- * if the same pipeline's vertex stage was (MetalPipeline.variant adapts the vertex first), so the stage interfaces always
- * match. Everything else keeps the M2 path (ShadeMsl.hdrFragment: vanilla lighting converted to scene-linear). Glint,
+ * if the same variant's vertex stage was (MetalPipeline.variant adapts the vertex first, on the same thread), so the stage
+ * interfaces always match. Everything else keeps the M2 path (ShadeMsl.hdrFragment: vanilla lighting converted to scene-linear). Glint,
  * emissive (eyes, energy swirl), text, lines and the vanilla blob shadow are left alone. mcopt.shade.entities=false turns it
  * off.
  */
@@ -65,8 +65,12 @@ public final class ShadeEntity {
 		Map.entry("minecraft:pipeline/solid_block", 1), Map.entry("minecraft:pipeline/cutout_block", 1), Map.entry("minecraft:pipeline/translucent_block", 1),
 		Map.entry("minecraft:pipeline/opaque_particle", 2), Map.entry("minecraft:pipeline/translucent_particle", 2));
 
-	/** Pipelines whose vertex stage was patched (the fragment follows only then). */
-	private static final Set<String> VERTEX_PATCHED = ConcurrentHashMap.newKeySet();
+	/**
+	 * Whether the variant being built on this thread had its vertex stage patched (MetalPipeline.variant adapts the vertex,
+	 * then the fragment, on one thread): the fragment is patched only then. Per variant, not per pipeline name: MC 26.3 has
+	 * three pipelines named item_cutout (plain, glint, glint special), and a resource pack can change one stage.
+	 */
+	private static final ThreadLocal<boolean[]> VERTEX_LIT = ThreadLocal.withInitial(() -> new boolean[1]);
 	private static final Set<String> LOGGED = ConcurrentHashMap.newKeySet();
 	private static volatile @Nullable String library;
 
@@ -102,8 +106,13 @@ public final class ShadeEntity {
 	static @Nullable String vertex(String pipelineName, String msl) {
 		if (!ON) return null;
 		String v = vertexPatch(pipelineName, msl);
-		if (v != null) VERTEX_PATCHED.add(pipelineName);
+		VERTEX_LIT.get()[0] = v != null;
 		return v;
+	}
+
+	/** A new variant starts (ShadeMsl.FORMAT_ADAPTER.vertex): no vertex stage patched yet. */
+	static void beginVariant() {
+		VERTEX_LIT.get()[0] = false;
 	}
 
 	static @Nullable String vertexPatch(String pipelineName, String msl) {
@@ -133,7 +142,9 @@ public final class ShadeEntity {
 
 	/** The HDR variant's fragment stage, patched, or null to take the M2 path (ShadeMsl.hdrFragment). */
 	static @Nullable String fragment(String pipelineName, String msl, boolean hand) {
-		if (!ON || !VERTEX_PATCHED.contains(pipelineName)) return null;
+		boolean[] lit = VERTEX_LIT.get();
+		if (!ON || !lit[0]) return null;
+		lit[0] = false;
 		return fragmentPatch(pipelineName, msl, hand);
 	}
 

@@ -181,6 +181,7 @@ public final class ShadeMsl {
 	static final MetalShaderRegistry.FormatAdapter FORMAT_ADAPTER = new MetalShaderRegistry.FormatAdapter() {
 		@Override
 		public String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats) {
+			ShadeEntity.beginVariant(); // M3: this variant's fragment follows its own vertex stage (MetalPipeline.variant)
 			if (handTarget(colorFormats)) { // M3: the lit first-person hand (ShadeEntity.HAND)
 				String lit = registry ? null : ShadeEntity.vertex(pipelineName, msl);
 				return lit != null ? lit : msl;
@@ -210,12 +211,15 @@ public final class ShadeMsl {
 	 * Which pipelines get their HDR variant built as soon as they compile (on the frontend's compile worker), so the first
 	 * world frame that uses one doesn't compile it on the render thread: everything but the GUI and full-screen game passes.
 	 */
-	static int @org.jspecify.annotations.Nullable [] prewarm(String name) {
+	static int @org.jspecify.annotations.Nullable [] @org.jspecify.annotations.Nullable [] prewarm(String name) {
 		if (!ShadeConfig.HDR) return null;
 		String n = name.toLowerCase(java.util.Locale.ROOT);
 		if (n.contains("gui") || n.contains("panorama") || n.contains("lightmap") || n.contains("blit") || n.contains("blur") || n.contains("oit_")
 			|| n.contains("animate_sprite") || n.contains("crosshair") || n.contains("distanthorizons") || n.contains("post/")) return null;
-		return new int[] {ShadeConfig.HDR_FORMAT};
+		// M3: the lit hand's tagged variants too (the "Item in hand" pass: arm, held items and their glint), so its first frame
+		// doesn't compile ~80 KB fragments on the render thread
+		if (ShadeEntity.HAND && (ShadeEntity.PIPELINES.containsKey(name) || n.contains("glint"))) return new int[][] {{ShadeConfig.HDR_FORMAT}, {ShadeEntity.HAND_FORMAT}};
+		return new int[][] {{ShadeConfig.HDR_FORMAT}};
 	}
 
 	static void register() {

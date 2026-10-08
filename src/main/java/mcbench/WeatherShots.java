@@ -26,7 +26,7 @@ import net.minecraft.world.level.material.Fluids;
  * <li>{@code perf}: two recorded perf phases at the ground pose (results.json perf.wxdry / perf.wxrain, gpu.*): 10 s panning
  * +-25 degrees, clear noon, then in rain (the weather's cost; -Dmcbench.wxSeconds).</li>
  * <li>{@code price}: the same pan as perf with parts of the weather switched off one at a time through the system property
- * mcopt.shade.dev (read by mcopt-shade every frame): wxdry_notint, wxrain, wxrain_nossr, wxrain_noripple, wxrain_plainrain,
+ * mcopt.shade.dev (read by mcopt-shade every frame): wxdry, wxdry_notint (no tint pass/lookup), wxrain, wxrain_nossr, wxrain_noripple, wxrain_plainrain,
  * wxrain_dry (terrain dry, M2 rain), wxrain2 (all on again: drift).</li>
  * <li>{@code wx_rain_ground} (noon, rain): 2.6 blocks above the flat torch-grid site, looking across it toward the village
  * side: wet ground, puddles with reflections and raindrop ripples, slanted lit rain.</li>
@@ -115,6 +115,7 @@ final class WeatherShots {
 				}
 				if (on("price") && p.ground != null) {
 					// what each part costs, inside one session: mcopt-shade reads mcopt.shade.dev every frame (SHADE_DEV_WX_* bits)
+					if (!on("perf")) price(extra, "wxdry", false, p.ground, 0); // dry, everything on: the tint map's price against wxdry_notint
 					price(extra, "wxdry_notint", false, p.ground, 16384);
 					if (!on("perf")) perf(extra, "wxrain", true, p.ground);
 					price(extra, "wxrain_nossr", true, p.ground, 1024);

@@ -1,24 +1,23 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## Status (2026-10-07 18:20)
+## Status (2026-10-07 19:50)
 
-- Resumed after the 15:06 pause. The WIP commit (finer steps when the camera is inside the cloud layer; cloud shadow map
-  every 4th frame) is kept and finished: the shadow map now keeps its own frame (origin, plane, light) between updates so
-  a moving camera does not shift the shadows by a texel.
-- Running: in-game shots (all scenes) + in-session price A/B (clouds / clouds_off / clouds2), result `c11-all`.
-- Next: judge the shots, fix what is wrong, price at balanced vs budget (E05 0.30-0.45 ms), DEV-DH sanity, fill §7.
+Done this session (resume after the 15:06 pause):
+- WIP finished and kept: finer steps near the camera inside the cloud layer (no more checkerboard there); shadow map every
+  4th frame, which now keeps its own frame (origin, plane, light) between updates (a moving camera no longer shifts the
+  shadows by a texel).
+- Fixed: from above the clouds the deck was flat grey haze (horizon fade now only for a camera below the layer).
+- Distant Horizons: DH's own LOD clouds are switched off through DH's API while ours draw (verified in DEV-DH: log line
+  and shots, run c13); clouds now also composite over DH's LODs from above (run c17).
+- All 13 cloud scenes looked at (section 7.1); video of the spin (7.2); in-session price (7.3).
+- `mcopt.shade.clouds.motionBlend` (default 0 = off) added as a candidate cure for the comb on moving edges.
 
-Shader bible E05: volumetric cumulus (multiple scattering with powdery cores, silver linings, warm sides at sunset, dark
-storm bases), a cirrus layer, cloud shadows on terrain, water and god rays, a daily weather (coverage, cloud type, wind
-change from day to day; rain and thunder close the sky in), rendered at a fraction of the output resolution with a
-checkerboard + temporal reconstruction, composited behind the world in the sky pass (so Distant Horizons, glass and water
-occlude them correctly), mirrored in water (a reflection dome for directions off screen), and a "blocky" style
-(vanilla-like 12-block cells, ray-traced and lit) for the Storybook look. Replaces vanilla's clouds while it draws.
-
-Code: original; parts adapted from Photon (MIT, commit 26c2906e, allowed by bible §8) with the attribution line in
-`clouds.metal`'s header: the cumulus altitude shaping idea, the Worley "dampen" detail erosion, the powder shape, the cloud
-phase mix, the multiple-scattering octave loop, the aerial-perspective blend and the checkerboard + reprojection upscaling.
-The noise is generated on the GPU at start (no data files).
+Next (open):
+- **Comb / hatching on cloud edges while turning** (7.2): confirmed to come from the 3x3 checkerboard reconstruction
+  (checker=1 is clean, run c22). Candidate: `motionBlend` (run c24 recording, verdict in 7.2); real fix to find.
+- **Over budget**: +0.5-0.9 ms vs 0.30-0.45 (7.3). March steps are the lever (16 steps: +0.22 ms in one clean phase);
+  runs c23 (steps 20 and 16 with shots) decide the balanced default.
+- Sunset away from the sun looks taupe (7.1); art pass later.
 
 ## 1. Files
 

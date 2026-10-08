@@ -25,6 +25,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import mcopt.metal.MetalShaderRegistry;
 import mcopt.metal.shade.water.ShadeWater;
+import mcopt.metal.shade.weather.ShadeWeather;
 
 /**
  * The shaded MSL, assembled from resources/mcopt/shade the same way for the game and for validation tools (mslcheck):
@@ -51,7 +52,7 @@ public final class ShadeMsl {
 	public static final String SKY = "minecraft:pipeline/sky", CELESTIAL = "minecraft:pipeline/celestial", SUNRISE = "minecraft:pipeline/sunrise_sunset";
 	public static final List<String> TERRAIN = List.of("sodium:pipeline/solid_terrain", "sodium:pipeline/cutout_terrain", "sodium:pipeline/translucent_terrain");
 
-	public static final String WEATHER = "minecraft:pipeline/weather", STARS = "minecraft:pipeline/stars";
+	public static final String WEATHER = "minecraft:pipeline/weather", STARS = "minecraft:pipeline/stars", LIGHTNING = "minecraft:pipeline/lightning";
 	/** M3 (mcopt.shade.dims): the End sky box (end_sky.{vs,fs}.metal). */
 	public static final String END_SKY = "minecraft:pipeline/end_sky";
 	public static final List<String> CLOUDS = List.of("minecraft:pipeline/clouds", "minecraft:pipeline/flat_clouds");
@@ -108,8 +109,11 @@ public final class ShadeMsl {
 
 	/** terrain(source) with the water module forced on or off (validation tools build both). */
 	public static String terrain(String source, boolean water) {
-		if (water && source.startsWith(TRANSLUCENT_DEFINE) && source.contains("fragment main0_out main0(")) return prelude() + ShadeWater.prelude() + source;
-		return prelude() + source;
+		// M3 weather (ShadeWeather.prelude: wet surfaces, puddles, ripples, shadow tint) goes in front of every terrain fragment,
+		// before the water module (whose surface uses its ripples)
+		String weather = source.contains("fragment main0_out main0(") ? ShadeWeather.prelude(source.startsWith(TRANSLUCENT_DEFINE)) : "";
+		if (water && source.startsWith(TRANSLUCENT_DEFINE) && source.contains("fragment main0_out main0(")) return prelude() + weather + ShadeWater.prelude() + source;
+		return prelude() + weather + source;
 	}
 
 	private static final String TRANSLUCENT_DEFINE = "#define ALPHA_CUTOUT 0.01";
@@ -137,11 +141,45 @@ public final class ShadeMsl {
 		int at = generated.indexOf(WEATHER_RESULT);
 		if (!generated.contains(WEATHER_SIGNATURE) || at < 0) return generated;
 		int end = generated.indexOf(';', at) + 1;
-		String patched = generated.substring(0, end) + "\n    out.fragColor = shadeWeather(out.fragColor, mcoptShadeFrame, mcoptShadeLook, mcoptShadeGpu);"
-			+ generated.substring(end);
+		boolean m3 = ShadeWeather.MODULE && !generated.contains("[[position]]");
+		String call = m3 ? "shadeWeather3(out.fragColor, mcoptFragCoord, mcoptShadeFrame, mcoptShadeLook, mcoptShadeGpu, mcoptSkyLut, mcoptSkyLutSmplr)"
+			: "shadeWeather(out.fragColor, mcoptShadeFrame, mcoptShadeLook, mcoptShadeGpu)";
+		String patched = generated.substring(0, end) + "\n    out.fragColor = " + call + ";" + generated.substring(end);
 		patched = patched.replace(WEATHER_SIGNATURE, WEATHER_SIGNATURE
-			+ ", constant ShadeFrame& mcoptShadeFrame [[buffer(16)]], constant ShadeLook& mcoptShadeLook [[buffer(17)]], constant ShadeGpu& mcoptShadeGpu [[buffer(18)]]");
+			+ ", constant ShadeFrame& mcoptShadeFrame [[buffer(16)]], constant ShadeLook& mcoptShadeLook [[buffer(17)]], constant ShadeGpu& mcoptShadeGpu [[buffer(18)]]"
+			+ (m3 ? ", float4 mcoptFragCoord [[position]], texture2d<half> mcoptSkyLut [[texture(17)]], sampler mcoptSkyLutSmplr [[sampler(13)]]" : ""));
+		return prelude() + (m3 ? "#define SHADE_WEATHER\n" + (ShadeWeather.LITE ? "#define SHADE_WX_LITE\n" : "") : "") + resource("weather.metal") + "\n" + patched;
+	}
+
+	private static final String VERTEX_SIGNATURE = "vertex main0_out main0(main0_in in [[stage_in]]";
+	private static final String VERTEX_BODY = "main0_out out = {};";
+
+	/**
+	 * minecraft:pipeline/weather (vertex, M3 weather with mcopt.shade.rainSlant): vanilla's generated stage with the column
+	 * vertices leaned along the wind before anything uses them (weather.metal shadeRainSlant). Unchanged if the source doesn't
+	 * have the expected shape.
+	 */
+	public static String weatherVertex(String generated) {
+		if (!ShadeWeather.MODULE || !ShadeWeather.SLANT || !generated.contains(VERTEX_SIGNATURE) || !generated.contains(VERTEX_BODY)
+			|| !generated.contains("in.Position")) return generated;
+		String patched = generated.replace(VERTEX_BODY, VERTEX_BODY + "\n    in.Position = shadeRainSlant(in.Position, mcoptShadeLook);")
+			.replace(VERTEX_SIGNATURE, VERTEX_SIGNATURE + ", constant ShadeLook& mcoptShadeLook [[buffer(17)]]");
 		return prelude() + resource("weather.metal") + "\n" + patched;
+	}
+
+	private static final String LIGHTNING_RESULT = "out.fragColor = calculateFinalColor(";
+
+	/**
+	 * minecraft:pipeline/lightning (fragment, M3 weather): the bolt is light, not paint. In the HDR world target its colour is
+	 * written as bright pre-exposed radiance (about 10x the display white), so bloom makes it glow; in RGBA8 it stays as it was.
+	 */
+	public static String lightning(String generated) {
+		int at = generated.indexOf(LIGHTNING_RESULT);
+		if (!ShadeWeather.MODULE || !ShadeWeather.LIGHTNING || !generated.contains(FRAGMENT_ENTRY) || at < 0) return generated;
+		int end = generated.indexOf(';', at) + 1;
+		String patched = generated.substring(0, end)
+			+ "\n#ifdef MCOPT_HDR\n    out.fragColor.rgb = min(out.fragColor.rgb * float3(30.0, 33.0, 40.0), float3(6.0e4));\n#endif" + generated.substring(end);
+		return patched;
 	}
 
 	private static final String FRAGMENT_ENTRY = "fragment main0_out main0(";
@@ -249,7 +287,9 @@ public final class ShadeMsl {
 		MetalShaderRegistry.register(CELESTIAL, new MetalShaderRegistry.Variant(generated -> celestialVertex, null, matrices));
 		MetalShaderRegistry.register(SUNRISE, new MetalShaderRegistry.Variant(generated -> sunriseVertex, null, matrices));
 		for (String name : CLOUDS) MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(null, generated -> cloudFragment, List.of("CloudInfo")));
-		MetalShaderRegistry.register(WEATHER, new MetalShaderRegistry.Variant(null, ShadeMsl::weather, List.of()));
+		MetalShaderRegistry.register(WEATHER, new MetalShaderRegistry.Variant(ShadeWeather.MODULE && ShadeWeather.SLANT ? ShadeMsl::weatherVertex : null,
+			ShadeMsl::weather, List.of()));
+		if (ShadeWeather.MODULE && ShadeWeather.LIGHTNING) MetalShaderRegistry.register(LIGHTNING, new MetalShaderRegistry.Variant(null, ShadeMsl::lightning, List.of()));
 		MetalShaderRegistry.register(STARS, new MetalShaderRegistry.Variant(generated -> starsVertex, null, matrices));
 		if (mcopt.metal.shade.dims.DimsConfig.DIMS) {
 			MetalShaderRegistry.register(END_SKY, new MetalShaderRegistry.Variant(generated -> endSkyVertex, generated -> endSkyFragment,

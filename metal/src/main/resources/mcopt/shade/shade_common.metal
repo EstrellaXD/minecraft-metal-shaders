@@ -93,6 +93,22 @@ struct ShadeFrame {
 #define SHADE_DEV_FLAT_SKY 4      // sky pixels: the zenith colour only
 #define SHADE_DEV_NO_WATER 8      // no water reflection
 #define SHADE_DEV_FLAT_LIGHT 16   // terrain: albedo * constant (no lighting, fog or tone curve maths)
+// M3 weather (weather_surface.metal, weather.metal); high bits so other modules' new bits don't collide
+#define SHADE_DEV_WX_NO_SSR 1024      // puddles reflect the sky only (no march of last frame's image)
+#define SHADE_DEV_WX_NO_RIPPLES 2048  // no raindrop rings on puddles
+#define SHADE_DEV_WX_DRY 4096         // terrain stays dry (no wet layer, puddles, snow)
+#define SHADE_DEV_WX_PLAIN_RAIN 8192  // rain streaks shaded the M2 way (no sky lookup)
+#define SHADE_DEV_WX_NO_TINT 16384    // no coloured shadows: no tint lookup on the terrain, no tint pass (ShadowPass)
+#define SHADE_DEV_WX_ANALYTIC 32768   // puddle/snow noise evaluated per pixel instead of the baked tile
+#define SHADE_DEV_WX_NO_SSR_GATE 65536 // puddle reflections marched on every puddle pixel (not only where Fresnel shows them)
+// M3 weather budget gates: always on with SHADE_WX_LITE (mcopt.shade.weatherLite, default on for performance and balanced);
+// on quality/ultra these dev bits switch them on for pricing (mcbench weather price phases wxrain_c32 / c64 / c128 / c224)
+#define SHADE_DEV_WX_SUN_GATE 32       // no sun highlight on wet surfaces in heavy rain (the sun is behind the clouds: <= 32 %)
+#define SHADE_DEV_WX_RIPPLE_GATE 64    // raindrop rings only where the puddle mirror shows them (flat Fresnel x puddle >= 0.02)
+#define SHADE_DEV_WX_LITE_RAIN 128     // rain streaks lit by the sky's mean light, no sky-view LUT lookup per fragment
+#define SHADE_DEV_WX_RAIN_TINT 256     // coloured shadows fade out in heavy rain (the direct sun they colour is <= 32 % there)
+#define SHADE_DEV_WX_FILM_SKY 512      // heavy rain: wet films off the puddles reflect the overcast sky's mean light (no LUT lookup)
+#define SHADE_DEV_WX_SSR_GATE2 131072  // puddle reflections marched where F x P >= 0.05 (ramp to 0.09) instead of 0.035 (to 0.07)
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

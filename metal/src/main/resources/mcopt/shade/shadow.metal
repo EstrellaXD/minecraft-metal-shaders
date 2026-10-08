@@ -128,6 +128,68 @@ fragment void shadow_entity_fs(ShadowCutoutOut in [[stage_in]], texture2d<float>
     if (tex.sample(s, in.uv, level(0.0)).w < e.cutoff) discard_fragment();
 }
 
+// ---- coloured shadows (M3 weather, mcopt.shade.colorShadows): the translucent casters of the near cascade ----
+// Sodium's translucent terrain (water, stained glass and panes, ice, slime, honey) drawn from the light into a small tint map
+// (RGBA16Float, cleared to (1, 1, 1, 0)): rgb = the light they let through, blended by MIN (two faces of one pane, or panes
+// behind each other, don't multiply into black; the darkest wins per channel), a = their reversed-Z light depth, blended by
+// MAX (the one nearest the light). Receivers (weather_surface.metal shadeShadowTint) take the tint only when they lie a
+// quarter block or more beyond that depth, i.e. below the glass. No depth attachment: the opaque cascade decides whether
+// light arrives at all. No raster bias: receivers compare their own depth.
+struct ShadowTintOut { float4 pos [[position]]; float2 uv; half4 color; };
+// Water sprite rectangles in the block atlas (ShadeWater: still, flowing; all 0 when unknown); mode.x = 1: leave water out
+// (the water module is on: M2.1 absorbs the light on its way down to the floor, a tint here would absorb it twice).
+struct ShadowTintParams { float4 still; float4 flow; float4 mode; };
+
+vertex ShadowTintOut shadow_tint_vs(uint vid [[vertex_id]], uint iid [[instance_id]], const device uint *arena [[buffer(0)]],
+                                    const device ShadowChunk *chunks [[buffer(1)]], const device ShadowRegion *regions [[buffer(2)]],
+                                    constant ShadowCascade &cascade [[buffer(3)]])
+{
+    ShadowTintOut out;
+    uint region = 0;
+    const device uint *v = shadowVertex(vid, iid, arena, chunks, region);
+    if (v == nullptr) {
+        out.pos = float4(0.0);
+        out.uv = float2(0.0);
+        out.color = half4(0.0h);
+        return out;
+    }
+    float3 p = shadowVertexPosition(v, regions[region]);
+    out.pos = cascade.viewProj * float4(p, 1.0);
+    uint tex = v[3];
+    out.uv = float2(uint2(tex, tex >> 16) & 0x7FFFu) * (1.0 / 32768.0);
+    out.color = unpack_unorm4x8_to_half(v[2]);
+    return out;
+}
+
+fragment float4 shadow_tint_fs(ShadowTintOut in [[stage_in]], texture2d<float> atlas [[texture(0)]], sampler s [[sampler(0)]],
+                               constant ShadowTintParams &tp [[buffer(0)]])
+{
+    float4 t = atlas.sample(s, in.uv, level(0.0));
+    float3 vc = float3(in.color.rgb);
+    bool water = tp.still.z > 0.0 && ((all(in.uv >= tp.still.xy) && all(in.uv <= tp.still.zw)) || (all(in.uv >= tp.flow.xy) && all(in.uv <= tp.flow.zw)));
+    float3 T;
+    if (water && tp.mode.x > 0.5) discard_fragment();
+    if (water) {
+        // about two blocks of water from the biome's colour (the vertex tint): clear teal shallows, green swamps
+        float3 tint = max(vc * vc, float3(0.004));
+        T = exp(-(float3(0.26, 0.07, 0.035) + 0.09 * -log(tint)) * 2.0);
+    } else {
+        float a = t.a * float(in.color.a);
+        if (a < 0.03) discard_fragment(); // the clear parts of glass
+        float3 c = t.rgb * vc;
+        c = c * c * c; // linear, and deeper: light through coloured glass is purer than the glass looks
+        // the hue at full strength in its brightest channel (red glass lets red through, not a dim brown): bright, saturated
+        // pools of colour like light through a church window; tinted (dark) glass stays dark through its luminance
+        float m = max(max(c.r, c.g), max(c.b, 1e-4));
+        float l = dot(t.rgb * vc, float3(0.2126, 0.7152, 0.0722));
+        c = c / m * smoothstep(0.02, 0.25, l);
+        // stained glass is evenly coloured: its lighter interior texels (alpha ~0.3) tint as fully as the frame (the colour of
+        // the light comes from the pane, not from the texture's alpha pattern)
+        T = mix(float3(1.0), saturate(c), smoothstep(0.03, 0.3, a));
+    }
+    return float4(T, in.pos.z);
+}
+
 // ---- debug view (mcopt.shade.debug=1): one cascade per tile, drawn into the game's main color target ----
 
 // centerDepth: the camera's depth in this cascade; range: the cascade's depth range in blocks.

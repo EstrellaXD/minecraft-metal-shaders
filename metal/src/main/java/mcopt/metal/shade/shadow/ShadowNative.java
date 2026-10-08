@@ -29,6 +29,10 @@ final class ShadowNative {
 	private static final MethodHandle ENT_SHIFT = fn("mc_shadow_entity_shift", null, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
 	private static final MethodHandle ENT_COUNT = fn("mc_shadow_entity_count", JAVA_INT, JAVA_LONG);
 	private static final MethodHandle BIND = fn("mc_shadow_bind", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
+	private static final MethodHandle TINT_INIT = fn("mc_shadow_tint_init", JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle TINT_TEXTURE = fn("mc_shadow_tint_texture", JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle TINT_RENDER = fn("mc_shadow_tint_render", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
+		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 
 	private ShadowNative() {
@@ -140,6 +144,33 @@ final class ShadowNative {
 	static int debug(long enc, long shadow, long target, int x, int y, int size, int gap, long params, int paramBytes) {
 		try {
 			return (int) DEBUG.invokeExact(enc, shadow, target, x, y, size, gap, params, paramBytes);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** M3 coloured shadows: the tint map and its pipeline (0, or 1 with err filled). */
+	static int tintInit(long shadow, int resolution, long err, int errCap) {
+		try {
+			return (int) TINT_INIT.invokeExact(shadow, resolution, err, errCap);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static long tintTexture(long shadow) {
+		try {
+			return (long) TINT_TEXTURE.invokeExact(shadow);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static int tintRender(long enc, long shadow, long cascade, int cascadeBytes, long chunks, long chunksOffset, long regions, long regionsOffset, long draws,
+		int drawCount, long atlas, long params, int paramBytes) {
+		try {
+			return (int) TINT_RENDER.invokeExact(enc, shadow, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params,
+				paramBytes);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

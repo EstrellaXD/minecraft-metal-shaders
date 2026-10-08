@@ -746,6 +746,16 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 n = w.nFace;
 	if (top) {
 		n = shadeWaterNormal(w, f, wp, waves, height, pattern);
+#if defined(SHADE_WEATHER) && defined(SHADE_RIPPLES)
+		// M3 weather: raindrop rings on water under open sky (weather_surface.metal), faded out where they would alias
+		if (wp.state.z > 0.02 && w.sky > 0.95h) {
+			float rf = 1.0 - smoothstep(0.03, 0.06, w.footprint);
+			if (rf > 0.0) {
+				float2 rs = shadeWxRipples(shadeWxXZ(w.p.xz, f), f.sunPath.w, min(wp.state.z * 1.1, 1.0), w.footprint) * (rf * 1.4);
+				n = normalize(n + float3(-rs.x, 0.0, -rs.y));
+			}
+		}
+#endif
 		// grazing angles: normals average out across a pixel and the far water calms into a mirror
 		float graze = 1.0 - saturate(-v.y);
 		n = normalize(mix(n, float3(0.0, 1.0, 0.0), 0.8 * graze * graze * graze * graze));

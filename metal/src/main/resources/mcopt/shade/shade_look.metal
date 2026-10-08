@@ -42,24 +42,24 @@ struct ShadeLook {
 	float4 fogM;       // 448  x mist sigma (1/block), y mist scale height, z mist base y (absolute), w mist albedo
 	float4 fogMisc;    // 464  x haze base y (absolute), y border fog start fraction, z border fog radius (blocks, 0 = off), w evening glow
 	float4 vl;         // 480  reserved for the volumetric light module: x strength, y max distance, z HG g, w steps
-	float4 wet;        // 496  reserved: wetness, puddles, snow cover, rain (smoothed)
-	float4 wind;       // 512  reserved
+	float4 wet;        // 496  (M3 weather) x wetness, y puddles, z snow cover, w rain intensity (smoothed), all 0..1
+	float4 wind;       // 512  (M3 weather) xy wind direction (unit, world xz), z rain slant (blocks per block of fall), w snowfall at the camera 0..1
 	float4 clouds0;    // 528  M3 clouds: x cumulus base y, y top y (relative to the camera), z cloud shadow strength (0 off), w 1 = volumetric clouds on (vanilla's off)
 	float4 clouds1;    // 544  M3 clouds: x 1 = the reflection dome holds clouds, y cirrus altitude (relative), zw reserved
 	float4 clouds2;    // 560  reserved
 	float4 water;      // 576  reserved for the water module
 	float4 waterAbs;   // 592  reserved for the water module
-	float4 heldLight;  // 608  reserved
+	float4 tintRect;   // 608  (M3 weather) the coloured-shadow casters in the near cascade's light clip space: xy min, zw max (none: min > max); written after the shadow pass (ShadeBindings.setShadowTint)
 	float4 eye;        // 624  xyz camera-relative feet position, w smoothed sky light at the eye 0..1
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0
 	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w M3 evening rose hue weight (sky LUT)
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
-	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), yzw reserved (SSR)
+	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), z 1 = ShadeResources.weatherNoise is baked (M3 weather), w 1 = ShadeResources.shadowTint holds casters this frame (M3 weather, written after the shadow pass)
 	float4 taa;        // 704  reserved for TAAU
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)
 	float4 dimTint;    // 752  reserved
-	float4 flash;      // 768  reserved
+	float4 flash;      // 768  (M3 weather) xyz unit direction toward a lightning flash (camera-relative), w its light (radiance on a white surface, before exposure)
 	float4 dt;         // 784  x frame dt (s), y time (s, wraps hourly), z day index, w +1 morning / -1 evening
 	int4 tier;         // 800  x tier (0 P .. 3 U), y feature bits (SHADE_FEATURE_*), z look preset (0 epic, 1 storybook, 2 natural), w debug view
 	float4 gradeIn[3];    // 816  rows of the scene grade + inset matrix (white balance, saturation, inset): c' = (dot(row_i, c))
@@ -96,9 +96,9 @@ struct ShadeResources {
 	texture2d<half> prevScene;   // 1  last frame's HDR world (pre-exposed with ShadeGpu.exposure.z), before the tonemap: SSR source
 	texture2d<half> scene;       // 2  this frame's HDR world target (read it only outside the world passes: it is their attachment)
 	texture2d<half> bloom;       // 3  bloom accumulation from level 1 down (quarter size), after the post chain of the previous frame
-	texture2d<half> reserved4;
-	texture2d<half> reserved5;
-	texture2d<half> reserved6;
+	texture2d<half> weatherNoise;// 4  (M3 weather) RG16F 1024^2 tile of 256 blocks: r puddle field, g snow drift (baked once; weather_surface.metal)
+	texture2d<half> prevDepth;   // 5  (TAAU) linear view depth of prevScene (R16F, blocks along last frame's view axis, ~65000 = sky); valid when ssr.y == 1
+	texture2d<half> shadowTint;  // 6  (M3 weather) coloured shadows: near cascade tint map (RGBA16F, rgb transmittance, a reversed-Z light depth of the nearest translucent caster)
 	texture2d<half> reserved7;
 	texture2d<half> reserved8;
 	texture2d<half> reserved9;

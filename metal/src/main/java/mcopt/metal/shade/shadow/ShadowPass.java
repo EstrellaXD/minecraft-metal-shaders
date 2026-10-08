@@ -59,6 +59,10 @@ public final class ShadowPass {
 
 	private long shadow;
 	private long texture, compareSampler;
+	/** M3 coloured shadows: the tint map (0 = off), the water sprites for its pass. */
+	private long tintMap;
+	private final float[] waterRects = new float[8];
+	private static final int TINT_PARAM_BYTES = 48;
 	private final ShadowCascade[] cascades = {new ShadowCascade(), new ShadowCascade()};
 	private final ShadowCasters casters = new ShadowCasters();
 	/** This frame's camera-relative matrices (2 x 16, column-major) and their camera. */
@@ -327,6 +331,29 @@ public final class ShadowPass {
 		return step <= 0 ? angle : Math.round(angle / step) * step;
 	}
 
+	/**
+	 * M3 coloured shadows: the listed translucent sections' rectangle in cascade 0's light clip space (its matrix takes
+	 * camera-relative positions; orthographic, so a 16^3 box spans its centre +- 8 (|row x| + |row y| + |row z|)), widened by
+	 * 4 texels for the receivers' normal offset and bilinear taps; into this frame's ShadeLook (ssr.w, tintRect).
+	 */
+	private void publishTint(boolean any) {
+		float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
+		float[] m = this.matrices;
+		float ex = 8f * (Math.abs(m[0]) + Math.abs(m[4]) + Math.abs(m[8])), ey = 8f * (Math.abs(m[1]) + Math.abs(m[5]) + Math.abs(m[9]));
+		int[] b = this.casters.tintBoxes;
+		for (int i = 0; any && i < this.casters.tintCount; i++) {
+			float px = (float) (b[i * 3] + 8 - this.camX), py = (float) (b[i * 3 + 1] + 8 - this.camY), pz = (float) (b[i * 3 + 2] + 8 - this.camZ);
+			float cx = m[0] * px + m[4] * py + m[8] * pz + m[12], cy = m[1] * px + m[5] * py + m[9] * pz + m[13];
+			x0 = Math.min(x0, cx - ex);
+			x1 = Math.max(x1, cx + ex);
+			y0 = Math.min(y0, cy - ey);
+			y1 = Math.max(y1, cy + ey);
+		}
+		float pad = 8f / Math.max(mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES, 1);
+		boolean on = any && this.casters.tintCount > 0 && x0 - pad < 1f && x1 + pad > -1f && y0 - pad < 1f && y1 + pad > -1f;
+		mcopt.metal.shade.ShadeBindings.setShadowTint(on, x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+	}
+
 	private void render() {
 		Object encoder = MetalBridge.encoder(((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend());
 		if (encoder == null || MetalBridge.inRenderPass(encoder)) {
@@ -338,7 +365,11 @@ public final class ShadowPass {
 		if (this.draw[0]) EntityCasters.prepareCast(this.frames, this.camX, this.camY, this.camZ); // M3: last frame's entities, onto this camera
 		int faceMask = ShadowCasters.faceMask(this.light, ShadowConfig.ALL_FACES);
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
-		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT);
+		// SHADE_DEV_WX_NO_TINT (16384, mcopt.shade.dev, read per frame): skip the tint pass too, to price coloured shadows in one session
+		// in heavy rain on performance/balanced (ShadeWeather.tintHidden) the receivers' tint has faded out: no pass either
+		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0 && !mcopt.metal.shade.weather.ShadeWeather.tintHidden();
+		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint,
+			mcopt.metal.shade.water.ShadeWater.ON);
 		if (ShadowConfig.STATS) this.statBuildNanos += System.nanoTime() - t0;
 		if (!built) {
 			this.problem(this.casters.problem);
@@ -366,17 +397,19 @@ public final class ShadowPass {
 				if (!this.draw[c]) continue;
 				List<ShadowCasters.DrawList> lists = this.casters.lists[c];
 				long draws = stack.ncalloc(8, Math.max(1, lists.size()) * DRAW_BYTES, 1);
-				int n = 0;
+				long tintDraws = stack.ncalloc(8, Math.max(1, lists.size()) * DRAW_BYTES, 1);
+				int n = 0, nTint = 0;
 				for (ShadowCasters.DrawList l : lists) {
 					if (l.count == 0 || l.arena.isClosed()) continue;
 					MemoryUtil.memIntBuffer(chunkAt + (long) first * ShadowCasters.chunkBytes(), l.count * 2).put(l.chunks, 0, l.count * 2);
-					long d = draws + (long) n * DRAW_BYTES;
+					boolean translucent = l.kind == ShadowCasters.KIND_TRANSLUCENT; // M3 coloured shadows: the tint pass, not the depth pass
+					long d = (translucent ? tintDraws : draws) + (long) (translucent ? nTint : n) * DRAW_BYTES;
 					MemoryUtil.memPutLong(d, MetalBridge.useBuffer(encoder, l.arena));
 					MemoryUtil.memPutInt(d + 8, first);
 					MemoryUtil.memPutInt(d + 12, l.count);
 					MemoryUtil.memPutInt(d + 16, l.kind);
 					first += l.count;
-					n++;
+					if (translucent) nTint++; else n++;
 				}
 				ShadowCascade cascade = this.cascades[c];
 				long cascadeData = stack.ncalloc(16, CASCADE_BYTES, 1);
@@ -386,6 +419,20 @@ public final class ShadowPass {
 				// slope-scaled raster bias, negative: reversed Z pushes casters away from the light by lowering depth
 				int gpuEncoder = ShadowNative.render(enc, this.shadow, c, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
 					regions.slice().offset(), draws, n, atlas, -ShadowConfig.BIAS_SLOPE, -8f * depthPerTexel);
+				if (c == 0 && tint) {
+					// M3 coloured shadows: the near cascade's translucent casters into the tint map (unbiased matrix: receivers compare their own depth)
+					MemoryUtil.memPutFloat(cascadeData + 64, 0f);
+					long params = stack.ncalloc(16, TINT_PARAM_BYTES, 1);
+					mcopt.metal.shade.water.WaterFrame.rects(this.waterRects);
+					for (int i = 0; i < 8; i++) MemoryUtil.memPutFloat(params + i * 4L, this.waterRects[i]);
+					// mode.x = 1: leave water out (the water module absorbs the light on its way down to the floor itself)
+					MemoryUtil.memPutFloat(params + 32, mcopt.metal.shade.water.ShadeWater.ON ? 1f : 0f);
+					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
+					ShadowNative.tintRender(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle, regions.slice().offset(),
+						tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES);
+					this.publishTint(nTint > 0);
+					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, this.tintMap);
+				}
 				if (tracing) {
 					System.out.println(String.format("[mcopt] shade trace: shadow cascade %d: %d sections, %d quads, %d chunks in %d draws%s", c, this.casters.sections[c],
 						this.casters.quads[c], lists.stream().mapToInt(l -> l.count).sum(), n,
@@ -484,6 +531,17 @@ public final class ShadowPass {
 		EntityCasters.attach(this.shadow); // M3: entity draws cast into the near cascade
 		this.texture = ShadowNative.texture(this.shadow);
 		this.compareSampler = ShadowNative.compareSampler(this.shadow);
+		if (mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOWS) { // M3 coloured shadows: the near cascade's tint map
+			try (MemoryStack stack = MemoryStack.stackPush()) {
+				long err = stack.ncalloc(1, 1024, 1);
+				if (ShadowNative.tintInit(this.shadow, mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES, err, 1024) == 0) {
+					this.tintMap = ShadowNative.tintTexture(this.shadow);
+					System.out.println("[mcopt] shade: coloured shadows " + mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES + "^2 (near cascade)");
+				} else {
+					System.out.println("[mcopt] shade: no coloured shadows: " + MemoryUtil.memUTF8(err));
+				}
+			}
+		}
 		System.out.println(String.format("[mcopt] shade: shadow map %dx%d x %d cascades (%s, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s, far cutout: %s",
 			ShadowConfig.RES, ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS == 16 ? "Depth16Unorm" : "Depth32Float",
 			CASCADES * (ShadowConfig.DEPTH_BITS / 8.0) * ShadowConfig.RES * ShadowConfig.RES / (1 << 20), ShadowConfig.NEAR, ShadowConfig.DIST,

@@ -24,7 +24,7 @@
 //   - kind (SHADE_DYN_*): what is being lit, e.g. to skip self-lighting of the hand or to soften particles;
 //   - pixel: the fragment's position (px), for noise / dithered contact shadows (vary it per frame with ShadeFrame.flags2.x);
 //   - R: the ShadeResources argument buffer when the stage has it bound (buffer(19), HDR variants), else nullptr: the
-//     module may keep its light list in a ShadeResources texture slot (4-7 are free) or in ShadeLook (heldLight is reserved
+//     module may keep its light list in a ShadeResources texture slot (weather uses 4-6) or its own bindings (m3-lights: buffer 24, textures 23-25; ShadeLook 608, once heldLight, is weather's tintRect
 //     for the held light at offset 608).
 #ifndef MCOPT_SHADE_DYNLIGHT
 #define MCOPT_SHADE_DYNLIGHT

@@ -23,6 +23,8 @@ static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSm
 	float3 sky = shadeSkyRadiance2(dir, skyLut, skyLutSmplr, sf, sl, sr.milkyWay, pixelAngle);
 	// M3 aurora (shade_dims.metal; ShadeLook.night.z, 0 unless it shows tonight): emission over the night sky
 	if (sl.night.z > 0.002) sky += shadeAurora(dir, sf, sl, sr.milkyWay, pixel);
+	// M3 weather: a lightning flash lights the clouds (the whole overcast sky glows, most toward the bolt)
+	if (sl.flash.w > 0.0) sky += float3(0.78, 0.86, 1.0) * (sl.flash.w * 0.35 * (0.35 + 0.65 * pow(saturate(dot(dir, sl.flash.xyz) * 0.5 + 0.5), 3.0)));
 #ifdef MCOPT_HDR
 	// M3 volumetric clouds (shade_clouds.metal): in front of the sky, sun, moon and stars, behind everything the world draws
 	float4 clouds = shadeCloudsScreen(dir, sl, sr.cloudScreen);

@@ -68,6 +68,8 @@ public class ShadeMslDump {
 		Files.writeString(out.resolve("post.metal"), ShadeMsl.post());
 		// the water module's own passes (wave bake, SSR coarse depth): ShadeWater.library
 		Files.writeString(out.resolve("water_passes.metal"), ShadeMsl.post() + mcopt.metal.shade.water.ShadeWater.prelude());
+		// M3 weather: the puddle/snow noise bake (ShadeWeather.bakeNoise)
+		Files.writeString(out.resolve("weather_noise.metal"), ShadeMsl.post() + "#define SHADE_WX_NOISE_BAKE\n" + mcopt.metal.shade.weather.ShadeWeather.prelude());
 		Files.writeString(out.resolve("vl.metal"), mcopt.metal.shade.vl.VlConfig.source()); // volumetric light (mcvl.m)
 		Files.writeString(out.resolve("dynlight_vis.metal"), "#define SHADE_DL_KERNELS\n" + ShadeMsl.resource("dynlight.metal") + "\n" + ShadeMsl.resource("dynlight_vis.metal")); // M3 dynamic lights: visibility kernel (mcdynlight.m)
 		Files.writeString(out.resolve("clouds_passes.metal"), mcopt.metal.shade.clouds.CloudConfig.source()); // M3 volumetric clouds (mcclouds.m)
@@ -104,6 +106,17 @@ public class ShadeMslDump {
 					Files.writeString(ent.resolve("hand_" + file + ".vs.metal"), v);
 					Files.writeString(ent.resolve("hand_" + file + ".fs.metal"), h);
 				}
+			}
+			// M3 weather: the slanted weather vertex stage and the HDR lightning bolt
+			java.nio.file.Path wv = java.nio.file.Path.of(gen, "minecraft_pipeline_weather.vs.metal");
+			if (Files.exists(wv)) {
+				Files.writeString(out.resolve("weather.vs.metal"), ShadeMsl.weatherVertex(Files.readString(wv)));
+				Files.writeString(out.resolve("hdrweather.vs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.weatherVertex(Files.readString(wv)));
+			}
+			java.nio.file.Path lf = java.nio.file.Path.of(gen, "minecraft_pipeline_lightning.fs.metal");
+			if (Files.exists(lf)) {
+				Files.writeString(out.resolve("lightning.fs.metal"), ShadeMsl.lightning(Files.readString(lf)));
+				Files.writeString(out.resolve("hdrlightning.fs.metal"), "#define MCOPT_HDR\n" + ShadeMsl.lightning(Files.readString(lf)));
 			}
 			// every generated game fragment, converted for the HDR world target (ShadeMsl.hdrFragment)
 			Path hdrGen = out.resolve("hdrgen");

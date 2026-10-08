@@ -146,6 +146,27 @@ public final class ShadeBindings {
 		if (state != 0) currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN).putFloat(ShadeLook.SSR, valid ? 1f : 0f);
 	}
 
+	/**
+	 * ShadeLook.ssr.y of this frame (after ShadeLook.pack): 1 when ShadeResources.prevDepth holds the linear view depth of
+	 * prevScene (the TAA history's), so passes can march last frame's image (M3 weather: puddle reflections).
+	 */
+	static void setPrevDepthValid(boolean valid) {
+		if (state != 0) currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN).putFloat(ShadeLook.SSR + 4, valid ? 1f : 0f);
+	}
+
+	/**
+	 * M3 weather coloured shadows, this frame (after ShadeLook.pack and the shadow pass, before the world passes):
+	 * ShadeLook.ssr.w = 1 when the tint map holds casters, ShadeLook.tintRect = their rectangle in the near cascade's light
+	 * clip space (x0, y0, x1, y1); receivers outside it skip the tint lookup.
+	 */
+	public static void setShadowTint(boolean casters, float x0, float y0, float x1, float y1) {
+		if (state == 0) return;
+		ByteBuffer b = currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN);
+		b.putFloat(ShadeLook.SSR + 12, casters ? 1f : 0f);
+		b.putFloat(ShadeLook.TINT_RECT, casters ? x0 : 1f).putFloat(ShadeLook.TINT_RECT + 4, casters ? y0 : 1f);
+		b.putFloat(ShadeLook.TINT_RECT + 8, casters ? x1 : -1f).putFloat(ShadeLook.TINT_RECT + 12, casters ? y1 : -1f);
+	}
+
 	/** This frame's ShadeLook bytes (in the current slot). */
 	static ByteBuffer currentLook() {
 		return views[slot].slice(LOOK_OFFSET, ShadeLook.SIZE);

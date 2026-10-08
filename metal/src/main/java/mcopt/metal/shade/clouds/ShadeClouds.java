@@ -193,7 +193,9 @@ public final class ShadeClouds {
 			p.dev = dev;
 			// the shadow map and the dome change slowly (the wind moves the shadows ~1/25 of a map texel in 4 frames): each every
 			// fourth frame, never in the same frame (both after a reset). CloudParams keeps the map's own frame in between.
-			boolean dome = (p.frame & 3) == 1;
+			// (M3.1: the dome every 8th frame at performance/balanced, CloudConfig.DOME_EVERY: its 8k rays cost ~0.11 ms per update,
+			// the long horizon rays' latency, not their number)
+			boolean dome = (p.frame & (CloudConfig.DOME_EVERY - 1)) == 1;
 			p.shadowUpdate = CloudConfig.SHADOWS && ((p.frame & 3) == 3 || p.reset);
 			p.pack(PACKED, f, WEATHER);
 			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)

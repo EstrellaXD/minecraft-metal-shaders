@@ -58,6 +58,8 @@ public final class CloudConfig {
 	public static final boolean DOME = flag("mcopt.shade.clouds.dome", true);
 	public static final int DOME_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.domeSteps", new int[] {8, 10, 12, 16}[TIER]), 4, 64);
 	public static final int DOME_W = 128, DOME_H = 64;
+	/** Frames between dome updates (4 or 8; mcopt.shade.clouds.domeEvery): M3.1 lean 8 at performance/balanced, else 4 (M3). */
+	public static final int DOME_EVERY = Integer.getInteger("mcopt.shade.clouds.domeEvery", flag("mcopt.shade.clouds.lean", true) && TIER <= 1 ? 8 : 4) >= 8 ? 8 : 4;
 	public static final boolean CIRRUS = flag("mcopt.shade.clouds.cirrus", true);
 	/**
 	 * Cloud style: volumetric (default) or blocky (vanilla-style 12-block cells, ray-traced and lit: the Storybook look's

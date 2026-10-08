@@ -49,12 +49,12 @@ struct ShadeLook {
 	float4 clouds2;    // 560  reserved
 	float4 water;      // 576  reserved for the water module
 	float4 waterAbs;   // 592  reserved for the water module
-	float4 heldLight;  // 608  reserved
+	float4 tintRect;   // 608  (M3 weather) the coloured-shadow casters in the near cascade's light clip space: xy min, zw max (none: min > max); written after the shadow pass (ShadeBindings.setShadowTint)
 	float4 eye;        // 624  xyz camera-relative feet position, w smoothed sky light at the eye 0..1
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0
 	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w 0
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
-	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), z 1 = ShadeResources.weatherNoise is baked (M3 weather), w 1 = ShadeResources.shadowTint holds casters (M3 weather)
+	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), z 1 = ShadeResources.weatherNoise is baked (M3 weather), w 1 = ShadeResources.shadowTint holds casters this frame (M3 weather, written after the shadow pass)
 	float4 taa;        // 704  reserved for TAAU
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)

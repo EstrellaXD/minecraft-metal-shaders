@@ -240,7 +240,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #ifdef SHADE_WEATHER
 #if defined(SHADE_COLOR_SHADOW) && defined(MCOPT_HDR)
         // light that came through stained glass, ice or water takes their colour (the shadow pass's tint map, near cascade)
-        if (shadow > 0.0h && in.v_Light.y > 0.3h && sl.ssr.w > 0.5 && !shadeDev(sf, SHADE_DEV_WX_NO_TINT)) radiance += shadeShadowTintDelta(wetAlbedo, n, in.v_Light.y, shadow, shadeShadowTint(p, n, sf, sr.shadowTint), thin, foliage, sf);
+        if (shadow > 0.0h && in.v_Light.y > 0.3h && sl.ssr.w > 0.5 && !shadeDev(sf, SHADE_DEV_WX_NO_TINT)) radiance += shadeShadowTintDelta(wetAlbedo, n, in.v_Light.y, shadow, shadeShadowTint(p, n, sf, sl, sr.shadowTint), thin, foliage, sf);
 #endif
 #ifdef SHADE_LIGHTNING
         radiance += shadeWxFlash(wetAlbedo, n, in.v_Light.y, sl);

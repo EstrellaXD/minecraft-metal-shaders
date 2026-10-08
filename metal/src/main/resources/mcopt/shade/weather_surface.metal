@@ -427,8 +427,10 @@ static inline float3 shadeWxFlash(half3 albedo, half3 n, half sky, constant Shad
 // The light that reached p through stained glass, ice or water: the near cascade's tint map (ShadowPass, the translucent
 // casters' transmittance with the light depth of the one nearest the light in alpha). Only below a caster: the receiver must
 // be farther from the light than it by a quarter block (and the map fades out with the near cascade's edge). 1 = untinted.
-static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, texture2d<half> tint) {
+// L.tintRect: the casters' rectangle in the same light clip space (ShadowPass): receivers outside it skip the sample.
+static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> tint) {
 	float4 c = f.shadowViewProj[0] * float4(p + float3(n) * (0.75 * f.cascadeSplits.z), 1.0);
+	if (any(c.xy < L.tintRect.xy) || any(c.xy > L.tintRect.zw)) return half3(1.0h);
 	float m = max(abs(c.x), abs(c.y));
 	if (m >= 1.0 || c.z <= 0.0 || c.z >= 1.0) return half3(1.0h);
 	half4 t = tint.sample(shadeWxLinear, shadeShadowUV(c.xyz), level(0.0));
@@ -443,6 +445,7 @@ static half3 shadeShadowTint(float3 p, half3 n, constant ShadeFrame &f, texture2
 // The direct light's share of shadeLit2 that the tint changes (the same sun term: wrap, gate, shadow), times (tint - 1):
 // added to shadeLit2's result, it turns the light that came through glass into the glass's colour.
 static inline float3 shadeShadowTintDelta(half3 albedo, half3 n, half sky, half shadow, half3 tint, bool thin, bool foliage, constant ShadeFrame &f) {
+	if (all(tint == half3(1.0h))) return float3(0.0); // outside the casters' rectangle or above them
 	half nl = half(dot(float3(n), f.lightDirWorld.xyz));
 	half ndl = thin ? half(0.3) + half(0.5) * abs(nl)
 		: foliage ? half(0.25) + half(0.75) * saturate(nl) + half(0.5) * saturate(-nl)

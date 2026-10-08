@@ -5,7 +5,7 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 22:16)
+## Status (2026-10-07 22:21)
 
 **Fix round 22:00 (pre-integration, from the skeptic check `check:weather` in `work/notes/m3-2026-10-07/prefix-checks.json`):**
 done and committed (builds, validate ALL OK, **not yet tested in game**):
@@ -14,7 +14,12 @@ done and committed (builds, validate ALL OK, **not yet tested in game**):
   has no translucent model (`LevelChunkSection.maybeHas` + `BakedQuad.FLAG_TRANSLUCENT`), so near plain water the tint pass
   draws nothing and the receivers skip the lookup (ssr.w = 0). Fixes the double absorption on lake floors (tint map + M2.1's
   dy term). With the water module off, water still tints. `ShadowCasters.tintBoxes/tintCount` = the near cascade's listed
-  translucent sections (block coords), ready for the light-space rectangle (not used yet).
+  translucent sections (block coords).
+- Light-space rectangle: `ShadowPass.publishTint` projects those section boxes through cascade 0's matrix into a clip-space
+  rectangle (+8 texels) and writes it, with ssr.w, into **this frame's** ShadeLook slot after the shadow pass
+  (`ShadeBindings.setShadowTint`; no longer one frame late; `ShadeWeather.tintCasters` is gone, `pack` writes "none").
+  ShadeLook 608 `heldLight` (reserved, unused by every branch) is now **`tintRect`** (`ShadeLook.TINT_RECT`). Receivers
+  (`shadeShadowTint`, now with `L`) return before the sample outside it, and `shadeShadowTintDelta` returns 0 for tint 1.
 
 - Quad-shuffle guard: the quad-shared puddle SSR block now starts with `quadPuddle &&` (no shuffles over lanes that left).
 - `COLOR_SHADOWS` needs `ShadeConfig.HDR` (LDR has no reader: no tint pass there).
@@ -22,12 +27,7 @@ done and committed (builds, validate ALL OK, **not yet tested in game**):
   the CPU); `shadeWeather3` gives flakes M2.1's alpha 0.55 and no torch heuristic while it snows. Not looked at in game yet.
 
 **Next, in this order** (the 21:55 task list, items 1-7; item 3 is half done: LDR lite noise left):
-1. Light-space rectangle: in `ShadowPass.render` after the tint pass, project `casters.tintBoxes` (16^3 boxes,
-   camera-relative = box - camX/Y/Z) through `matrices[0..15]` (column-major: x' = m0 x + m4 y + m8 z + m12, extent
-   8(|m0|+|m4|+|m8|)) into a clip-space rect; publish it the SAME frame into the current ShadeLook slot (ShadePost already
-   writes ssr.x/y there after the pack: add a public `ShadeBindings.setShadowTint(any, x0, y0, x1, y1)`), into ShadeLook 608
-   (rename `heldLight` -> `tintRect`, unused by every branch) and ssr.w; `ShadeWeather.pack` writes empty defaults; drop
-   `ShadeWeather.tintCasters`. Receivers (`shadeShadowTint`): return 1 before the sample outside the rect (+ a few texels).
+1. Game test of the above (glass shots: tint still there; price wxdry / wxdry_notint near glass and near water).
 2. Budget in heavy rain at balanced (0.80 ms in wx17 incl. ~0.19 tint): price after item 1; candidates as dev bits 32-512.
 3. LDR puddles on a lite analytic noise (only the field needed, 2 octaves) instead of the full per-pixel noise.
 4. Snowfall shot: mcbench WeatherShots `snowfall` pose (nearest snowy biome, like DimShots.aurora's search), look at it.

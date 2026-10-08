@@ -319,6 +319,29 @@ public final class ShadowPass {
 		return step <= 0 ? angle : Math.round(angle / step) * step;
 	}
 
+	/**
+	 * M3 coloured shadows: the listed translucent sections' rectangle in cascade 0's light clip space (its matrix takes
+	 * camera-relative positions; orthographic, so a 16^3 box spans its centre +- 8 (|row x| + |row y| + |row z|)), widened by
+	 * 4 texels for the receivers' normal offset and bilinear taps; into this frame's ShadeLook (ssr.w, tintRect).
+	 */
+	private void publishTint(boolean any) {
+		float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
+		float[] m = this.matrices;
+		float ex = 8f * (Math.abs(m[0]) + Math.abs(m[4]) + Math.abs(m[8])), ey = 8f * (Math.abs(m[1]) + Math.abs(m[5]) + Math.abs(m[9]));
+		int[] b = this.casters.tintBoxes;
+		for (int i = 0; any && i < this.casters.tintCount; i++) {
+			float px = (float) (b[i * 3] + 8 - this.camX), py = (float) (b[i * 3 + 1] + 8 - this.camY), pz = (float) (b[i * 3 + 2] + 8 - this.camZ);
+			float cx = m[0] * px + m[4] * py + m[8] * pz + m[12], cy = m[1] * px + m[5] * py + m[9] * pz + m[13];
+			x0 = Math.min(x0, cx - ex);
+			x1 = Math.max(x1, cx + ex);
+			y0 = Math.min(y0, cy - ey);
+			y1 = Math.max(y1, cy + ey);
+		}
+		float pad = 8f / Math.max(mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES, 1);
+		boolean on = any && this.casters.tintCount > 0 && x0 - pad < 1f && x1 + pad > -1f && y0 - pad < 1f && y1 + pad > -1f;
+		mcopt.metal.shade.ShadeBindings.setShadowTint(on, x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+	}
+
 	private void render() {
 		Object encoder = MetalBridge.encoder(((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend());
 		if (encoder == null || MetalBridge.inRenderPass(encoder)) {
@@ -393,7 +416,7 @@ public final class ShadowPass {
 					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
 					ShadowNative.tintRender(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle, regions.slice().offset(),
 						tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES);
-					if (nTint > 0) mcopt.metal.shade.weather.ShadeWeather.tintCasters = true;
+					this.publishTint(nTint > 0);
 					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, this.tintMap);
 				}
 				if (tracing) {

@@ -55,7 +55,9 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * (re-arms FrameGen's dumps, files prefixed with the label); creative, a torch in the hand, HUD shown; overview at noon: 9 s
  * still (the dumps' settle), a fast turn (200 degrees/s, 3 s: "turn" dumps need 3+ degrees between real frames), a fast
  * straight move (40 blocks/s, 2 s: "move"), a slow pan (30 degrees/s, 4 s), a shot of the real frame ({@code rb_fg_<label>}).
- * FrameGen's own once-a-second report lines in the log fall between the bench's "framegen <label> ..." lines.</li>
+ * FrameGen's own once-a-second report lines in the log fall between the bench's "framegen <label> ..." lines. An entry
+ * {@code press:<label prefix>=N} presses that pause-menu button N times instead (e.g. {@code press:Resolución=6} = 1080p from
+ * auto); at the end each is pressed round to a whole cycle and config/mcopt.properties is put back byte for byte.</li>
  * <li>{@code fgbutton}: the pause menu with mcopt-shade's "Gen. de cuadros" button ({@code rb_fgbutton_0}), pressed
  * ({@code rb_fgbutton_1}, the config line logged), pressed again ({@code rb_fgbutton_2}); config/mcopt.properties is put back
  * byte for byte afterwards (it is the dev instance's: a left-over frame generation key would reach every later run).</li>
@@ -435,11 +437,16 @@ final class RobustShots {
 
 	// ---- framegen -----------------------------------------------------------------------------------------------------
 
+	static final Map<String, Integer> FG_PRESSES = new LinkedHashMap<>();
+	static final byte[][] FG_CONFIG = new byte[1][];
+
 	static void framegen(Deque<BenchDriver.Step> steps) {
 		String spec = System.getProperty("mcbench.fgVariants", "upstream:mcopt.shade.framegen.taau=false;fix:mcopt.shade.framegen.taau=true");
 		steps.add(new BenchDriver.Scene("rb_fg", 6000, false, () -> BenchDriver.spot.overview));
 		steps.add(new BenchDriver.Settle("rb_fg", false, 3, 120));
 		steps.add(step("rb-fg-hand", 0, mc -> {
+			Path cfg = mc.gameDirectory.toPath().resolve("config").resolve("mcopt.properties");
+			FG_CONFIG[0] = java.nio.file.Files.exists(cfg) ? java.nio.file.Files.readAllBytes(cfg) : null;
 			MinecraftServer s = BenchDriver.server(mc);
 			BenchDriver.cmd(s, "gamemode creative @a");
 			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:torch");
@@ -453,6 +460,15 @@ final class RobustShots {
 				for (String kv : props) {
 					if (kv.isBlank()) continue;
 					String[] a = kv.split("=", 2);
+					if (a[0].trim().startsWith("press:")) { // press:<button label prefix>=N: the pause menu's button, N times
+						String prefix = a[0].trim().substring(6);
+						int n = Integer.parseInt(a[1].trim());
+						mc.gui.setScreen(new PauseScreen(true));
+						for (int i = 0; i < n; i++) note("framegen", "pressed: " + pressStartingWith(mc, prefix));
+						mc.gui.setScreen(null);
+						FG_PRESSES.merge(prefix, n, Integer::sum);
+						continue;
+					}
 					System.setProperty(a[0].trim(), a.length > 1 ? a[1].trim() : "");
 				}
 				System.setProperty("mcopt.metal.framegen.dumpTag", label);
@@ -473,6 +489,15 @@ final class RobustShots {
 			steps.add(new Snap("rb_fg_" + label));
 		}
 		steps.add(step("rb-fg-off", 0, mc -> {
+			// buttons pressed by the variants: round each up to a whole cycle (Resolución: 7 choices) and put the config file back
+			for (var e : FG_PRESSES.entrySet()) {
+				int cycle = e.getKey().startsWith("Resolución") ? 7 : 2, more = (cycle - e.getValue() % cycle) % cycle;
+				mc.gui.setScreen(new PauseScreen(true));
+				for (int i = 0; i < more; i++) note("framegen", "pressed back: " + pressStartingWith(mc, e.getKey()));
+				mc.gui.setScreen(null);
+			}
+			Path cfg = mc.gameDirectory.toPath().resolve("config").resolve("mcopt.properties");
+			if (FG_CONFIG[0] != null) java.nio.file.Files.write(cfg, FG_CONFIG[0]);
 			MinecraftServer s = BenchDriver.server(mc);
 			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:air");
 			BenchDriver.cmd(s, "gamemode spectator @a");

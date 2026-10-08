@@ -99,6 +99,7 @@ final class DimShots {
 						extra.add(new Props("variant-end-" + shot, v.replaceAll("=[^:]*", "=")));
 					}
 					if (!x.teardown.isEmpty()) extra.add(new Cmd("teardown-" + e.getKey(), x.teardown));
+					addAb(extra, e.getKey(), x.pose); // M3.3: -Dmcbench.dimsAb spins at this scene
 					// opt-in perf spin at the first Nether / End scene (-Dmcbench.dimsPerf=SECONDS): phases "nether" / "end"
 					String phase = e.getKey().equals("nether_wastes") ? "nether" : e.getKey().equals("end_island") ? "end" : null;
 					// in-session price A/B: look on / paused (mcopt.shade.dims.pause, read live by the mod) / on again
@@ -114,6 +115,7 @@ final class DimShots {
 				extra.add(new BenchDriver.Settle("dims-return", false, 2, 60));
 				extra.add(new Props("passlog-overworld", "mcopt.shade.passLog=overworld"));
 				extra.add(new BenchDriver.Hold("dims-return", 1));
+				addAb(extra, "overview", o); // M3.3: -Dmcbench.dimsAb spins at the overworld spot (noon)
 				// XDR highlights price at the overworld spot (noon): on / as on an SDR-only screen (mcopt.shade.xdrTest=sdr) / on
 				if (PERF > 0) {
 					extra.add(new DimSpin("xdr", o, PERF, "mcopt.shade.xdrTest", ""));
@@ -147,7 +149,7 @@ final class DimShots {
 			Pose p = x.pose;
 			BenchDriver.pose = t -> p;
 			BenchDriver.cmd(s, String.format(Locale.ROOT, "execute in %s run tp @a %.3f %.3f %.3f %.2f %.2f", x.dim, p.x(), p.y(), p.z(), p.yaw(), p.pitch()));
-			if (!x.setup.isEmpty()) BenchDriver.cmd(s, x.setup);
+			if (!x.setup.isEmpty()) for (String c : x.setup.split(";;")) BenchDriver.cmd(s, c); // M3.3: several commands
 			BenchDriver.log("scene " + name + " in " + x.dim + " pose " + p);
 		}
 
@@ -165,6 +167,27 @@ final class DimShots {
 	 */
 	static final List<String> VARIANTS = System.getProperty("mcbench.dimsVariants", "").isBlank() ? List.of()
 		: List.of(System.getProperty("mcbench.dimsVariants").trim().split("\\+"));
+
+	/**
+	 * M3.3: -Dmcbench.dimsAb=scene@a=1:b=2,scene@a=2,...: after that scene's shot (or "overview": the overworld spot at noon,
+	 * after the return), one recorded 360-degree spin per entry, in order, as phases dab1..dab12 (results.json perf / gpu), with
+	 * the entry's live properties set for it (2 s settle unrecorded) and cleared after; -Dmcbench.dimsAbSeconds (10) each.
+	 * An entry may repeat a scene (ABBA). Scene names: those of results.json dimShots.
+	 */
+	static final List<String> AB = System.getProperty("mcbench.dimsAb", "").isBlank() ? List.of() : List.of(System.getProperty("mcbench.dimsAb").trim().split(","));
+	static final double AB_SECONDS = Double.parseDouble(System.getProperty("mcbench.dimsAbSeconds", "10"));
+
+	static void addAb(List<BenchDriver.Step> extra, String scene, Pose pose) {
+		for (int i = 0; i < AB.size() && i < 12; i++) {
+			String entry = AB.get(i);
+			int at = entry.indexOf('@');
+			if (at <= 0 || !entry.substring(0, at).equals(scene)) continue;
+			String props = entry.substring(at + 1);
+			extra.add(new Props("ab-" + (i + 1), props));
+			extra.add(new DimSpin("dab" + (i + 1), pose, AB_SECONDS, "mcbench.dimsAbPhase", "dab" + (i + 1) + " " + props));
+			extra.add(new Props("ab-end-" + (i + 1), props.replaceAll("=[^:]*", "=")));
+		}
+	}
 
 	/** Sets (or, with an empty value, clears) ':'-separated system properties "k=v". */
 	static final class Props extends BenchDriver.Step {
@@ -385,6 +408,21 @@ final class DimShots {
 		}
 		int h2 = Math.max(surface(l, 0, Math.max(z2 - 4, 0)), 50);
 		out.put("end_void", new Found("minecraft:the_end", new Pose(0.5, h2 + 3.0, z2 - 3.5, 0f, -6f), 6000, "", ""));
+		if (want("endmobs")) {
+			// M3.3: a few NoAI mobs on the island (the bench world is peaceful: passive ones) under the End key light, seen from
+			// 9 blocks east and 4 up, for the blob shadow next to the real one (removed afterwards)
+			int mx = 18, cy = surface(l, mx + 9, 0);
+			StringBuilder setup = new StringBuilder();
+			String[] mobs = {"villager", "iron_golem", "cow", "armor_stand", "horse", "sheep"};
+			for (int k = 0; k < mobs.length; k++) {
+				int z = -6 + k * 2 + (k >= 3 ? 1 : 0), y = surface(l, mx, z);
+				if (setup.length() > 0) setup.append(";;");
+				setup.append(String.format(Locale.ROOT, "execute in minecraft:the_end run summon minecraft:%s %d.5 %d %d.5 {NoAI:1b,Silent:1b,Invulnerable:1b,Tags:[\"mcbench_endmob\"],Rotation:[90f,0f]}",
+					mobs[k], mx, y, z));
+			}
+			out.put("end_mobs", new Found("minecraft:the_end", new Pose(mx + 9.5, cy + 4.0, 0.5, 90f, 24f), 6000, setup.toString(),
+				"execute in minecraft:the_end run kill @e[tag=mcbench_endmob]"));
+		}
 	}
 
 	private static void aurora(ServerLevel l, Map<String, Found> out) {

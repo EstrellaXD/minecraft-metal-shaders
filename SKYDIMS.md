@@ -206,11 +206,12 @@ assumed its terrain was already lit per pixel; in M2.1 it still used vanilla's f
 - **Nether with DH had no haze at all**: DH pushes vanilla's fog away itself, and our fog density followed vanilla's
   (now huge) fog end, so it went to zero. Fixed (`59a6d0d`): the density uses vanilla's own Nether distance whatever
   other mods did.
-- **End with DH was broken**: a grey checkerboard with coloured contours over the whole frame (both End shots). Not
-  diagnosed in time; probably the DH bridge (display-referred LODs/fog decoded back to HDR) meeting the End look's
-  sky/fog. For now the End look switches itself off when DH is loaded (`481492a`; M2.1's End, which was fine with DH in
-  FT0); `-Dmcopt.shade.dims.endWithDh=true` turns it back on for debugging. A baseline run with the End look off
-  (`sdr-dh-base`) and a check of both fixes (`sdr-dh2`) were queued at 19:38; see the Status section.
+- **End with DH is broken, but not by this module**: a grey checkerboard / coloured noise over the whole frame. A baseline
+  with the End look off (`-Dmcopt.shade.dims=false`, run `20261007-194816-sdr-dh-base`, i.e. M2.1's End) is just as
+  broken (worse: coloured noise over the sky, the island olive-green), so it comes from the M2 base + Distant Horizons
+  in the End (FT0 only tested the overworld). A temporary "End look off with DH" guard was reverted for that reason.
+  Owner: the DH/FT1 work (or the M3 integrator). Repro: `mcbench-run --direct --instance "mcopt DEV-DH" ... --jvm
+  "-Dmcopt.shade=true -Dmcbench.dims=end -Dmcbench.standardShots=false" --scenes shots`.
 
 ### 6.5 How it looks (work/release/M3-skydims-screenshots/)
 

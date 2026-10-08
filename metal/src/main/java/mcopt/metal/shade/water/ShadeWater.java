@@ -105,6 +105,11 @@ public final class ShadeWater {
 	 * no side fade on hits, and the far-end fade goes by distance instead of screen length (false: M2's SSR edges).
 	 */
 	public static final boolean SSR_EDGE = Boolean.parseBoolean(System.getProperty("mcopt.shade.ssrEdge", "true"));
+	/**
+	 * M3: the sun glint's distance widening (normals averaging out across a pixel) only at grazing views; from high up the
+	 * widened glint of a low sun was a broad glow cut into bright rectangles by the terrain's shadows (false: M2.1's glint).
+	 */
+	public static final boolean GLINT_GRAZE = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterGlintGraze", "true"));
 	/** M2.1: the water animates on a real-time clock instead of the (server-corrected, tick-based) game time. */
 	public static final boolean CLOCK = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterClock", "true"));
 	/** The pipeline whose first use in a main pass triggers the scene copy. */
@@ -142,6 +147,7 @@ public final class ShadeWater {
 			if (DETAIL_EXTRAS) b.append("#define SHADE_WATER_DETAIL_EXTRAS 1\n");
 		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
+		if (GLINT_GRAZE) b.append("#define SHADE_WATER_GLINT_GRAZE 1\n");
 		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n#define SHADE_WAVE_BAKE_SIZE ").append(BAKE_SIZE).append('\n');
 		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
 		// jitter changes per frame for the temporal resolve to integrate. The sub-rect mapping is exact without TAAU too
@@ -166,7 +172,7 @@ public final class ShadeWater {
 				}
 			}
 			System.out.println("[mcopt] shade: water on (ssr " + SSR + (SSR_QUAD ? " quad" : "") + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
-				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ")");
+				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ", glint graze " + GLINT_GRAZE + ")");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: water setup failed, M1 water from now on: " + e);

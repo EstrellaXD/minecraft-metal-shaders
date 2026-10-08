@@ -254,8 +254,17 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 		float3 vs = float3(v.x, max(v.y, 0.0), v.z);
 		skyBehind = shadeSkyLookup(vs, lut, s, f);
 		if (R != nullptr && L.clouds0.w > 0.5) {
-			float4 cl = shadeCloudsScreen(normalize(vs), L, R->cloudScreen);
-			skyBehind = skyBehind * cl.a + cl.rgb;
+			// the clouds the sky pass drew in this pixel's own direction v, not in the clamped one: below the horizon vs is the
+			// horizon at the same azimuth, so every pixel of land and sea under a horizon cloud (or gap) took that cloud's value
+			// = thin vertical streaks across the sea and bright columns over the far terrain at sunset (Gael, 2026-10-07).
+			// Below the horizon, from under the layer, the march has faded the clouds into the horizon haze already (nothing
+			// there to streak); from inside or above the layer the clouds below the horizon are in front of the terrain
+			// (cloud_over composites them), not behind it: none here.
+			float wc = v.y >= 0.0 ? 1.0 : smoothstep(0.0, 24.0, L.clouds0.x);
+			if (wc > 0.0) {
+				float4 cl = shadeCloudsScreen(v, L, R->cloudScreen);
+				skyBehind = skyBehind * mix(1.0, cl.a, wc) + cl.rgb * wc;
+			}
 		}
 	}
 	if (ap > 0.002) radiance = mix(radiance, skyBehind, ap * 0.6);

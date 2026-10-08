@@ -1,6 +1,29 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## Status (2026-10-07 20:15) - module finished for this phase; integration into m3 is the next workflow
+## Status (2026-10-07 22:15) - fixing Gael's sunset report + check findings before M3 integration
+
+Gael's report (`work/notes/m3-2026-10-07/gael-report-sunset-lines/`, sunset_west: "líneas raras de reflejo en el mar").
+A/B runs at head 4611a6f (scene sunset_west + water, one flag per run; `work/bench-results/20261007-2149..2204-fx*`,
+crops `ab_*.jpg` in that folder, scripts `prefix-scripts/clouds-fx/`):
+1. **Thin light lines across the sea/land + bright vertical columns over the far terrain**: NOT VL (same with
+   `vl=false`, `vl.ssTaps=0`), not the cloud shadow (`clouds.shadows=false` same), not SSR; gone with `clouds=false`.
+   Cause: `shade_m2.metal shadeFogAir2` (m3-clouds code) looked the clouds up at the CLAMPED direction (horizon at the same
+   azimuth) for terrain/water below the horizon, so every pixel under a horizon cloud/gap got its value = vertical streaks.
+   **Fix written (WIP commit 22:15, not yet built/tested in game)**: look up at the pixel's own direction v;
+   below the horizon only from under the layer (smoothstep(0,24, clouds0.x)).
+2. **Bright rectangular patches on the water (bottom centre)**: identical with `ssr=false` and with `clouds=false` -> not
+   clouds, not SSR. Probably real sand blocks at/just below the surface lit by the low sun; to confirm with
+   `-Dmcopt.shade.water=false` (vanilla water) in the next batch.
+3. **Horizontal stripes in the far clouds near the horizon**: same with `checker=1` and `wind=0` -> not the checkerboard /
+   reprojection: the march itself at grazing angles (long steps over a long path; suspects: the loop cap
+   `3n+4` iterations running out in dense far cloud, the start offset t0 + jitter*dt aliasing per row). Next: test
+   `steps=60`, and a larger iteration cap / per-row jitter decorrelation.
+
+Next steps (in order): build + validate; shot batch sunset_west,water with the fog fix (+ `water=false` for item 2,
++ `steps=60`); fix item 3; then the check findings (comb with a still camera: diagnose with wind=0/checker=1 crops at
+noon_south; inside/above re-shoot at 20 steps); then Status/Results + price. Previous status (20:15) below.
+
+### Status (2026-10-07 20:15)
 
 Done this session (resume after the 15:06 pause), all committed:
 - WIP finished and kept: finer steps near the camera inside the cloud layer (the checkerboard seen from inside is gone);

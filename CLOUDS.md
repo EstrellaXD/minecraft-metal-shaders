@@ -1,10 +1,17 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## M3.3 Status (2026-10-08 10:05) - branch `m3.3-clouds` from m3-int 397e241
+## M3.3 Status (2026-10-08 10:20) - branch `m3.3-clouds` from m3-int 397e241
 
-Item 1 (comb): **cause found and fixed offline** (b4ece4e, flag `mcopt.shade.clouds.stable`, default true, read every
-frame; false = M3.2; dev bit 32768 = M3.2 way for in-session pricing). In-game confirmation: run 1 queued
-(`work/notes/m33-2026-10-08/clouds/run1.sh`, label m33c-1). Diagnosis (offline preview, which now turns / scales the
+Item 1 (comb): **fixed and confirmed in game** (b4ece4e, flag `mcopt.shade.clouds.stable`, default true, read every
+frame; false = M3.2; dev bit 32768 = M3.2 way for in-session pricing). Run 1 (`bench-results/20261008-101319-m33c-1`,
+`work/notes/m33-2026-10-08/clouds/run1.sh`, wind on, each scene shot with stable=false then true a few seconds apart):
+noon_south still camera: M3.2 shows the vertical comb along the soft edges, M3.3 a clean edge
+(`work/release/M3.3-screenshots/clouds_comb_quieto_antes_despues.jpg`); turning at 30 deg/s (shot mid-turn,
+`turn_south`, `turn_sunset`): M3.2 diagonal hatching over whole clouds and combed sunset edges, M3.3 none (a fine random
+grain remains where the turn just uncovered the sky, near the screen edge: `clouds_comb_girando_antes_despues.jpg`,
+`clouds_comb_girando_atardecer_antes_despues.jpg`). Its in-session price in run 1 is unusable (whole-frame GPU ms jumped
+between ~8.8 and ~10.9 ms between phases with nothing changed, residual sd 1.2 ms: GPU contention from outside the
+game); run 3 repeats it with 24 short interleaved phases. Diagnosis (offline preview, which now turns / scales the
 wind: `CLOUDS_YAWRATE`, `CLOUDS_WIND`; experiment shader kept as `work/notes/m33-2026-10-08/clouds/clouds_experiments.metal`):
 - soft cloud parts are step-aliased: one march sample's result there depends almost entirely on its start offset (fixed
   offsets 0.1/0.3/0.5/0.7/0.9 give five different sets of lobes); only the average over visits is the soft cloud;

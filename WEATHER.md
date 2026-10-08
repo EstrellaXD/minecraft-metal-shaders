@@ -94,22 +94,34 @@ session** with the `mcopt.shade.dev` bits (`-Dmcbench.weather=price`): a phase w
 perf phases of every run listed (clean; the >350 % samples are the world loading before them). Provisional: clean final
 numbers come after the M3 integration.
 
-### What each part costs (in-session, ms)
+### What each part costs (ms of GPU time per frame)
 
-| Part | wx7 15:00 (pre-pause build) | wx8 18:16 (baked noise + Fresnel gate) | wx10 18:32 (31 % cover) | wx11 18:55 (puddles in view) | wx13 (final, balanced) |
+Method: each run prices every part **inside one session** with the `mcopt.shade.dev` bits (a 10 s phase with that part
+off, against `wxrain`/`wxdry` of the same session). Two biases showed up and are corrected with **a run of the same phases
+with the module off** (`wx14`, `mcopt.shade.weather=false`: the dev bits do nothing there, so any difference between its
+phases is pure bias): (1) the first phase (`wxdry`) is ~0.17 ms slower than the second in every run, module on or off
+(warm-up), so the "coloured shadows" price that looked like 0.10-0.18 ms is really **~0**; (2) the GPU drifts up
+0.0-0.3 ms through a session (wxrain2 - wxrain), more in some sessions than others. Corrected = in-session difference
+minus the same difference in the module-off run.
+
+| Part | wx7 15:00 pre-pause (raw) | wx10 18:32 (corrected) | wx11 18:55 (corrected) | wx13 19:15 final (corrected) | WX15_COL |
 |---|---|---|---|---|---|
-| Puddles in the view (ground pose) | ~49 % (old pattern) | ~17 % | ~22 % | ~37 % | ~37 % |
-| **Dry**: coloured shadows (tint pass + lookup; the bench's glass roof is in range) = wxdry - wxdry_notint | n/a | 0.10 | 0.17 | 0.18 | WX13_TINT |
-| **Rain, everything** = wxrain - wxrain_dry | 1.16 | 0.71 | 0.82 | 0.97 | WX13_RAIN |
-| puddle reflections (SSR) = wxrain - wxrain_nossr | 0.39 | 0.13 | 0.16 | 0.25 | WX13_SSR |
-| ... saved by the Fresnel gate = wxrain_nogate - wxrain | | | 0.14 | 0.14 | WX13_GATE |
-| ... saved by the baked noise = wxrain_analytic - wxrain | | | 0.77 | 0.77 | WX13_NOISE |
-| raindrop ripples = wxrain - wxrain_noripple | 0.12 | 0.03 | 0.03 | 0.18 | WX13_RIPPLE |
-| lit, slanted rain streaks = wxrain - wxrain_plainrain | 0.05 | 0.11 | 0.10 | 0.09 | WX13_STREAK |
-| the rest (wet darkening and film, sky reflection, sun sheen, puddle mask) | ~0.6 | ~0.35 | ~0.36 | ~0.27 | WX13_REST |
-| drift wxrain2 - wxrain | +0.13 | -0.01 | 0.00 | +0.01 | WX13_DRIFT |
+| Puddles in the view (ground pose) | ~49 % (old pattern) | ~22 % | ~37 % | ~37 % | ~37 % |
+| **Dry**: coloured shadows (tint pass + lookup, glass roof in range) | | -0.01 | 0.01 | -0.01 | WX15_TINT |
+| **Rain, everything** (vs the dev-bit "all off") | 1.16 | 0.94 | 1.09 | 0.77 | WX15_RAIN |
+| puddle reflections (SSR) | 0.39 | 0.22 | 0.31 | 0.24 | WX15_SSR |
+| saved by the Fresnel gate | | 0.12 | 0.13 | 0.18 | WX15_GATE |
+| saved by the baked noise | | 0.72 | 0.72 | 0.82 | WX15_NOISE |
+| raindrop ripples | 0.12 | 0.10 | 0.25 (2 grids) | ~0 (1 grid; drift-noisy) | WX15_RIPPLE |
+| lit, slanted rain streaks | 0.05 | 0.21 | 0.20 | ~0 (drift-noisy) | WX15_STREAK |
+| drift left after correction | 0.13 | -0.12 | -0.11 | +0.16 | WX15_DRIFT |
 
-WX14_OFF
+**The module as a whole, on vs off (cross-session, both on AC, clean):** WX_ONOFF
+
+Reading: numbers move by ±0.1 ms between sessions on this shared machine (five agents, builds, thermal state), so trust
+the big items: the **baked noise saves ~0.75 ms**, the **Fresnel gate ~0.15 ms**, puddle **reflections cost ~0.25 ms**,
+coloured shadows **~0** at the receiver (the pass draws only the near cascade's glass/water), and **rain costs ~0.8-1.0 ms
+over a dry frame with ~37 % of the ground in view under puddles** (less with fewer puddles: 0.8 in wx10 at ~22 %).
 
 ### Before / after this session (plain words)
 
@@ -117,8 +129,8 @@ WX14_OFF
   that alone saves **0.77 ms** in rain (the biggest single win).
 - **Puddle reflections are only traced where you can actually see them** (looking across a puddle, not straight down
   into it): saves **0.14 ms**, no visible change (where the trace is skipped the puddle reflects 2-4 % of the light).
-- **Soaked grass and damp ground no longer look up the sky** they would blur away anyway; **coloured shadows cost nothing
-  when no glass or water is near** (the tint lookup is skipped).
+- **Soaked grass and damp ground no longer look up the sky** they would blur away anyway; with no glass or water near,
+  the terrain skips the coloured-shadow lookup.
 - **Balanced** uses one raindrop grid (drops come faster, so about as many rings) and 12 reflection steps instead of 16;
   quality/ultra keep two grids and 20/24 steps.
 - With all that, rain at balanced costs **WX13_RAIN ms** over a dry frame in this puddle-heavy view (37 % of the ground in

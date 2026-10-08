@@ -5,15 +5,19 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 18:15)
+## Status (2026-10-07 19:50)
 
-Resumed after the account pause. Done since the pause: the WIP commit (baked puddle/snow noise tile, ShadeResources 4) is
-finished and kept (`3c93d58`); the puddle SSR now marches only where the Fresnel term makes it visible (`d7c5823`); new dev
-bits `WX_ANALYTIC` (32768) and `WX_NO_SSR_GATE` (65536) and the `NO_TINT` bit also skips the tint pass, so mcbench's
-`price` phases (now `wxdry`, `wxdry_notint`, `wxrain`, `wxrain_nossr`, `wxrain_nogate`, `wxrain_analytic`,
-`wxrain_noripple`, `wxrain_plainrain`, `wxrain_dry`, `wxrain2`) price every part inside one session.
-Next: run `wx8-price-shots` (build d7c5823), read prices, cut cost toward the budget (0.1 ms dry, 0.5 ms rain at
-balanced), judge the shots, fill Results.
+**Done (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only
+where Fresnel shows it; terrain skips the coloured-shadow lookup when no translucent casters are near; rough films skip
+the sky lookup; balanced uses one raindrop grid and 12 reflection steps; puddle cover back to ~31 % (the 256-block lattice
+changed the pattern; the swell seed puts puddles in the bench view); dev bits and mcbench price phases for every part; a
+module-off baseline. Prices, on/off, looks and runs are in **Results** below. Screenshots:
+`work/release/M3-weather-screenshots/` (`final_*` = build ccaad51).
+
+**Next:** the budget is not met at balanced in heavy rain (~0.9 ms vs 0.5; see Results for the options); the coloured-
+shadow pass cost needs one clean bracketed number (wx17 below, if it ran); puddle edges in motion (video) not checked yet;
+integration into m3 (ShadeResources slot 4 vs the lights module, `shadeLit2` direct term duplicated in
+`shadeShadowTintDelta`).
 
 ## What it does (in game)
 
@@ -104,19 +108,27 @@ phases is pure bias): (1) the first phase (`wxdry`) is ~0.17 ms slower than the 
 0.0-0.3 ms through a session (wxrain2 - wxrain), more in some sessions than others. Corrected = in-session difference
 minus the same difference in the module-off run.
 
-| Part | wx7 15:00 pre-pause (raw) | wx10 18:32 (corrected) | wx11 18:55 (corrected) | wx13 19:15 final (corrected) | WX15_COL |
+| Part | wx7 15:00 pre-pause (raw) | wx10 18:32 (corrected) | wx11 18:55 (corrected) | wx13 19:15 final (corrected with wx14) | wx15 19:38 final (corrected with wx16) |
 |---|---|---|---|---|---|
 | Puddles in the view (ground pose) | ~49 % (old pattern) | ~22 % | ~37 % | ~37 % | ~37 % |
-| **Dry**: coloured shadows (tint pass + lookup, glass roof in range) | | -0.01 | 0.01 | -0.01 | WX15_TINT |
-| **Rain, everything** (vs the dev-bit "all off") | 1.16 | 0.94 | 1.09 | 0.77 | WX15_RAIN |
-| puddle reflections (SSR) | 0.39 | 0.22 | 0.31 | 0.24 | WX15_SSR |
-| saved by the Fresnel gate | | 0.12 | 0.13 | 0.18 | WX15_GATE |
-| saved by the baked noise | | 0.72 | 0.72 | 0.82 | WX15_NOISE |
-| raindrop ripples | 0.12 | 0.10 | 0.25 (2 grids) | ~0 (1 grid; drift-noisy) | WX15_RIPPLE |
-| lit, slanted rain streaks | 0.05 | 0.21 | 0.20 | ~0 (drift-noisy) | WX15_STREAK |
-| drift left after correction | 0.13 | -0.12 | -0.11 | +0.16 | WX15_DRIFT |
+| **Dry**: coloured shadows (tint pass + lookup, glass roof in range) | | -0.01 | 0.01 | -0.01 | 0.17 (?) |
+| **Rain, everything** (vs the dev-bit "all off") | 1.16 | 0.94 | 1.09 | 0.77 | 0.61 |
+| puddle reflections (SSR) | 0.39 | 0.22 | 0.31 | 0.24 | 0.06 |
+| saved by the Fresnel gate | | 0.12 | 0.13 | 0.18 | 0.27 |
+| saved by the baked noise | | 0.72 | 0.72 | 0.82 | 0.90 |
+| raindrop ripples | 0.12 | 0.10 | 0.25 (2 grids) | ~0 (1 grid; drift-noisy) | ~0 (1 grid; drift-noisy) |
+| lit, slanted rain streaks | 0.05 | 0.21 | 0.20 | ~0 (drift-noisy) | ~0 (drift-noisy) |
+| drift left after correction | 0.13 | -0.12 | -0.11 | +0.16 | +0.29 |
 
-**The module as a whole, on vs off (cross-session, both on AC, clean):** WX_ONOFF
+**The module as a whole, on vs off** (four launches alternating on/off/on/off, wx13 / wx14 / wx15 / wx16, all on AC,
+cpu-load 90-200 % during the phases; the same 10 s pans; wx14 had no glass roof, the others did):
+
+| | on (wx13, wx15) | off = M2.1 (wx14, wx16) | module cost |
+|---|---|---|---|
+| dry (wxdry) | 6.90, 7.02 | 6.76, 6.68 | **+0.24** (+0.14 / +0.33 pairwise) |
+| rain (wxrain) | 8.27, 8.38 | 7.30, 7.53 | **+0.91** (+0.98 / +0.85 pairwise) |
+
+WX17_TINT
 
 Reading: numbers move by ±0.1 ms between sessions on this shared machine (five agents, builds, thermal state), so trust
 the big items: the **baked noise saves ~0.75 ms**, the **Fresnel gate ~0.15 ms**, puddle **reflections cost ~0.25 ms**,
@@ -133,9 +145,14 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
   the terrain skips the coloured-shadow lookup.
 - **Balanced** uses one raindrop grid (drops come faster, so about as many rings) and 12 reflection steps instead of 16;
   quality/ultra keep two grids and 20/24 steps.
-- With all that, rain at balanced costs **WX13_RAIN ms** over a dry frame in this puddle-heavy view (37 % of the ground in
-  view is puddle), was **1.16 ms** before the pause with fewer puddles. Dry: WX13_TINT ms (coloured shadows, glass in range;
-  ~0 without glass). **Budget (0.1 dry, 0.5 rain): WX13_VERDICT**
+- With all that, **rain at balanced costs ~0.9 ms more than M2.1** in this puddle-heavy view (37 % of the ground in view
+  is puddle; before the pause it measured 1.16 ms over a dry frame with the old pattern). **Dry: +0.1-0.3 ms** with the
+  glass roof in the coloured-shadow range (too noisy on this shared Mac to pin down closer; see the bracketed run below).
+- **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met.** Rain is ~0.4 ms over, dry is at or a bit
+  over. What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
+  (`mcopt.shade.puddleSsr=false`, the bible's plan for P/B: -0.1 to -0.3 ms, puddles then mirror only the sky),
+  a deferred puddle pass at half resolution (new work, M4), coloured shadows only on quality+ (`mcopt.shade.colorShadows`).
+  Gael loves reflections, so this branch keeps them on at balanced.
 
 ### How it looks (screenshots in `work/release/M3-weather-screenshots/`)
 
@@ -164,5 +181,8 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 | `20261007-183259-wx10-price-shots` | fb42a8c | puddle threshold 0.575 (31 % of open ground at full) |
 | `20261007-185602-wx11-price-shots` | 4d5c812 | swell seed with puddles in the bench view; tint flag; rough films skip the sky lookup |
 | `20261007-190041-wx12-snowlook` | 4d5c812 | `-Dmcopt.shade.snowAmount=1`: snow cover look |
-| WX13_RUN | ccaad51 | final balanced prices + all shots |
-| WX14_RUN | ccaad51 | `mcopt.shade.weather=false` baseline (wxdry / wxrain), cross-session |
+| `20261007-191550-wx13-price-shots` | ccaad51 | final balanced prices + all shots (session drift +0.29) |
+| `20261007-192037-wx14-off-price` | ccaad51 | `mcopt.shade.weather=false`, same phases (bias of each phase position), no glass roof |
+| `20261007-193854-wx15-price` | ccaad51 | final balanced prices again (price + glass, no shots) |
+| `20261007-194245-wx16-off-price` | ccaad51 | `mcopt.shade.weather=false`, price + glass |
+| WX17_RUN | ccaad51 | warm-up + dry A/B/A bracket of the coloured shadows (mcbench 6a2531f) |

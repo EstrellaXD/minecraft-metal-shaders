@@ -721,19 +721,11 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		int2 ay = int2(mi.x, min(mi.y + 1, ms.y)), by = int2(mi.x, max(mi.y - 1, 0));
 		float d1 = curDist.read(uint2(ax)).r, d2 = curDist.read(uint2(bx)).r, d3 = curDist.read(uint2(ay)).r, d4 = curDist.read(uint2(by)).r;
 		float dMin = min(min(min(d1, d2), min(d3, d4)), dNow), dMax = max(max(max(d1, d2), max(d3, d4)), dNow);
-		// while the view moves, the history is resampled every frame: Catmull-Rom's slight gain at mid frequencies compounds
-		// over frames and grows the checkerboard's period-3 residue into a comb along the motion (cloud edges while turning).
-		// Keep the history inside this frame's march range there too (a looser pad), as TAA does; a still view keeps its
-		// converged detail (no clamp)
-		float motion = length((puv - uv) * c.size.xy);
-		bool jump = dMax > dMin * 1.3 + 4.0;
-		float mk = saturate((motion - 0.2) * 2.0);
-		if (jump || mk > 0.0) {
+		if (dMax > dMin * 1.3 + 4.0) {
 			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
 			half4 lo = min(min(min(c1, c2), min(c3, c4)), now), hi = max(max(max(c1, c2), max(c3, c4)), now);
-			half4 pad = (hi - lo) * (jump ? 0.15h : 0.3h) + hi * 0.03h;
-			half4 hc = clamp(h, lo - pad, hi + pad);
-			h = jump ? hc : mix(h, hc, half(mk));
+			half4 pad = (hi - lo) * 0.15h;
+			h = clamp(h, lo - pad, hi + pad);
 		}
 	}
 	CloudResolveOut o;

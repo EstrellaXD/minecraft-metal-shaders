@@ -1,6 +1,6 @@
 # M3 base + entities (branch `m3`, the M3 integration branch)
 
-## Status (2026-10-07 22:18, fix round after the skeptic check `check:base`)
+## Status (2026-10-07 22:21, fix round after the skeptic check `check:base`)
 
 - **Done and committed (build OK, `validate.sh` ALL OK; not yet tested in game):**
   - 74e763b: `mcopt.shade.skyRose` (default true, read every frame; false = M2.1's evening sky) and `mcopt.shade.vl.waterM3`
@@ -18,12 +18,19 @@
   - BASE.md sections 1, 3, 4, 7.2 and 8 updated (f29afef, d01f123). mcbench 4017188: `EntityShots` `rose` (sunset_water pose
     and 25 degrees up, `mcopt.shade.skyRose` false then true, `tick freeze` around each pair) and `cave` (pig + villager + a
     torch in LightShots' dark cave).
-- **Game run done (22:16):** `bench-results/20261007-221517-m3fix-shots2` (jar `notes/m3-2026-10-07/jars/m3-d01f123.jar`, dump in
-  the scratchpad `dump-m3fix`: copy it to `notes/m3-2026-10-07/dump-m3fix` before using). The mixin applies (no error), 8
-  shots: ent_noon, ent_night, ent_hand, ent_cave, rose_{off,on}_{water,sky}. (`-Dmcbench.godRays=true` with
-  `standardShots=false` gave no god-ray shots: vl_underwater still to shoot.) First look: **no blob is visible under the
-  cave mobs** (ent_cave, torch next to them): to check (full-res crop of the feet; is `dropBlob` false there? the blob's HDR
-  variant (M2 path) may be too faint; compare with an M2.1 jar at the same pose).
+- **Game run done (22:16):** `bench-results/20261007-221517-m3fix-shots2` (jar `notes/m3-2026-10-07/jars/m3-d01f123.jar`; MSL
+  dump copied to `notes/m3-2026-10-07/dump-m3fix`). The mixin applies (no error, no "entity shadows off"), 8 shots.
+  - `MCOPT_GEN_DIR=notes/m3-2026-10-07/dump-m3fix validate.sh`: **ALL OK, 38 entity pipelines build** (36 + the plain
+    `item_cutout~1` world and hand pair; the glint `item_cutout` logs "not patched") (`notes/m3-2026-10-07/m3fix-validate-gen.txt`).
+  - **Rose, matched pair in one session** (ticks frozen: identical clouds): `release/M3-base-screenshots/sunset_rose_off_vs_on_same_session.jpg`
+    and `sunset_sky_rose_off_vs_on_same_session.jpg` (top off = M2.1 sky, bottom on). The rose turns the upper sky mauve-rose;
+    the shafts are still there but **the dark cloud-shadow rays read weaker against the rose sky than against the blue**:
+    for Gael to judge (he loves god rays); `mcopt.shade.skyRose=false` keeps the blue.
+  - **Not verified:** the blob in the cave (`entities_cave_torch_M3fix.jpg`): no blob is visible under the pig/villager next
+    to the torch. Unknown whether `dropBlob` returned true there (some sky light in that cave?) or the blob is too faint in
+    the HDR (M2) path; the night shot's ground is hidden by tall grass. To do: a log line in `dropBlob` (sky light, decision)
+    or a cave A/B with the M2.1 jar at the same pose. `vl_underwater` not shot (`godRays=true` with `standardShots=false`
+    gave no god-ray shots).
 - **Next (exact):**
   2. The game run, jar copied to `notes/m3-2026-10-07/jars/`: `--jvm "-Dmcopt.shade=true -Dmcbench.entities=noon,evening,night,hand,rose,cave
      -Dmcbench.godRays=true -Dmcbench.standardShots=false -Dmcopt.metal.dumpMsl=<dir>" --scenes shots`; check the log for

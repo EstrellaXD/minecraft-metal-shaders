@@ -27,6 +27,10 @@ public class ShadeMslDump {
 			// M2 HDR variants (what MetalPipeline.variant builds through ShadeMsl's format adapter)
 			Files.writeString(out.resolve("hdr_" + e.getKey() + ".vs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(vs));
 			Files.writeString(out.resolve("hdr_" + e.getKey() + ".fs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			// M3.1 / M3.3 lean terrain variants (ShadeLean): the overworld's and the Nether's (compiled only)
+			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leanow.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_OW\n#define SHADE_LEAN_DRY\n#define SHADE_LEAN_NODL\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leannether.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_NETHER\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leannetherdry.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_NETHER\n#define SHADE_LEAN_DRY\n#define SHADE_LEAN_NODL\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
 			if (e.getKey().equals("translucent")) {
 				// the translucent fragment without the water module (mcopt.shade.water=false: M1's water)
 				Files.writeString(out.resolve("shade_translucentnowater.vs.metal"), slotsT + ShadeMsl.terrain(vs));
@@ -48,7 +52,11 @@ public class ShadeMslDump {
 			Files.writeString(out.resolve("sky" + i + ".fs.metal"), s + ShadeMsl.skyStage("sky.fs.metal"));
 			Files.writeString(out.resolve("hdrsky" + i + ".vs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("sky.vs.metal"));
 			Files.writeString(out.resolve("hdrsky" + i + ".fs.metal"), "#define MCOPT_HDR\n" + s + ShadeMsl.skyStage("sky.fs.metal"));
+			// M3.1 / M3.3: the sky's lean variant (no per-pixel aurora; still reads the reduced-resolution aurora texture)
+			Files.writeString(out.resolve("hdrskylean" + i + ".fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_NOAURORA\n" + s + ShadeMsl.skyStage("sky.fs.metal"));
 		}
+		// M3.3 (dims): the reduced-resolution aurora pass (ShadeAurora)
+		Files.writeString(out.resolve("aurora_pass.metal"), mcopt.metal.shade.ShadeRender.prelude() + "\n" + mcopt.metal.shade.ShadeRender.postSource() + "\n" + ShadeMsl.resource("aurora.metal"));
 		String s2 = MetalShaderRegistry.slotDefines(List.of("Projection", "DynamicTransforms", "Sampler0"));
 		Files.writeString(out.resolve("celestial.vs.metal"), s2 + ShadeMsl.skyStage("celestial.vs.metal"));
 		String s3 = MetalShaderRegistry.slotDefines(List.of("DynamicTransforms", "Projection"));

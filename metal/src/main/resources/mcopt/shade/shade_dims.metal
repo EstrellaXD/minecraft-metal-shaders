@@ -16,8 +16,9 @@
 //     SHADE_DP_FOG 0  fog in-scatter (both)          SHADE_DP_LAVA 1  lava up-light at the lava sea (Nether)
 //     SHADE_DP_ACCENT 2 Nether biome accent | End sky zenith   3 End sky horizon   4 End beams   5 End filaments
 //     6, 7 End nebula hues
-// ShadeLook: dimTint = (fog extinction 1/block, lava sea y, border fog radius in blocks (0 off), 1 Nether / 2 End / 3 End
-// without a sky pass: vanilla skips the sky during the dragon fight, the final pass paints shadeEndSky on empty pixels);
+// ShadeLook: dimTint = (fog extinction 1/block, lava sea y, border fog radius in blocks (0 off), w: kind + 4 x the M3.3 bits;
+// kind (shadeDimKind) 1 Nether / 2 End / 3 End without a sky pass: vanilla skips the sky during the dragon fight, the final
+// pass paints shadeEndSky on empty pixels; 0 in the overworld; bits SHADE_DIMS_* (shadeDimsBit), live per frame);
 // flash = (End flash direction, intensity), written only while the dims are lit (in the overworld the field is the weather
 // module's lightning); night.z = aurora strength 0..1.
 // NOISE. ShadeResources.milkyWay's alpha holds a tileable fbm (baked with the Milky Way, shade_post.metal): shadeDimsNoise.
@@ -34,6 +35,24 @@
 #define SHADE_DP_ACCENT 2
 
 static inline bool shadeDimsLit(constant ShadeFrame &f) { return (int(f.sunPath.z) & SHADE_FLAG_DIMS_LIT) != 0; }
+// M3.3: ShadeLook.dimTint.w = kind + 4 x bits (an exact small float)
+#define SHADE_DIMS_MOTES 1        // Nether: dark suspended particles lifted to a luminance floor (mcopt.shade.dims.motes)
+#define SHADE_DIMS_AURORA_TEX 2   // overworld: the sky pass samples the reduced-resolution aurora (ShadeResources.aurora; mcopt.shade.aurora.half)
+#define SHADE_DIMS_DH_SKY 4       // End + Distant Horizons: the final pass paints the End sky where the clear colour still shows (mcopt.shade.dhClear)
+static inline int shadeDimKind(constant ShadeLook &L) { return int(L.dimTint.w) & 3; }
+static inline bool shadeDimsBit(constant ShadeLook &L, int b) { return ((int(L.dimTint.w) >> 2) & b) != 0; }
+
+// M3.3: vanilla's suspended Nether motes are near black (warped spores 0.1 / 0.1 / 0.3, ash 0..0.5 grey): made for its
+// near-black fog, they read as dark specks in our lit haze. Their albedo's luminance is lifted to a floor, the hue kept
+// (warped spores read blue, as the wiki describes them; ash grey); brighter particles are untouched.
+static inline half3 shadeDimsMote(half3 a) {
+	half l = dot(a, half3(0.2126h, 0.7152h, 0.0722h));
+	const half lift = 0.16h;
+	if (l >= lift) return a;
+	half3 hue = a * (lift / max(l, 0.002h));
+	hue = hue / max(1.0h, max(hue.x, max(hue.y, hue.z)));          // a saturated hue may not exceed 1
+	return mix(half3(lift), hue, saturate(l * 80.0h));              // no hue in a black: grey
+}
 
 // ---- tileable noise ---------------------------------------------------------------------------------------------------------
 // Value noise on a lattice wrapped every `period` cells (so the bake tiles), in cell units.
@@ -79,7 +98,7 @@ static float3 shadeLitDimsExtra(half3 albedo, half3 n, half shadow, bool thin, b
 	float3 light = nn.y >= 0.0 ? mix(side, f.ambientSky.rgb, nn.y) : mix(side, f.ambientGround.rgb, -nn.y);
 	if (foliage || thin) light *= 1.15;
 	float yAbs = f.cameraBlock.y + f.cameraFract.y + p.y;
-	if (L.dimTint.w < 1.5) {
+	if (shadeDimKind(L) == 1) {
 		// Nether: lava below lights ceilings and undersides
 		float up = thin ? 0.5 : saturate(0.55 - 0.45 * nn.y);
 		float h = exp(-max(yAbs - L.dimTint.y, 0.0) / 30.0);
@@ -182,6 +201,8 @@ constant float3 SHADE_AURORA_LAYERS[6] = {
 	float3(0.2093, 0.0466, 0.0735),
 	float3(0.1119, 0.0246, 0.0392)};
 
+// M3.2's aurora, unchanged: evaluated per pixel in the sky pass (mcopt.shade.aurora.half=false), or by the M3.3
+// reduced-resolution pass (aurora.metal, ShadeAurora) for the texel's direction.
 static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
 	float s = L.night.z;
 	if (s <= 0.002 || dir.y < 0.02) return float3(0.0);
@@ -208,6 +229,16 @@ static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	return sum * (rays * s * horizon * 0.12);
 }
 
+// M3.3 (mcopt.shade.aurora.half, default true; ShadeLook bit SHADE_DIMS_AURORA_TEX, set only in frames whose aurora pass
+// ran): the sky pass, a full-screen triangle that every pixel pays before the terrain covers most of it, takes the aurora
+// from ShadeResources.aurora (aurora.metal: shadeAurora at a fraction of the output resolution, this frame's jittered view)
+// with one bilinear tap at the pixel's screen position, instead of evaluating it per pixel. pixel: the render-target pixel.
+static inline float3 shadeAuroraTex(float3 dir, constant ShadeFrame &f, constant ShadeResources &sr, float2 pixel) {
+	if (dir.y < 0.02) return float3(0.0);
+	constexpr sampler auroraClamp(filter::linear, address::clamp_to_edge);
+	return float3(sr.aurora.sample(auroraClamp, pixel * f.screen.zw, level(0.0)).rgb);
+}
+
 // ---- fog in the Nether and the End (final pass, from depth) ----------------------------------------------------------------
 // Nether: a layered haze, denser toward the lava sea and broken up by drifting noise, glowing warm low down; distance
 // dissolves into coloured smoke (bible E24). End: a thin violet haze that meets the sky's horizon. Both end in a 4th-power
@@ -216,7 +247,7 @@ static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook
 static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f, constant ShadeLook &L, float ex, bool keepSky,
                            texture2d<half> mw) {
 	float sigma = L.dimTint.x;
-	bool nether = L.dimTint.w < 1.5;
+	bool nether = shadeDimKind(L) == 1;
 	float yc = f.cameraBlock.y + f.cameraFract.y;
 	float3 S = f.horizon[SHADE_DP_FOG].rgb;
 	float3 lava = f.horizon[SHADE_DP_LAVA].rgb;

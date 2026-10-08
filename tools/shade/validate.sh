@@ -34,6 +34,9 @@ for k in solid cutout translucent; do
 	done
 done
 for i in 0 1; do ./pipecheck pos variants/sky$i.vs.metal variants/sky$i.fs.metal || fail=1; ./pipecheck pos variants/hdrsky$i.vs.metal variants/hdrsky$i.fs.metal || fail=1; done
+# M3.3 (dims): the sky's lean variant and the reduced-resolution aurora pass (ShadeAurora, RGBA16F target)
+for i in 0 1; do ./pipecheck pos variants/hdrsky$i.vs.metal variants/hdrskylean$i.fs.metal || fail=1; done
+./pipecheck compile variants/aurora_pass.metal || fail=1
 ./pipecheck compile variants/stars.vs.metal || fail=1
 # M3 End sky box (POSITION_TEX_COLOR), and the post library's XDR final pass (two color targets, mcxdr.m)
 for i in 0 1; do ./pipecheck postexcolor variants/endsky$i.vs.metal variants/endsky$i.fs.metal || fail=1; ./pipecheck postexcolor variants/hdrendsky$i.vs.metal variants/hdrendsky$i.fs.metal || fail=1; done

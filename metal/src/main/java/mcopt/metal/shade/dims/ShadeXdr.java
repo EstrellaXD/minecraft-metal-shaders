@@ -138,12 +138,47 @@ public final class ShadeXdr {
 			}
 		}
 		peak += (target - peak) * (1f - (float) Math.exp(-dt / 0.5f));
+		if (on) updateSkip(dt);
 	}
 
 	/** Whether this frame's final pass writes highlights above SDR white (on, and the window's screen can show EDR). */
 	public static boolean highlights() {
-		return on && edrHere;
+		return on && edrHere && (!skip || hot);
 	}
+
+	// M3.3 (mcopt.shade.xdrSkip, live, default true; false = M3.2): the XDR final pass and compose only while something on
+	// screen nears the knee (the bloom's first downsample flags it on the GPU, ShadeGpu.xdrHot), held HOLD seconds after the
+	// last such frame so it never flickers; otherwise the frame takes the SDR path (as on an SDR-only screen).
+	private static boolean skip, hot = true;
+	private static float sinceHot;
+	private static long framesXdr, framesSdr;
+	static final float HOLD = 1.5f, MARGIN = 0.5f;
+
+	/** The bloom's first downsample flags pixels above this (pre-exposed scene luminance), 0 = don't flag (ShadePost). */
+	public static float hotThreshold() {
+		if (!(on && edrHere && skip)) return 0f;
+		asked = true;
+		return KNEE * MARGIN;
+	}
+
+	/** The last frame's bloom flagged (no bloom pass, e.g. bloom off: no detection, the highlights stay on). */
+	private static boolean asked;
+
+	private static void updateSkip(float dt) {
+		skip = !"false".equals(System.getProperty("mcopt.shade.xdrSkip"));
+		if (mcopt.metal.shade.ShadeBindings.takeXdrHot() || !asked) sinceHot = 0f;
+		else sinceHot += dt;
+		asked = false;
+		boolean was = hot;
+		hot = sinceHot < HOLD;
+		if (highlights()) framesXdr++;
+		else if (on && edrHere) framesSdr++;
+		if (was != hot && LOG_SKIP) System.out.println("[mcopt] shade: XDR " + (hot ? "highlights on" : "skipped (nothing near the knee)"));
+		if (LOG_SKIP && (framesXdr + framesSdr) % 2000 == 0 && framesXdr + framesSdr > 0)
+			System.out.println("[mcopt] shade: XDR skip: " + framesXdr + " frames with highlights, " + framesSdr + " skipped");
+	}
+
+	private static final boolean LOG_SKIP = !"false".equals(System.getProperty("mcopt.shade.xdrSkip.log"));
 
 	/** The highlight peak this frame, in multiples of SDR white (1 = SDR). */
 	public static float peak() {

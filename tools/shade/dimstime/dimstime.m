@@ -54,7 +54,7 @@ int main(int argc, const char **argv) {
 		for (int i = 0; i < 8; i++) { F[688 / 4 + i * 4] = 0.1; F[688 / 4 + i * 4 + 1] = 0.05; F[688 / 4 + i * 4 + 2] = 0.2; }
 		F[992 / 4 + 3] = 100.0; F[464 / 4 + 1] = 0.5; F[448 / 4 + 1] = 64;
 		L[672 / 4 + 2] = 1.0;           // aurora strength
-		L[752 / 4] = 0.02; L[752 / 4 + 1] = 31; L[752 / 4 + 2] = 256; L[752 / 4 + 3] = 1; // dimTint (Nether)
+		L[752 / 4] = 0.02; L[752 / 4 + 1] = 31; L[752 / 4 + 2] = 256; L[752 / 4 + 3] = 1 + 4; // dimTint (Nether; + 4 x bit 1: motes)
 		((int *) L)[800 / 4] = 1;        // tier balanced
 		const char *names[] = {"t_empty", "t_aurora", "t_endsky", "t_netherfog", "t_media"};
 		for (int k = 0; k < 5; k++) {

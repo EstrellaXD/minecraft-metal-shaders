@@ -117,7 +117,8 @@ public final class EntityCasters {
 	 */
 	public static boolean dropBlob(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
 		return shadow != 0 && ShadowPass.enabled() && !ShadowPass.lightIsMoon()
-			&& level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) >= BLOB_SKY;
+			// M3.3: in the End (no sky light) the key light's map shades every receiver: the blob goes wherever it draws
+			&& (mcopt.metal.shade.dims.ShadeDims.endDropsBlob() || level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) >= BLOB_SKY);
 	}
 
 	/** Sky light from which receivers use the shadow map (sky / 15 > 0.3). */

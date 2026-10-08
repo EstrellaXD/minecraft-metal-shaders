@@ -240,6 +240,7 @@ public final class ShadePost {
 		world = true;
 		bridgeOpen = false;
 		bridgeUsed = false;
+		mcopt.metal.shade.dims.DimsDebug.beginFrame(); // M3.3 dev: mcopt.shade.passLog (off unless set)
 		vlLight = vlDist = 0;
 		liveWidth = w;
 		liveHeight = h;
@@ -320,11 +321,12 @@ public final class ShadePost {
 	private static MetalHooks.@Nullable Redirect redirect(RenderPassDescriptor d) {
 		if (!world && ShadeEntity.HAND) return handRedirect(d);
 		if (!world || mainColor == null) return null;
+		if (mcopt.metal.shade.dims.DimsDebug.logging()) mcopt.metal.shade.dims.DimsDebug.pass(d, mainColor); // M3.3 dev
 		// Distant Horizons: every one of its passes (also those drawing into its own targets: its far fade samples the main
 		// colour) sees the display-referred image in main and composites there, as without shading
 		String label = d.label().get();
 		if (label != null && label.startsWith("distantHorizons:")) {
-			if (ShadeConfig.DH_BRIDGE && !bridgeOpen) openBridge();
+			if (ShadeConfig.DH_BRIDGE && !bridgeOpen && !mcopt.metal.shade.dims.DimsDebug.noBridge()) openBridge();
 			return null;
 		}
 		var colors = d.colorAttachments();
@@ -375,13 +377,25 @@ public final class ShadePost {
 			System.out.println("[mcopt] shade: Distant Horizons passes seen: bridging them through the HDR frame");
 		}
 		long main = MetalBridge.textureHandle(mainColor);
-		MetalBridge.takePendingColorClear(encoder, mainColor);
+		mcopt.metal.shade.dims.DimsDebug.note("bridge encode (HDR -> main)");
+		float[] clear = MetalBridge.takePendingColorClear(encoder, mainColor);
+		// M3.3 (mcopt.shade.dhClear, live, default true; false = M3.2): when no world pass drew into main before Distant
+		// Horizons' first one (no sky pass: the Nether, the End's dragon fight, under water / lava / powder snow, blindness),
+		// the frame's clear of main is still pending and the HDR target still holds the last frame: apply the clear there
+		// first, as the redirect does for the first world pass. Without it DH's TAA + sharpen re-processed last frame's image
+		// every frame where nothing else draws (the End + DH grey checkerboard / coloured noise, SKYDIMS.md 6.6 and M3.3).
+		if (clear != null && mcopt.metal.shade.dims.DimsDebug.dhClear()) {
+			float[] h = ShadeFrameUpdater.LOOK.ldrToHdr(clear[0], clear[1], clear[2]);
+			MetalBridge.renderBegin(enc, new long[] {hdr[frame & 1]}, new float[][] {{h[0], h[1], h[2], clear[3]}}, 0, false, 0f, width, height);
+			mcopt.metal.shade.dims.DimsDebug.note("bridge: main's pending clear applied to the HDR target");
+		}
 		pass(psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
 	}
 
 	private static void closeBridge() {
 		bridgeOpen = false;
 		long main = MetalBridge.textureHandle(mainColor);
+		mcopt.metal.shade.dims.DimsDebug.note("bridge decode (main -> HDR)");
 		pass(psoDecode, hdr[frame & 1], ShadeRender.LOAD, new long[] {main}, null, "mcopt shade: DH bridge decode");
 	}
 
@@ -391,6 +405,7 @@ public final class ShadePost {
 		if (!world) return;
 		world = false;
 		if (bridgeOpen) closeBridge();
+		mcopt.metal.shade.dims.DimsDebug.endFrame(); // M3.3 dev
 		// M3: this frame's entity draws -> the next frame's near shadow cascade
 		if (mcopt.metal.shade.shadow.EntityCasters.ON) mcopt.metal.shade.shadow.EntityCasters.commit(enc);
 		if (mainColor == null) return;
@@ -450,7 +465,7 @@ public final class ShadePost {
 		int n = bloomLevels.length;
 		if (n > 0) {
 			downParams.clear();
-			downParams.putFloat(srcU).putFloat(srcV).putFloat(0f).putFloat(0f).flip();
+			downParams.putFloat(srcU).putFloat(srcV).putFloat(mcopt.metal.shade.dims.ShadeXdr.hotThreshold()).putFloat(0f).flip(); // z: M3.3 XDR skip
 			pass(psoDown0, bloomLevels[0], ShadeRender.DONT_CARE, new long[] {bloomSource}, downParams, "mcopt shade: bloom down 0");
 			for (int i = 1; i < n; i++) {
 				pass(psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");

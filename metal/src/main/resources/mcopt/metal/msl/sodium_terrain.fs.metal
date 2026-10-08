@@ -139,6 +139,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     // outside the overworld: vanilla's lightmapped colour, unless the dims module (M3, shade_dims.metal) lights it below
 #ifdef SHADE_LEAN_OW
     const bool dims = false;
+#elif defined(SHADE_LEAN_NETHER)
+    const bool dims = true; // M3.3: the Nether's lean variant (ShadeLean): no sun, shadow map, clouds or overworld fog code
 #else
     bool dims = sf.flags.x != SHADE_DIM_OVERWORLD;
 #endif
@@ -186,6 +188,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     // (the End has no sky light: its key light's map is looked up everywhere, with full sky for the far fallback)
 #ifdef SHADE_LEAN_OW
     const bool endLit = false, netherLit = false;
+#elif defined(SHADE_LEAN_NETHER)
+    const bool endLit = false, netherLit = true;
 #else
     bool endLit = sf.flags.x == SHADE_DIM_END, netherLit = sf.flags.x == SHADE_DIM_NETHER;
 #endif

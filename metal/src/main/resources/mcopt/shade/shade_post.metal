@@ -60,7 +60,8 @@ static inline half3 shadeDown13(texture2d<half> src, float2 uv, float2 texel, bo
 // a few very bright texels (the sun, specular sparkles) can't flicker the whole bloom; the 13-tap filter takes over below.
 // p.xy: the part of src's uv range that holds the image (TAAU: the live sub-rect of the internal-resolution HDR world,
 // whose stale border must not bleed in; 1, 1 otherwise). Level 0 itself is half the output size.
-fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]], constant float4 &p [[buffer(0)]]) {
+fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src [[texture(0)]], constant float4 &p [[buffer(0)]],
+                                  device ShadeGpu &gw [[buffer(18)]]) {
 	float2 texel = 1.0 / float2(src.get_width(), src.get_height());
 	float2 uv = in.uv * p.xy, lo = texel, hi = p.xy - texel;
 	half3 a = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(-1, -1), lo, hi)).rgb, half3(30000.0h));
@@ -68,6 +69,12 @@ fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src
 	half3 c = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(-1, 1), lo, hi)).rgb, half3(30000.0h));
 	half3 d = min(src.sample(shadeLinearClamp, clamp(uv + texel * float2(1, 1), lo, hi)).rgb, half3(30000.0h));
 	half wa = 1.0h / (1.0h + shadeLumaH(a)), wb = 1.0h / (1.0h + shadeLumaH(b)), wc = 1.0h / (1.0h + shadeLumaH(c)), wd = 1.0h / (1.0h + shadeLumaH(d));
+	// M3.3 (mcopt.shade.xdrSkip): does any pixel come near the XDR knee this frame (p.z: the threshold, 0 = not asked)? One
+	// atomic per SIMD group that sees one; ShadeXdr reads ShadeGpu.xdrHot a frame or two later and keeps the XDR path on.
+	if (p.z > 0.0) {
+		float m = float(max(max(shadeLumaH(a), shadeLumaH(b)), max(shadeLumaH(c), shadeLumaH(d))));
+		if (simd_any(m > p.z) && simd_is_first()) atomic_fetch_or_explicit((device atomic_uint *) &gw.xdrHot, 1u, memory_order_relaxed);
+	}
 	return half4((a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd), 1.0h);
 }
 
@@ -194,7 +201,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float d = depth.read(dpx);
 	bool dims = DIMS && (L.tier.y & SHADE_FEATURE_DIMS) != 0 && L.dimTint.x > 0.0 && f.flags.x != SHADE_DIM_OVERWORLD;
 	uint2 sp = px;
-	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && L.dimTint.w < 1.5 && d > 0.0) {
+	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && shadeDimKind(L) == 1 && d > 0.0) {
 		// M3 heat shimmer over distant Nether terrain (shade_dims.metal): this pixel shows a slightly displaced one (still
 		// sharpened below, like every other pixel: the shimmer must not soften the Nether next to the overworld)
 		float dist = length(shadeWorldFromDepth(in.uv, d, f));
@@ -216,7 +223,10 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	// haze (shade_dims.metal), in open air
 	// r.w is a bit field: 1 = Distant Horizons drew into this frame (its LODs sit where depth is empty), 2 = M2.2's VL unjitter
 	bool dhDrew = (int(P.r.w) & 1) != 0;
-	if (dims && d <= 0.0 && L.dimTint.w > 2.5 && f.flags.y == 0 && !dhDrew) {
+	// M3.3 (mcopt.shade.dhClear): with DH in the frame, the sky still goes where nothing drew: the pixel holds the frame's clear
+	// colour (vanilla's fog colour, which ShadePost's bridge now applies to the HDR target), not one of DH's LODs (brighter)
+	bool endSkyHere = !dhDrew || (shadeDimsBit(L, SHADE_DIMS_DH_SKY) && shadeLuma(c) <= shadeLuma(shadeLdrToHdr(f.fogColor.rgb, L)) * 1.5 + 1e-4);
+	if (dims && d <= 0.0 && shadeDimKind(L) == 3 && f.flags.y == 0 && endSkyHere) {
 		float4 w4 = f.invViewProj * float4(in.uv * 2.0 - 1.0, 0.5, 1.0);
 		float pixelAngle = 2.0 * atan(1.0 / max(abs(f.proj[1][1]), 1e-3)) / float(scene.get_height());
 		c = shadeEndSky(normalize(w4.xyz / w4.w), f, L, sr.milkyWay, pixelAngle) * ex;

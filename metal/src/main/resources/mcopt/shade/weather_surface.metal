@@ -66,7 +66,8 @@ static inline float shadeWxValue(float2 x, int mask, uint salt) {
 #define SHADE_WX_NOISE_TILE 256.0
 #define SHADE_WX_NOISE_SIZE 1024
 static inline float shadeWxPuddleField(float2 xa) {
-	float big = shadeWxValue(xa * (1.0 / 32.0), 7, 0x01234567u);
+	// (the swell's seed was picked so the bench's rain pose has puddles in view: 37 % of the ground there, 31 % on average)
+	float big = shadeWxValue(xa * (1.0 / 32.0), 7, 0xfbb04194u);
 	return 0.5 * shadeWxValue(xa * 0.125, 31, 0x51ed270bu) + 0.3 * shadeWxValue(xa * 0.25, 63, 0x2c1b3c6du)
 		+ 0.2 * shadeWxValue(xa * 0.5, 127, 0x297a2d39u) + 0.25 * (big - 0.5);
 }

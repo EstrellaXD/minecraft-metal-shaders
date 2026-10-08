@@ -98,7 +98,7 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_NO_RIPPLES 2048  // no raindrop rings on puddles
 #define SHADE_DEV_WX_DRY 4096         // terrain stays dry (no wet layer, puddles, snow)
 #define SHADE_DEV_WX_PLAIN_RAIN 8192  // rain streaks shaded the M2 way (no sky lookup)
-#define SHADE_DEV_WX_NO_TINT 16384    // no coloured-shadow lookup on the terrain (the tint pass still runs)
+#define SHADE_DEV_WX_NO_TINT 16384    // no coloured shadows: no tint lookup on the terrain, no tint pass (ShadowPass)
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

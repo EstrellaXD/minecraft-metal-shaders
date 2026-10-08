@@ -329,7 +329,8 @@ public final class ShadowPass {
 		if (this.shadow == 0) this.create(MetalBridge.ctx(encoder));
 		int faceMask = ShadowCasters.faceMask(this.light, ShadowConfig.ALL_FACES);
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
-		boolean tint = this.tintMap != 0;
+		// SHADE_DEV_WX_NO_TINT (16384, mcopt.shade.dev, read per frame): skip the tint pass too, to price coloured shadows in one session
+		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0;
 		boolean built = this.casters.build(this.cascades, this.draw, faceMask, this.camX, this.camY, this.camZ, ShadowConfig.CULL_LIGHT, tint);
 		if (ShadowConfig.STATS) this.statBuildNanos += System.nanoTime() - t0;
 		if (!built) {

@@ -589,8 +589,21 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		// (M3.1: dithered per sample for the nearest-level sampler; CLOUD_DEV_OLD_MIP: M3's, whose level was ignored)
 		float lod = cloudDev(c, CLOUD_DEV_OLD_MIP) ? max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0)
 			: max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
-		float d = batch ? cloudDensityB(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod)
-			: cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+		// skylight from above through what is left above this point (one cheap sample), bounce from below
+		float above = c.layer.y - y;
+		// (CLOUD_MODE_BATCH) a sample that will need a light march fetches for it together with its own density (wasted
+		// when the sample misses: few do)
+		bool needL = !(light2 && haveL && !odd);
+		float d, tauL = 0.0, dUp = 0.0;
+		if (batch && needL) {
+			d = cloudDensityB(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+			tauL = cloudLightDepthB(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod, p + float3(0.0, above * 0.4, 0.0),
+				y + above * 0.4, dUp);
+		} else if (batch) {
+			d = cloudDensityB(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+		} else {
+			d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+		}
 		if (d <= 0.002) {
 			if (++miss >= 4) fine = false;
 			t += dtl;
@@ -609,7 +622,7 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		T *= stepT;
 		// M3.3 (CLOUD_MODE_LIGHT2): every other sample waits for the next one's light march and takes the mean of its
 		// neighbours' (the light depth and the sky-light sample above vary smoothly along the ray)
-		if (light2 && haveL && !odd) {
+		if (!needL) {
 			odd = true;
 			pw0 = wseg;
 			pd = d;
@@ -620,13 +633,7 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 			t += ds;
 			continue;
 		}
-		// skylight from above through what is left above this point (one cheap sample), bounce from below
-		float above = c.layer.y - y;
-		float tauL, dUp;
-		if (batch) {
-			tauL = cloudLightDepthB(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod, p + float3(0.0, above * 0.4, 0.0),
-				y + above * 0.4, dUp);
-		} else {
+		if (!batch) {
 			tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod);
 			dUp = cloudDensity(p + float3(0.0, above * 0.4, 0.0), y + above * 0.4, 0, c, weather, noise);
 		}

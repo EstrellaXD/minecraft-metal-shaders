@@ -102,7 +102,7 @@ public final class ShadeWater {
 	/** Footprint (blocks/pixel) where the pixel pattern ends (dev knob). */
 	private static final String PATTERN_FAR = System.getProperty("mcopt.shade.waterPatternFar", "0.075");
 	private static final int DETAIL_FAR = Math.clamp(Integer.getInteger("mcopt.shade.waterDetailFar",
-		"m21".equals(System.getProperty("mcopt.shade.water.style", "photon")) ? 96 : 160), 32, 512); // FT1.3: ripples farther out (Gael's references)
+		"m21".equals(System.getProperty("mcopt.shade.water.style", "photon")) ? 96 : 112), 32, 512); // FT1.3: ripples a little farther out (160 cost ~0.3 ms over the lake, run wpq)
 	/**
 	 * M2.1: SSR reaches the left and right screen edges: rays that leave through a side keep marching on the edge column,
 	 * no side fade on hits, and the far-end fade goes by distance instead of screen length (false: M2's SSR edges).

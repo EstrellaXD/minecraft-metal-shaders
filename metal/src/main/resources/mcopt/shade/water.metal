@@ -827,7 +827,16 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #endif
 	// the sun's (or moon's) glint: rougher with distance (normals average out: long glitter roads) and in rain; it carries
 	// its own Fresnel, hidden where SSR found something in front of the sky
-	float alpha = 0.035 + 0.10 * saturate(dist / 110.0) + 0.06 * wp.state.z;
+#ifdef SHADE_WATER_GLINT_GRAZE
+	// M3 (mcopt.shade.waterGlintGraze): the widening only at grazing views, where a pixel's footprint stretches along the
+	// view over many waves (low over the sea: the glitter road as before). Seen from high up the waves are resolved: the
+	// widened lobe lit the near water from a low sun as a broad glow, which the terrain's long sunset shadows cut into
+	// bright rectangles (Gael's sunset report, 2026-10-07)
+	float far = saturate(dist / 110.0) * (1.0 - smoothstep(0.1, 0.4, -v.y));
+#else
+	float far = saturate(dist / 110.0);
+#endif
+	float alpha = 0.035 + 0.10 * far + 0.06 * wp.state.z;
 	float spec = shadeGgxSpec(n, v, f.lightDirWorld.xyz, alpha);
 	float soft = smoothstep(0.15, 0.85, float(w.shadow));
 	float3 glint = f.sunColor.rgb * min(spec, 60.0) * soft * open * (1.0 - hitWeight);

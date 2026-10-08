@@ -257,6 +257,7 @@ public final class BenchDriver {
 			UiShots.plan(steps); // opt-in -Dmcbench.ui=true (M3.1: the pause menu's resolution button)
 			ShadowShots.plan(steps); // opt-in -Dmcbench.shadow=tint,glass,far (M3.3 shadow passes)
 			MiscShots.plan(steps); // opt-in -Dmcbench.ab=... / -Dmcbench.variantShots=... (M3.3 misc: generic A/B phases and variant shots)
+			WetShots.plan(steps); // opt-in -Dmcbench.wet=ground,sunset,night,storm,path,sand,stone (M3.3 wet ground A/B shots)
 			RobustShots.plan(steps); // opt-in -Dmcbench.robust=gui,transp,dims,resize,rejoin,fail (M3.3 robustness)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog

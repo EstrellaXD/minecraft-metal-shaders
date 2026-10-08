@@ -24,11 +24,12 @@ import net.minecraft.server.MinecraftServer;
  * phases at WeatherShots' ground pose (noon, clear, panning +-25 degrees for {@code -Dmcbench.shadowTintSeconds} (10) s),
  * each with its own system properties (mcopt-shade reads them every frame): {@code shtint_m32} (M3.2: section rectangle),
  * {@code shtint_none} (no coloured shadows: mcopt.shade.dev 16384), {@code shtint_nolookup} (tintDev 1), {@code shtint_nopass}
- * (tintDev 2), {@code shtint_tight} (block rectangle), {@code shtint_lite} (tintDev 8: 512^2 map), {@code shtint_tightlite},
- * {@code shtint_m32b} (M3.2 again: drift), then {@code shtint_time} / {@code shtint_time_t} (M3.2 / tight with the shadow
- * GPU timers on). An unrecorded warm-up phase first.</li>
- * <li>{@code glass}: with the roof in place, frozen ticks, shots {@code sh_glass_<variant>} at WeatherShots' glass pose (noon)
- * and {@code sh_glasseve_<variant>} (11000) for variants m32, tight, lite.</li>
+ * (tintDev 2), {@code shtint_tight} (block rectangle), {@code shtint_sub} (block rectangle, only it drawn: tintSub),
+ * {@code shtint_lite} (tintDev 8: 512^2 map), {@code shtint_sublite}, {@code shtint_m32b} (M3.2 again: drift), then
+ * {@code shtint_time} / {@code shtint_time_t} (M3.2 / tight + sub with the shadow GPU timers on). An unrecorded warm-up phase
+ * first. M3.2 phases set tintTight and tintSub false explicitly.</li>
+ * <li>{@code glass}: with the roof in place, shots {@code sh_glass_<variant>} at WeatherShots' glass pose (noon) and
+ * {@code sh_glasseve_<variant>} (11000) for variants m32, tight, sub, lite.</li>
  * <li>{@code far}: shots of the far cascade with mcopt.shade.shadowFarSpread false / true: {@code sh_far_eve_off|on} (overview
  * point at 11500 looking east: long shadows far away, still), {@code sh_far_strafe_off|on} (overview point, noon, strafing
  * right at 8 blocks/s, shot after 1.5 s), {@code sh_far_turn_off|on} (overview point at 11500, turning 30 degrees/s, shot
@@ -204,17 +205,19 @@ final class ShadowShots {
 		});
 	}
 
+	private static final String SUB = "mcopt.shade.tintSub";
 	private static final String[][] TINT_PHASES = {
-		{"shtint_m32", TIGHT + "=false"},
-		{"shtint_none", TIGHT + "=false", "mcopt.shade.dev=16384"},
-		{"shtint_nolookup", TIGHT + "=false", DEV + "=1"},
-		{"shtint_nopass", TIGHT + "=false", DEV + "=2"},
-		{"shtint_tight", TIGHT + "=true"},
-		{"shtint_lite", TIGHT + "=false", DEV + "=8"},
-		{"shtint_tightlite", TIGHT + "=true", DEV + "=8"},
-		{"shtint_m32b", TIGHT + "=false"},
-		{"shtint_time", TIGHT + "=false", TIMES + "=true"},
-		{"shtint_time_t", TIGHT + "=true", TIMES + "=true"}};
+		{"shtint_m32", TIGHT + "=false", SUB + "=false"},
+		{"shtint_none", TIGHT + "=false", SUB + "=false", "mcopt.shade.dev=16384"},
+		{"shtint_nolookup", TIGHT + "=false", SUB + "=false", DEV + "=1"},
+		{"shtint_nopass", TIGHT + "=false", SUB + "=false", DEV + "=2"},
+		{"shtint_tight", TIGHT + "=true", SUB + "=false"},
+		{"shtint_sub", TIGHT + "=true", SUB + "=true"},
+		{"shtint_lite", TIGHT + "=false", SUB + "=false", DEV + "=8"},
+		{"shtint_sublite", TIGHT + "=true", SUB + "=true", DEV + "=8"},
+		{"shtint_m32b", TIGHT + "=false", SUB + "=false"},
+		{"shtint_time", TIGHT + "=false", SUB + "=false", TIMES + "=true"},
+		{"shtint_time_t", TIGHT + "=true", SUB + "=true", TIMES + "=true"}};
 
 	private static void tint(List<BenchDriver.Step> extra, Pose ground) {
 		double sec = Double.parseDouble(System.getProperty("mcbench.shadowTintSeconds", "10"));
@@ -289,7 +292,8 @@ final class ShadowShots {
 		extra.add(new BenchDriver.Scene(tag, time, false, () -> pose));
 		extra.add(new BenchDriver.Settle(tag, false, 3, 120));
 		extra.add(new BenchDriver.Hold(tag, Math.max(BenchDriver.SHOT_WAIT, 2.5)));
-		String[][] variants = {{"m32", TIGHT + "=false"}, {"tight", TIGHT + "=true"}, {"lite", TIGHT + "=true", DEV + "=8"}};
+		String[][] variants = {{"m32", TIGHT + "=false", SUB + "=false"}, {"tight", TIGHT + "=true", SUB + "=false"}, {"sub", TIGHT + "=true", SUB + "=true"},
+			{"lite", TIGHT + "=true", SUB + "=true", DEV + "=8"}};
 		Map<String, Object> m = pose.json();
 		m.put("time", time);
 		for (String[] v : variants) {

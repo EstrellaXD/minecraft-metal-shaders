@@ -390,6 +390,7 @@ public final class ShadowPass {
 					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
 					ShadowNative.tintRender(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle, regions.slice().offset(),
 						tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES);
+					if (nTint > 0) mcopt.metal.shade.weather.ShadeWeather.tintCasters = true;
 					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, this.tintMap);
 				}
 				if (tracing) {

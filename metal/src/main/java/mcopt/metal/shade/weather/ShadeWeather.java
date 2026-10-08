@@ -87,6 +87,13 @@ public final class ShadeWeather {
 	private static long noiseTexture;
 	private static boolean noiseFailed;
 
+	/**
+	 * Set by ShadowPass when the near cascade's tint pass drew translucent casters; packed into ShadeLook.ssr.w and reset
+	 * (render thread). With none nearby (the usual case away from glass and water) the terrain skips the tint lookup. The
+	 * shadow pass runs after the pack, so the flag is one frame late: a frame without tint when glass first comes into range.
+	 */
+	public static boolean tintCasters;
+
 	// ---- state (render thread) -----------------------------------------------------------------------------------------
 	/** Smoothed: wetness, puddles, snow cover, rain intensity. */
 	static float wetness, puddles, snow, rain;
@@ -165,6 +172,8 @@ public final class ShadeWeather {
 		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, gust);
 		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], LIGHTNING ? flash : 0f);
 		b.putFloat(ShadeLook.SSR + 8, noiseTexture != 0 ? 1f : 0f); // ssr.z: ShadeResources.weatherNoise is baked
+		b.putFloat(ShadeLook.SSR + 12, tintCasters ? 1f : 0f); // ssr.w: the tint map holds translucent casters (else receivers skip it)
+		tintCasters = false;
 	}
 
 	/**

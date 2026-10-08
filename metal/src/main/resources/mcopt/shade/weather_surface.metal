@@ -377,9 +377,11 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	float3 r = reflect(v, n);
 	if (dot(r, nf) < 0.02) r = normalize(r + nf * (0.02 - dot(r, nf))); // ripples must not send the mirror ray into the ground
 	float open = float(shadeSkyCurve(in.sky));
-	float3 refl = shadeWxSkyRefl(r, in.prevExposure, in.histOk && P > 0.0, f, L, lut, lutS, hist, histDepth);
-	// rough films see a blurred sky: toward the sky's mean light (ambientSky ~ irradiance / pi)
-	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, saturate(rough * 1.6)) * open;
+	// rough films see a blurred sky: toward the sky's mean light (ambientSky ~ irradiance / pi); the roughest (soaked grass,
+	// damp ground: rough >= 0.625) see only that, so the sky lookups are skipped there
+	float blur = saturate(rough * 1.6);
+	float3 refl = blur < 1.0 ? shadeWxSkyRefl(r, in.prevExposure, in.histOk && P > 0.0, f, L, lut, lutS, hist, histDepth) : float3(0.0);
+	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, blur) * open;
 #ifdef SHADE_PUDDLE_SSR
 	// The march only where the mirror shows: the film reflects F (2 % looking straight down, ~10 % at 65 degrees from the
 	// normal, all of it at grazing angles), so where F * P < 0.035 the sky reflection alone is within a few percent of what

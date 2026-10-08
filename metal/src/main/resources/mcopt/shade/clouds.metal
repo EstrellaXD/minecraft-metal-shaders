@@ -45,7 +45,7 @@ struct CloudParams {
 	float4 layer;          // 160 x cumulus base y, y cumulus top y (absolute), z camera y (absolute), w curvature 1/(2 R) (1/blocks)
 	float4 shape;          // 176 x coverage 0..1, y type (0 flat .. 1 towering), z extinction per block at density 1, w erosion
 	float4 origin;         // 192 xy the camera's xz in the weather map's space (blocks, wrapped, wind included), zw the same for
-	                       //     the 3D noise (moves a little slower: the clouds boil as they drift)
+	                       //     the 3D noise (mcopt.shade.clouds.noiseDrift x the wind: 1 = rigid, the reprojection exact)
 	float4 wind;           // 208 xy how far the clouds moved since last frame (blocks), z cirrus coverage, w rain/storm 0..1
 	float4 light;          // 224 rgb irradiance from the light reaching the cloud layer (sun or moon; before exposure), w 1 sun
 	float4 lightDir;       // 240 xyz toward the light (unit), w 0

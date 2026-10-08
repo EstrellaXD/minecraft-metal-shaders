@@ -160,8 +160,8 @@ public final class ShadeClouds {
 			CloudParams p = PARAMS;
 			p.windX += sx;
 			p.windZ += sz;
-			p.wind3X += sx * 0.82;
-			p.wind3Z += sz * 0.82;
+			p.wind3X += sx * CloudConfig.NOISE_DRIFT;
+			p.wind3Z += sz * CloudConfig.NOISE_DRIFT;
 			p.cirrusX += sx * 1.7;
 			p.cirrusZ += sz * 1.7;
 			// keep the accumulators small (each wraps at a multiple of its noise period)

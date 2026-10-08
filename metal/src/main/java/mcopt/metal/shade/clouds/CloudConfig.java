@@ -74,6 +74,13 @@ public final class CloudConfig {
 	public static final float COVERAGE = floatProperty("mcopt.shade.clouds.coverage", -1f);
 	public static final float TYPE = floatProperty("mcopt.shade.clouds.type", -1f);
 	public static final float WIND = Math.max(0f, floatProperty("mcopt.shade.clouds.wind", 1f));
+	/**
+	 * Speed of the 3D (billow) noise relative to the cumulus field (1 = the clouds drift as rigid shapes; 0.82 until 2026-10-07:
+	 * "boil", the billows slid through the shapes). The history reprojection moves everything with the cumulus wind, so with
+	 * boil the cloud edges moved at another speed than the reprojection assumed and each checkerboard slot drifted by a
+	 * different amount between its marches: a comb along soft edges even with a still camera (gone with wind 0).
+	 */
+	public static final float NOISE_DRIFT = clamp(floatProperty("mcopt.shade.clouds.noiseDrift", 1f), 0f, 2f);
 	public static final long SEED = Long.getLong("mcopt.shade.clouds.seed", 0L);
 	public static final float DENSITY = clamp(floatProperty("mcopt.shade.clouds.density", 1f), 0.1f, 10f);
 	public static final float DETAIL = clamp(floatProperty("mcopt.shade.clouds.detail", 1f), 0f, 3f);

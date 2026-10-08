@@ -1,6 +1,6 @@
 # M3.3 wet ground: the whole open ground soaks in the rain (branch `m3.3-wet` from m3-int 397e241)
 
-## M3.3 Status (2026-10-08 10:40)
+## M3.3 Status (2026-10-08 11:00, resumed after the 10:52 usage stop)
 
 **Done:**
 - 1cb8b14 .. 077db60: `mcopt.shade.wetAll` (default true, read every frame; false at startup = M3.2's shaders). Solid open
@@ -12,13 +12,17 @@
   into a flooded marsh (a uniform grey sky sheet in rain, a glassy lake at sunset), puddles no longer stood out. -> 077db60:
   vegetation keeps 55 % of the film and a rougher one (~0.38: no film reflections on grass), extra darkening 0.2, the rim
   only turns into standing water near the puddle's edge.
+- **wet2-tex** (`20261008-103258-wet2-tex`, jar 1ba36fc = wet1's film settings + wetTex/wetRim, **battery**, residual
+  0.05 ms): the texel proxy wetTex 3 breaks the sheet a little (grass blades poke through) but with wet1's film the meadow
+  still reads flooded; narrow rim (0.06) changes little. Price (battery, noisy): wetTex 4 +0.04 ms over new.
 
 **Running / next:**
-1. wet2-tex (`m3.3-wet-1ba36fc`, launched 10:33 **on battery**): texel height proxy (wetTex 3/6), narrow rim, with wet1's
-   film settings.
-2. wet3-veg (`m3.3-wet-077db60`, queued 10:40): vegetation film share 0.4/0.55/0.7, wetTex 3, film reflections off;
-   prices: wxrain ab phases + rain over sand (wetPerf) for the film reflections on non-vegetation ground.
-3. Pick the defaults, then the final run (AC): M3.2 vs new at every pose (`work/release/M3.3-screenshots/wet_*.jpg`) + price.
+1. wet3-veg (jar `m3.3-wet-077db60`, launched 10:56, waiting for the lock; log `work/notes/m33-2026-10-08/wet/wet3.log`):
+   all scenes x {m32, new, veg04, veg07, tex3, nossr}; ab wxrain m32/new/tex/dry/nossr (ABBA-ish); wetPerf sand m32/new/nossr.
+   Read it with `python3 work/notes/m33-2026-10-08/wet/wetprice.py <dir>` and the images with sbs.py.
+2. Pick the defaults from wet3 (if the pick is one of its variants, wet3's images are the final evidence: set the default in
+   ShadeWeather.java line ~214-217, build, validate, copy jar). Else one final run (AC): M3.2 vs new at every pose + price.
+3. Side-by-sides to `work/release/M3.3-screenshots/wet_*.jpg` (sbs.py), fill Prices/Screenshots below, report.
 
 ## Gael's request
 

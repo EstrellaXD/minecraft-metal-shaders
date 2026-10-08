@@ -33,7 +33,8 @@ import net.minecraft.server.MinecraftServer;
  * held {@code -Dmcbench.variantHold} (2.5) s and shot as {@code <tag>_<label>}; the ticks are unfrozen afterwards. Poses:
  * {@code rose_sky} (the sunset_water pose 25 degrees up), {@code rose_water} (the sunset_water pose), {@code sunset_west}
  * (the overview point toward the setting sun, 8 degrees up), {@code wxground} (WeatherShots' ground pose) or
- * {@code x,y,z,yaw,pitch}. Weather: clear, rain or thunder.</li>
+ * {@code x,y,z,yaw,pitch}. Weather: clear, rain or thunder. {@code -Dmcbench.variantPair=<seconds>}: a second shot
+ * {@code <shot>_b} that long after each (frame-to-frame noise at a still pose).</li>
  * </ul>
  */
 final class MiscShots {
@@ -41,6 +42,8 @@ final class MiscShots {
 	static final String VARIANTS = System.getProperty("mcbench.variantShots", "").trim();
 	static final Map<String, Object> AB_JSON = new LinkedHashMap<>();
 	static final Map<String, Object> VAR_JSON = new LinkedHashMap<>();
+	/** -Dmcbench.variantPair=<seconds> (0 = off): each variant shot gets a second one, {@code <shot>_b}, this long after it. */
+	static final double PAIR = Double.parseDouble(System.getProperty("mcbench.variantPair", "0"));
 	/** How many ab phases BenchDriver.REC_PHASES has room for (ab1..abN). */
 	static final int MAX_AB = 24;
 	static int abCount;
@@ -285,6 +288,10 @@ final class MiscShots {
 			});
 			steps.add(new BenchDriver.Hold(shot, hold));
 			steps.add(new BenchDriver.Shot(shot));
+			if (PAIR > 0) { // a second shot a moment later: what changed between them at a frozen pose is temporal noise (flicker)
+				steps.add(new BenchDriver.Hold(shot + "_b", PAIR));
+				steps.add(new BenchDriver.Shot(shot + "_b"));
+			}
 			steps.add(new BenchDriver.Step("var-restore-" + shot, 0) {
 				@Override
 				void start(Minecraft mc, long now) {

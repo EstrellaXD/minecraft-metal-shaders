@@ -81,6 +81,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
 #define CLOUD_MODE_LIGHT2 2 // the light march (and the sky-light sample above) on every other in-cloud sample, the ones between
                             // lit by the mean of their neighbours' (cloudMarch)
 #define CLOUD_MODE_BATCH 4  // a march sample's texture fetches issued together (cloudDensityB, cloudLightDepthB): same values
+#define CLOUD_MODE_PAIR 8   // the march's empty-air tests two at a time (both fetches issued together): same tests, same values
 static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
@@ -540,10 +541,40 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	// steps made it a noisy guess that showed the checkerboard)
 	float dtl = inside ? dt * 0.08 : dt;
 	float t = t0 + jitter * dtl;
-	for (int i = 0; i < 3 * n + 4 + (inside ? 24 : 0) && t < t1; i++) {
+	int budget = 3 * n + 4 + (inside ? 24 : 0);
+	// M3.3 (CLOUD_MODE_PAIR): outside the layer, the empty-air test also looks one double step ahead, both fetches issued
+	// together (the tests and their order are the serial loop's: a pair counts as two iterations)
+	bool pair = cloudMode(c, CLOUD_MODE_PAIR) && !inside;
+	for (int i = 0; i < budget && t < t1; i++) {
 		if (inside) dtl = dt * clamp((t + 24.0) / 400.0, 0.08, 1.0);
 		float3 p = dir * t;
 		float y = cloudAltitude(r, t);
+		if (!fine && pair) {
+			float tB = t + 2.0 * dtl;
+			float3 pB = dir * tB;
+			float yB = cloudAltitude(r, tB);
+			float inv = 1.0 / (c.layer.y - c.layer.x);
+			float hA = (y - c.layer.x) * inv, hB = (yB - c.layer.x) * inv;
+			half4 wA = cloudWeatherAt(c.origin.xy + p.xz, hA, c, weather), wB = cloudWeatherAt(c.origin.xy + pB.xz, hB, c, weather);
+			bool useB = i + 1 < budget && tB < t1;
+			if (cloudDensityMath(wA, wA, wA, hA, 0, c, 1.0) > 0.0) {
+				fine = true;
+				miss = 0;
+				t = max(t - dtl, t0 + jitter * dtl);
+				continue;
+			}
+			t = tB;
+			if (!useB) continue;
+			i++;
+			if (cloudDensityMath(wB, wB, wB, hB, 0, c, 1.0) > 0.0) {
+				fine = true;
+				miss = 0;
+				t = max(tB - dtl, t0 + jitter * dtl);
+				continue;
+			}
+			t = tB + 2.0 * dtl;
+			continue;
+		}
 		if (!fine) {
 			if (cloudDensity(p, y, 0, c, weather, noise) <= 0.0) {
 				t += 2.0 * dtl;

@@ -386,10 +386,22 @@ public final class ShadowPass {
 	 * 4 texels for the receivers' normal offset and bilinear taps; into this frame's ShadeLook (ssr.w, tintRect).
 	 */
 	private void publishTint(boolean any) {
+		boolean on = any && this.tintRect();
+		float[] r = this.tintRectNow;
+		mcopt.metal.shade.ShadeBindings.setShadowTint(on ? this.tintSubNow ? 2 : 1 : 0, r[0], r[1], r[2], r[3]);
+	}
+
+	/** This frame's tint rectangle (x0, y0, x1, y1 in cascade 0's light clip space, padded; clipped to [-1, 1] with tintSub). */
+	private final float[] tintRectNow = new float[4];
+	/** M3.3 mcopt.shade.tintSub: this frame's tint pass draws only the rectangle (tintSubMatrix), ssr.w = 2. */
+	private boolean tintSubNow;
+
+	/** Fills tintRectNow from the listed casters' boxes; false when none of them reaches the near cascade. */
+	private boolean tintRect() {
 		float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
 		float[] m = this.matrices;
 		int[] b = this.casters.tintBoxes;
-		for (int i = 0; any && i < this.casters.tintCount; i++) {
+		for (int i = 0; i < this.casters.tintCount; i++) {
 			int o = i * 6; // world block box, max exclusive (a section's 16^3, or M3.3's tight box of its translucent blocks)
 			float hx = (b[o + 3] - b[o]) * 0.5f, hy = (b[o + 4] - b[o + 1]) * 0.5f, hz = (b[o + 5] - b[o + 2]) * 0.5f;
 			float px = (float) (b[o] + hx - this.camX), py = (float) (b[o + 1] + hy - this.camY), pz = (float) (b[o + 2] + hz - this.camZ);
@@ -401,8 +413,39 @@ public final class ShadowPass {
 			y1 = Math.max(y1, cy + by);
 		}
 		float pad = 8f / Math.max(this.tintRes, 1);
-		boolean on = any && this.casters.tintCount > 0 && x0 - pad < 1f && x1 + pad > -1f && y0 - pad < 1f && y1 + pad > -1f;
-		mcopt.metal.shade.ShadeBindings.setShadowTint(on, x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+		float[] r = this.tintRectNow;
+		r[0] = x0 - pad;
+		r[1] = y0 - pad;
+		r[2] = x1 + pad;
+		r[3] = y1 + pad;
+		if (this.tintSubNow) { // receivers only look up inside the cascade's square: the drawn rectangle needs no more
+			r[0] = Math.max(r[0], -1f);
+			r[1] = Math.max(r[1], -1f);
+			r[2] = Math.min(r[2], 1f);
+			r[3] = Math.min(r[3], 1f);
+		}
+		return this.casters.tintCount > 0 && r[0] < 1f && r[2] > -1f && r[1] < 1f && r[3] > -1f && r[0] < r[2] && r[1] < r[3];
+	}
+
+	/**
+	 * M3.3 mcopt.shade.tintSub: cascade 0's matrix (at cascadeData) made to draw only the tint rectangle into the top-left
+	 * areaW x areaH texels of the map, at the same texel size as the whole map (texel column (c.x - x0) res / 2, row
+	 * (y1 - c.y) res / 2; weather_surface.metal reads it back that way when ssr.w = 2). Returns {areaW, areaH}.
+	 */
+	private int[] tintSubMatrix(long cascadeData, int res) {
+		float[] r = this.tintRectNow;
+		int w = Math.min(res, (int) Math.ceil(0.5 * (r[2] - r[0]) * res) + 2), h = Math.min(res, (int) Math.ceil(0.5 * (r[3] - r[1]) * res) + 2);
+		float sx = (float) res / w, sy = (float) res / h;
+		// clip x'' = sx (c.x - x0) - 1, y'' = 1 - sy (y1 - c.y): row x and row y of the column-major matrix scaled and shifted
+		for (int col = 0; col < 4; col++) {
+			long ax = cascadeData + (col * 4L) * 4L, ay = ax + 4;
+			MemoryUtil.memPutFloat(ax, sx * MemoryUtil.memGetFloat(ax));
+			MemoryUtil.memPutFloat(ay, sy * MemoryUtil.memGetFloat(ay));
+		}
+		long tx = cascadeData + 12 * 4L, ty = cascadeData + 13 * 4L;
+		MemoryUtil.memPutFloat(tx, MemoryUtil.memGetFloat(tx) - sx * r[0] - 1f);
+		MemoryUtil.memPutFloat(ty, MemoryUtil.memGetFloat(ty) + 1f - sy * r[3]);
+		return new int[] {w, h};
 	}
 
 	private void render() {
@@ -515,9 +558,12 @@ public final class ShadowPass {
 					if (lite && this.tintLite == 0) this.tintLite = ShadowNative.tintLiteInit(this.shadow, 512);
 					lite &= this.tintLite != 0;
 					this.tintRes = lite ? 512 : mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES;
+					// M3.3 mcopt.shade.tintSub: draw (clear, store) only the casters' rectangle, at the map's texel size, in its top-left corner
+					this.tintSubNow = ShadowConfig.tintSub() && nTint > 0 && (tintDev & 2) == 0;
+					int[] area = this.tintSubNow && this.tintRect() ? this.tintSubMatrix(cascadeData, this.tintRes) : new int[2];
 					if ((tintDev & 2) == 0) {
 						ShadowNative.tintRenderEx(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
-							regions.slice().offset(), tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES, lite ? 1 : 0, this.timing ? 3 : -1);
+							regions.slice().offset(), tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES, lite ? 1 : 0, this.timing ? 3 : -1, area[0], area[1]);
 					}
 					this.publishTint(nTint > 0 && (tintDev & 1) == 0);
 					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, lite ? this.tintLite : this.tintMap);
@@ -600,9 +646,9 @@ public final class ShadowPass {
 		float[] t = new float[9];
 		for (int i = 0; i < 9; i++) t[i] = MemoryUtil.memGetFloat(this.timesOut + i * 4L);
 		System.out.println(String.format(java.util.Locale.ROOT,
-			"[mcopt] shade: shadow gpu ms near %.3f (%d) far %.3f (%d) farPart %.3f (%d) tint %.3f (%d), %d frames; spread %s, tintTight %s, tintDev %d",
+			"[mcopt] shade: shadow gpu ms near %.3f (%d) far %.3f (%d) farPart %.3f (%d) tint %.3f (%d), %d frames; spread %s, tintTight %s, tintSub %s, tintDev %d",
 			t[0], (int) t[4], t[1], (int) t[5], t[2], (int) t[6], t[3], (int) t[7], (int) t[8], ShadowConfig.farSpread(), ShadowConfig.tintTight(),
-			ShadowConfig.tintDev()));
+			ShadowConfig.tintSub(), ShadowConfig.tintDev()));
 	}
 
 	private void problem(@Nullable String why) {

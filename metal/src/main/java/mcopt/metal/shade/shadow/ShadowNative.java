@@ -42,7 +42,7 @@ final class ShadowNative {
 	private static final MethodHandle TIMES = fn("mc_shadow_times", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle TINT_LITE_INIT = fn("mc_shadow_tint_lite_init", JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle TINT_RENDER_EX = fn("mc_shadow_tint_render_ex", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
-		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
+		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
 	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 
 	private ShadowNative() {
@@ -246,10 +246,10 @@ final class ShadowNative {
 	}
 
 	static int tintRenderEx(long enc, long shadow, long cascade, int cascadeBytes, long chunks, long chunksOffset, long regions, long regionsOffset, long draws,
-		int drawCount, long atlas, long params, int paramBytes, int lite, int timerKind) {
+		int drawCount, long atlas, long params, int paramBytes, int lite, int timerKind, int areaW, int areaH) {
 		try {
 			return (int) TINT_RENDER_EX.invokeExact(enc, shadow, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params,
-				paramBytes, lite, timerKind);
+				paramBytes, lite, timerKind, areaW, areaH);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

@@ -160,9 +160,18 @@ public final class ShadeBindings {
 	 * clip space (x0, y0, x1, y1); receivers outside it skip the tint lookup.
 	 */
 	public static void setShadowTint(boolean casters, float x0, float y0, float x1, float y1) {
+		setShadowTint(casters ? 1 : 0, x0, y0, x1, y1);
+	}
+
+	/**
+	 * M3.3 (shadow work): mode 0 no casters, 1 the tint map spans the near cascade (M3.2), 2 it holds only the rectangle,
+	 * top-left at texel (0, 0) (weather_surface.metal shadeShadowTint reads ssr.w).
+	 */
+	public static void setShadowTint(int mode, float x0, float y0, float x1, float y1) {
 		if (state == 0) return;
+		boolean casters = mode > 0;
 		ByteBuffer b = currentLook().order(java.nio.ByteOrder.LITTLE_ENDIAN);
-		b.putFloat(ShadeLook.SSR + 12, casters ? 1f : 0f);
+		b.putFloat(ShadeLook.SSR + 12, mode);
 		b.putFloat(ShadeLook.TINT_RECT, casters ? x0 : 1f).putFloat(ShadeLook.TINT_RECT + 4, casters ? y0 : 1f);
 		b.putFloat(ShadeLook.TINT_RECT + 8, casters ? x1 : -1f).putFloat(ShadeLook.TINT_RECT + 12, casters ? y1 : -1f);
 	}

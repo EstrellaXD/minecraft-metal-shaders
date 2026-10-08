@@ -654,7 +654,7 @@ id<MTLTexture> mc_shadow_tint_lite_init(Shadow *s, int resolution) {
 
 int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes,
-	int lite, int timerKind);
+	int lite, int timerKind, int areaW, int areaH);
 
 /*
  * The tint pass for the near cascade: clears the map to (1, 1, 1, 0) (no tint, no caster) and draws the translucent lists
@@ -663,13 +663,16 @@ int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int casca
  */
 int mc_shadow_tint_render(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes) {
-	return mc_shadow_tint_render_ex(enc, s, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params, paramBytes, 0, -1);
+	return mc_shadow_tint_render_ex(enc, s, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params, paramBytes, 0, -1,
+		0, 0);
 }
 
 // mc_shadow_tint_render into the lite map (lite 1, after mc_shadow_tint_lite_init) or the normal one, timed as timerKind (-1: no).
+// areaW x areaH > 0 (M3.3 mcopt.shade.tintSub): only that top-left part of the map is cleared, drawn and stored (the casters'
+// rectangle; cascade's matrix maps it onto the area), the rest keeps whatever it held (receivers never read it).
 int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes,
-	int lite, int timerKind) {
+	int lite, int timerKind, int areaW, int areaH) {
 	if (!s->tint || !s->tintMap) return 0;
 	id<MTLTexture> map = lite && s->tintLite ? s->tintLite : s->tintMap;
 	bool *dirty = map == s->tintLite ? &s->tintLiteDirty : &s->tintDirty;
@@ -682,10 +685,17 @@ int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int casca
 		rp.colorAttachments[0].clearColor = MTLClearColorMake(1.0, 1.0, 1.0, 0.0);
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 		if (timerKind >= 0) timerAttach(s, rp, timerKind);
-		id<MTLRenderCommandEncoder> r = [cmd renderCommandEncoderWithDescriptor:rp];
-		r.label = @"mcopt shadow tint";
 		int res = (int) map.width;
-		[r setViewport:(MTLViewport) {0, 0, res, res, 0, 1}];
+		int w = res, h = res;
+		if (areaW > 0 && areaH > 0) {
+			w = areaW < res ? areaW : res;
+			h = areaH < res ? areaH : res;
+			rp.renderTargetWidth = (NSUInteger) w;
+			rp.renderTargetHeight = (NSUInteger) h;
+		}
+		id<MTLRenderCommandEncoder> r = [cmd renderCommandEncoderWithDescriptor:rp];
+		r.label = w < res || h < res ? @"mcopt shadow tint (rectangle)" : @"mcopt shadow tint";
+		[r setViewport:(MTLViewport) {0, 0, w, h, 0, 1}];
 		if (drawCount > 0 && atlas) {
 			[r setRenderPipelineState:s->tint];
 			[r setCullMode:MTLCullModeNone];

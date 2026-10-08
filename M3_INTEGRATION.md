@@ -29,4 +29,7 @@ working on `m3`, `m3-clouds` and `m3-weather`. When everything is merged and tes
 
 ## Smoke tests
 - `int1-smoke` (jar `work/notes/m3-2026-10-07/jars/m3int-526a1a5.jar`): entities noon/night/hand, dynamic lights
-  mobs/nether, dims nether/end. Result: see `work/bench-results/*int1-smoke*`.
+  mobs/nether, dims nether/end. Result (`bench-results/20261007-220548-int1-smoke`, 13 shots, no shader errors): mobs lit
+  once and not overexposed at night (lower half +11 % brighter than m3's own ent_night: dynamic lights of the zoo's
+  dropped items), the hand with torch + soul lantern fine, Nether particles now light grey ash instead of dark specks (a
+  few dark dots left in nether_warped: check which pipeline), End fine, blazes lit in dl_nether.

@@ -1,6 +1,19 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## M3.3 Status (2026-10-08 11:05) - resumed (new session after 52efc55)
+## M3.3 Status (2026-10-08 11:25) - resumed (new session after 52efc55)
+
+Offline (quiet-ish GPU, `work/notes/m33-2026-10-08/clouds/pvchk.sh` -> `pvchk1.out`, 3024x1964, history 0.45, M3.3 modes,
+3 alternations x 4 scenarios): **4x4 checkerboard: march 0.19-0.25 -> 0.12-0.13 ms (-40 %)**, resolve the same (0.22-0.25),
+total 0.55-0.62 -> 0.48-0.53. Offline look (`pvprep.sh`/`pvpng.sh`, 240 frames at 60 fps with wind, full-size crops in
+the scratchpad): still camera M3.2 combed, M3.3 3x3 and 4x4 clean (4x4 a little more grain); turning 30 deg/s: same fine
+grain for both. 2d9de10 allows `mcopt.shade.clouds.checker=4` (default still 3) + dev bit 524288 (checkerAlt 4) for
+in-session pricing + `mcopt.shade.clouds.freeze` (per frame: clouds stand still, for variant look shots); 2f215b7 keeps the
+noise mips of 3x3 under 4x4 (angle x min(N, 3): no change of the far billows). Resolve experiment R16Unorm instead of
+R16Uint data (`pvres2.sh` -> `pvres1.out`): no gain (0.26 both; M3.2's R8 resolve 0.20): dropped. Run 4 (`run4.sh`, jar
+2f215b7, queued 11:22): in-session price new / c4 / old / off (24 x 6 s interleaved), comb shots (wind) old / new / c4,
+frozen look shots fold / fnew / fc4 (noon_south, sunset_west, up, inside). Run 2's wind=0 look diff (old vs f9196f2, which
+still had halfLight on): `up` mean 3.4/255, luma -2.9 (darker) -> halfLight (now off) is the suspect; run 4 re-checks.
+
 
 Plan of the resumed session: (1) item 1 stays done; it is re-shot with the final jar in the last run. (2) Price: the
 remaining lever with a size of ~0.1 ms is fewer march rays: a 4x4 checkerboard (`mcopt.shade.clouds.checker=4`, today

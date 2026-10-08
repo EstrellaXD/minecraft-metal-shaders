@@ -467,3 +467,27 @@ R16Uint data targets `dataSt[2]` next to the R8 ones, render flag 16), `CloudCon
 flag 16), `CloudNative.java` (doc), `tools/shade/clouds/*` (offline preview: turning, wind scale, scenarios inside /
 horizon_sunset, mode-aware resolve, `CLOUDS_DEFS` / `CLOUDS_RES` / `CLOUDS_DUMP` for experiments). `work/mcbench`
 `CloudShots.java` (own file): `-Dmcbench.cloudsVariants`, scenes `turn_south` / `turn_sunset` (commit 89f72df).
+
+### Price (item 2): where the time goes and what the M3.3 changes do
+Offline profile (`work/notes/m33-2026-10-08/clouds/pvprof.sh`, `pvprof1.out`; `run.sh time` 3024x1964, history 0.45, M3.2
+mode, instrumented copy via `CLOUDS_RES`): march 0.21-0.27 ms = pass overhead + output **0.04** (shader returning at once)
++ per-ray fixed work (segment, cirrus, sky LUT) ~0.01 + the loop **~0.12-0.14** + its light march **~0.05-0.08** (all light
+removed: 0.16-0.19); cirrus and the four phase lobes ~0. Resolve 0.19-0.24 (bandwidth), dome 0.10 per update (1 in 8
+frames), shadow 0.045 per update (1 in 4). Work counters (`CLOUDS_DUMP`): an average ray does ~4.5 loop iterations, ~3
+empty-air tests, ~2 in-cloud samples and ~1 light march (dense clouds: 2 samples reach T < 0.02).
+
+In game, run 2 (`bench-results/20261008-103827-m33c-2`, AC, wind 0, f9196f2; phases 12 s, dev bits per phase; residual
+sd 0.03 ms, cpu median 113 %; the first phase was disturbed by an offline timing batch of ours and is left out):
+whole-frame GPU ms: default 9.02 (2 phases), all M3.3 off 9.05 (2), halfLight off 9.03, batch off 9.00, stable off 9.00,
+pair off 9.03, clouds paused 8.42 (2): **the clouds cost ~0.60 ms, M3.3's changes move it by less than the noise
+(+-0.05)**. Pass timers (`timerphase.py`, median per phase type): march 0.395 (default) / 0.419 (all off) / 0.413 (batch
+off) / 0.407 (pair off) / 0.394 (halfLight off); resolve 0.248 (default) / 0.219 (stable off) / 0.201 (all off); shadow
+0.101 per update with the batched shadow samples vs 0.048 without (removed in 9898b7b). Reading: batch and pair save
+~0.01-0.02 ms each on the march, halfLight nothing (now off by default: no gain for a look change), the comb fix's resolve
+costs ~+0.03-0.05 ms (its 2-byte data target and the second gather). Net ~0, so **the target <= 0.5 ms is not reached**
+(~0.6 ms at balanced in this sky-heavy spin). The march is not dominated by its fetch chain (batching it gained ~5 %) nor
+by its light march (halving the light marches gained nothing measurable in game); a third of the offline march is pass
+overhead and the resolve is DRAM-bound, so the remaining levers are fewer pixels (history scale 0.45 -> 0.4: resolve
+timer 0.20 -> 0.15 in M3.1, whole frame not measurable then), a 4x4 checkerboard (now that the comb is fixed, march rays
+-44 %, more grain in motion) or the async/previous-frame scheme of "M3.1 performance" step 4 - each a look/latency
+trade-off for Gael to choose, not done here.

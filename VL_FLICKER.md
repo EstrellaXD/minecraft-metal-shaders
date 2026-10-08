@@ -112,8 +112,11 @@ Beam brightness in fm2's shaft region: M2.1 146–147, M2.2 148 (8-bit mean); mi
 Clean whole-frame ABBA x2 (batch M, balanced fixed 0.80, GPU ms/frame): M2.1 spin 9.21 / flight 8.69; vls13 9.34 /
 8.84 → **+0.12 / +0.15 ms** (~1.5–2 fps at ~110 fps). Performance preset (batch K): **+0.05 / +0.09**. Of that, the VL
 passes are only +0.04 (march +0.01, temporal +0.03 in these scenes); the rest was in the full-resolution final pass, most
-likely the edge-blend code compiled in even though switched off (register pressure). **vls14 (6434a16) removes that code;
-its clean cost is not measured yet** (batch N was interrupted when Gael needed the Mac). In the forest shot holds the VL
+likely the edge-blend code compiled in even though switched off (register pressure). **vls14 (6434a16) removes that code:
+batch P (AC, nothing else open, M2.1/vls13/vls14 ABCCBA x2, balanced): M2.1 9.117 / 8.633, vls13 9.322 / 8.794 (+0.21 /
++0.16), vls14 9.158 / 8.689 = +0.04 / +0.06 ms** (VL passes +0.035; VL module off: equal; every M2.2 flag off: equal). On
+battery with Safari/audio busy (batch O) the same jars measured +1.1 / +0.8 (balanced) and +1.4 (performance) although the VL
+passes only added +0.05-0.09: an environment effect, open question. In the forest shot holds the VL
 passes cost +0.17 ms (nearDither +0.1, temporal +0.035). Per flag and all runs:
 `work/notes/vl-stable-2026-10-07/results/RESULTS_cost.md`.
 

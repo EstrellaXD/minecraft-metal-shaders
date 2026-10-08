@@ -33,17 +33,22 @@ Branch `m3` starts from `m2.1` (water M2.1) and is where the M3 modules (dynamic
 `mcopt.shade=false` the backend is upstream's (the two backend seams added, `MetalDrawTap` and redirect-format tags, are inert
 without a listener / tagged redirect). Read `M2_INTEGRATION.md` first: this file only adds what M3 base changed.
 
+**Every M3 base flag off = M2.1:** `-Dmcopt.shade.entities=false -Dmcopt.shade.entityShadows=false -Dmcopt.shade.taaMotion=false
+-Dmcopt.shade.handLight=false -Dmcopt.shade.skyRose=false -Dmcopt.shade.vl.waterM3=false` (the "off" set for A/B runs; the
+perf "off" runs of section 7 predate the last two, so they still had the rose and the under-water retune: sky colour and
+under-water only, no cost).
+
 ## 1. What this branch adds
 
 | Piece | Where | Flag (default) |
 |---|---|---|
 | Entities, block entities, dropped items, armour, moving blocks and particles lit by the shade model (bible E17) | `ShadeEntity.java`, `shade_entity.metal`, `ShadeMsl.FORMAT_ADAPTER` | `mcopt.shade.entities` (true) |
 | First-person hand and held items lit the same way (tone-mapped in the fragment, no fog) | `ShadePost.handRedirect`, `ShadeEntity.HAND_FORMAT`, `MCOPT_HAND` in `shade_entity.metal` | `mcopt.shade.handLight` (true) |
-| Entity sun shadows in the near cascade (bible E08 / M3c), vanilla blob shadow off | `MetalDrawTap`, `shadow/EntityCasters.java`, `mcshadow.m` `mc_shadow_entity_*`, `shadow.metal` `shadow_entity_vs/fs` | `mcopt.shade.entityShadows` (true), `.log` (false), `.pause` (read every frame: bench A/B) |
+| Entity sun shadows in the near cascade (bible E08 / M3c), vanilla blob shadow off where they replace it (sunlit ground, sky light >= 5) | `MetalDrawTap`, `shadow/EntityCasters.java`, `shadow/mixin/EntityBlobShadowMixin`, `mcshadow.m` `mc_shadow_entity_*`, `shadow.metal` `shadow_entity_vs/fs` | `mcopt.shade.entityShadows` (true), `.log` (false), `.pause` (read every frame: bench A/B) |
 | Per-object motion for TAAU (moving entities don't smear) (bible E18 step 4) | `taa/ShadeMotion.java`, `taa.metal` `TaaMovers`, `mctaa.m` `mc_taa_movers` | `mcopt.shade.taaMotion` (true); `taaDebug=5` view (does not show in the HDR path: see 7) |
 | **Dynamic-lights seam**: `shadeDynamicLights(ShadeDynIn, f, L, R)` called by terrain, water and entities (stub returns 0) | `shade_dynlight.metal` (in `ShadeMsl.prelude()`) | — (the module's) |
-| Evening sky: rose / peach hue of the upper sky at golden hour (Complementary-like, our sun, rays and blue top kept) | `ShadeLook.SKY_ROSE` -> `skyGoldZ.w`, `sky_lut.metal` | look-scaled (epic 1, storybook 1.15, natural 0.6) |
-| Underwater god rays: caustic curtains on the water's real-time clock (were on the game time, which the server corrects every second: the jumps smeared them through the 0.9 history), less history under water (0.8), stronger (HDR_WATER 0.45 -> 0.6, carve 0.55 -> 0.62) | `vl/ShadeVl.java` | `mcopt.shade.vl.underwater` (true) |
+| Evening sky: rose / peach hue of the upper sky at golden hour (Complementary-like, our sun, rays and blue top kept) | `ShadeLook.SKY_ROSE` -> `skyGoldZ.w`, `sky_lut.metal` | `mcopt.shade.skyRose` (true; read every frame; false = M2.1's sky), look-scaled (epic 1, storybook 1.15, natural 0.6) |
+| Underwater god rays: caustic curtains on the water's real-time clock (were on the game time, which the server corrects every second: the jumps smeared them through the 0.9 history), less history under water (0.8), stronger (HDR_WATER 0.45 -> 0.6, carve 0.55 -> 0.62) | `vl/ShadeVl.java`, `VlConfig.WATER_M3`; `vl.metal vlCausticPhases` (whole turns per 4096 s: seamless clock wrap, as water.metal and vl-stable) | `mcopt.shade.vl.waterM3` (true; false = M2.1: 0.45 / 0.55 / 0.9 / game time) |
 | Bench: entity scenes (`-Dmcbench.entities=true` or `perf,noon,evening,night,hand,motion`), zoo perf phase | `work/mcbench` `EntityShots.java` | see `work/HARNESS.md` 8f |
 
 ## 2. Dynamic lights: the seam (for `m3-lights`)
@@ -80,7 +85,10 @@ static inline float3 shadeDynamicLights(ShadeDynIn d, constant ShadeFrame &f, co
   item_translucent, solid/cutout/translucent_block, opaque/translucent_particle). Not patched (M2 path, vanilla light
   converted to HDR): glint pipelines (`item_cutout` shares its name with its glint variants: logged once as "fragment
   shape"), emissive (eyes, energy swirl, entity_translucent_emissive), text, lines, leash, beacon, end portal/gateway.
-- A fragment is patched only if its pipeline's vertex stage was (`VERTEX_PATCHED`), so the interfaces always match.
+- A fragment is patched only if the same variant's vertex stage was (thread-local `VERTEX_LIT`, set by `ShadeEntity.vertex`,
+  reset at the top of `FORMAT_ADAPTER.vertex`; per variant, not per name: three pipelines are named `item_cutout`).
+- Hand variants are prewarmed with the HDR ones (`ShadeMsl.prewarm` returns `{HDR}, {HAND}` for `PIPELINES` + glint
+  pipelines while `handLight` is on): no 0.2-0.5 s render-thread compile the first time the hand shows.
 - Shading (`shade_entity.metal`): `shadeLit2` with `shadeShadow` (4-tap, cheaper than PCSS; skipped at sky light <= 0.3),
   + dynamic lights, `shadeFogAir2` + `shadeFinish2` like terrain. Particles at lightmap 15/15 (flames, sparks) glow.
   Outside the overworld the game's colour is kept (as terrain does). Debug views 1 (shadow), 2 (normals), 3 (grey albedo).
@@ -88,7 +96,10 @@ static inline float3 shadeDynamicLights(ShadeDynIn d, constant ShadeFrame &f, co
   (`MetalHooks.TAG_SHIFT`: a variant tag, the pipeline is built for the low bits); `MCOPT_HAND` then writes
   `sRGB(shadeDisplay(radiance))`, no fog.
 - Validation: `MCOPT_GEN_DIR=<a -Dmcopt.metal.dumpMsl dir> tools/shade/validate.sh` patches the dumped stages and builds
-  every pair as a real pipeline (36 = 18 world + 18 hand variants; `item_cutout` is skipped, see above). Re-dump after a Minecraft / mcopt update.
+  every pair as a real pipeline (36 = 18 world + 18 hand variants with the old dump). The dump now keeps same-named
+  pipelines with other sources as `NAME~1`, `~2` (`MetalPipeline.dump`), and `ShadeMslDump` patches them all, so the plain
+  `item_cutout` (dropped and held items) is built too; its glint twins are logged "not patched" (they keep the M2 path).
+  Re-dump after a Minecraft / mcopt update.
 
 ## 4. Entity shadows: how it works
 
@@ -102,7 +113,14 @@ static inline float3 shadeDynamicLights(ShadeDynIn d, constant ShadeFrame &f, co
 4. Next frame, `mc_shadow_render` for cascade 0 draws them after the terrain (`shadow_entity_vs`: vertex pulling, quads
    from `vertex_id`, shifted by camera(then) - camera(now); `shadow_entity_fs`: alpha test). One frame of latency.
    Only the near cascade (±32 blocks, ahead of the view).
-- The vanilla blob shadow (`entity_shadow`) is dropped in the HDR variant when entity shadows are on (as Iris does).
+- The vanilla blob shadow (`entity_shadow`) is dropped **per piece, on the CPU**, only where the real shadow replaces it:
+  `EntityBlobShadowMixin` (HEAD of `EntityRenderer.extractShadowPiece`) asks `EntityCasters.dropBlob(level, pos)`: casters
+  ready, a shadow map, the sun casting (not the moon: its shadows are too faint), sky light >= 5 at the piece (the
+  receivers' gate: terrain and entities skip the map at sky <= 0.3). Caves, dark interiors, the night, Nether and End keep
+  the blob. (The blob's vertex lightmap is constant 15/15, so its shader cannot tell.)
+- Resources: `mc_shadow_new` is m2.1's; the casters' pipeline and 12 MB buffer come from `mc_shadow_entity_init`, called by
+  `EntityCasters.attach` only when entity shadows are on (a failure is logged and keeps the terrain shadows). Without a
+  near cascade this frame (Nether, End) the tap records nothing and nothing is copied.
 - `-Dmcopt.shade.entityShadows.log=true`: a line every 4 s with the casters drawn.
 
 ## 5. Per-object motion (TAAU)
@@ -131,7 +149,7 @@ Translation only (limb swing and turning stay with the variance clip). `mctaa.m`
 hand and the anti-smear for moving mobs together cost **nothing measurable**: with ~12 mobs, a chest, a sign and floating
 items filling the screen the GPU needs **~6.4 ms per frame (~155 fps) with M3, the same as with M2.1**. The differences
 between runs (0.1-0.2 ms) are noise: two runs of the exact same M2.1 jar differed by more than that. Entity shadows alone,
-switched on and off inside the same game session: **< 0.05 ms**.
+switched on and off inside the same game session: **not measurable (< ~0.1 ms)**.
 
 ### 7.1 How it was measured (provisional: clean numbers come after the integration)
 
@@ -158,16 +176,18 @@ switched on and off inside the same game session: **< 0.05 ms**.
 | M2.1-2 (`...193559-m3p-m21-2`, drifted) | *10.033* | *9.992* | *6.965* | *7.120* | *7.350* |
 | off-2 (`...194927-m3p-off-2`) | 9.161 | 8.783 | 6.417 | 6.457 | 6.480 |
 | on-2 (`...200535-m3p-on-2`) | 9.315 | 8.636 | 6.448 | 6.446 | 6.482 |
-| **mean M3 on** | **9.35** (107 fps) | **8.76** (114 fps) | | | **6.41** (156 fps) |
-| **mean M3 flags off** | **9.26** | **8.83** | | | **6.43** |
-| **M2.1** (run 1) | **9.23** | **8.93** | mean of its 3 zoo phases **6.42** | | |
+| **mean M3 on** (on-1, on-2) | **9.35** (107 fps) | **8.76** (114 fps) | all three zoo phases **6.433** (155 fps) | | |
+| **mean M3 flags off** (off-1, off-2) | **9.26** | **8.83** | all three zoo phases **6.436** | | |
+| **M2.1** (run 1) | **9.23** | **8.93** | all three zoo phases **6.422** | | |
 
-M3 on minus M2.1: spin +0.12 ms, flight -0.17 ms, zoo -0.01 ms: **zero within the noise** (run-to-run spread of the same
-config here is 0.1-0.2 ms). The spin/flight views have no mobs, so they show that nothing leaked into terrain, sky or post.
+The same phases for every jar (all three zoo phases; with `zoo2` alone it is on 6.415, off 6.433, M2.1 6.486: the same
+conclusion). M3 on minus M2.1: spin +0.12 ms, flight -0.17 ms, zoo +0.01 ms: **zero within the noise** (run-to-run spread
+of the same config here is 0.1-0.2 ms; one sample per condition, so these numbers are provisional). The spin/flight views
+have no mobs, so they show that nothing leaked into terrain, sky or post.
 
 In-session price of the entity shadows (`zoo_noshadow` vs `zoo2`, same session): on-1 6.351 vs 6.347 (+0.00); on-2
-6.446 vs 6.482 (+0.04 ms). The first `zoo` phase runs ~0.1-0.15 ms high in every run, the M2.1 jar included (it has no pause switch, so its
-three phases are identical): warm-up, not cost.
+6.446 vs 6.482 (+0.04 ms): **not measurable (< ~0.1 ms)**: in the off runs, where the pause switch does nothing, the
+phase-to-phase spread is 0.06-0.11 ms. (The first `zoo` phase was the highest in on-1 and off-1 only, not in every run.)
 
 ### 7.3 Visual checks (screenshots in `work/release/M3-base-screenshots/`)
 

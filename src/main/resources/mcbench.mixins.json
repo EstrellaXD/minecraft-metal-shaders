@@ -3,6 +3,6 @@
 	"package": "mcbench.mixin",
 	"plugin": "mcbench.mixin.BenchMixinPlugin",
 	"compatibilityLevel": "JAVA_25",
-	"client": ["MinecraftMixin", "FramerateLimitTrackerMixin"],
+	"client": ["MinecraftMixin", "FramerateLimitTrackerMixin", "CameraBobMixin", "GameRendererBobMixin"],
 	"injectors": { "defaultRequire": 1 }
 }

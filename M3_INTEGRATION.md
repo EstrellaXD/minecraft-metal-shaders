@@ -44,3 +44,9 @@ working on `m3`, `m3-clouds` and `m3-weather`. When everything is merged and tes
 images `work/release/M3-sky-screenshots/`. art3: broad warm gradient toward the sun, no orange ring opposite it.
 **Open:** crepuscular-ray contrast in the `rose_*_sky` view 7.23 -> 5.94 (high-pass std of luma, -18 %): re-measure after
 the clouds merge (volumetric clouds drive the rays there) and compensate (e.g. VL strength in the golden hour) if still lower.
+
+## Delivered (2026-10-08 00:20)
+All branches merged: `m3` fast-forwarded to `m3-int` (25c6ef9). Jar `work/release/mcopt-shade-M3.jar`, notes
+`work/release/M3_NOTES.md`, instance "mcopt Shaders Metal 26.3 (M3)". Tests: `int3-all` (22 shots, all modules), `int4-dh`
+(DH sanity), `art*` (sunset A/B). Clean price (ABBA x2, `fp1-*`): M2.2 9.27 / 8.80 ms -> M3 13.02 / 11.66 ms (spin / flight,
+balanced, DRS off). Breakdown `bd1-*` and flags-off bisect `bs1-*`: see M3_NOTES.md and PROXIMOS_PASOS.md (M3.1 plan).

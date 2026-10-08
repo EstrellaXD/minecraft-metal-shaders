@@ -101,8 +101,8 @@ public final class ShadeWeather {
 	// ---- state (render thread) -----------------------------------------------------------------------------------------
 	/** Smoothed: wetness, puddles, snow cover, rain intensity. */
 	static float wetness, puddles, snow, rain;
-	/** Wind direction (radians from +x toward +z), slant, gust. */
-	static float windAngle, slant, gust;
+	/** Wind direction (radians from +x toward +z), slant, gust; snowfall at the camera 0..1 (smoothed: snow flakes' look). */
+	static float windAngle, slant, gust, snowfall;
 	/** This frame's flash: direction (camera-relative, unit) and its light. */
 	static final float[] flashDir = {0f, 1f, 0f};
 	static float flash;
@@ -140,11 +140,13 @@ public final class ShadeWeather {
 			puddles = wetTarget;
 			snow = snowTarget;
 			rain = rainTarget;
+			snowfall = snowTarget > 0.05f ? 1f : 0f;
 		} else {
 			wetness = approach(wetness, wetTarget, s, 14f, 75f);
 			puddles = approach(puddles, puddleTarget, s, 10f, 110f);
 			snow = approach(snow, snowTarget, s, 30f, 240f);
 			rain = approach(rain, rainTarget, dt, 1.5f, 3f);
+			snowfall = approach(snowfall, snowTarget > 0.05f ? 1f : 0f, dt, 1.5f, 1.5f);
 		}
 		if (FORCE_WET >= 0f) {
 			wetness = Math.min(FORCE_WET, 1f);
@@ -173,7 +175,7 @@ public final class ShadeWeather {
 			return;
 		}
 		put4(b, ShadeLook.WET, wetness, PUDDLES ? puddles : 0f, SNOW ? snow : 0f, rain);
-		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, gust);
+		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, snowfall); // w: snowfall (gust only shapes the slant)
 		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], LIGHTNING ? flash : 0f);
 		b.putFloat(ShadeLook.SSR + 8, noiseTexture != 0 ? 1f : 0f); // ssr.z: ShadeResources.weatherNoise is baked
 		b.putFloat(ShadeLook.SSR + 12, tintCasters ? 1f : 0f); // ssr.w: the tint map holds translucent casters (else receivers skip it)

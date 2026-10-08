@@ -43,7 +43,7 @@ struct ShadeLook {
 	float4 fogMisc;    // 464  x haze base y (absolute), y border fog start fraction, z border fog radius (blocks, 0 = off), w evening glow
 	float4 vl;         // 480  reserved for the volumetric light module: x strength, y max distance, z HG g, w steps
 	float4 wet;        // 496  (M3 weather) x wetness, y puddles, z snow cover, w rain intensity (smoothed), all 0..1
-	float4 wind;       // 512  (M3 weather) xy wind direction (unit, world xz), z rain slant (blocks per block of fall), w gust 0..1
+	float4 wind;       // 512  (M3 weather) xy wind direction (unit, world xz), z rain slant (blocks per block of fall), w snowfall at the camera 0..1
 	float4 clouds0;    // 528  reserved
 	float4 clouds1;    // 544  reserved
 	float4 clouds2;    // 560  reserved

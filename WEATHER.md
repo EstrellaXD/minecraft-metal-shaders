@@ -5,7 +5,7 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 22:12)
+## Status (2026-10-07 22:16)
 
 **Fix round 22:00 (pre-integration, from the skeptic check `check:weather` in `work/notes/m3-2026-10-07/prefix-checks.json`):**
 done and committed (builds, validate ALL OK, **not yet tested in game**):
@@ -18,6 +18,8 @@ done and committed (builds, validate ALL OK, **not yet tested in game**):
 
 - Quad-shuffle guard: the quad-shared puddle SSR block now starts with `quadPuddle &&` (no shuffles over lanes that left).
 - `COLOR_SHADOWS` needs `ShadeConfig.HDR` (LDR has no reader: no tint pass there).
+- Snowfall: `ShadeLook.wind.w` is now the snowfall at the camera (0..1, smoothed 1.5 s; the gust only shaped the slant on
+  the CPU); `shadeWeather3` gives flakes M2.1's alpha 0.55 and no torch heuristic while it snows. Not looked at in game yet.
 
 **Next, in this order** (the 21:55 task list, items 1-7; item 3 is half done: LDR lite noise left):
 1. Light-space rectangle: in `ShadowPass.render` after the tint pass, project `casters.tintBoxes` (16^3 boxes,
@@ -28,8 +30,7 @@ done and committed (builds, validate ALL OK, **not yet tested in game**):
    `ShadeWeather.tintCasters`. Receivers (`shadeShadowTint`): return 1 before the sample outside the rect (+ a few texels).
 2. Budget in heavy rain at balanced (0.80 ms in wx17 incl. ~0.19 tint): price after item 1; candidates as dev bits 32-512.
 3. LDR puddles on a lite analytic noise (only the field needed, 2 octaves) instead of the full per-pixel noise.
-4. Snowfall: own alpha (~0.55) and no torch heuristic for snow in `shadeWeather3` (pass wet.z / a snow flag); mcbench
-   WeatherShots `snowfall` pose (nearest snowy biome, like DimShots.aurora's search).
+4. Snowfall shot: mcbench WeatherShots `snowfall` pose (nearest snowy biome, like DimShots.aurora's search), look at it.
 5. Moving view: a `wxmove` phase (walk across the puddles) recorded with `-Dmcopt.rec=... -Dmcopt.rec.start=wxmove`.
 6. Integration notes (slot 4 vs lights, tint delta duplicate). 7. WEATHER.md prices and stale "~0" claims (skeptic finding 6).
 

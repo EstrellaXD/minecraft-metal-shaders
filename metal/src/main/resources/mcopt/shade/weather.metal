@@ -44,12 +44,15 @@ static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, cons
 	float mu = dot(v, f.lightDirWorld.xyz);
 	float3 sun = f.sunColor.rgb * (0.03 + 0.45 * shadeHG(mu, 0.6));
 	float3 light = max(sky, skyMean) * 1.02 + sun + float3(0.78, 0.86, 1.0) * (L.flash.w * 0.6);
-	// torch light: vanilla's lightmap brightens the streak beyond what the sky alone gives (warm, like the block light)
-	float torch = max(l - 0.75, 0.0) * 2.0;
+	// torch light: vanilla's lightmap brightens the streak beyond what the sky alone gives (warm, like the block light); tuned
+	// for the blue rain texture (mean luma 0.4): the white snow texture would trip it in daylight, so not while it snows
+	float snowK = saturate(L.wind.w);
+	float torch = max(l - 0.75, 0.0) * 2.0 * (1.0 - snowK);
 	light += f.ambientBlock.rgb * torch * 0.6;
 	float3 lit = shadeOut(light * (0.9 + 0.2 * l) * float3(0.97, 0.99, 1.0), f, shadeExposure(f, g));
 	// thin and glassy: mostly transparent, and the columns right in front of the eye (a block wide on screen) fade out
-	float a = c.a * (0.28 + 0.14 * saturate(L.wet.w)) * smoothstep(1.2, 4.5, dist);
+	// (snow: flakes are opaque, about M2.1's 0.55; L.wet.w is 0 while it snows)
+	float a = c.a * mix(0.28 + 0.14 * saturate(L.wet.w), 0.55, snowK) * smoothstep(1.2, 4.5, dist);
 	return float4(lit, a);
 }
 #endif

@@ -14,7 +14,7 @@
 // Assembled by ShadeMsl.terrain after the prelude (shade_look + shade_common + shade_m2) and before water.metal, with the
 // SHADE_WEATHER defines (mcopt.metal.shade.weather.ShadeWeather.prelude) in front. Inputs:
 //   ShadeLook.wet    x wetness 0..1, y puddles 0..1, z snow cover 0..1, w rain intensity (smoothed rain level, + thunder)
-//   ShadeLook.wind   xy wind direction (unit, world xz), z rain slant (horizontal blocks per block of fall), w gust 0..1
+//   ShadeLook.wind   xy wind direction (unit, world xz), z rain slant (horizontal blocks per block of fall), w snowfall at the camera 0..1
 //   ShadeLook.flash  xyz unit direction toward the lightning (camera-relative), w its light (radiance on a white surface
 //                    facing it, before exposure)
 //   ShadeLook.ssr.y  1 when ShadeResources.prevDepth (5) holds the linear view depth of ShadeResources.prevScene (TAA history)

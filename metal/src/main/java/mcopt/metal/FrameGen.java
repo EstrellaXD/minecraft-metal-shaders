@@ -154,8 +154,8 @@ public final class FrameGen {
 		} catch (Throwable t) {
 			throw new IllegalStateException(t);
 		}
-		System.out.printf("mcopt-framegen: %s (refresh %.2f Hz, %s holds)%n", GENERATE ? "MetalFX frame interpolation on" : "paced baseline, no generated frames",
-			period() > 0 ? 1 / period() : 0, EVEN ? "even" : "uneven");
+		System.out.println(String.format("mcopt-framegen: %s (refresh %.2f Hz, %s holds)", GENERATE ? "MetalFX frame interpolation on" : "paced baseline, no generated frames",
+			period() > 0 ? 1 / period() : 0, EVEN ? "even" : "uneven")); // mcopt-shade M3.3: println (printf bypassed latest.log)
 	}
 
 	/** The frame generator on the Metal backend, created on first use; null otherwise. */
@@ -360,7 +360,7 @@ public final class FrameGen {
 		this.width = main.width;
 		this.height = main.height;
 		this.previousCaptured = false;
-		System.out.printf("mcopt-framegen: interpolating %dx%d%n", this.width, this.height);
+		System.out.println(String.format("mcopt-framegen: interpolating %dx%d", this.width, this.height));
 		return true;
 	}
 
@@ -581,14 +581,14 @@ public final class FrameGen {
 		}
 		StringBuilder h = new StringBuilder();
 		for (int i = 0; i < holds.length; i++) if (holds[i] > 0) h.append(' ').append(i).append("x:").append(holds[i]);
-		System.out.printf("mcopt-framegen: %.1f real frames/s, %.1f shown/s (%d generated, %d dropped, %d late) | shown every %.2f ms (sd %.2f, min %.2f, max %.2f; refreshes held%s)"
+		System.out.println(String.format("mcopt-framegen: %.1f real frames/s, %.1f shown/s (%d generated, %d dropped, %d late) | shown every %.2f ms (sd %.2f, min %.2f, max %.2f; refreshes held%s)"
 				+ " | real frame start->shown %.1f ms (p90 %.1f) | frame work p90 %.1f ms, frame GPU p90 %.1f ms, %d refresh(es) per image | %s"
-				+ " | %d of %d generated frames between differing real frames were the newer one given back (not interpolated)%n",
+				+ " | %d of %d generated frames between differing real frames were the newer one given back (not interpolated)",
 			this.reportFrames / seconds, shown.size() / seconds, generated, dropped, late, mean * 1e3, sd * 1e3,
 			sorted.length > 0 ? sorted[0] * 1e3 : 0, sorted.length > 0 ? sorted[sorted.length - 1] * 1e3 : 0, h,
 			lat.length > 0 ? Arrays.stream(lat).average().orElse(0) * 1e3 : 0, lat.length > 0 ? lat[(int) (0.9 * (lat.length - 1))] * 1e3 : 0,
 			percentile(this.work, 0.9) * 1e3, percentile(this.gpu, 0.9) * 1e3, this.refreshes, this.presentedTimes ? "presentedTime" : "presented-handler time",
-			copied, moving);
+			copied, moving)); // mcopt-shade M3.3: println, so it reaches latest.log
 		this.reportFrames = this.reportGenerated = this.reportLate = 0;
 	}
 

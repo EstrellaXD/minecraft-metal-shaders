@@ -19,6 +19,15 @@ wind: `CLOUDS_YAWRATE`, `CLOUDS_WIND`; experiment shader kept as `work/notes/m33
 - what remains in motion is a fine random grain (the noise floor of 1/9-rate sampling under sub-pixel resampling; a
   2D model `sim_checker.py`/`sim2.py` shows the error grows with speed for any jitter: blur vs noise trade-off).
 
+Item 2 (price), 10:15: the march is **latency-bound**, not fetch-bound: instrumented offline (march work counters,
+`CLOUDS_RES`/`CLOUDS_DUMP`), an average ray does only ~4.5 loop iterations (~3 empty-air tests, ~2 in-cloud samples,
+~1 light march; the clouds are dense: 2 samples reach T < 0.02), i.e. ~10 texture fetches, but in a chain of dependent
+ones. Changes (each a mode bit, read every frame, with a dev bit back to M3.2's way for in-session pricing):
+`halfLight` (light march on every other in-cloud sample, the ones between take the mean: look diff mean 0.5-0.7/255),
+`batch` (a sample's fetches issued together incl. its light march and the cirrus' first fetch: same values, max diff
+13/255 on a handful of pixels from float order), `pair` (empty-air tests two at a time: bit-exact). Run 2 (`run2.sh`,
+m33c-2, jar symlink `jars/m3.3-clouds-run2.jar` -> the sha jar at its start) prices each one in session.
+
 1. Comb / hatching on soft cloud edges (still camera + wind + 3x3 checkerboard). Reproduce offline first
    (`tools/shade/clouds/run.sh png` with a still camera over a few hundred frames, crops at full size), find the cause
    with a debug output, fix behind a flag (off = M3.2), confirm in game (noon_south, still camera, wind on; and turning).

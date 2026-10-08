@@ -65,6 +65,10 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
                          , constant ShadeFrame& sf [[buffer(16)]], constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]],
                          depth2d_array<float> shadowMap [[texture(16)]], sampler shadowCompare [[sampler(12)]],
                          texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]], float4 fragCoord [[position]]
+#ifdef SHADE_DYNLIGHT
+                         , constant ShadeDynLights& dl [[buffer(24)]], texture3d<half> dlVis [[texture(23)]], texture3d<half> dlIrr [[texture(24)]]
+                         , texture3d<half> dlDir [[texture(25)]]
+#endif
 #ifdef SHADE_WATER
                          , texture2d<half> sceneCopy [[texture(18)]], depth2d<float> depthCopy [[texture(19)]], constant ShadeWaterParams& wp [[buffer(23)]]
                          , texture2d<half> waterWaves [[texture(20)]], texture2d<float> waterCoarse [[texture(21)]]
@@ -127,6 +131,18 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     main0_out out;
     if (sf.flags.x != SHADE_DIM_OVERWORLD) {
         color.rgb *= float(shadeVanillaFace(n, sf.flags.x)); // the face-shade-off mixins removed it from the vertices
+#ifdef SHADE_DYNLIGHT
+        {
+            // vanilla's colour carries its lightmap (block light curve b / (4 - 3b), the dimension's ambient floor): a carried
+            // light raises it toward the level reaching it (display-referred: sqrt of the response, warm like the lightmap)
+            float3 dyn = shadeDynamicLightsVol(dl, dlIrr, dlDir, in.v_Pos, float3(n), thin, half(0.0));
+            if (dyn.x + dyn.y + dyn.z > 1e-4) {
+                float b = float(in.v_Light.x), have = max(b / (4.0 - 3.0 * b), 0.12);
+                float3 want = sqrt(dyn) * float3(1.0, 0.86, 0.72);
+                color.rgb *= min(max(want / have, 1.0), 12.0);
+            }
+        }
+#endif
         out.fragColor = float4(shadeVanillaOut(mix(color.xyz, g.u_FogColor.xyz, float3(fogValue * g.u_FogColor.w)), sl), color.w);
         return out;
     }
@@ -191,10 +207,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         if ((n.y > 0.5h || (n.y < -0.5h && sf.flags2.y != 0)) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
-#ifdef MCOPT_HDR
-        wi.lit += shadeDynamicLights(shadeDynIn(p, float3(0.0, 1.0, 0.0), float3(1.0), fragCoord.xy, in.v_Light.y, in.v_Light.x, SHADE_DYN_WATER), sf, sl, &sr);
-#else
-        wi.lit += shadeDynamicLights(shadeDynIn(p, float3(0.0, 1.0, 0.0), float3(1.0), fragCoord.xy, in.v_Light.y, in.v_Light.x, SHADE_DYN_WATER), sf, sl, nullptr);
+#ifdef SHADE_DYNLIGHT
+        float3 dlSpec = float3(0.0);
+        if (n.y > 0.5h) { // the surface seen from above: torchlight on the water body and its glint on the ripples
+            float3 V = -normalize(p);
+            float3 dlN = normalize(float3(0.0, 1.0, 0.0) + float3(wi.detail.x, 0.0, wi.detail.y) * 0.35);
+            wi.lit += sf.ambientBlock.xyz * shadeDynamicLightsSpec(dl, dlVis, p, dlN, in.v_Light.x, V, 160.0, dlSpec);
+            float fres = 0.02 + 0.98 * pow(1.0 - saturate(dot(dlN, V)), 5.0);
+            dlSpec *= sf.ambientBlock.xyz * (0.25 + 3.0 * fres);
+        } else {
+            wi.lit += sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), false, in.v_Light.x);
+        }
 #endif
         wi.exposure = ex;
 #ifdef MCOPT_HDR
@@ -214,6 +237,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         texture2d<half> prevScene = sceneCopy;
 #endif
         radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy, prevScene, waterWaves, waterCoarse);
+#ifdef SHADE_DYNLIGHT
+        radiance += dlSpec;
+#endif
         alpha = 1.0; // the water composited what is behind it from the scene copy
         if (debug == 7) radiance = float3(saturate(wi.footprint * 4.0), float(waterSprite == 2), saturate(length(p) / 128.0)) / max(ex, 1e-3);
     } else
@@ -221,19 +247,18 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     if (water) {
 #ifdef ALPHA_CUTOUT
         float3 lit = shadeLit2(half3(1.0h), n, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
+#ifdef SHADE_DYNLIGHT
+        lit += sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), false, in.v_Light.x);
+#endif
         float4 w = shadeWater(lit, tint, shadeLumaH(half3(texel.rgb)), alpha, p, in.v_Light.y, shadow, skyLut, skyLutSmplr, sf);
         radiance = w.rgb;
         alpha = w.a;
 #endif
     } else {
         radiance = shadeLit2(albedo, n, in.v_Light.y, in.v_Light.x, shadow, thin, foliage, sf, sl);
-        // M3 dynamic lights (shade_dynlight.metal; the base's stub adds nothing)
-#ifdef MCOPT_HDR
-        constant ShadeResources *dynRes = &sr;
-#else
-        constant ShadeResources *dynRes = nullptr;
+#ifdef SHADE_DYNLIGHT
+        radiance += float3(albedo) * sf.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, float3(n), thin, in.v_Light.x);
 #endif
-        radiance += shadeDynamicLights(shadeDynIn(p, float3(n), float3(albedo), fragCoord.xy, in.v_Light.y, in.v_Light.x, SHADE_DYN_TERRAIN), sf, sl, dynRes);
         // Light sources until M2's material mask: at block light 14-15, bright warm texels (torch and lantern flames,
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block.
         half tl = shadeLumaH(half3(texel.rgb));

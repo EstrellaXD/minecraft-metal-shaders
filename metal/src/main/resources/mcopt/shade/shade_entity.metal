@@ -15,7 +15,7 @@
 //   fragment: after the game's own colour (alpha, cutout discard and dissolve stay the game's), the colour is replaced by
 //               shadeEntityShade(): albedo = texture x raw colour x ColorModulator with the hurt / creeper overlay, lit by
 //               shadeLit2 (sun or moon N.L with the shadow map, directional sky light, warm fill, block light curve, cave
-//               minimum), + shadeDynamicLights, fogged like terrain (shadeFogAir2) and exposed (shadeFinish2).
+//               minimum), + the dynamic lights (m3-lights' irradiance volume), fogged like terrain (shadeFogAir2) and exposed (shadeFinish2).
 // Outside the overworld the game's colour is kept (as terrain does), converted to scene-linear.
 #ifndef MCOPT_SHADE_ENTITY
 #define MCOPT_SHADE_ENTITY
@@ -24,6 +24,17 @@
 #define SHADE_ENT_BLOCK 1     // moving / falling blocks (no normal attribute: flat normal from the position's derivatives)
 #define SHADE_ENT_PARTICLE 2  // particles (camera-facing quads: lit as thin two-sided surfaces)
 #define SHADE_ENT_HAND 3      // the first-person hand and held items (MCOPT_HAND: after the final pass, into RGBA8)
+
+// M3 dynamic lights (m3-lights, dynlight.metal; SHADE_DYNLIGHT is defined by its prelude when the module is on): the
+// module's light list and irradiance volume, appended to the patched entry point by ShadeEntity.fragmentPatch (buffer 24,
+// textures 23-25: free in these stages) and passed through to shadeEntityShade.
+#ifdef SHADE_DYNLIGHT
+#define SHADE_ENT_DL_PARAMS , constant ShadeDynLights &dl, texture3d<half> dlIrr, texture3d<half> dlDir
+#define SHADE_ENT_DL_ARGS , mcoptDL, mcoptDLIrr, mcoptDLDir
+#else
+#define SHADE_ENT_DL_PARAMS
+#define SHADE_ENT_DL_ARGS
+#endif
 
 // MCOPT_HAND: the hand draws after the final pass into the display-referred main target: shade in HDR, then the same display
 // transform as the world (Shade Filmic + grade, shadeDisplay) and the sRGB encoding; no fog (bible E17).
@@ -42,7 +53,7 @@ static inline float4 shadeEntityOut(float3 preExposed, float alpha, constant Sha
 // distance start/end (the Fog uniform).
 static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay, float3 p, float3 nv, float2 light, bool front, float4 frag,
                                int kind, float4 fog, texture2d<half> lut, sampler lutS, depth2d_array<float> shadowMap, sampler cmp,
-                               constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &R) {
+                               constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &R SHADE_ENT_DL_PARAMS) {
 	// flat normal for formats without one (before any early return: the whole 2x2 quad takes part)
 	float3 dpx = dfdx(p), dpy = dfdy(p);
 #ifdef MCOPT_HAND
@@ -76,6 +87,12 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 	float3 radiance = shadeLit2(albedo, hn, sky, block, shadow, thin, false, f, L);
 	int dynKind = kind == SHADE_ENT_PARTICLE ? SHADE_DYN_PARTICLE : kind == SHADE_ENT_HAND ? SHADE_DYN_HAND : SHADE_DYN_ENTITY;
 	radiance += shadeDynamicLights(shadeDynIn(p, n, float3(albedo), frag.xy, sky, block, dynKind), f, L, &R);
+#ifdef SHADE_DYNLIGHT
+	// the dynamic lights as the terrain takes them (irradiance volume, per pixel). Not the hand: its p is hand space, and
+	// m3-lights' DynLightEntityRendererMixin already raised the local player's packed light (block light here) to the
+	// dynamic level at the player.
+	if (kind != SHADE_ENT_HAND) radiance += float3(albedo) * f.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, n, thin, block);
+#endif
 #ifdef MCOPT_HAND
 	float vanillaFog = 0.0; // the hand gets no fog
 #else

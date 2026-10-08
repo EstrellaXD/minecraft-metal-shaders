@@ -1,0 +1,8 @@
+{
+	"required": true,
+	"package": "mcopt.metal.shade.light.mixin",
+	"plugin": "mcopt.metal.shade.light.mixin.DynLightMixinPlugin",
+	"compatibilityLevel": "JAVA_25",
+	"client": ["DynLightClientLevelMixin", "DynLightEntityRendererMixin"],
+	"injectors": { "defaultRequire": 1 }
+}

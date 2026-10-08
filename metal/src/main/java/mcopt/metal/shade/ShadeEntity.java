@@ -175,6 +175,9 @@ public final class ShadeEntity {
 			.append(", constant ShadeResources& mcoptSR [[buffer(19)]], depth2d_array<float> mcoptShadow [[texture(16)]], sampler mcoptShadowCmp [[sampler(12)]]")
 			.append(", texture2d<half> mcoptLut [[texture(17)]], sampler mcoptLutSmplr [[sampler(13)]], float4 mcoptFrag [[position]]");
 		if (front.equals("mcoptFront")) params.append(", bool mcoptFront [[front_facing]]");
+		// M3 dynamic lights (shade_entity.metal SHADE_ENT_DL_PARAMS): the module's light list and irradiance volume
+		if (mcopt.metal.shade.light.DynLightMsl.ON) params.append("\n#ifdef SHADE_DYNLIGHT\n, constant ShadeDynLights& mcoptDL [[buffer(24)]], "
+			+ "texture3d<half> mcoptDLIrr [[texture(24)]], texture3d<half> mcoptDLDir [[texture(25)]]\n#endif\n");
 		int kind = hand ? 3 : PIPELINES.get(pipelineName);
 		String overlay = in.contains(" overlayColor [[user(") ? "in.overlayColor" : "float4(0.0, 0.0, 0.0, 1.0)";
 		String modulator = hasDt ? dt.group(1) + ".ColorModulator" : "float4(1.0)";
@@ -182,7 +185,7 @@ public final class ShadeEntity {
 			+ ".FogRenderDistanceStart, " + fog.group(1) + ".FogRenderDistanceEnd)" : "float4(1e6, 1e6, 1e6, 1e6)";
 		String shade = "out." + member + " = shadeEntityShade(out." + member + ", Sampler0.sample(Sampler0Smplr, in.texCoord0) * in.mcoptColor * " + modulator + ", "
 			+ overlay + ", in.mcoptPos, in.mcoptNrm, in.mcoptLight, " + front + ", mcoptFrag, " + kind + ", " + fogV
-			+ ", mcoptLut, mcoptLutSmplr, mcoptShadow, mcoptShadowCmp, mcoptSF, mcoptSL, mcoptSG, mcoptSR);\n    ";
+			+ ", mcoptLut, mcoptLutSmplr, mcoptShadow, mcoptShadowCmp, mcoptSF, mcoptSL, mcoptSG, mcoptSR SHADE_ENT_DL_ARGS);\n    ";
 		String patched = msl.substring(0, close) + params + msl.substring(close, ret) + shade + msl.substring(ret);
 		// the four extra inputs, at the end of main0_in
 		int inAt = patched.indexOf("struct main0_in\n{");

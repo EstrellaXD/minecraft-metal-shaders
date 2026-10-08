@@ -74,6 +74,7 @@ public final class ShadeMsl {
 	public static String prelude() {
 		if (prelude == null) {
 			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_m2.metal") + "\n"
+				+ mcopt.metal.shade.light.DynLightMsl.prelude() // M3 dynamic lights (empty when off)
 				+ resource("shade_dynlight.metal") + "\n";
 		}
 		return prelude;
@@ -198,8 +199,12 @@ public final class ShadeMsl {
 					.replace(VERTEX_FLIP, VERTEX_FLIP + "\n    int4 mcoptFlags = as_type<int4>(mcoptShadeFrame[60]); // ShadeFrame.flags (offset 960)\n"
 						+ "    if (mcoptFlags.z != 0 && mcoptFlags.x == 0) out.gl_Position = float4(0.0);");
 			}
-			String lit = ShadeEntity.vertex(pipelineName, msl); // M3: entities, items, moving blocks, particles lit by shade
-			return lit != null ? lit : msl;
+			// M3: the game's own world stages (entities, items, block entities, particles) take the dynamic lights in their lightmap
+			// (DynLightMsl, per vertex: the game's colour keeps them where ShadeEntity does not shade, outside the overworld and
+			// in the pipelines it leaves alone: glint, text, leash...), then ShadeEntity's per-pixel lighting (overworld)
+			String dyn = mcopt.metal.shade.light.DynLightMsl.patchVertex(pipelineName, msl);
+			String lit = ShadeEntity.vertex(pipelineName, dyn); // M3: entities, items, moving blocks, particles lit by shade
+			return lit != null ? lit : dyn;
 		}
 
 		@Override

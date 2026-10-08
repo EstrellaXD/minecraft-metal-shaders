@@ -254,6 +254,8 @@ public final class ShadeFrameUpdater {
 		LOOK.pack(ShadeBindings.currentLook(), f);
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
+		// M3 dynamic lights: this frame's lights into their ring slot, occupancy refresh, visibility volumes (before the world)
+		if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.frame(ShadeBindings.ctx(), enc, camera, level, partial);
 		if (mcopt.metal.shade.water.ShadeWater.ON) mcopt.metal.shade.water.ShadeWater.bake(ShadeBindings.ctx(), enc);
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());
 		if (LOG_EVERY > 0 && now - lastLog > LOG_EVERY * 1_000_000_000L) {

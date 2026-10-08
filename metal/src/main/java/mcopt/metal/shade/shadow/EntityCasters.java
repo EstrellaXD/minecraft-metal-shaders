@@ -49,6 +49,8 @@ public final class EntityCasters {
 
 	private static long shadow;
 	private static int recorded, dropped;
+	/** mcopt.shade.entityShadows.pause, read every frame (mcbench's zoo_noshadow phase: the cost A/B in one session). */
+	private static boolean paused;
 	private static boolean installed;
 
 	private EntityCasters() {
@@ -57,7 +59,7 @@ public final class EntityCasters {
 	private static final MetalDrawTap.Listener TAP = (pipeline, vertexBuffer, firstVertex, quads, stride, uvOffset, texture) -> {
 		Float cutoff = CASTERS.get(pipeline);
 		long s = shadow;
-		if (cutoff == null || s == 0 || quads <= 0 || texture == 0) return;
+		if (paused || cutoff == null || s == 0 || quads <= 0 || texture == 0) return;
 		if (ShadowNative.entityRecord(s, vertexBuffer, firstVertex, quads, stride, uvOffset, texture, cutoff) == 0) recorded++;
 		else dropped++;
 	};
@@ -82,6 +84,7 @@ public final class EntityCasters {
 
 	/** Before this frame's world passes: drop whatever a frame that never reached its commit recorded. */
 	static void beginFrame() {
+		paused = Boolean.getBoolean("mcopt.shade.entityShadows.pause");
 		if (shadow != 0 && recorded + dropped > 0) ShadowNative.entityReset(shadow);
 		recorded = dropped = 0;
 	}
@@ -96,7 +99,7 @@ public final class EntityCasters {
 	/** The near cascade is about to draw (camera x, y, z): shift last frame's casters onto it. */
 	static void prepareCast(long frame, double x, double y, double z) {
 		if (shadow == 0) return;
-		boolean stale = !fresh;
+		boolean stale = !fresh || paused;
 		fresh = false;
 		double dx = camX - x, dy = camY - y, dz = camZ - z;
 		if (dx * dx + dy * dy + dz * dz > 64 * 64) stale = true; // a teleport: they'd land in the wrong place

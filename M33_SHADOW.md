@@ -1,16 +1,23 @@
 # M3.3 shadow passes (branch `m3.3-shadow` from `m3-int` 397e241)
 
-## M3.3 Status (2026-10-08 09:55)
+## M3.3 Status (2026-10-08 10:10)
 
-- **Done (built, `validate.sh` ALL OK, not yet seen in game):** c023d12 = far cascade spread, shadow GPU timers, tight
-  coloured-shadow rectangle, rectangle-only tint pass, tint pricing bits, blob decision counts. mcbench 9cd7025
-  (`ShadowShots`).
-- **Running:** game run 1 (`notes/m33-2026-10-08/shadow/run1.sh`, jar `jars/m3.3-shadow-c023d12.jar`): in-session A/B of the
-  far spread (spin x4, route x4, timers x2 via MiscShots `-Dmcbench.ab`), coloured-shadow price phases (`shtint_*`), glass
-  variant shots, far spread shots (still / strafe / turn), entity shots cave/noon/evening/night; then the same entity shots
-  with `release/mcopt-shade-M2.1.jar` (blob reference).
-- **Next:** read the numbers (`notes/m33-2026-10-08/shadow/framespread.py <run>`, timer lines `shadow gpu ms` in latest.log),
-  look at the shots, decide the defaults, write the prices below.
+- **Done:** 0d872ba (build OK, `validate.sh` ALL OK). Run 1 (`bench-results/20261008-095117-sh1-shadow`, jar
+  `jars/m3.3-shadow-c023d12.jar`, AC power) seen in game:
+  - **Far spread works:** the every-4th-frame spike goes from **+0.20-0.33 ms to +0.04-0.11 ms** (the rest is other periodic
+    work), whole-frame GPU unchanged (spin -0.05, route +0.04: noise), GPU frame-to-frame jitter -0.04 ms, CPU frame-to-frame
+    jitter -0.06 ms (-20 %). Same casters per 4 frames (310.5k quads whole = 4 x 77.6k parts at the overview spin). Shots
+    still / strafing / turning: same terrain shadows, no seams, no missing quarter. CPU caster listing was +0.2 ms/frame
+    (0.22 -> 0.42): fixed in 0d872ba (far-only regions walk only the part's sections); to confirm in run 2.
+  - **Coloured shadows:** looks identical for M3.2 / tight rectangle / rectangle-only pass / 512 map
+    (`release/M3.3-screenshots/shadow_glass_noon_M32_tight_sub_lite.jpg`). Prices in one session too noisy (drift +0.11 ms
+    over the bracket): whole feature 0.14, no pass -0.085, no lookup -0.036. Run 2 alternates M3.2 / new / none 4 times.
+  - **Blob:** the log shows every cave piece kept (sky light 0), every night piece kept (moon), sunlit pieces dropped;
+    `ent_cave` shows a faint blob at the villager's feet. The M2.1 reference run is queued.
+  - The shadow GPU timers measure spans that include overlapping work of the frame before (near ~2.0 ms, far ~1.8-2.7 ms,
+    tint ~2.0 ms: upper bounds only, not usable as prices); kept as a dev flag, documented.
+- **Running:** M2.1 entity run (run1.sh part 2), then run 2 (`run2.sh`, jar `jars/m3.3-shadow-0d872ba.jar`).
+- **Next:** blob A/B images, run 2 prices, defaults, release screenshots, Spanish summary.
 
 Plan (in this order; every new behaviour behind a flag whose "off" = M3.2 exactly):
 

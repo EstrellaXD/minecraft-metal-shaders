@@ -58,6 +58,14 @@ public final class MetalShaderRegistry {
 		String vertex(String pipelineName, String msl, boolean registry, int[] colorFormats);
 
 		String fragment(String pipelineName, String msl, boolean registry, int[] colorFormats);
+
+		/**
+		 * The formats a pipeline's variant is keyed and built by (default: as given): lets an adapter drop tag bits a pipeline
+		 * does not use, so one tagged pass does not build duplicate variants of every other pipeline drawn in it.
+		 */
+		default int[] canonical(String pipelineName, int[] colorFormats) {
+			return colorFormats;
+		}
 	}
 
 	private static volatile @Nullable FormatAdapter adapter;

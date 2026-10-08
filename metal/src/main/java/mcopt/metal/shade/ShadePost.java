@@ -346,7 +346,8 @@ public final class ShadePost {
 			float[] h = ShadeFrameUpdater.LOOK.ldrToHdr(clear[0], clear[1], clear[2]);
 			clears = new float[][] {{h[0], h[1], h[2], clear[3]}};
 		}
-		return MetalHooks.Redirect.formats(new long[] {hdr[frame & 1]}, clears, width, height, new int[] {ShadeConfig.HDR_FORMAT});
+		// M3.1: this frame's lean tag (ShadeLean) selects the Sodium terrain's variant without the module code it can't use
+		return MetalHooks.Redirect.formats(new long[] {hdr[frame & 1]}, clears, width, height, new int[] {ShadeConfig.HDR_FORMAT | ShadeLean.tag() << ShadeMsl.LEAN_SHIFT});
 	}
 
 	/**

@@ -65,6 +65,12 @@ import org.lwjgl.system.MemoryUtil;
 public final class DynLights {
 	/** The module is compiled into the shaders and bound (static final: off, every hook is dead code). */
 	public static final boolean ON = DynLightConfig.ENABLED;
+	/** This frame's light count (0: the terrain can take its lean variant without dynamic-light code, ShadeLean). */
+	private static volatile int lastCount;
+
+	public static int activeCount() {
+		return lastCount;
+	}
 	/** The local player's packed light follows what it holds (DynLightEntityRendererMixin). */
 	public static final boolean HAND_LIGHT = ON && DynLightConfig.HAND;
 	static final int MAX = 64, GRID_X = 16, GRID_Y = 12, GRID_Z = 16, CELL = 8;
@@ -221,6 +227,7 @@ public final class DynLights {
 		// -Dmcopt.shade.dynLights.pause (read every frame; the bench sets it at run time for an A/B in one session): no lights
 		if (Boolean.getBoolean("mcopt.shade.dynLights.pause")) ACTIVE.clear();
 		int count = Math.min(ACTIVE.size(), DynLightConfig.MAX);
+		lastCount = count;
 		for (int i = 0; i < ACTIVE.size(); i++) {
 			Src s = ACTIVE.get(i);
 			s.selected = i < count;

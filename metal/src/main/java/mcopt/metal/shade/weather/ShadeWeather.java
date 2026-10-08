@@ -116,6 +116,14 @@ public final class ShadeWeather {
 	private ShadeWeather() {
 	}
 
+	/**
+	 * Nothing of the weather shows on the terrain this frame (no rain, wetness, puddles, snow cover, snowfall or flash, below
+	 * what can be seen): the terrain can take its lean variant without the wet-surface code (ShadeLean).
+	 */
+	public static boolean dry() {
+		return wetness < 0.003f && puddles < 0.003f && snow < 0.003f && rain < 0.003f && snowfall < 0.003f && flash <= 0f;
+	}
+
 	static boolean flag(String key, boolean fallback) {
 		String v = System.getProperty(key);
 		return v == null ? fallback : Boolean.parseBoolean(v.trim());

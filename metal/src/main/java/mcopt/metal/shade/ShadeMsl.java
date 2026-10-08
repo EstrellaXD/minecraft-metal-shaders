@@ -118,6 +118,21 @@ public final class ShadeMsl {
 	}
 
 	private static final String TRANSLUCENT_DEFINE = "#define ALPHA_CUTOUT 0.01";
+	/**
+	 * M3.1 lean terrain tags (ShadeLean) on the HDR world format, bits 17-19 (the lit hand's tag is bit 16, on RGBA8): the Sodium
+	 * terrain's variant for a tag compiles that code out (sodium_terrain.fs.metal SHADE_LEAN_*); other pipelines drop the bits.
+	 */
+	public static final int LEAN_SHIFT = mcopt.metal.MetalHooks.TAG_SHIFT + 1, LEAN_OW = 1, LEAN_DRY = 2, LEAN_NODL = 4, LEAN_MASK = 7 << LEAN_SHIFT;
+
+	static boolean leanTerrain(String pipelineName) {
+		return pipelineName.startsWith("sodium:pipeline/") && pipelineName.endsWith("_terrain");
+	}
+
+	static String leanDefines(int format) {
+		int t = (format & LEAN_MASK) >>> LEAN_SHIFT;
+		return ((t & LEAN_OW) != 0 ? "#define SHADE_LEAN_OW\n" : "") + ((t & LEAN_DRY) != 0 ? "#define SHADE_LEAN_DRY\n" : "")
+			+ ((t & LEAN_NODL) != 0 ? "#define SHADE_LEAN_NODL\n" : "");
+	}
 	/** M3.1 experiment (-Dmcopt.shade.leanTest=ow,dry,nodl): those lean defines in every terrain fragment, always. */
 	private static final String LEAN_TEST = leanTest(System.getProperty("mcopt.shade.leanTest", ""));
 
@@ -235,7 +250,9 @@ public final class ShadeMsl {
 
 	/** Whether colorFormats are an HDR world target's (one color attachment of the HDR format). */
 	static boolean hdrTarget(int[] colorFormats) {
-		return colorFormats.length == 1 && (colorFormats[0] == ShadeRender.RGBA16F || colorFormats[0] == ShadeRender.RG11B10F);
+		if (colorFormats.length != 1) return false;
+		int f = colorFormats[0] & ~LEAN_MASK;
+		return f == ShadeRender.RGBA16F || f == ShadeRender.RG11B10F;
 	}
 
 	/** MetalShaderRegistry's format adapter for the HDR world target (see the class comment). */
@@ -266,9 +283,16 @@ public final class ShadeMsl {
 				return lit != null ? lit : msl;
 			}
 			if (!hdrTarget(colorFormats)) return msl;
-			if (registry) return "#define MCOPT_HDR\n" + msl;
+			if (registry) return "#define MCOPT_HDR\n" + leanDefines(colorFormats[0]) + msl; // (M3.1 lean terrain tags: canonical keeps them only for the terrain)
 			String lit = ShadeEntity.fragment(pipelineName, msl, false);
 			return lit != null ? lit : hdrFragment(msl);
+		}
+
+		@Override
+		public int[] canonical(String pipelineName, int[] colorFormats) {
+			// M3.1: the lean tags only mean something to the Sodium terrain; any other pipeline keeps one HDR variant
+			if (colorFormats.length == 1 && (colorFormats[0] & LEAN_MASK) != 0 && !leanTerrain(pipelineName)) return new int[] {colorFormats[0] & ~LEAN_MASK};
+			return colorFormats;
 		}
 	};
 
@@ -284,6 +308,12 @@ public final class ShadeMsl {
 		// M3: the lit hand's tagged variants too (the "Item in hand" pass: arm, held items and their glint), so its first frame
 		// doesn't compile ~80 KB fragments on the render thread
 		if (ShadeEntity.HAND && (ShadeEntity.PIPELINES.containsKey(name) || n.contains("glint"))) return new int[][] {{ShadeConfig.HDR_FORMAT}, {ShadeEntity.HAND_FORMAT}};
+		// M3.1: the Sodium terrain's eight lean variants (ShadeLean), so a change of tag never compiles on the render thread
+		if (ShadeLean.ON && leanTerrain(name)) {
+			int[][] sets = new int[8][];
+			for (int t = 0; t < 8; t++) sets[t] = new int[] {ShadeConfig.HDR_FORMAT | t << LEAN_SHIFT};
+			return sets;
+		}
 		return new int[][] {{ShadeConfig.HDR_FORMAT}};
 	}
 

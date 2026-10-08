@@ -483,6 +483,8 @@ final class MetalPipeline implements BackendRenderPipeline {
 			throw new IllegalArgumentException(this.name + " has " + this.info.colorTargetStates().size() + " color targets, not " + colorFormats.length);
 		}
 		if (pulled && this.pulledMsl == null) return 0;
+		MetalShaderRegistry.FormatAdapter canon = MetalShaderRegistry.formatAdapter();
+		if (canon != null) colorFormats = canon.canonical(this.name, colorFormats);
 		String key = java.util.Arrays.toString(colorFormats) + (depth ? "+d" : "") + (pulled ? "+p" : "");
 		Long cached = this.variants.get(key);
 		if (cached != null) return cached;

@@ -335,7 +335,7 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 
 // Clouds in front of the world (cloud_over): into scene (the HDR target, its live sub-rect liveW x liveH) where the depth
 // lies behind the clouds' apparent distance (this frame's march distances), scene x T + light x exposure.
-void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture> depth, int liveW, int liveH) {
+void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture> depth, int liveW, int liveH, int mode) {
 	if (!s || !s->hist[0] || !scene || !depth) return;
 	@autoreleasepool {
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
@@ -370,6 +370,8 @@ void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture
 		[r setFragmentTexture:depth atIndex:0];
 		[r setFragmentTexture:s->marchDist atIndex:1];
 		[r setFragmentTexture:s->hist[s->cur] atIndex:2];
+		uint32_t m = (uint32_t) mode;
+		[r setFragmentBytes:&m length:4 atIndex:0];
 		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 		[r endEncoding];
 	}

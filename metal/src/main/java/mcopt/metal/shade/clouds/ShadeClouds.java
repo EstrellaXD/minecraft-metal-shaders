@@ -231,7 +231,9 @@ public final class ShadeClouds {
 	private static void beforeTonemap(ShadePost.Context c) {
 		if (!active || !over || failed || state == 0 || c.depth() == 0 || c.scene() == 0) return;
 		try {
-			CloudNative.over(c.enc(), state, c.scene(), c.depth(), c.width(), c.height());
+			// Distant Horizons' LODs are not in the world depth (empty there): with DH drawn this frame, pixels below the horizon
+			// without world depth are taken as far terrain behind the clouds (mode 1)
+			CloudNative.over(c.enc(), state, c.scene(), c.depth(), c.width(), c.height(), DH && ShadePost.bridgedThisFrame() ? 1 : 0);
 		} catch (Throwable t) {
 			System.out.println("[mcopt] shade: clouds over the world failed: " + t);
 			over = false;

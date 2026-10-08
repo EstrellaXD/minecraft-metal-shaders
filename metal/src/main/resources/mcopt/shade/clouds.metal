@@ -749,14 +749,20 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 // them behind everything else). Blend: One, OneMinusSourceAlpha (scene x T + light x exposure).
 fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]],
                           constant ShadeGpu &g [[buffer(18)]], depth2d<float> depth [[texture(0)]], texture2d<float> cdist [[texture(1)]],
-                          texture2d<half> hist [[texture(2)]]) {
+                          texture2d<half> hist [[texture(2)]], constant uint &mode [[buffer(0)]]) {
 	float d = depth.read(uint2(in.position.xy));
-	if (d <= 0.0) discard_fragment();
+	// mode 1 (Distant Horizons drew this frame): its LODs are not in the world depth, so an empty pixel below the horizon is
+	// taken as far terrain behind the clouds (true sky there gets the clouds a second time: rare with the LODs to the horizon)
+	if (d <= 0.0 && mode == 0u) discard_fragment();
 	float2 ndc = in.position.xy * f.screen.zw * 2.0 - 1.0;
-	float4 w = f.invViewProj * float4(ndc, d, 1.0);
+	float4 w = f.invViewProj * float4(ndc, d > 0.0 ? d : 0.5, 1.0);
 	float3 p = w.xyz / w.w;
 	float dist = length(p);
 	float3 dir = p / max(dist, 1e-4);
+	if (d <= 0.0) {
+		if (dir.y >= 0.0) discard_fragment();
+		dist = 1e9;
+	}
 	float4 cp = L.viewProjNoJitter * float4(dir, 0.0);
 	if (cp.w <= 1e-6) discard_fragment();
 	float2 uv = cp.xy / cp.w * 0.5 + 0.5;

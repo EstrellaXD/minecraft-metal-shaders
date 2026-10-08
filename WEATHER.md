@@ -5,7 +5,7 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 19:50)
+## Status (2026-10-07 20:05)
 
 **Done (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only
 where Fresnel shows it; terrain skips the coloured-shadow lookup when no translucent casters are near; rough films skip
@@ -14,8 +14,7 @@ changed the pattern; the swell seed puts puddles in the bench view); dev bits an
 module-off baseline. Prices, on/off, looks and runs are in **Results** below. Screenshots:
 `work/release/M3-weather-screenshots/` (`final_*` = build ccaad51).
 
-**Next:** the budget is not met at balanced in heavy rain (~0.9 ms vs 0.5; see Results for the options); the coloured-
-shadow pass cost needs one clean bracketed number (wx17 below, if it ran); puddle edges in motion (video) not checked yet;
+**Next:** the budget is not met at balanced in heavy rain (~0.9 ms vs 0.5; see Results for the options); coloured shadows cost 0.19 ms near glass (wx17: limit the lookup to the casters' light-space rectangle); puddle edges in motion (video) not checked yet;
 integration into m3 (ShadeResources slot 4 vs the lights module, `shadeLit2` direct term duplicated in
 `shadeShadowTintDelta`).
 
@@ -128,7 +127,23 @@ cpu-load 90-200 % during the phases; the same 10 s pans; wx14 had no glass roof,
 | dry (wxdry) | 6.90, 7.02 | 6.76, 6.68 | **+0.24** (+0.14 / +0.33 pairwise) |
 | rain (wxrain) | 8.27, 8.38 | 7.30, 7.53 | **+0.91** (+0.98 / +0.85 pairwise) |
 
-WX17_TINT
+**Cleanest single session: wx17** (19:57, a 10 s unrecorded warm-up first, drift wxrain2 - wxrain only +0.04 ms, cpu-load
+100-180 % during the phases), raw in-session differences, ms:
+
+| Part | wx17 |
+|---|---|
+| **Dry: coloured shadows** (glass roof in range), bracketed wxdry 6.696 / wxdry_notint 6.508 / wxdry2 6.709 | **0.19** |
+| **Rain, everything** (wxrain 8.010 vs wxrain_dry 7.212) | **0.80** |
+| puddle reflections (SSR, 12 steps, quad) | 0.16 |
+| saved by the Fresnel gate | 0.11 |
+| saved by the baked noise | 0.75 |
+| raindrop ripples (1 grid) | 0.08 |
+| lit, slanted rain streaks | 0.08 |
+| the rest (wet darkening and film, sky reflection, sun sheen, puddle mask, coloured shadows ~0.19) | ~0.48 |
+
+So with glass nearby the coloured shadows cost ~0.19 ms (the receivers' lookup runs on every sunlit pixel once any
+translucent caster is in the near cascade); away from glass and water the lookup is skipped and only the empty tint pass
+(a clear) remains.
 
 Reading: numbers move by ±0.1 ms between sessions on this shared machine (five agents, builds, thermal state), so trust
 the big items: the **baked noise saves ~0.75 ms**, the **Fresnel gate ~0.15 ms**, puddle **reflections cost ~0.25 ms**,
@@ -148,10 +163,11 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 - With all that, **rain at balanced costs ~0.9 ms more than M2.1** in this puddle-heavy view (37 % of the ground in view
   is puddle; before the pause it measured 1.16 ms over a dry frame with the old pattern). **Dry: +0.1-0.3 ms** with the
   glass roof in the coloured-shadow range (too noisy on this shared Mac to pin down closer; see the bracketed run below).
-- **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met.** Rain is ~0.4 ms over, dry is at or a bit
-  over. What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
+- **Budget (bible §7: ~0.1 ms dry, <= 0.5 ms in rain at balanced): not met.** Rain is 0.3-0.4 ms over (0.80 ms in the
+  cleanest session, ~0.9 ms on/off); dry is 0.19 ms with glass in range (~0 without). What would close it, in order of size, for the integrator / Gael to choose: puddle reflections off on balanced
   (`mcopt.shade.puddleSsr=false`, the bible's plan for P/B: -0.1 to -0.3 ms, puddles then mirror only the sky),
-  a deferred puddle pass at half resolution (new work, M4), coloured shadows only on quality+ (`mcopt.shade.colorShadows`).
+  a deferred puddle pass at half resolution (new work, M4), coloured shadows only on quality+ (`mcopt.shade.colorShadows`,
+  -0.19 ms near glass) or a light-space rectangle of the casters so only receivers under them do the lookup (small change, untested).
   Gael loves reflections, so this branch keeps them on at balanced.
 
 ### How it looks (screenshots in `work/release/M3-weather-screenshots/`)
@@ -185,4 +201,4 @@ over a dry frame with ~37 % of the ground in view under puddles** (less with few
 | `20261007-192037-wx14-off-price` | ccaad51 | `mcopt.shade.weather=false`, same phases (bias of each phase position), no glass roof |
 | `20261007-193854-wx15-price` | ccaad51 | final balanced prices again (price + glass, no shots) |
 | `20261007-194245-wx16-off-price` | ccaad51 | `mcopt.shade.weather=false`, price + glass |
-| WX17_RUN | ccaad51 | warm-up + dry A/B/A bracket of the coloured shadows (mcbench 6a2531f) |
+| `20261007-195738-wx17-price` | ccaad51 | warm-up + dry A/B/A bracket of the coloured shadows (mcbench 6a2531f); cleanest session |

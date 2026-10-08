@@ -24,7 +24,7 @@ fragment half4 shade_lut_fs(ShadeLutOut in [[stage_in]], constant ShadeFrame &f 
 	float3 transmittance;
 	float3 dir = shadeLutDirection(uv, f);
 	bool art = L.skyGoldH.w > 0.5; // M3 sunset art (mcopt.shade.sunsetArt)
-	float3 sky = shadeSkyRadiance(dir, f, transmittance, art);
+	float3 sky = shadeSkyRadiance(art ? shadeSunsetStretch(dir, f.sunDirWorld.xyz, f.sunDirWorld.w, f.weather.x) : dir, f, transmittance, art);
 	// M2 art layer: the golden hour's warm horizon and rose upper sky (ShadeLook.skyGold*), strongest toward the sun; baked
 	// into the LUT so the sky, its reflections and the fog into the sky behind terrain all agree
 	float2 hz = dir.xz, sz = f.sunDirWorld.xz;

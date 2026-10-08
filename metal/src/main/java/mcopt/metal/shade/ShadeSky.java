@@ -174,8 +174,15 @@ public final class ShadeSky {
 			float band = (float) Math.pow(Math.max(h, 1e-4f), 9f + (2f - 9f) * toward * toward);
 			float t = toward > 0.5f ? toward * 2f - 1f : toward * 2f;
 			float[] a = toward > 0.5f ? ART_SIDE : ART_AWAY, b = toward > 0.5f ? ART_TOWARD : ART_SIDE;
-			float k = gh * (0.2f + 0.8f * band);
-			for (int c = 0; c < 3; c++) out[c] *= 1f + (a[c] + (b[c] - a[c]) * t - 1f) * k;
+			float sl3 = (float) Math.sqrt(s.sunX * s.sunX + s.sunY * s.sunY + s.sunZ * s.sunZ);
+			float cs = Math.max((dx * s.sunX + dy * s.sunY + dz * s.sunZ) / Math.max(sl3, 1e-6f), 0f);
+			float glow = (float) Math.pow(cs, 10.0);
+			float k = gh * Math.min(0.2f + 0.8f * band + 0.6f * glow, 1f);
+			for (int c = 0; c < 3; c++) {
+				float col = a[c] + (b[c] - a[c]) * t;
+				col += (ART_HALO[c] - col) * glow * 0.6f;
+				out[c] *= 1f + (col - 1f) * k;
+			}
 		} else {
 			gh *= 0.55f + 0.45f * h * h * h;
 			out[0] *= 1f + 0.45f * gh; out[1] *= 1f + 0.02f * gh; out[2] *= 1f - 0.28f * gh;
@@ -188,7 +195,7 @@ public final class ShadeSky {
 
 	/** M3 sunset art (mcopt.shade.sunsetArt, set every frame by ShadeLook): the azimuth-aware grade of shadeSunsetGrade. */
 	public static volatile boolean sunsetArt = true;
-	private static final float[] ART_TOWARD = {1.52f, 0.98f, 0.64f}, ART_SIDE = {1.42f, 0.96f, 0.80f}, ART_AWAY = {1.18f, 0.90f, 1.06f};
+	private static final float[] ART_HALO = {1.70f, 0.98f, 0.52f}, ART_TOWARD = {1.60f, 0.93f, 0.60f}, ART_SIDE = {1.42f, 0.96f, 0.80f}, ART_AWAY = {1.18f, 0.90f, 1.06f};
 
 	/** shade_common.metal's shadeGoldenHour weight: the warm grade on the sky while the sun is low. */
 	static float goldenHourWeight(float sunY, float rain) {

@@ -5,40 +5,60 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
-## M3.3 Status (2026-10-08 10:00) — agent "dims", branch `m3.3-dims` (from m3-int 397e241)
+## M3.3 Status (2026-10-08 11:20) — agent "dims", branch `m3.3-dims` (from m3-int 397e241)
 
 Plan (in this order; each item ends done with in-game before/after evidence, or with a precise note):
-1. Nether dark specks (nether_warped). 2. End blob shadow next to the End key light's shadows. 3. End + Distant Horizons
-broken. 4. Aurora price. 5. Nether +0.6 ms. 6. XDR skip when nothing is above the knee.
+1. Nether dark specks. 2. End blob shadow next to the End key light's shadows. 3. End + Distant Horizons broken.
+4. Aurora price. 5. Nether +0.6 ms. 6. XDR skip when nothing is above the knee.
 
-Progress (built, `validate.sh` ALL OK; jar `work/notes/m33-2026-10-08/jars/m3.3-dims-9b16fb3.jar`; in-game check running:
-`work/notes/m33-2026-10-08/dims/r23.sh`):
-- **3. End + DH: root cause found** (run `20261008-093853-dims-dh1`, pass log + metal trace of one End frame). The bench's End
-  has the dragon alive: vanilla draws **no sky pass** in a boss fight (the Nether never has one either). Then Distant Horizons'
-  first pass is the first thing that touches main in the frame, and `ShadePost.openBridge` took main's pending clear and
-  **dropped it**: the HDR target was never cleared, still held the last frame, and the bridge fed that to DH, whose TAA +
-  sharpen (its post chain copies its whole colour target back into main) re-processed it every frame: a feedback loop that
-  grows Turing-like patterns (the "grey checkerboard / coloured noise") wherever no world geometry draws; the auto exposure
-  then darkened the island (olive). Evidence: with `mcopt.shade.dhDebug=1` (DH kept out of the bridge) the End is clean;
-  `mcopt.shade.taa.cut=true` (our TAAU without history) still broken; `dims.pause` still broken (= pre-existing since M2).
-  Overworld frames have a `Sky` pass first, so they never hit it. Fix (`mcopt.shade.dhClear`, live, default true): openBridge
-  applies main's pending clear to the HDR target first (as the redirect does for the first world pass). Also covers the Nether,
-  under water / lava / powder snow and blindness with DH (no sky pass either). Not FT1: DH's LODs stay unlit/unfogged.
-- 1. Warped specks = **warped spores** (`opaque_particle`, `SuspendedParticle.WarpedSporeProvider`, vertex colour
-  0.1/0.1/0.3), already lit by `shadeLitDims` and fogged by the final pass: dark because vanilla made them navy for its
-  near-black purple fog; ash in the soul sand valley is the same (0..0.5 grey). Change (`mcopt.shade.dims.motes`): Nether
-  particles' albedo luminance lifted to a floor of 0.16, hue kept (spores blue, ash grey). Shots pending.
-- 2. `mcopt.shade.dims.endBlob`: the blob is dropped in the End while its key light's shadows draw (receivers there look the
-  map up everywhere: no sky-light gate). New bench scene `end_mobs` (mcbench `-Dmcbench.dims=...,endmobs`). Shots pending.
-- 4. `mcopt.shade.aurora.lean`: the aurora's 8 noise taps shared by the 2x2 quad (~3 per pixel). Price pending.
-- 5. `mcopt.shade.dims.netherLean`: the Nether's own lean terrain variant (shadow / cloud / overworld-fog code compiled
-  out); `mcopt.shade.dims.netherLight=vanilla`: vanilla lightmap + our fog (performance-preset candidate). Prices pending.
-- 6. `mcopt.shade.xdrSkip`: the bloom's first downsample flags pixels near the knee (ShadeGpu.xdrHot); XDR final pass and
-  compose only while flagged, held 1.5 s. Price pending.
+Runs so far (all AC power, `work/bench-results/`): `20261008-093853-dims-dh1` (End+DH diagnosis), `20261008-101036-dims-dh2`
+(End+DH fix, jar `m3.3-dims-9b16fb3`), `20261008-104241-dims-r3` (DEV shots v1 = every M3.3 flag off, in-session prices; same
+jar; table: `python3 work/notes/m33-2026-10-08/dims/abtable.py <run>`). Running now: `work/notes/m33-2026-10-08/dims/r45.sh`
+with jar `m3.3-dims-252f407` (R5 = DEV-DH End/Nether, R4 = DEV shots + 16 price phases; log `r45.log` next to it).
 
-Dev switches (live, off by default): `mcopt.shade.passLog=<tag>` (log one world phase's passes), `mcopt.shade.dhDebug=1`,
-`mcopt.shade.taa.cut=true`, `mcopt.shade.aurora.pause=true`. mcbench (DimShots): `-Dmcbench.dimsVariants`, `-Dmcbench.dimsAb`,
-scene `end_mobs`.
+- **1. Nether specks: DONE.** They are warped spores (`opaque_particle`, vanilla colour 0.1/0.1/0.3) and soul-valley ash,
+  already lit by `shadeLitDims` and fogged: dark because vanilla made them navy for its black fog. `mcopt.shade.dims.motes`
+  (live, default true): Nether particles' albedo luminance lifted to a floor of 0.16, hue kept. r3 shots: spores now blue
+  specks instead of black dots (`work/release/M3.3-screenshots/dims_nether_warped_before.png` / `_after.png`, full-res crops);
+  basalt's white ash unchanged (no dark specks in either).
+- **2. End blob** (`mcopt.shade.dims.endBlob`, live, default true): r3's `end_mobs` could not show it (the mobs stood in a
+  pillar's shadow, camera above them). mcbench a423879 moves them to x = -18 (out of the pillars' shadows under the key
+  light from +x +z at 55 degrees), 3 blocks apart. Shots in R4.
+- **3. End + DH: root cause and fix DONE** (dh2: `end_island` clean with the fix, the v1 = M3.2 shot shows the coloured-noise
+  feedback; `work/release/M3.3-screenshots/dims_end_dh_before_after.jpg`). Root cause: the End with the dragon alive has no
+  sky pass, so Distant Horizons' first pass was the first to touch main; `ShadePost.openBridge` dropped main's pending clear,
+  the HDR target kept the last frame, and DH's TAA + sharpen re-processed it every frame (a feedback loop). Fix
+  `mcopt.shade.dhClear` (live, default true): the clear is applied to the HDR target first. Left over in dh2: with DH the End
+  void was plain dark (the final pass skipped its End sky wherever DH drew). 252f407 paints it where the pixel still holds
+  the clear colour (luma <= 1.5 x the fog colour's): check in R5.
+- **4. Aurora**: r3 showed the 2x2-shared aurora (`aurora.lean`) saves nothing in game (6.43 vs 6.47 ms; the aurora costs
+  ~0.40 ms there: `aurora.pause` 6.05 ms), and XDR stayed on in all those phases (no side effect). Replaced (252f407) by a
+  reduced-resolution pass (`mcopt.shade.aurora.half`, live, default true; false = M3.2): `ShadeAurora` renders M3.2's
+  `shadeAurora` unchanged into an RGBA16F texture of 0.4 x the output (`mcopt.shade.aurora.scale`), the sky pass reads it with
+  one tap and draws with its lean variant (no per-pixel aurora code). Price + look in R4.
+- **5. Nether**: `mcopt.shade.dims.netherLean` (live, default true) = the Nether's own lean terrain variant: r3 in-session
+  4.505 ms vs 4.786 ms with it off = **-0.28 ms**, same look (r3 diff nether_wastes vs v1: differences only on animated lava
+  and particles). `mcopt.shade.dims.netherLight=vanilla` (lightmap + our fog) measured 4.493 ms = no further gain (and XDR
+  was skipped during it: even less). R4 re-measures against the M2.1 look (dims.pause) with XDR skip off throughout.
+- **6. XDR skip** (`mcopt.shade.xdrSkip`, live, default true): r3: it almost never engages in the bench scenes (lava, End
+  crystals, the moon keep a pixel near the knee): end_island / overview A/B within noise. It engages in the vanilla-light
+  Nether: R4 prices it there (dab13-16).
+
+Flags (all live): `mcopt.shade.dims.motes`, `mcopt.shade.dims.endBlob`, `mcopt.shade.dhClear`, `mcopt.shade.aurora.half`
+(+ static `mcopt.shade.aurora.scale` 0.4), `mcopt.shade.dims.netherLean`, `mcopt.shade.dims.netherLight` (option, default
+ours), `mcopt.shade.xdrSkip` (+ `mcopt.shade.xdrSkip.log`). Off = M3.2 for each. Dev switches (off by default):
+`mcopt.shade.passLog=<tag>`, `mcopt.shade.dhDebug=1`, `mcopt.shade.taa.cut=true`, `mcopt.shade.aurora.pause=true`.
+mcbench (DimShots): `-Dmcbench.dimsVariants`, `-Dmcbench.dimsAb`, scene `end_mobs` (`-Dmcbench.dims=...,endmobs`).
+
+Integration notes (shared files touched on this branch, for the orchestrator's merge):
+- `shade_look.metal`: ShadeResources `reserved11` -> `aurora` (slot 11, M3.3 dims). Another module claiming slot 11 must move.
+- `ShadeLean.java`: LEAN_NOAURORA also while `ShadeAurora.active()`; LEAN_NETHER bit (16) for the Nether variant (`update`).
+- `ShadeMsl.java`: LEAN_NETHER = 16 (LEAN_MASK 31), variant defines, prewarm sets for the Nether's four variants.
+- `sodium_terrain.fs.metal`: `SHADE_LEAN_NETHER` (shadow / cloud / overworld fog code compiled out in the Nether).
+- `ShadeFrameUpdater.java`: one line after `renderSkyLut`: `ShadeAurora.render(enc)`.
+- `ShadePost.java`: `openBridge` applies main's pending clear to the HDR target (dhClear); final pass `endSkyHere` (shade_post.metal).
+- `ShadeBindings.java`: `takeXdrHot()` (ShadeGpu offset 464). `shade_entity.metal`: Nether motes floor. `ShadeTaa.java`: dev `taa.cut`.
+- `sky.fs.metal`: the aurora read (`shadeAuroraTex`) compiled into both sky variants.
 
 ## Status (2026-10-07 22:10) — pre-merge fixes
 

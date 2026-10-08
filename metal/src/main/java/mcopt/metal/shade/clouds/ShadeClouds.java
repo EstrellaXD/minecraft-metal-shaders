@@ -54,6 +54,7 @@ public final class ShadeClouds {
 	private static int frame, domeFrames;
 	private static double lastX, lastY, lastZ;
 	private static int lastDimension = -1;
+	private static int lastMode = -1;
 	/** ShadePost before-tonemap order (AO 50, clouds 80, VL 100). */
 	public static final int HOOK_ORDER = 80;
 	private static boolean hooked, over;
@@ -145,12 +146,18 @@ public final class ShadeClouds {
 			// M3.1 dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): the bench's price phases switch passes or
 			// consumers off, or an optimisation back to M3's way, inside one session (CloudConfig.DEV_*, CLOUDS.md "M3.1 performance")
 			int dev = CloudConfig.devBits();
+			// M3.3 mode bits (read every frame): switching the resolve drops the history once (its data target differs)
+			int mode = CloudConfig.modeBits();
+			boolean modeChanged = lastMode < 0 || ((mode ^ lastMode) & CloudConfig.MODE_STABLE) != 0;
+			lastMode = mode;
 			// sizes: a fraction of the output (window framebuffer), independent of TAAU's render scale
 			var window = mc.getWindow();
 			int ow = Math.max(1, window.getWidth()), oh = Math.max(1, window.getHeight());
 			float scale = (dev & CloudConfig.DEV_SCALE_ALT) != 0 ? CloudConfig.SCALE_ALT : CloudConfig.SCALE;
 			int hw = Math.max(16, Math.round(ow * scale)), hh = Math.max(16, Math.round(oh * scale));
-			int checker = CloudConfig.CHECKER;
+			// (M3.3: dev bit DEV_CHECKER_ALT = the other checkerboard, mcopt.shade.clouds.checkerAlt, for in-session pricing; the
+			// march target's size changes, so the switch drops the history once)
+			int checker = (dev & CloudConfig.DEV_CHECKER_ALT) != 0 ? CloudConfig.CHECKER_ALT : CloudConfig.CHECKER;
 			hw = (hw + checker - 1) / checker * checker;
 			hh = (hh + checker - 1) / checker * checker;
 			int mw = hw / checker, mh = hh / checker;
@@ -160,7 +167,10 @@ public final class ShadeClouds {
 			long ticks = level.getDefaultClockTime();
 			double days = (ticks + f.partialTick) / 24000.0;
 			WEATHER.update(days, f.rain, f.thunder, dt, snap, CloudConfig.SEED);
-			float sx = WEATHER.windX * WEATHER.windSpeed * dt, sz = WEATHER.windZ * WEATHER.windSpeed * dt;
+			// (M3.3: mcopt.shade.clouds.freeze, read every frame, default false: the clouds stand still, no wind displacement at
+			// all, for look comparisons of variants shot one after another inside one session; the bench sets it)
+			float move = Boolean.getBoolean("mcopt.shade.clouds.freeze") ? 0f : dt;
+			float sx = WEATHER.windX * WEATHER.windSpeed * move, sz = WEATHER.windZ * WEATHER.windSpeed * move;
 			CloudParams p = PARAMS;
 			p.windX += sx;
 			p.windZ += sz;
@@ -186,11 +196,12 @@ public final class ShadeClouds {
 			p.marchH = mh;
 			p.checker = checker;
 			p.frame = frame++;
-			p.reset = snap || resized;
+			p.reset = snap || resized || modeChanged;
 			if (p.reset) domeFrames = 0;
 			p.domeValid = CloudConfig.DOME && domeFrames > 0;
 			p.opacity = 1f;
 			p.dev = dev;
+			p.mode = mode;
 			// the shadow map and the dome change slowly (the wind moves the shadows ~1/25 of a map texel in 4 frames): each every
 			// fourth frame, never in the same frame (both after a reset). CloudParams keeps the map's own frame in between.
 			// (M3.1: the dome every 8th frame at performance/balanced, CloudConfig.DOME_EVERY: its 8k rays cost ~0.11 ms per update,
@@ -200,7 +211,7 @@ public final class ShadeClouds {
 			p.shadowUpdate = CloudConfig.SHADOWS && ((p.frame & 3) == 3 || p.reset);
 			p.pack(PACKED, f, WEATHER);
 			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)
-				| (CloudConfig.GPU_TIMER ? 8 : 0);
+				| (CloudConfig.GPU_TIMER ? 8 : 0) | ((mode & CloudConfig.MODE_STABLE) != 0 ? 16 : 0);
 			if (!p.reset) {
 				if ((dev & CloudConfig.DEV_NO_SCREEN) != 0) flags &= ~2;   // pricing: no march / resolve (the consumers read the old history)
 				if ((dev & CloudConfig.DEV_NO_MAPS) != 0) flags &= ~(1 | 4); // pricing: no shadow map / dome pass

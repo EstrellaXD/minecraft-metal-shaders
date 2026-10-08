@@ -1,5 +1,75 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
+## M3.3 Status (2026-10-08 11:25) - resumed (new session after 52efc55)
+
+Offline (quiet-ish GPU, `work/notes/m33-2026-10-08/clouds/pvchk.sh` -> `pvchk1.out`, 3024x1964, history 0.45, M3.3 modes,
+3 alternations x 4 scenarios): **4x4 checkerboard: march 0.19-0.25 -> 0.12-0.13 ms (-40 %)**, resolve the same (0.22-0.25),
+total 0.55-0.62 -> 0.48-0.53. Offline look (`pvprep.sh`/`pvpng.sh`, 240 frames at 60 fps with wind, full-size crops in
+the scratchpad): still camera M3.2 combed, M3.3 3x3 and 4x4 clean (4x4 a little more grain); turning 30 deg/s: same fine
+grain for both. 2d9de10 allows `mcopt.shade.clouds.checker=4` (default still 3) + dev bit 524288 (checkerAlt 4) for
+in-session pricing + `mcopt.shade.clouds.freeze` (per frame: clouds stand still, for variant look shots); 2f215b7 keeps the
+noise mips of 3x3 under 4x4 (angle x min(N, 3): no change of the far billows). Resolve experiment R16Unorm instead of
+R16Uint data (`pvres2.sh` -> `pvres1.out`): no gain (0.26 both; M3.2's R8 resolve 0.20): dropped. Run 4 (`run4.sh`, jar
+2f215b7, queued 11:22): in-session price new / c4 / old / off (24 x 6 s interleaved), comb shots (wind) old / new / c4,
+frozen look shots fold / fnew / fc4 (noon_south, sunset_west, up, inside). Run 2's wind=0 look diff (old vs f9196f2, which
+still had halfLight on): `up` mean 3.4/255, luma -2.9 (darker) -> halfLight (now off) is the suspect; run 4 re-checks.
+
+
+Plan of the resumed session: (1) item 1 stays done; it is re-shot with the final jar in the last run. (2) Price: the
+remaining lever with a size of ~0.1 ms is fewer march rays: a 4x4 checkerboard (`mcopt.shade.clouds.checker=4`, today
+clamped to 3) priced offline first, then in game with an in-session switch (dev bit) against 3x3; also look for a cheaper
+stable resolve (its +0.03-0.05 ms). Run 3 (robust interleaved price, never ran: `run3.out` empty) is folded into the next
+game run together with the wind=0 look shots old vs new (imgdiff). (3) Horizon layering / far speckle only if cheap.
+
+## M3.3 Status (2026-10-08 10:28) - branch `m3.3-clouds` from m3-int 397e241
+
+Item 1 (comb): **fixed and confirmed in game** (b4ece4e, flag `mcopt.shade.clouds.stable`, default true, read every
+frame; false = M3.2; dev bit 32768 = M3.2 way for in-session pricing). Run 1 (`bench-results/20261008-101319-m33c-1`,
+`work/notes/m33-2026-10-08/clouds/run1.sh`, wind on, each scene shot with stable=false then true a few seconds apart):
+noon_south still camera: M3.2 shows the vertical comb along the soft edges, M3.3 a clean edge
+(`work/release/M3.3-screenshots/clouds_comb_quieto_antes_despues.jpg`); turning at 30 deg/s (shot mid-turn,
+`turn_south`, `turn_sunset`): M3.2 diagonal hatching over whole clouds and combed sunset edges, M3.3 none (a fine random
+grain remains where the turn just uncovered the sky, near the screen edge: `clouds_comb_girando_antes_despues.jpg`,
+`clouds_comb_girando_atardecer_antes_despues.jpg`). Its in-session price in run 1 is unusable (whole-frame GPU ms jumped
+between ~8.8 and ~10.9 ms between phases with nothing changed, residual sd 1.2 ms: GPU contention from outside the
+game); run 3 repeats it with 24 short interleaved phases. Diagnosis (offline preview, which now turns / scales the
+wind: `CLOUDS_YAWRATE`, `CLOUDS_WIND`; experiment shader kept as `work/notes/m33-2026-10-08/clouds/clouds_experiments.metal`):
+- soft cloud parts are step-aliased: one march sample's result there depends almost entirely on its start offset (fixed
+  offsets 0.1/0.3/0.5/0.7/0.9 give five different sets of lobes); only the average over visits is the soft cloud;
+- the offset was IGN(pixel) + visit x golden ratio. IGN is linear in the pixel (mod 1), so a cloud carried across the
+  pixels (wind, turning) met offsets stepping by a near-constant amount per visit that can cancel the golden step (one
+  3-pixel block in -x per 9 frames: -0.665 + 0.618 = -0.047): it was marched at the same depth phase visit after visit,
+  never averaged = the comb. Fixed offsets (no jitter) remove the comb (but alias); a per-pixel hash removes it too;
+- the block's one march distance used to reproject all 9 pixels jumps between visits on soft clouds (slab entry for a
+  clear ray, cloud depth for a hit): a band of speckle where the jumps were large. Fixed by carrying each pixel's own
+  cloud distance in the history (as Photon's clouds_data) + nearest-cloud distance of the 2x2 footprint for reprojection;
+- not the cause: the resolve's distance-jump clamp, the empty-space skip, Catmull-Rom vs bilinear, noiseDrift.
+- what remains in motion is a fine random grain (the noise floor of 1/9-rate sampling under sub-pixel resampling; a
+  2D model `sim_checker.py`/`sim2.py` shows the error grows with speed for any jitter: blur vs noise trade-off).
+
+Item 2 (price), 10:15: the march is **latency-bound**, not fetch-bound: instrumented offline (march work counters,
+`CLOUDS_RES`/`CLOUDS_DUMP`), an average ray does only ~4.5 loop iterations (~3 empty-air tests, ~2 in-cloud samples,
+~1 light march; the clouds are dense: 2 samples reach T < 0.02), i.e. ~10 texture fetches, but in a chain of dependent
+ones. Changes (each a mode bit, read every frame, with a dev bit back to M3.2's way for in-session pricing):
+`halfLight` (light march on every other in-cloud sample, the ones between take the mean: look diff mean 0.5-0.7/255),
+`batch` (a sample's fetches issued together incl. its light march and the cirrus' first fetch: same values, max diff
+13/255 on a handful of pixels from float order), `pair` (empty-air tests two at a time: bit-exact). Run 2 (`run2.sh`,
+m33c-2, jar symlink `jars/m3.3-clouds-run2.jar` -> f9196f2) prices each one in session; run 3 (`run3.sh`, m33c-3, same
+jar) repeats new / old (all four dev bits) / off in 24 interleaved 4-s spins (MiscShots `-Dmcbench.ab`) because run 1's
+whole-frame numbers jumped by ~2 ms between phases. f9196f2 also: the stable resolve reads its reprojection distance where
+the pixel is (one dependent fetch round less; run 1's timer had the stable resolve at 0.26 vs 0.19 ms), young pixels lean
+toward the upsampled march (less grain where a turn uncovers sky), the sky LUT and the shadow map's samples prefetched.
+Offline after f9196f2 the harsh case (60 fps wind) is clean too (`work/notes/m33-2026-10-08/clouds/` crops).
+
+1. Comb / hatching on soft cloud edges (still camera + wind + 3x3 checkerboard). Reproduce offline first
+   (`tools/shade/clouds/run.sh png` with a still camera over a few hundred frames, crops at full size), find the cause
+   with a debug output, fix behind a flag (off = M3.2), confirm in game (noon_south, still camera, wind on; and turning).
+   Evidence: `work/release/M3.3-screenshots/clouds_comb_*`.
+2. Price <= 0.5 ms at balanced (now ~0.65-0.71): empty-space skip (max-reduced weather mip), cheaper light march,
+   fewer resolve bytes; in-session pricing with `clouds-m31` tools; look kept (wind=0 shots old vs new, imgdiff).
+3. Only if cheap: far horizon band layering; speckle on far clouds from inside.
+Scripts/evidence: `work/notes/m33-2026-10-08/clouds/`.
+
 ## Status (2026-10-08 08:30) - M3.1 performance pass (branch `m3.1-clouds`), stopped by the usage limit
 
 Done (all committed, builds, validate ALL OK): price breakdown tools + six savings behind `mcopt.shade.clouds.lean`
@@ -399,3 +469,54 @@ mip_filter::linear (no gain: two levels), far light samples with the noise mean 
 `clouds.metal`, `CloudConfig/CloudParams/ShadeClouds.java`, `tools/shade/clouds/*` (CLOUDS_DEV),
 `work/mcbench` (`CloudShots.java`, `BenchDriver.REC_PHASES` + clouds_d1..d8; commits 862d838, a52ef55).
 `ShadeLook.clouds1.z` now carries the dev bits (was reserved), `CloudParams.lightDir.w` too.
+
+## M3.3 (2026-10-08, branch `m3.3-clouds` from m3-int 397e241): comb fix and price
+
+### Flags (all read every frame; each off = M3.2's way; `CloudConfig.modeBits()` -> `CloudParams.shadowDir.w`)
+| Flag | Default | Mode bit (shader) | Dev bit back to M3.2 | What |
+|---|---|---|---|---|
+| `mcopt.shade.clouds.stable` | true | 1 `CLOUD_MODE_STABLE` | 32768 | march start offsets from a per-pixel hash (not IGN); resolve `cloud_resolve_st` carries the clouds' distance in the history (R16Uint data: age 4 bits + log2 distance 12 bits), reprojects with the nearest cloud distance of the pixel's 2x2 history neighbourhood, young pixels (age < 3) lean toward this frame's upsampled march. Switching it drops the history once (different data target) |
+| `mcopt.shade.clouds.halfLight` | true | 2 `CLOUD_MODE_LIGHT2` | 65536 | the light march (+ the sky-light sample above) on every other in-cloud sample; the samples between take the mean of their neighbours' |
+| `mcopt.shade.clouds.batch` | true | 4 `CLOUD_MODE_BATCH` | 131072 | a march sample's texture fetches issued together (density + its light march + sky-light sample; the cirrus' first fetch and the sky LUT before the march; the shadow map's six samples): same values |
+| `mcopt.shade.clouds.pair` | true | 8 `CLOUD_MODE_PAIR` | 262144 | empty-air tests two at a time (both fetches together; same tests, same order, bit-exact) |
+All four off at once: `-Dmcopt.shade.clouds.dev=491520` (what the bench's "old" variants use).
+
+Added in the resumed session (all clouds-owned files):
+| Flag | Default | What |
+|---|---|---|
+| `mcopt.shade.clouds.m33` | true | master switch: false = every M3.3 change off at once (mode bits 0 and the M3.2 checkerboard defaults) = M3.2 exactly |
+| `mcopt.shade.clouds.checker` | P 3, B 3, Q 2, U 2 (see Status for the 4x4 decision) | now 1..4 (was 1..3); 4 = 4x4 Bayer slot order, visit cap 8 (`maxAge`), the noise mips of 3x3 |
+| `mcopt.shade.clouds.checkerAlt` + dev bit 524288 | 4 | in-session pricing: the dev bit switches the checkerboard to checkerAlt (the history is re-made once) |
+| `mcopt.shade.clouds.freeze` | false | read every frame: no wind displacement (clouds stand still): variant look shots inside one session (bench) |
+
+### Shared files touched (integration)
+None of the shared list. Clouds-owned only: `clouds.metal` (passes), `native/mcclouds.m` (pipeline `cloud_resolve_st`,
+R16Uint data targets `dataSt[2]` next to the R8 ones, render flag 16), `CloudConfig.java` (flags, mode bits, dev bits),
+`CloudParams.java` (`mode` -> shadowDir.w), `ShadeClouds.java` (mode per frame, history drop when the stable bit changes,
+flag 16), `CloudNative.java` (doc), `tools/shade/clouds/*` (offline preview: turning, wind scale, scenarios inside /
+horizon_sunset, mode-aware resolve, `CLOUDS_DEFS` / `CLOUDS_RES` / `CLOUDS_DUMP` for experiments). `work/mcbench`
+`CloudShots.java` (own file): `-Dmcbench.cloudsVariants`, scenes `turn_south` / `turn_sunset` (commit 89f72df).
+
+### Price (item 2): where the time goes and what the M3.3 changes do
+Offline profile (`work/notes/m33-2026-10-08/clouds/pvprof.sh`, `pvprof1.out`; `run.sh time` 3024x1964, history 0.45, M3.2
+mode, instrumented copy via `CLOUDS_RES`): march 0.21-0.27 ms = pass overhead + output **0.04** (shader returning at once)
++ per-ray fixed work (segment, cirrus, sky LUT) ~0.01 + the loop **~0.12-0.14** + its light march **~0.05-0.08** (all light
+removed: 0.16-0.19); cirrus and the four phase lobes ~0. Resolve 0.19-0.24 (bandwidth), dome 0.10 per update (1 in 8
+frames), shadow 0.045 per update (1 in 4). Work counters (`CLOUDS_DUMP`): an average ray does ~4.5 loop iterations, ~3
+empty-air tests, ~2 in-cloud samples and ~1 light march (dense clouds: 2 samples reach T < 0.02).
+
+In game, run 2 (`bench-results/20261008-103827-m33c-2`, AC, wind 0, f9196f2; phases 12 s, dev bits per phase; residual
+sd 0.03 ms, cpu median 113 %; the first phase was disturbed by an offline timing batch of ours and is left out):
+whole-frame GPU ms: default 9.02 (2 phases), all M3.3 off 9.05 (2), halfLight off 9.03, batch off 9.00, stable off 9.00,
+pair off 9.03, clouds paused 8.42 (2): **the clouds cost ~0.60 ms, M3.3's changes move it by less than the noise
+(+-0.05)**. Pass timers (`timerphase.py`, median per phase type): march 0.395 (default) / 0.419 (all off) / 0.413 (batch
+off) / 0.407 (pair off) / 0.394 (halfLight off); resolve 0.248 (default) / 0.219 (stable off) / 0.201 (all off); shadow
+0.101 per update with the batched shadow samples vs 0.048 without (removed in 9898b7b). Reading: batch and pair save
+~0.01-0.02 ms each on the march, halfLight nothing (now off by default: no gain for a look change), the comb fix's resolve
+costs ~+0.03-0.05 ms (its 2-byte data target and the second gather). Net ~0, so **the target <= 0.5 ms is not reached**
+(~0.6 ms at balanced in this sky-heavy spin). The march is not dominated by its fetch chain (batching it gained ~5 %) nor
+by its light march (halving the light marches gained nothing measurable in game); a third of the offline march is pass
+overhead and the resolve is DRAM-bound, so the remaining levers are fewer pixels (history scale 0.45 -> 0.4: resolve
+timer 0.20 -> 0.15 in M3.1, whole frame not measurable then), a 4x4 checkerboard (now that the comb is fixed, march rays
+-44 %, more grain in motion) or the async/previous-frame scheme of "M3.1 performance" step 4 - each a look/latency
+trade-off for Gael to choose, not done here.

@@ -47,7 +47,7 @@ public final class CloudParams {
 
 	// ---- inputs (set by the caller each frame) ----
 	public int histW = 1, histH = 1, marchW = 1, marchH = 1, frame;
-	/** Checkerboard N (1-3): one history pixel of each N x N block is marched per frame. */
+	/** Checkerboard N (1-4): one history pixel of each N x N block is marched per frame. */
 	public int checker = 3;
 	public boolean reset = true, domeValid;
 	/** The cloud shadow map is rendered this frame (else consumers keep reading the one rendered on an earlier frame). */
@@ -60,6 +60,8 @@ public final class CloudParams {
 	public float opacity = 1f;
 	/** This frame's dev bits (CloudConfig.devBits): the passes read them in lightDir.w, the consumers in ShadeLook.clouds1.z. */
 	public int dev;
+	/** This frame's M3.3 mode bits (CloudConfig.modeBits; 0 = M3.2): the passes read them in shadowDir.w. */
+	public int mode;
 
 	// ---- derived, for the log / tools ----
 	public final float[] light = new float[3];
@@ -78,12 +80,12 @@ public final class CloudParams {
 		inv.get(0, b);
 		m.translation(-f.prevJitterX, -f.prevJitterY, 0f).mul(f.prevViewProj).get(64, b);
 		put4(b, 128, this.histW, this.histH, this.marchW, this.marchH);
-		int n = Math.max(1, Math.min(3, this.checker));
+		int n = Math.max(1, Math.min(4, this.checker));
 		int slot = Math.floorMod(this.frame, n * n);
-		// slot orders that spread consecutive frames apart: 2x2 (0,0) (1,1) (1,0) (0,1); 3x3 by a Bayer-like order
-		int[] order = n == 3 ? ORDER3 : n == 2 ? ORDER2 : ORDER1;
+		// slot orders that spread consecutive frames apart: 2x2 (0,0) (1,1) (1,0) (0,1); 3x3 by a Bayer-like order; 4x4 Bayer
+		int[] order = n == 4 ? ORDER4 : n == 3 ? ORDER3 : n == 2 ? ORDER2 : ORDER1;
 		int cell = order[slot];
-		put4(b, 144, cell % n, cell / n, this.reset ? 1f : 0f, CloudConfig.MAX_AGE);
+		put4(b, 144, cell % n, cell / n, this.reset ? 1f : 0f, CloudConfig.maxAge(n));
 		float camY = (float) f.cameraY;
 		put4(b, 160, this.base, this.top, camY, 1f / (2f * CURVATURE_RADIUS));
 		float storm = w.storm;
@@ -157,10 +159,11 @@ public final class CloudParams {
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
 		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.4f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
-		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard
+		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard (M3.3: at
+		// most 3, so a 4x4 checkerboard reads the noise from the same mip levels as 3x3: the same far billows)
 		float fovY = (float) (2.0 * Math.atan(1.0 / Math.max(Math.abs(f.proj.m11()), 1e-3f)));
-		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, fovY / Math.max(this.histH, 1) * n);
-		put4(b, 400, sl[0], ly, sl[2], 0f);
+		put4(b, 384, (float) Math.cos(CIRRUS_AXIS), (float) Math.sin(CIRRUS_AXIS), n, fovY / Math.max(this.histH, 1) * Math.min(n, 3));
+		put4(b, 400, sl[0], ly, sl[2], this.mode);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
 		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
 		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, CloudConfig.BLOCKY ? 1f : 0f);
@@ -209,6 +212,8 @@ public final class CloudParams {
 	}
 
 	private static final int[] ORDER1 = {0}, ORDER2 = {0, 3, 1, 2}, ORDER3 = {0, 7, 5, 2, 6, 4, 8, 3, 1};
+	/** 4x4 (M3.3): the cells (y * 4 + x) by their value in the 4x4 Bayer matrix. */
+	private static final int[] ORDER4 = {0, 10, 2, 8, 5, 15, 7, 13, 1, 11, 3, 9, 4, 14, 6, 12};
 
 	/** SHADE_FEATURE_CLOUDS (shade_look.metal). */
 	public static final int FEATURE_CLOUDS = 4096;

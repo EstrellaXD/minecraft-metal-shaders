@@ -45,11 +45,21 @@ import mcopt.metal.shade.Shade;
  */
 public final class CloudConfig {
 	private static final int TIER = Shade.TIER;
+	/**
+	 * M3.3 master switch (mcopt.shade.clouds.m33, default true): false = every M3.3 change of the clouds off at once, exactly
+	 * M3.2 (mode bits 0, the M3.2 checkerboard defaults); each change also has its own flag (CLOUDS.md M3.3).
+	 */
+	public static final boolean M33 = flag("mcopt.shade.clouds.m33", true);
 	public static final boolean ENABLED = Shade.ENABLED && flag("mcopt.shade.clouds", true) && flag("mcopt.shade.hdr", true)
 		&& !Boolean.parseBoolean(System.getProperty("mcopt.lod", "false"));
 	public static final float SCALE = clamp(floatProperty("mcopt.shade.clouds.scale", new float[] {0.4f, 0.45f, 0.5f, 0.67f}[TIER]), 0.2f, 1f);
-	/** Checkerboard N: one pixel of each N x N block is marched per frame (P 3, B 3, Q 2, U 2; 1 = every pixel). */
-	public static final int CHECKER = clampInt(Integer.getInteger("mcopt.shade.clouds.checker", new int[] {3, 3, 2, 2}[TIER]), 1, 3);
+	/**
+	 * Checkerboard N: one pixel of each N x N block is marched per frame (P 3, B 3, Q 2, U 2; 1 = every pixel; M3.3: up to 4,
+	 * a 16-frame cycle with 44 % fewer march rays than 3).
+	 */
+	public static final int CHECKER = clampInt(Integer.getInteger("mcopt.shade.clouds.checker", new int[] {3, 3, 2, 2}[TIER]), 1, 4);
+	/** M3.3: the checkerboard dev bit {@link #DEV_CHECKER_ALT} switches to (mcopt.shade.clouds.checkerAlt, 4): in-session pricing. */
+	public static final int CHECKER_ALT = clampInt(Integer.getInteger("mcopt.shade.clouds.checkerAlt", 4), 1, 4);
 	public static final int STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.steps", new int[] {20, 20, 40, 56}[TIER]), 6, 128);
 	public static final int LIGHT_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.lightSteps", new int[] {3, 3, 4, 5}[TIER]), 1, 8);
 	public static final boolean SHADOWS = flag("mcopt.shade.clouds.shadows", true);
@@ -89,7 +99,12 @@ public final class CloudConfig {
 	/** Blocks of world per 1 km of the sky model's air for the light the layer gets (sunset light lingers on the clouds). */
 	public static final float ALTITUDE_SCALE = clamp(floatProperty("mcopt.shade.clouds.altitudeScale", 4f), 0f, 50f);
 	/** Most visits a history pixel averages (its march samples are jittered): fewer with a larger checkerboard (slower visits). */
-	public static final int MAX_AGE = clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", CHECKER >= 3 ? 10 : 12), 1, 63);
+	public static final int MAX_AGE = maxAge(CHECKER);
+
+	/** The visit cap for checkerboard n (mcopt.shade.clouds.maxAge overrides): 12 (n <= 2), 10 (3), 8 (4: ~ the same seconds as 3's 10). */
+	public static int maxAge(int n) {
+		return clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", n >= 4 ? 8 : n >= 3 ? 10 : 12), 1, 63);
+	}
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.clouds.debug", 0);
 	/**
 	 * M3.1 performance pass (CLOUDS.md "M3.1 performance"): the cheaper ways of the passes and consumers (fog lookup only where
@@ -100,7 +115,10 @@ public final class CloudConfig {
 	/** Dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): price parts of the clouds inside one session. */
 	public static final int DEV_NO_SCREEN = 1, DEV_NO_MAPS = 2, DEV_NO_SKY = 4, DEV_NO_FOG = 8, DEV_NO_SHADOW_USE = 16, DEV_NO_VL = 32,
 		DEV_OLD_FOG = 256, DEV_OLD_VL = 512, DEV_OLD_RESOLVE = 1024, DEV_OLD_MARCH = 2048, DEV_SCALE_ALT = 4096, DEV_OLD_MIP = 8192,
-		DEV_OLD_DOME = 16384;
+		DEV_OLD_DOME = 16384, DEV_OLD_STABLE = 32768, DEV_OLD_LIGHT = 65536, DEV_OLD_BATCH = 131072, DEV_OLD_PAIR = 262144,
+		DEV_CHECKER_ALT = 524288;
+	/** All M3.3 dev bits (the M3.2 way of every M3.3 change). */
+	public static final int DEV_OLD_M33 = DEV_OLD_STABLE | DEV_OLD_LIGHT | DEV_OLD_BATCH | DEV_OLD_PAIR;
 	public static final int DEV_OLD_ALL = DEV_OLD_FOG | DEV_OLD_VL | DEV_OLD_RESOLVE | DEV_OLD_MARCH | DEV_OLD_MIP | DEV_OLD_DOME;
 	/** The history scale dev bit 4096 switches to (pricing another scale inside one session). */
 	public static final float SCALE_ALT = clamp(floatProperty("mcopt.shade.clouds.scaleAlt", 0.4f), 0.2f, 1f);
@@ -108,6 +126,39 @@ public final class CloudConfig {
 	/** This frame's dev bits: mcopt.shade.clouds.dev (read every frame: the bench's price phases set it), plus OLD_* without LEAN. */
 	public static int devBits() {
 		return Integer.getInteger("mcopt.shade.clouds.dev", 0) | (LEAN ? 0 : DEV_OLD_ALL);
+	}
+	/**
+	 * M3.3 mode bits (CloudParams.shadowDir.w, clouds.metal CLOUD_MODE_*; each off = M3.2's way). {@link #MODE_STABLE}
+	 * (mcopt.shade.clouds.stable, default true): the march's start offsets from a per-pixel hash and the resolve that carries
+	 * the clouds' distance in the history (no comb / hatching on soft edges in the wind or while turning; CLOUDS.md M3.3).
+	 */
+	public static final int MODE_STABLE = 1;
+	/**
+	 * {@link #MODE_LIGHT2} (mcopt.shade.clouds.halfLight, default false): the march's light march (and its sky-light sample)
+	 * on every other in-cloud sample, the samples between lit by the mean of their neighbours'. Off by default: no gain
+	 * measured in game (run m33c-2: march timer 0.394 vs 0.395 ms) for a small change of look.
+	 */
+	public static final int MODE_LIGHT2 = 2;
+	/**
+	 * {@link #MODE_BATCH} (mcopt.shade.clouds.batch, default true): a march sample's texture fetches issued together instead of
+	 * one after the other (the march is latency-bound; same values: M3.3 price).
+	 */
+	public static final int MODE_BATCH = 4;
+	/** {@link #MODE_PAIR} (mcopt.shade.clouds.pair, default true): the march's empty-air tests two at a time (same tests). */
+	public static final int MODE_PAIR = 8;
+
+	/**
+	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bits 32768 /
+	 * 65536 / 131072 = M3.2's march jitter and resolve / light march on every sample / fetch chains, for pricing with
+	 * mcbench's cloudsDev phases; 262144 = the empty-air tests one at a time).
+	 */
+	public static int modeBits() {
+		if (!M33) return 0;
+		int dev = Integer.getInteger("mcopt.shade.clouds.dev", 0);
+		return (flag("mcopt.shade.clouds.stable", true) && (dev & DEV_OLD_STABLE) == 0 ? MODE_STABLE : 0)
+			| (flag("mcopt.shade.clouds.halfLight", false) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)
+			| (flag("mcopt.shade.clouds.batch", true) && (dev & DEV_OLD_BATCH) == 0 ? MODE_BATCH : 0)
+			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0);
 	}
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");

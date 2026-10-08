@@ -57,9 +57,10 @@ struct CloudParams {
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
 	float4 dome;           // 352 xy dome size (px), z blend of the new march, w primary steps of the dome march
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
-	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-3),
+	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-4),
 	                       //     w radians a march sample covers (history pixel angle x N; the noise mip by distance)
-	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w 0
+	float4 shadowDir;      // 400 xyz the light the cloud shadow map is cast by (ShadeFrame's: sun, then moon), y >= 0.05, w M3.3 mode bits
+	                       //     (CLOUD_MODE_*; CloudConfig.modeBits, read every frame; 0 = M3.2)
 	float4 art;            // 416 x multiple-scattering octave weight (each octave x this), y octave extinction factor, z sky-light
 	                       //     extinction factor, w style (0 volumetric, 1 blocky: vanilla-style 12-block cells, ray-traced)
 	float4 shear;          // 432 xy horizontal offset of the 2D shape over the layer's height (blocks; wind shear: tops lean
@@ -73,6 +74,16 @@ static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)
 #define CLOUD_DEV_OLD_MARCH 2048   // the march looks the sky up for every ray, cloud or not (M3)
 #define CLOUD_DEV_OLD_MIP 8192     // the billow noise from its full-size level at any distance (M3)
 static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.lightDir.w) & bit) != 0; }
+
+// M3.3 mode bits (CloudParams.shadowDir.w; CloudConfig.MODE_*): new behaviour, each bit off = M3.2's way
+#define CLOUD_MODE_STABLE 1 // the march's start offsets from a per-pixel hash (not interleaved gradient noise) and the resolve that
+                            // carries the clouds' distance in the history (cloud_resolve_st): no comb on soft edges in the wind
+#define CLOUD_MODE_LIGHT2 2 // the light march (and the sky-light sample above) on every other in-cloud sample, the ones between
+                            // lit by the mean of their neighbours' (cloudMarch)
+#define CLOUD_MODE_BATCH 4  // a march sample's texture fetches issued together (cloudDensityB, cloudLightDepthB): same values
+                            // (tried on the shadow map's six samples too: twice as slow there, run m33c-2's timer: removed)
+#define CLOUD_MODE_PAIR 8   // the march's empty-air tests two at a time (both fetches issued together): same tests, same values
+static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
 // M3.1: the billow noise from the mip level of the sample's footprint, as cloudDensity's lod always meant (M3's cloudRep has
@@ -336,6 +347,95 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	return d * (0.5 + 0.5 * smoothstep(0.0, 0.2, h));
 }
 
+// ---- M3.3 (CLOUD_MODE_BATCH): the same densities with every texture fetch of a sample issued before any of them is used ----
+// cloudDensity returns early between its fetches (no cloud in the weather map: no noise fetch), so a march sample was a chain
+// of dependent fetches (weather, then billows, then detail; the light march three of those in a row, then the sky-light
+// sample above): the march is latency-bound (a few samples per ray, most of its time waiting). Here the positions are worked
+// out first, all fetches are issued together (some unused), then cloudDensityMath (cloudDensity's arithmetic, unchanged:
+// keep the two in step) evaluates them.
+static inline float cloudDensityMath(half4 w, half4 n, half4 m, float h, int q, constant CloudParams &c, float detail) {
+	if (h <= 0.0 || h >= 1.0) return 0.0;
+	float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
+	float cell = float(w.g);
+	float core = saturate((cell - (1.0 - cov)) / max(cov, 0.08));
+	float topH = mix(0.38, 1.0, c.shape.y) * (0.45 + 0.55 * core);
+	float x = h / max(topH, 0.05);
+	float d = core - x * x * mix(0.9, 0.6, c.shape.y);
+	d *= smoothstep(0.0, 0.04, h);
+	if (d <= 0.0) return 0.0;
+	if (q == 0) return saturate(d * 0.85);
+	float wd = 1.0 - (float(n.g) * 0.75 + float(n.r) * 0.25);
+	float thin = saturate(1.0 - d);
+	thin = thin * (2.0 - thin);
+	d -= c.shape.w * 0.55 * wd * wd * thin;
+	if (q >= 2 && d > 0.0) {
+		float wd2 = 1.0 - (float(m.g) * 0.6 + float(m.b) * 0.4);
+		float fade = 0.6 + 0.2 * smoothstep(0.85, 1.0, 1.0 - h) - 0.35 * smoothstep(0.05, 0.5, h);
+		d -= 0.55 * c.misc.w * detail * wd2 * wd2 * thin * fade;
+	}
+	d *= 0.6 + 0.8 * float(n.r);
+	d = saturate(d);
+	d = 1.0 - pow(1.0 - d, mix(3.0, 7.0, h));
+	return d * (0.5 + 0.5 * smoothstep(0.0, 0.2, h));
+}
+
+static inline half4 cloudWeatherAt(float2 xz, float h, constant CloudParams &c, texture2d<half> weather) {
+	return weather.sample(cloudRep, (xz - c.shear.xy * h) * (1.0 / CLOUD_WEATHER_TILE), level(0.0));
+}
+
+static inline float3 cloudNoisePos(float2 xz, float y, constant CloudParams &c) {
+	return float3(xz.x + c.origin.z - c.origin.x, y, xz.y + c.origin.w - c.origin.y);
+}
+
+// cloudDensity (volumetric, M3.1 noise mips) with its fetches issued together.
+static inline float cloudDensityB(float3 p, float y, int q, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
+                                  float detail, float lod) {
+	float h = (y - c.layer.x) / (c.layer.y - c.layer.x);
+	float2 xz = c.origin.xy + p.xz;
+	float3 n3 = cloudNoisePos(xz, y, c);
+	half4 w = cloudWeatherAt(xz, h, c, weather);
+	half4 n = noise.sample(cloudRepMip, n3 * CLOUD_NOISE_SCALE, level(lod));
+	half4 m = q >= 2 ? noise.sample(cloudRepMip, n3 * CLOUD_DETAIL_SCALE, level(lod + 1.0)) : half4(0.0h);
+	return cloudDensityMath(w, n, m, h, q, c, detail);
+}
+
+// cloudLightDepth (up to 4 light steps; the first two with billows) and the sky-light sample above (pUp, yUp: its 2D density in
+// dUp) with all their fetches issued together.
+static float cloudLightDepthB(float3 p, float y, float jitter, int steps, constant CloudParams &c, texture2d<half> weather,
+                              texture3d<half> noise, float lod, float3 pUp, float yUp, thread float &dUp) {
+	float3 L = c.lightDir.xyz;
+	float inv = 1.0 / (c.layer.y - c.layer.x);
+	float s = 0.0, stp = c.misc.y > 0.0 ? c.misc.y : 4.0;
+	float grow = steps <= 3 ? 3.5 : steps == 4 ? 2.6 : 2.0;
+	float hs[4], len[4];
+	float2 xz[4];
+	float yq[4];
+	for (int i = 0; i < 4; i++) {
+		float m = s + stp * (0.5 + 0.5 * (jitter - 0.5));
+		float3 q = p + L * m;
+		yq[i] = y + L.y * m;
+		hs[i] = (yq[i] - c.layer.x) * inv;
+		xz[i] = c.origin.xy + q.xz;
+		len[i] = stp;
+		s += stp;
+		stp *= grow;
+	}
+	float hUp = (yUp - c.layer.x) * inv;
+	float2 xzUp = c.origin.xy + pUp.xz;
+	half4 w0 = cloudWeatherAt(xz[0], hs[0], c, weather), w1 = cloudWeatherAt(xz[1], hs[1], c, weather);
+	half4 w2 = steps > 2 ? cloudWeatherAt(xz[2], hs[2], c, weather) : half4(0.0h);
+	half4 w3 = steps > 3 ? cloudWeatherAt(xz[3], hs[3], c, weather) : half4(0.0h);
+	half4 wUp = cloudWeatherAt(xzUp, hUp, c, weather);
+	half4 n0 = noise.sample(cloudRepMip, cloudNoisePos(xz[0], yq[0], c) * CLOUD_NOISE_SCALE, level(lod));
+	half4 n1 = noise.sample(cloudRepMip, cloudNoisePos(xz[1], yq[1], c) * CLOUD_NOISE_SCALE, level(lod + 1.0));
+	float tau = cloudDensityMath(w0, n0, n0, hs[0], 1, c, 1.0) * len[0];
+	if (steps > 1) tau += cloudDensityMath(w1, n1, n1, hs[1], 1, c, 1.0) * len[1];
+	if (steps > 2) tau += cloudDensityMath(w2, w2, w2, hs[2], 0, c, 1.0) * len[2];
+	if (steps > 3) tau += cloudDensityMath(w3, w3, w3, hs[3], 0, c, 1.0) * len[3];
+	dUp = cloudDensityMath(wUp, wUp, wUp, hUp, 0, c, 1.0);
+	return tau * c.shape.z;
+}
+
 // Optical depth toward the light from p (blocks x density x extinction): steps double from 6 blocks, jittered.
 static float cloudLightDepth(float3 p, float y, float jitter, int steps, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
                              float lod) {
@@ -372,6 +472,29 @@ struct CloudResult {
 	float T;     // transmittance
 	float dist;  // apparent distance (blocks): transmittance-weighted mean depth of what scattered
 };
+
+// One in-cloud sample's light (direct + ambient; x albedo x its segment weight T (1 - stepT): the light it scatters to the camera):
+// tauL the optical depth toward the light, dUp the 2D density above it (sky light), d its density, st = d x extinction.
+static inline float3 cloudSampleLight(float tauL, float dUp, float d, float st, float h, float y, float mu, float pw, float ph0, float ph1,
+                                      float ph2, float ph3, constant CloudParams &c) {
+	float sigma = c.shape.z;
+	float above = c.layer.y - y;
+	// (diffuse light: much less extinct than the direct beam)
+	float tauUp = (dUp * 0.7 + d * 0.3) * sigma * above * c.art.z;
+	float tauDown = d * sigma * (y - c.layer.x) * c.art.z * 0.75;
+	// multiple scattering: 4 octaves (Wrenninge): each dimmer, far less extinct and more isotropic (the light that
+	// diffuses through a thick cloud: lit sides near white, bases grey, not black)
+	float a1 = c.art.x, b1 = c.art.y;
+	float ms = exp(-tauL) * ph0 + a1 * exp(-b1 * tauL) * ph1 + a1 * a1 * exp(-b1 * b1 * tauL) * ph2
+		+ a1 * a1 * a1 * exp(-b1 * b1 * b1 * tauL) * ph3;
+	// powder: the thin skin of a cloud scatters less light toward the eye than its depths (dark creases on the sunlit
+	// side), gone when looking toward the light (Schneider's "beer-powder", shaped after Photon's)
+	float powder = 1.0 - pw * exp(-st * 28.0);
+	ms *= mix(powder, 1.0, saturate(mu * 1.5));
+	float3 direct = c.light.rgb * ms;
+	float3 amb = (c.ambTop.rgb * exp(-tauUp) * (0.55 + 0.45 * h) + c.ambBottom.rgb * exp(-tauDown)) * c.ambBottom.w;
+	return direct + amb;
+}
 
 // The cumulus layer along dir (camera-relative world, unit). steps/lsteps: primary and light samples; q: best density
 // quality; jitter in [0, 1).
@@ -410,14 +533,49 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	// a hit steps back and walks on with single full-quality steps until 4 misses in a row
 	bool fine = false;
 	int miss = 0;
+	// M3.3 (CLOUD_MODE_LIGHT2): the pending sample between two light marches (its weight, density, extinction, height, y)
+	bool light2 = cloudMode(c, CLOUD_MODE_LIGHT2), haveL = false, odd = false;
+	// M3.3 (CLOUD_MODE_BATCH): fetches issued together (the M3 noise sampler, dev bit OLD_MIP, and > 4 light steps keep the chain)
+	bool batch = cloudMode(c, CLOUD_MODE_BATCH) && !cloudDev(c, CLOUD_DEV_OLD_MIP) && lsteps <= 4;
+	float lastTauL = 0.0, lastUp = 0.0, pw0 = 0.0, pd = 0.0, pst = 0.0, ph = 0.0, py = 0.0;
 	// inside the layer the steps start short and grow with distance (the cloud around the camera is close: uniform 60-block
 	// steps made it a noisy guess that showed the checkerboard)
 	float dtl = inside ? dt * 0.08 : dt;
 	float t = t0 + jitter * dtl;
-	for (int i = 0; i < 3 * n + 4 + (inside ? 24 : 0) && t < t1; i++) {
+	int budget = 3 * n + 4 + (inside ? 24 : 0);
+	// M3.3 (CLOUD_MODE_PAIR): outside the layer, the empty-air test also looks one double step ahead, both fetches issued
+	// together (the tests and their order are the serial loop's: a pair counts as two iterations)
+	bool pair = cloudMode(c, CLOUD_MODE_PAIR) && !inside;
+	for (int i = 0; i < budget && t < t1; i++) {
 		if (inside) dtl = dt * clamp((t + 24.0) / 400.0, 0.08, 1.0);
 		float3 p = dir * t;
 		float y = cloudAltitude(r, t);
+		if (!fine && pair) {
+			float tB = t + 2.0 * dtl;
+			float3 pB = dir * tB;
+			float yB = cloudAltitude(r, tB);
+			float inv = 1.0 / (c.layer.y - c.layer.x);
+			float hA = (y - c.layer.x) * inv, hB = (yB - c.layer.x) * inv;
+			half4 wA = cloudWeatherAt(c.origin.xy + p.xz, hA, c, weather), wB = cloudWeatherAt(c.origin.xy + pB.xz, hB, c, weather);
+			bool useB = i + 1 < budget && tB < t1;
+			if (cloudDensityMath(wA, wA, wA, hA, 0, c, 1.0) > 0.0) {
+				fine = true;
+				miss = 0;
+				t = max(t - dtl, t0 + jitter * dtl);
+				continue;
+			}
+			t = tB;
+			if (!useB) continue;
+			i++;
+			if (cloudDensityMath(wB, wB, wB, hB, 0, c, 1.0) > 0.0) {
+				fine = true;
+				miss = 0;
+				t = max(tB - dtl, t0 + jitter * dtl);
+				continue;
+			}
+			t = tB + 2.0 * dtl;
+			continue;
+		}
 		if (!fine) {
 			if (cloudDensity(p, y, 0, c, weather, noise) <= 0.0) {
 				t += 2.0 * dtl;
@@ -432,7 +590,21 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		// (M3.1: dithered per sample for the nearest-level sampler; CLOUD_DEV_OLD_MIP: M3's, whose level was ignored)
 		float lod = cloudDev(c, CLOUD_DEV_OLD_MIP) ? max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0)
 			: max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
-		float d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+		// skylight from above through what is left above this point (one cheap sample), bounce from below
+		float above = c.layer.y - y;
+		// (CLOUD_MODE_BATCH) a sample that will need a light march fetches for it together with its own density (wasted
+		// when the sample misses: few do)
+		bool needL = !(light2 && haveL && !odd);
+		float d, tauL = 0.0, dUp = 0.0;
+		if (batch && needL) {
+			d = cloudDensityB(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+			tauL = cloudLightDepthB(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod, p + float3(0.0, above * 0.4, 0.0),
+				y + above * 0.4, dUp);
+		} else if (batch) {
+			d = cloudDensityB(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+		} else {
+			d = cloudDensity(p, y, T > 0.25 ? q : 1, c, weather, noise, detail, lod);
+		}
 		if (d <= 0.002) {
 			if (++miss >= 4) fine = false;
 			t += dtl;
@@ -445,33 +617,42 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		float ds = clamp(c.shear.z / max(st, 1e-4), dtl * c.shear.w, dtl);
 		float stepT = exp(-st * ds);
 		float h = saturate((y - c.layer.x) / thick);
-		float tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod);
-		// skylight from above through what is left above this point (one cheap sample), bounce from below
-		float above = c.layer.y - y;
-		float dUp = cloudDensity(p + float3(0.0, above * 0.4, 0.0), y + above * 0.4, 0, c, weather, noise);
-		// (diffuse light: much less extinct than the direct beam)
-		float tauUp = (dUp * 0.7 + d * 0.3) * sigma * above * c.art.z;
-		float tauDown = d * sigma * (y - c.layer.x) * c.art.z * 0.75;
-		// multiple scattering: 4 octaves (Wrenninge): each dimmer, far less extinct and more isotropic (the light that
-		// diffuses through a thick cloud: lit sides near white, bases grey, not black)
-		float a1 = c.art.x, b1 = c.art.y;
-		float ms = exp(-tauL) * ph0 + a1 * exp(-b1 * tauL) * ph1 + a1 * a1 * exp(-b1 * b1 * tauL) * ph2
-			+ a1 * a1 * a1 * exp(-b1 * b1 * b1 * tauL) * ph3;
-		// powder: the thin skin of a cloud scatters less light toward the eye than its depths (dark creases on the sunlit
-		// side), gone when looking toward the light (Schneider's "beer-powder", shaped after Photon's)
-		float powder = 1.0 - pw * exp(-st * 28.0);
-		ms *= mix(powder, 1.0, saturate(mu * 1.5));
-		float3 direct = c.light.rgb * ms;
-		float3 amb = (c.ambTop.rgb * exp(-tauUp) * (0.55 + 0.45 * h) + c.ambBottom.rgb * exp(-tauDown)) * c.ambBottom.w;
-		float3 Sstep = albedo * st * (direct + amb);
 		float wseg = T * (1.0 - stepT);
-		Sacc += Sstep * (wseg / max(st, 1e-6));
 		dsum += t * wseg;
 		wsum += wseg;
 		T *= stepT;
+		// M3.3 (CLOUD_MODE_LIGHT2): every other sample waits for the next one's light march and takes the mean of its
+		// neighbours' (the light depth and the sky-light sample above vary smoothly along the ray)
+		if (!needL) {
+			odd = true;
+			pw0 = wseg;
+			pd = d;
+			pst = st;
+			ph = h;
+			py = y;
+			if (T < 0.02) break;
+			t += ds;
+			continue;
+		}
+		if (!batch) {
+			tauL = cloudLightDepth(p, y, fract(jitter + float(i) * 0.618034), lsteps, c, weather, noise, lod);
+			dUp = cloudDensity(p + float3(0.0, above * 0.4, 0.0), y + above * 0.4, 0, c, weather, noise);
+		}
+		if (odd) {
+			Sacc += (albedo * pst * cloudSampleLight(0.5 * (lastTauL + tauL), 0.5 * (lastUp + dUp), pd, pst, ph, py, mu, pw, ph0, ph1, ph2, ph3, c))
+				* (pw0 / max(pst, 1e-6));
+			odd = false;
+		}
+		lastTauL = tauL;
+		lastUp = dUp;
+		haveL = true;
+		float3 Sstep = albedo * st * cloudSampleLight(tauL, dUp, d, st, h, y, mu, pw, ph0, ph1, ph2, ph3, c);
+		Sacc += Sstep * (wseg / max(st, 1e-6));
 		if (T < 0.02) break;
 		t += ds;
 	}
+	// a sample still waiting for its neighbour's light: the last one's
+	if (odd) Sacc += (albedo * pst * cloudSampleLight(lastTauL, lastUp, pd, pst, ph, py, mu, pw, ph0, ph1, ph2, ph3, c)) * (pw0 / max(pst, 1e-6));
 	o.S = Sacc;
 	o.T = saturate((T - 0.02) / 0.98);
 	o.dist = wsum > 1e-5 ? dsum / wsum : t0;
@@ -512,6 +693,60 @@ static CloudResult cloudCirrus(float3 dir, constant CloudParams &c, texture2d<ha
 	o.S = S;
 	o.T = T;
 	o.dist = t;
+	return o;
+}
+
+// M3.3 (CLOUD_MODE_BATCH): cloudCirrus in two halves, the first one's fetch issued before the cumulus march and used after
+// it (the same values as cloudCirrus).
+struct CloudCirrusPre {
+	float t;     // distance to the cirrus plane (<= 0: none)
+	float2 s;    // the streaks' frame position
+	half4 w0;    // the broad sheets' fetch
+};
+
+static inline CloudCirrusPre cloudCirrusBegin(float3 dir, constant CloudParams &c, texture2d<half> weather) {
+	CloudCirrusPre o;
+	o.t = 0.0;
+	o.s = 0.0;
+	o.w0 = half4(0.0h);
+	if (c.wind.z <= 0.001) return o;
+	CloudRay r = cloudRay(dir, c);
+	float r1, r2;
+	if (!cloudRoots(r.a, r.b, r.y0 - c.cirrus.x, r1, r2)) return o;
+	float t = r1 > 0.0 ? r1 : r2;
+	if (t <= 0.0 || t > c.march.z * 1.6) return o;
+	float2 rel = dir.xz * t;
+	float2 wd = c.windDir.xy, wn = float2(-wd.y, wd.x);
+	o.s = c.cirrus.zw + float2(dot(rel, wd), dot(rel, wn));
+	o.w0 = weather.sample(cloudRep, o.s * float2(1.0 / 16384.0, 1.0 / 4096.0), level(0.0));
+	o.t = t;
+	return o;
+}
+
+static inline CloudResult cloudCirrusEnd(CloudCirrusPre pre, float3 dir, constant CloudParams &c, texture2d<half> weather) {
+	CloudResult o;
+	o.S = 0.0;
+	o.T = 1.0;
+	o.dist = -1.0;
+	if (pre.t <= 0.0) return o;
+	float2 s = pre.s;
+	half4 w0 = pre.w0;
+	float2 warp = (float2(w0.a, w0.r) - 0.5) * 0.06;
+	half4 w1 = weather.sample(cloudRep, s * float2(1.0 / 8192.0, 1.0 / 2048.0) + warp, level(0.0));
+	half4 w2 = weather.sample(cloudRep, s * float2(1.0 / 4096.0, 1.0 / 1024.0) + warp * 1.5, level(0.0));
+	float n = float(w0.b) * 0.45 + float(w1.b) * 0.4 + float(w2.a) * 0.15;
+	float d = cloudRemap(n, 1.0 - c.wind.z * 0.6, 1.0, 0.0, 1.0);
+	d *= 0.55 + 0.45 * float(w2.b);
+	d = d * d * (3.0 - 2.0 * d);
+	if (d <= 0.0) return o;
+	float tau = d * c.cirrus.y;
+	float T = exp(-tau);
+	float mu = dot(dir, c.lightDir.xyz);
+	float phase = 0.6 * cloudHG(mu, 0.75) + 0.4 * cloudHG(mu, 0.2);
+	float3 S = (c.light.rgb * phase * 3.0 + c.ambTop.rgb * 0.9) * (1.0 - T) * 0.9;
+	o.S = S;
+	o.T = T;
+	o.dist = pre.t;
 	return o;
 }
 
@@ -616,11 +851,23 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
                             texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
-	CloudResult cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
-	CloudResult ci = cloudCirrus(dir, c, weather);
+	// (M3.3 CLOUD_MODE_BATCH: the cirrus' first fetch and the sky LUT are fetched before the cumulus march and wait alongside
+	// it; the march is latency-bound, a fetch more costs less than one more wait after it)
+	CloudResult ci, cu;
+	bool batch = cloudMode(c, CLOUD_MODE_BATCH);
+	float3 skyPre = 0.0;
+	if (batch) {
+		CloudCirrusPre pre = cloudCirrusBegin(dir, c, weather);
+		skyPre = shadeSkyLookup(dir, lut, lutS, f);
+		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+		ci = cloudCirrusEnd(pre, dir, c, weather);
+	} else {
+		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+		ci = cloudCirrus(dir, c, weather);
+	}
 	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)
 	if (cu.dist >= 0.0 || ci.dist >= 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH)) {
-		float3 sky = shadeSkyLookup(dir, lut, lutS, f);
+		float3 sky = batch ? skyPre : shadeSkyLookup(dir, lut, lutS, f);
 		float hf = cloudHorizonFade(dir, c);
 		cu = cloudAerial(cu, sky, hf, c);
 		ci = cloudAerial(ci, sky, hf, c);
@@ -665,7 +912,14 @@ fragment CloudMarchOut cloud_march(CloudVsOut in [[stage_in]], constant ShadeFra
 	// a history pixel is marched every N^2 frames: its start offsets step by the golden ratio per visit (stepping per frame
 	// made N^2 x 0.618 = 0.56 per visit with N = 3, nearly periodic: a biased mean that showed the checkerboard as a grid)
 	float visit = floor(c.misc.x / (n * n));
-	float jitter = fract(shadeNoise(hp, 0) + visit * 0.6180339887);
+	// M3.3 (CLOUD_MODE_STABLE): the per-pixel offset from a hash instead of interleaved gradient noise. IGN is linear in the
+	// pixel (mod 1): a cloud the wind carries across the pixels met offsets that stepped by a near-constant amount per visit,
+	// which could cancel the golden-ratio step (e.g. one 3-pixel block in -x per 9 frames: -0.665 + 0.618 = -0.047), so it was
+	// marched at almost the same depth phase visit after visit and its step aliasing never averaged out: the comb / hatching
+	// on soft edges in the wind and while turning (CLOUDS.md M3.3). A hash has no such structure; still pixels keep their
+	// golden-ratio sequence
+	float seed = cloudMode(c, CLOUD_MODE_STABLE) ? shadeHash01(shadeHash3(int3(int2(hp), 0), 0x2c1b3c6du)) : shadeNoise(hp, 0);
+	float jitter = fract(seed + visit * 0.6180339887);
 	CloudResult r = cloudSky(dir, int(c.march.x), int(c.march.y), 2, jitter, f, c, weather, noise, lut, lutS);
 	CloudMarchOut o;
 	o.color = half4(half3(min(r.S, 60000.0)), half(r.T));
@@ -779,6 +1033,109 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
 		o.age = 0.0h;
 	}
+	return o;
+}
+
+// ---- M3.3: the resolve that carries the clouds' distance (CLOUD_MODE_STABLE) ----------------------------------------------
+// Data target R16Uint per history pixel: bits 12-15 age (frames blended, 0..15), bits 0-11 the distance of the clouds the
+// pixel holds as log2(blocks) x 256 (0.27 % steps up to 65536 blocks; 4095 = holds no cloud).
+#define CLOUD_DIST_NONE 4095u
+static inline uint cloudDistCode(float d) { return uint(clamp(log2(max(d, 1.0)) * 256.0 + 0.5, 0.0, 4094.0)); }
+static inline float cloudDistDecode(uint q) { return exp2(float(q) * (1.0 / 256.0)); }
+
+struct CloudResolveStOut {
+	half4 color [[color(0)]]; // rgb scattered light (before exposure), a transmittance
+	ushort data [[color(1)]]; // R16Uint: age << 12 | distance code
+};
+
+// cloud_resolve with the history's own distance (CLOUD_MODE_STABLE, M3.3). M3.2 reprojected every pixel of a march block by
+// that block's one march distance, which jumps between visits wherever a soft cloud lets some rays through (the slab's entry
+// for a clear ray, the cloud's depth for a hit): in the wind the history slid at a different speed each frame, block by block
+// (combs along soft edges, a band where the jumps were large). Here each pixel carries the distance of what it shows,
+// averaged over its visits (1/distance, the parallax, blended like the colour), reprojects with the nearest cloud distance of
+// its 2x2 neighbourhood (the edge of a cloud moves with that cloud; as Photon's closest-distance reprojection), and a clear
+// sample does not move the distance of a pixel that still holds cloud.
+fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant CloudParams &c [[buffer(0)]],
+                                            texture2d<half> cur [[texture(0)]], texture2d<float> curDist [[texture(1)]],
+                                            texture2d<half> hist [[texture(2)]], texture2d<ushort> histData [[texture(3)]]) {
+	uint n = uint(c.windDir.z);
+	uint2 px = uint2(in.position.xy);
+	uint2 slot = uint2(c.frame.xy);
+	uint2 mp = min(px / n, uint2(c.size.zw) - 1u);
+	bool mine = all(px % n == slot);
+	float2 uv = (float2(px) + 0.5) / c.size.xy;
+	float3 dir = cloudDirection(uv, c);
+	half4 now = cur.read(mp);
+	constexpr sampler gatherS(filter::nearest, address::clamp_to_edge);
+	float2 msz = c.size.zw;
+	float4 g0 = curDist.gather(gatherS, float2(mp) / msz);
+	// the nearest cloud distance the history holds in this pixel's 2x2 neighbourhood, read where the pixel is (not where it
+	// came from, so this fetch waits alongside the march's: a turn does not depend on the distance, and the wind moves the
+	// clouds less than a pixel per frame)
+	uint4 qu = uint4(histData.gather(gatherS, uv)) & 0xfffu;
+	uint qMin = min(min(qu.x, qu.y), min(qu.z, qu.w));
+	float dNow = max(g0.y, 1.0);
+	float3 wnd = float3(c.wind.x, 0.0, c.wind.y);
+	float4 pc = c.prevViewProj * float4(dir * (qMin != CLOUD_DIST_NONE ? cloudDistDecode(qMin) : dNow) + wnd, 1.0);
+	float2 puv = pc.xy / max(pc.w, 1e-6) * 0.5 + 0.5;
+	bool valid = c.frame.z < 0.5 && pc.w > 1e-4 && all(puv >= 0.0) && all(puv <= 1.0);
+	half4 h = half4(0.0h, 0.0h, 0.0h, 1.0h);
+	float age = 0.0, dOwn = dNow;
+	uint qOwn = CLOUD_DIST_NONE;
+	bool ownCloud = false;
+	if (valid) {
+		// age and own distance where the pixel came from: (x0,y1) (x1,y1) (x1,y0) (x0,y0)
+		uint4 q = uint4(histData.gather(gatherS, puv));
+		float2 f = fract(puv * c.size.xy - 0.5);
+		float4 ages = float4(q >> 12u);
+		age = mix(mix(ages.w, ages.z, f.x), mix(ages.x, ages.y, f.x), f.y);
+		uint4 qd = q & 0xfffu;
+		qOwn = f.y < 0.5 ? (f.x < 0.5 ? qd.w : qd.z) : (f.x < 0.5 ? qd.x : qd.y);
+		ownCloud = qOwn != CLOUD_DIST_NONE;
+		if (ownCloud) dOwn = cloudDistDecode(qOwn);
+		h = cloudCatmullRom(hist, puv, c.size.xy);
+		// (as cloud_resolve) where this frame's march distances jump, keep the history inside their colour range
+		int2 mi = int2(mp), ms = int2(c.size.zw) - 1;
+		int2 ax = int2(min(mi.x + 1, ms.x), mi.y), bx = int2(max(mi.x - 1, 0), mi.y);
+		int2 ay = int2(mi.x, min(mi.y + 1, ms.y)), by = int2(mi.x, max(mi.y - 1, 0));
+		float4 g1 = curDist.gather(gatherS, (float2(mp) + 1.0) / msz);
+		float d1 = g1.z, d2 = g0.x, d3 = g1.x, d4 = g0.z;
+		float dMin = min(min(min(d1, d2), min(d3, d4)), g0.y), dMax = max(max(max(d1, d2), max(d3, d4)), g0.y);
+		if (dMax > dMin * 1.3 + 4.0) {
+			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
+			half4 lo = min(min(min(c1, c2), min(c3, c4)), now), hi = max(max(max(c1, c2), max(c3, c4)), now);
+			half4 pad = (hi - lo) * 0.15h;
+			h = clamp(h, lo - pad, hi + pad);
+		}
+	}
+	const half clear = 0.995h; // transmittance above this: no cloud
+	bool histCloud = valid && age > 0.5 && ownCloud && h.a < clear;
+	CloudResolveStOut o;
+	uint ageOut, qOut;
+	float cap = min(c.frame.w, 15.0);
+	if (mine) {
+		float w = valid ? 1.0 / min(age + 1.0, cap) : 1.0;
+		o.color = valid ? mix(h, now, half(w)) : now;
+		ageOut = uint(min(age + 1.0, cap) + 0.5);
+		bool nowCloud = now.a < clear;
+		qOut = nowCloud ? cloudDistCode(histCloud ? 1.0 / mix(1.0 / dOwn, 1.0 / dNow, w) : dNow) : histCloud ? qOwn : CLOUD_DIST_NONE;
+	} else if (valid && age > 0.5) {
+		o.color = h;
+		// a pixel the camera uncovered lately holds the mean of few of its own samples (noisy, at 1/9 rate): until its third
+		// visit it also leans toward this frame's march around it (spatially averaged), so a turn's new sky settles faster
+		if (age < 2.5) {
+			float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;
+			o.color = mix(h, cur.sample(cloudClamp, mpos / c.size.zw), half(0.5 / (age + 1.0)));
+		}
+		ageOut = uint(age + 0.5);
+		qOut = histCloud ? qOwn : CLOUD_DIST_NONE;
+	} else {
+		float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;
+		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
+		ageOut = 0u;
+		qOut = o.color.a < clear ? cloudDistCode(dNow) : CLOUD_DIST_NONE;
+	}
+	o.data = ushort(min(ageOut, 15u) << 12u | qOut);
 	return o;
 }
 

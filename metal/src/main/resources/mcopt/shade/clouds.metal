@@ -590,7 +590,9 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 	if (dir.y >= 0.0 || clear <= 1.0) return 1.0;
 	CloudRay r = cloudRay(dir, c);
 	float k = saturate(1.0 - r.b * r.b / (4.0 * r.a * clear)); // the ray's closest approach to the ground / the camera's height
-	return smoothstep(0.0, 0.9, k);
+	// only for a camera below the layer: from inside or above it, rays looking down meet the clouds before the ground (the
+	// fade turned the whole deck seen from above into flat sky-coloured haze)
+	return mix(smoothstep(0.0, 0.9, k), 1.0, smoothstep(c.layer.x - 24.0, c.layer.x, c.layer.z));
 }
 
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).

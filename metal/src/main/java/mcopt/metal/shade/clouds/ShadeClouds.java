@@ -142,10 +142,14 @@ public final class ShadeClouds {
 			lastZ = f.cameraZ;
 			lastDimension = f.dimension;
 
+			// M3.1 dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): the bench's price phases switch passes or
+			// consumers off, or an optimisation back to M3's way, inside one session (CloudConfig.DEV_*, CLOUDS.md "M3.1 performance")
+			int dev = CloudConfig.devBits();
 			// sizes: a fraction of the output (window framebuffer), independent of TAAU's render scale
 			var window = mc.getWindow();
 			int ow = Math.max(1, window.getWidth()), oh = Math.max(1, window.getHeight());
-			int hw = Math.max(16, Math.round(ow * CloudConfig.SCALE)), hh = Math.max(16, Math.round(oh * CloudConfig.SCALE));
+			float scale = (dev & CloudConfig.DEV_SCALE_ALT) != 0 ? CloudConfig.SCALE_ALT : CloudConfig.SCALE;
+			int hw = Math.max(16, Math.round(ow * scale)), hh = Math.max(16, Math.round(oh * scale));
 			int checker = CloudConfig.CHECKER;
 			hw = (hw + checker - 1) / checker * checker;
 			hh = (hh + checker - 1) / checker * checker;
@@ -186,6 +190,7 @@ public final class ShadeClouds {
 			if (p.reset) domeFrames = 0;
 			p.domeValid = CloudConfig.DOME && domeFrames > 0;
 			p.opacity = 1f;
+			p.dev = dev;
 			// the shadow map and the dome change slowly (the wind moves the shadows ~1/25 of a map texel in 4 frames): each every
 			// fourth frame, never in the same frame (both after a reset). CloudParams keeps the map's own frame in between.
 			boolean dome = (p.frame & 3) == 1;
@@ -193,6 +198,10 @@ public final class ShadeClouds {
 			p.pack(PACKED, f, WEATHER);
 			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)
 				| (CloudConfig.GPU_TIMER ? 8 : 0);
+			if (!p.reset) {
+				if ((dev & CloudConfig.DEV_NO_SCREEN) != 0) flags &= ~2;   // pricing: no march / resolve (the consumers read the old history)
+				if ((dev & CloudConfig.DEV_NO_MAPS) != 0) flags &= ~(1 | 4); // pricing: no shadow map / dome pass
+			}
 			CloudNative.render(enc, state, MemoryUtil.memAddress(PACKED), CloudParams.SIZE, flags);
 			if ((flags & 4) != 0) domeFrames++;
 			CloudNative.outputs(state, OUT);

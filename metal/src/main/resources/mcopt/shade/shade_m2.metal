@@ -250,6 +250,18 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	float ap = (1.0 - exp(-d * f.fogSky.z)) * f.fogSky.w * (1.0 - f.fogColor.a);
 	float3 skyBehind = float3(0.0);
 	bool needSky = ap > 0.002 || L.fogMisc.z > 0.0;
+	// the border fog's amount (applied last, below): computed first, the clouds' lookup needs it
+	float edge = 0.0;
+	if (air) {
+		if (L.fogMisc.z > 0.0) { // border fog: l4 norm on xz (square like the loaded chunks), into the horizon sky
+			float2 q = p.xz * p.xz;
+			float l4 = sqrt(sqrt(dot(q, q)));
+			float Rb = L.fogMisc.z;
+			edge = max(smoothstep(L.fogMisc.y * Rb, Rb, l4), chunkFade);
+		} else {
+			edge = vanillaFog;
+		}
+	}
 	if (needSky) {
 		float3 vs = float3(v.x, max(v.y, 0.0), v.z);
 		skyBehind = shadeSkyLookup(vs, lut, s, f);
@@ -261,6 +273,12 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 			// there to streak); from inside or above the layer the clouds below the horizon are in front of the terrain
 			// (cloud_over composites them), not behind it: none here.
 			float wc = v.y >= 0.0 ? 1.0 : smoothstep(0.0, 24.0, L.clouds0.x);
+			// M3.1: the clouds reach this pixel only through the blend weights below (ap x 0.6 toward the sky behind: under ~5 %
+			// within the render distance; the border fog's edge: up to all of it). Where both are tiny the clouds' part cannot
+			// show: no lookup there (terrain nearer than ~75 blocks), faded in over 1.5-3.5 % so no contour appears; the border
+			// fog keeps the full clouds. (SHADE_CLOUD_DEV_OLD_FOG: M3, a lookup for every pixel)
+			if (!shadeCloudDev(L, SHADE_CLOUD_DEV_OLD_FOG)) wc *= smoothstep(0.015, 0.035, max(ap * 0.6, edge));
+			if (shadeCloudDev(L, SHADE_CLOUD_DEV_NO_FOG)) wc = 0.0;
 			if (wc > 0.0) {
 				float4 cl = shadeCloudsScreen(v, L, R->cloudScreen);
 				skyBehind = skyBehind * mix(1.0, cl.a, wc) + cl.rgb * wc;
@@ -276,18 +294,7 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 		radiance = radiance * T + S;
 	}
 #endif
-	if (air) {
-		float edge;
-		if (L.fogMisc.z > 0.0) { // border fog: l4 norm on xz (square like the loaded chunks), into the horizon sky
-			float2 q = p.xz * p.xz;
-			float l4 = sqrt(sqrt(dot(q, q)));
-			float R = L.fogMisc.z;
-			edge = max(smoothstep(L.fogMisc.y * R, R, l4), chunkFade);
-		} else {
-			edge = vanillaFog;
-		}
-		if (edge > 0.002) radiance = mix(radiance, needSky ? skyBehind : shadeSkyLookup(float3(v.x, max(v.y, 0.0), v.z), lut, s, f), edge);
-	}
+	if (air && edge > 0.002) radiance = mix(radiance, needSky ? skyBehind : shadeSkyLookup(float3(v.x, max(v.y, 0.0), v.z), lut, s, f), edge);
 	return radiance;
 }
 

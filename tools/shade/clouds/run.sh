@@ -6,6 +6,7 @@
 # or times the passes at a given output size. Needs a built metal module (./gradlew :metal:build).
 #   tools/shade/clouds/run.sh png  [W H scale frames regex]   -> $OUT/png/<scenario>.png (+ _dome / _shadow variants)
 #   tools/shade/clouds/run.sh time [W H scale frames regex]   -> GPU ms per pass (default 3024x1964, scale 0.4: balanced)
+# CLOUDS_DEV=<bits>: CloudParams' M3.1 dev bits (CloudConfig.DEV_*; 3072 = M3's resolve taps and march sky lookups).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 METAL="$HERE/../../../metal"
@@ -20,7 +21,7 @@ CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$JOML:$JSPEC"
 rm -rf "$OUT/classes" "$OUT/frames" && mkdir -p "$OUT/classes" "$OUT/frames" "$OUT/png"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/CloudPreviewFrames.java" "$HERE/CloudPreviewSource.java"
 "${JAVA_BIN}java" -cp "$OUT/classes:$CP" CloudPreviewSource "$OUT/clouds_preview.metal" "$OUT/lut.metal" "$HERE/preview_composite.metal"
-"${JAVA_BIN}java" -cp "$OUT/classes:$CP" CloudPreviewFrames "$OUT/frames" "$W" "$H" "$SCALE" "$FRAMES" "$ONLY"
+"${JAVA_BIN}java" -Dclouds.dev="${CLOUDS_DEV:-0}" -cp "$OUT/classes:$CP" CloudPreviewFrames "$OUT/frames" "$W" "$H" "$SCALE" "$FRAMES" "$ONLY"
 clang -fobjc-arc -O1 -Wno-enum-conversion -framework Foundation -framework Metal -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers \
 	"$HERE/cloudpreview.m" -o "$OUT/cloudpreview"
 cd "$OUT"

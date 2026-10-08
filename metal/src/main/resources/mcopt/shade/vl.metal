@@ -248,6 +248,13 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float3 c1o = (f.shadowViewProj[1] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c1d = (f.shadowViewProj[1] * float4(dir, 0.0)).xyz;
 	bool shadows = f.flags.z != 0;
 	ShadeCloudRay cloudRay = {};
+	// M3.1: the cloud shadow is fetched on at most every other lit step and held for the next one (its texels are 4 blocks, the
+	// shafts from cloud gaps tens of blocks wide; the steps jitter per frame). SHADE_CLOUD_DEV_OLD_VL: every lit step (M3);
+	// SHADE_CLOUD_DEV_NO_VL: no clouds in VL (pricing)
+	bool vlClouds = VL_HDR && !shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_VL);
+	int cloudEvery = VL_HDR && shadeCloudDev(sl, SHADE_CLOUD_DEV_OLD_VL) ? 1 : 2;
+	int cloudAt = -8;
+	float cloudHeld = 1.0;
 	if (VL_HDR) cloudRay = shadeCloudRay(dir, sl); // (ShadeLook is read only in the HDR variant)
 
 	if (!underwater) {
@@ -274,7 +281,13 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
 			// M3: the volumetric clouds' shadows carve the air into shafts too (crepuscular rays from cloud gaps)
 			// (only where the sun reaches: no fetch in the terrain's shadow)
-			if (VL_HDR && v > 0.0) v *= shadeCloudShadowRay(cloudRay, t, sl, sr.cloudShadow);
+			if (vlClouds && v > 0.0) {
+				if (i - cloudAt >= cloudEvery) {
+					cloudHeld = shadeCloudShadowRay(cloudRay, t, sl, sr.cloudShadow);
+					cloudAt = i;
+				}
+				v *= cloudHeld;
+			}
 			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far, split by layer
 			float seg = trans * (1.0 - exp(-sigma * dt)) / max(sigma, 1e-9);
 			sumOpen += sOpen * seg;
@@ -390,7 +403,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	o.light = half4(half3(clamp(scatter, -30000.0, 30000.0)), half(dist));
 	// the sky mask: how open the sky is here; M3: the volumetric clouds' transmittance there, so next frame's crepuscular
 	// taps toward the sun see the clouds (dark rays across the aureole from the clouds around the sun)
-	o.sky = d <= 0.0 ? (VL_HDR ? half(shadeCloudsScreen(dir, sl, sr.cloudScreen).a) : 1.0h) : 0.0h;
+	o.sky = d <= 0.0 ? (VL_HDR && !shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_VL) ? half(shadeCloudsScreen(dir, sl, sr.cloudScreen).a) : 1.0h) : 0.0h;
 	return o;
 }
 

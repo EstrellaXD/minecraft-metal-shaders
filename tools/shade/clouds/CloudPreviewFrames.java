@@ -74,6 +74,7 @@ public class CloudPreviewFrames {
 			int nc = CloudConfig.CHECKER;
 			hw = (hw + nc - 1) / nc * nc; hh = (hh + nc - 1) / nc * nc;
 			p.histW = hw; p.histH = hh; p.marchW = hw / nc; p.marchH = hh / nc; p.checker = nc;
+			p.dev = Integer.getInteger("clouds.dev", 0); // M3.1 dev bits (run.sh: CLOUDS_DEV), e.g. 3072 = M3's resolve and march
 			p.base = 200f; p.top = CloudConfig.BLOCKY ? 200f + CloudConfig.BLOCK_THICKNESS : 350f;
 			ByteBuffer pb = ByteBuffer.allocateDirect(CloudParams.SIZE * frames).order(ByteOrder.LITTLE_ENDIAN);
 			for (int i = 0; i < frames; i++) {

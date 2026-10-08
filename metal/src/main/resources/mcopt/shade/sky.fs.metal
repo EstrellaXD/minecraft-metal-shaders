@@ -27,7 +27,7 @@ static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSm
 	if (sl.flash.w > 0.0) sky += float3(0.78, 0.86, 1.0) * (sl.flash.w * 0.35 * (0.35 + 0.65 * pow(saturate(dot(dir, sl.flash.xyz) * 0.5 + 0.5), 3.0)));
 #ifdef MCOPT_HDR
 	// M3 volumetric clouds (shade_clouds.metal): in front of the sky, sun, moon and stars, behind everything the world draws
-	float4 clouds = shadeCloudsScreen(dir, sl, sr.cloudScreen);
+	float4 clouds = shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_SKY) ? float4(0.0, 0.0, 0.0, 1.0) : shadeCloudsScreen(dir, sl, sr.cloudScreen);
 	sky = sky * clouds.a + clouds.rgb;
 #endif
 	float vanillaSky = dir.y <= 0.0 ? 1.0 : saturate(min(16.0 / max(dir.y, 1e-3), 512.0) / max(sf.fogSky.x, 1.0));

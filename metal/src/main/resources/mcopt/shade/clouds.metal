@@ -48,7 +48,7 @@ struct CloudParams {
 	                       //     the 3D noise (mcopt.shade.clouds.noiseDrift 0.82 x the wind: the clouds boil a little as they drift)
 	float4 wind;           // 208 xy how far the clouds moved since last frame (blocks), z cirrus coverage, w rain/storm 0..1
 	float4 light;          // 224 rgb irradiance from the light reaching the cloud layer (sun or moon; before exposure), w 1 sun
-	float4 lightDir;       // 240 xyz toward the light (unit), w 0
+	float4 lightDir;       // 240 xyz toward the light (unit), w M3.1 dev bits (mcopt.shade.clouds.dev; CLOUD_DEV_*)
 	float4 ambTop;         // 256 rgb mean sky radiance above the layer (before exposure), w albedo
 	float4 ambBottom;      // 272 rgb mean radiance from below (ground and haze), w multiple-scattering boost of the ambient
 	float4 march;          // 288 x primary steps, y light steps, z max distance (blocks), w aerial perspective distance (blocks)
@@ -67,6 +67,11 @@ struct CloudParams {
 	                       //     in cloud (smaller = more samples in dense cloud), w the shortest step (fraction of the base step)
 };
 static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)");
+
+// M3.1 dev bits (CloudParams.lightDir.w; CloudConfig.DEV_*): an M3.1 saving switched back to M3's way, for pricing in game
+#define CLOUD_DEV_OLD_RESOLVE 1024 // the resolve reads its five march distances one by one (M3)
+#define CLOUD_DEV_OLD_MARCH 2048   // the march looks the sky up for every ray, cloud or not (M3)
+static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.lightDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
 constexpr sampler cloudClamp(filter::linear, address::clamp_to_edge);
@@ -601,10 +606,15 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
                             texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
-	float3 sky = shadeSkyLookup(dir, lut, lutS, f);
-	float hf = cloudHorizonFade(dir, c);
-	CloudResult cu = cloudAerial(c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise), sky, hf, c);
-	CloudResult ci = cloudAerial(cloudCirrus(dir, c, weather), sky, hf, c);
+	CloudResult cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+	CloudResult ci = cloudCirrus(dir, c, weather);
+	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)
+	if (cu.dist >= 0.0 || ci.dist >= 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH)) {
+		float3 sky = shadeSkyLookup(dir, lut, lutS, f);
+		float hf = cloudHorizonFade(dir, c);
+		cu = cloudAerial(cu, sky, hf, c);
+		ci = cloudAerial(ci, sky, hf, c);
+	}
 	CloudResult o;
 	o.S = cu.S + cu.T * ci.S; // the cirrus is always behind (far above) the cumulus
 	o.T = cu.T * ci.T;
@@ -702,7 +712,13 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 	float2 uv = (float2(px) + 0.5) / c.size.xy;
 	float3 dir = cloudDirection(uv, c);
 	half4 now = cur.read(mp);
-	float dNow = curDist.read(mp).r;
+	// M3.1: the march distances around mp by two gathers (texel corners: (x-1..x, y-1..y) and (x..x+1, y..y+1); each returns
+	// (x0,y1) (x1,y1) (x1,y0) (x0,y0)) instead of five reads; clamp_to_edge = M3's clamped neighbours
+	bool oldTaps = cloudDev(c, CLOUD_DEV_OLD_RESOLVE);
+	constexpr sampler gatherS(filter::nearest, address::clamp_to_edge);
+	float2 msz = c.size.zw;
+	float4 g0 = oldTaps ? float4(0.0) : curDist.gather(gatherS, float2(mp) / msz);
+	float dNow = oldTaps ? curDist.read(mp).r : g0.y;
 	// reproject: where this direction's cloud (at the current march's distance) was last frame. The density is read at
 	// origin + p with origin = camera + the accumulated wind, so a cloud drifts by -wind each frame: last frame it was at
 	// p + wind (the sign matters: the other way round the history smeared 2 x wind per frame, blurring and patterning the
@@ -722,7 +738,16 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		int2 mi = int2(mp), ms = int2(c.size.zw) - 1;
 		int2 ax = int2(min(mi.x + 1, ms.x), mi.y), bx = int2(max(mi.x - 1, 0), mi.y);
 		int2 ay = int2(mi.x, min(mi.y + 1, ms.y)), by = int2(mi.x, max(mi.y - 1, 0));
-		float d1 = curDist.read(uint2(ax)).r, d2 = curDist.read(uint2(bx)).r, d3 = curDist.read(uint2(ay)).r, d4 = curDist.read(uint2(by)).r;
+		float d1, d2, d3, d4;
+		if (oldTaps) {
+			d1 = curDist.read(uint2(ax)).r, d2 = curDist.read(uint2(bx)).r, d3 = curDist.read(uint2(ay)).r, d4 = curDist.read(uint2(by)).r;
+		} else {
+			float4 g1 = curDist.gather(gatherS, (float2(mp) + 1.0) / msz);
+			d1 = g1.z; // (x+1, y)
+			d2 = g0.x; // (x-1, y)
+			d3 = g1.x; // (x, y+1)
+			d4 = g0.z; // (x, y-1)
+		}
 		float dMin = min(min(min(d1, d2), min(d3, d4)), dNow), dMax = max(max(max(d1, d2), max(d3, d4)), dNow);
 		if (dMax > dMin * 1.3 + 4.0) {
 			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));

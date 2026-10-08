@@ -89,6 +89,23 @@ public final class CloudConfig {
 	/** Most visits a history pixel averages (its march samples are jittered): fewer with a larger checkerboard (slower visits). */
 	public static final int MAX_AGE = clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", CHECKER >= 3 ? 10 : 12), 1, 63);
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.clouds.debug", 0);
+	/**
+	 * M3.1 performance pass (CLOUDS.md "M3.1 performance"): the cheaper ways of the passes and consumers (fog lookup only where
+	 * it shows, VL cloud shadow every other step, the resolve's distance taps by gather, the march's sky lookup only where a
+	 * cloud is). false = M3 exactly (the dev bits OLD_* all set).
+	 */
+	public static final boolean LEAN = flag("mcopt.shade.clouds.lean", true);
+	/** Dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): price parts of the clouds inside one session. */
+	public static final int DEV_NO_SCREEN = 1, DEV_NO_MAPS = 2, DEV_NO_SKY = 4, DEV_NO_FOG = 8, DEV_NO_SHADOW_USE = 16, DEV_NO_VL = 32,
+		DEV_OLD_FOG = 256, DEV_OLD_VL = 512, DEV_OLD_RESOLVE = 1024, DEV_OLD_MARCH = 2048, DEV_SCALE_ALT = 4096;
+	public static final int DEV_OLD_ALL = DEV_OLD_FOG | DEV_OLD_VL | DEV_OLD_RESOLVE | DEV_OLD_MARCH;
+	/** The history scale dev bit 4096 switches to (pricing another scale inside one session). */
+	public static final float SCALE_ALT = clamp(floatProperty("mcopt.shade.clouds.scaleAlt", 0.4f), 0.2f, 1f);
+
+	/** This frame's dev bits: mcopt.shade.clouds.dev (read every frame: the bench's price phases set it), plus OLD_* without LEAN. */
+	public static int devBits() {
+		return Integer.getInteger("mcopt.shade.clouds.dev", 0) | (LEAN ? 0 : DEV_OLD_ALL);
+	}
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");
 
@@ -102,7 +119,8 @@ public final class CloudConfig {
 
 	static String describe() {
 		return (BLOCKY ? "blocky, " : "") + "preset " + Shade.PRESET + ", scale " + SCALE + " (" + CHECKER + "x" + CHECKER + " checkerboard)" + ", " + STEPS + "/" + LIGHT_STEPS + " steps"
-			+ (SHADOWS ? ", shadows " + SHADOW_STRENGTH : ", no shadows") + (DOME ? ", dome " + DOME_STEPS + " steps" : "") + (CIRRUS ? ", cirrus" : "");
+			+ (SHADOWS ? ", shadows " + SHADOW_STRENGTH : ", no shadows") + (DOME ? ", dome " + DOME_STEPS + " steps" : "") + (CIRRUS ? ", cirrus" : "")
+			+ (LEAN ? "" : ", not lean (M3 passes)");
 	}
 
 	static boolean flag(String key, boolean def) {

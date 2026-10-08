@@ -124,7 +124,7 @@ render3dHud -> ShadePost.beforeHand hooks:
 | `.base` / `.thickness` | vanilla cloud height + 8 / 150 | cumulus layer (absolute y / blocks) |
 | `.coverage` / `.type` | -1 (daily) | force coverage 0..1 / type 0 flat .. 1 towering |
 | `.wind` / `.seed` | 1 / 0 | wind speed multiplier / daily weather seed |
-| `.noiseDrift` | 1 (was 0.82) | speed of the billow noise relative to the cumulus (1 = rigid drift; < 1 "boil", which the reprojection cannot follow: comb on soft edges) |
+| `.noiseDrift` | 0.82 | speed of the billow noise relative to the cumulus (1 = rigid drift; < 1 "boil"). 1 was tried against the still-camera comb: no change (runs cf7/cf2), so 0.82 stays |
 | `.density` / `.detail` | 1 / 1 | extinction / fine detail multipliers |
 | `.altitudeScale` | 4 | blocks -> metres of the sky model's air for the light the layer gets (sunset light lingers on the clouds) |
 | `.octaveWeight` / `.octaveExtinction` / `.skyExtinction` / `.sunsetFill` / `.apSunset` / `.lightStep` / `.odStep` / `.odMin` | 0.68 / 0.48 / 0.2 / 0.4 / 1.5 / 4 / 2.5 / 0.5 | art and sampling knobs (see CloudParams) |

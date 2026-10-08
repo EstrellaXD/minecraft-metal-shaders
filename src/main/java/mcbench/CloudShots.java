@@ -38,6 +38,8 @@ import net.minecraft.server.MinecraftServer;
  * {@code -Dmcbench.cloudsVariants=<suffix>:<key=value>[|<key=value>...][;<suffix2>:...]} shoots every listed scene once
  * per variant as {@code clouds_<scene>_<suffix>}, with those system properties set from the scene's start until its shot
  * (then restored), e.g. {@code old:mcopt.shade.clouds.stable=false;new:mcopt.shade.clouds.stable=true}.
+ * {@code -Dmcbench.clouds2=<scenes>} with {@code -Dmcbench.cloudsVariants2=<variants>}: a second list, shot after the first
+ * (e.g. still look shots with {@code mcopt.shade.clouds.freeze=true} next to turning shots in the wind; use other suffixes).
  */
 final class CloudShots {
 	static final String SPEC = System.getProperty("mcbench.clouds", "").trim();
@@ -48,15 +50,23 @@ final class CloudShots {
 	}
 
 	/** Called from BenchDriver.buildPlan after the standard shots. */
-	@SuppressWarnings("unchecked")
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		if (SPEC.isEmpty() || SPEC.equals("false")) return;
-		List<String> names = SPEC.equals("all") || SPEC.equals("true") ? ALL : Arrays.stream(SPEC.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
 		Map<String, Object> json = new LinkedHashMap<>();
+		if (!SPEC.isEmpty() && !SPEC.equals("false")) plan(steps, SPEC, "mcbench.cloudsVariants", "cloudsVariants", json);
+		// M3.3: a second scene list with its own variants (-Dmcbench.clouds2 / -Dmcbench.cloudsVariants2), shot after the first
+		// (e.g. still look shots with the clouds frozen next to turning shots in the wind)
+		String spec2 = System.getProperty("mcbench.clouds2", "").trim();
+		if (!spec2.isEmpty() && !spec2.equals("false")) plan(steps, spec2, "mcbench.cloudsVariants2", "cloudsVariants2", json);
+		if (!json.isEmpty()) BenchDriver.results.put("cloudShots", json);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void plan(java.util.Deque<BenchDriver.Step> steps, String spec, String variantsKey, String variantsJson, Map<String, Object> json) {
+		List<String> names = spec.equals("all") || spec.equals("true") ? ALL : Arrays.stream(spec.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
 		if (names.contains("perf")) perf(steps);
 		// M3.3: -Dmcbench.cloudsVariants (suffix -> properties); none = one shot per scene, as before
 		Map<String, Map<String, String>> variants = new LinkedHashMap<>();
-		String vSpec = System.getProperty("mcbench.cloudsVariants", "").trim();
+		String vSpec = System.getProperty(variantsKey, "").trim();
 		for (String v : vSpec.isEmpty() ? new String[0] : vSpec.split(";")) {
 			if (v.isBlank()) continue;
 			int c = v.indexOf(':');
@@ -68,7 +78,7 @@ final class CloudShots {
 			variants.put(v.substring(0, c).trim(), props);
 		}
 		if (variants.isEmpty()) variants.put("", Map.of());
-		else BenchDriver.results.put("cloudsVariants", variants);
+		else BenchDriver.results.put(variantsJson, variants);
 		for (String n : names) {
 			if (n.equals("perf")) continue;
 			boolean turn = TURNS.contains(n);
@@ -137,7 +147,6 @@ final class CloudShots {
 				json.put(name, m);
 			}
 		}
-		BenchDriver.results.put("cloudShots", json);
 	}
 
 	/** M3.3 turning shots (only by name). */

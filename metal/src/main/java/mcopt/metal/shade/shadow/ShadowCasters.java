@@ -49,8 +49,8 @@ final class ShadowCasters {
 
 	/** A list of chunks drawn with one instanced draw: one arena, one kind, one cascade. */
 	static final class DrawList {
-		final GpuBuffer arena;
-		final int kind;
+		GpuBuffer arena; // reused from a pool (M3.3): set by listFor
+		int kind;
 		/** firstVertex, packed pairs. */
 		int[] chunks = new int[256];
 		int count;
@@ -140,6 +140,7 @@ final class ShadowCasters {
 			}
 		}
 		for (int c = 0; c < 2; c++) {
+			this.pool.addAll(this.lists[c]); // M3.3: lists are reused frame to frame (the far parts list every frame now)
 			this.lists[c].clear();
 			this.sections[c] = 0;
 			this.quads[c] = 0;
@@ -291,6 +292,8 @@ final class ShadowCasters {
 			}
 		}
 		if (!any) return;
+		this.listStart[0] = this.lists[0].size();
+		this.listStart[1] = this.lists[1].size();
 		// M3.3 far spread: a region only the far cascade wants this frame skips the other parts' sections before reading them
 		boolean partOnly = !near && this.farPart >= 0;
 		// light mode, far part only: walk just that part's sections (a quarter of the region's 256), not all of them
@@ -369,13 +372,23 @@ final class ShadowCasters {
 	}
 
 	private DrawList listFor(int cascade, GpuBuffer arena, int kind) {
-		for (DrawList l : this.lists[cascade]) {
+		// every region has its own arena, so only the lists this region made can match (M3.3: was a scan of all of them)
+		List<DrawList> ls = this.lists[cascade];
+		for (int i = this.listStart[cascade]; i < ls.size(); i++) {
+			DrawList l = ls.get(i);
 			if (l.arena == arena && l.kind == kind) return l;
 		}
-		DrawList l = new DrawList(arena, kind);
-		this.lists[cascade].add(l);
+		DrawList l = this.pool.isEmpty() ? new DrawList(arena, kind) : this.pool.remove(this.pool.size() - 1);
+		l.arena = arena;
+		l.kind = kind;
+		l.count = 0;
+		ls.add(l);
 		return l;
 	}
+
+	/** M3.3: draw lists of earlier frames, for reuse; where this region's lists start in lists[c]. */
+	private final List<DrawList> pool = new ArrayList<>();
+	private final int[] listStart = new int[2];
 
 	/** The region's ShadowRegion record: its origin relative to the camera, computed exactly as Sodium's renderer does. */
 	private int addRegion(RenderRegion region, CameraTransform camera) {

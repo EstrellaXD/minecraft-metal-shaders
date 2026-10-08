@@ -1,5 +1,16 @@
 # M3 base + entities (branch `m3`, the M3 integration branch)
 
+## Status (2026-10-07 18:25)
+
+- Done: all features (section 1). Re-verified after the pause: build + `validate.sh` ALL OK (also with `MCOPT_GEN_DIR` =
+  the 402-stage dump of 10:56). Fresh shots `20261007-181121-m3r-shots`: entities noon/evening/night, hand, motion look right.
+- New since the pause: `mcopt.shade.entityShadows.pause` (per-frame switch) + mcbench zoo phases `zoo / zoo_noshadow / zoo2`
+  (entity shadows priced inside one session); evening rose warmer (upper sky rose instead of mauve: it read lilac-grey next
+  to Complementary's peach).
+- Running: ABBA entity cost (m3 on / flags off / M2.1), sky check, taaDebug 5, DH sanity. Next: fill section 7.
+- Section 8: integration checklist for the M3 merge (dated; the module branches were still being finished).
+
+
 Branch `m3` starts from `m2.1` (water M2.1) and is where the M3 modules (dynamic lights `m3-lights`, weather/clouds
 `m3-weather`, sky/dimensions `m3-skydims`, ...) merge. Everything here is behind `mcopt.shade=true` and the HDR target; with
 `mcopt.shade=false` the backend is upstream's (the two backend seams added, `MetalDrawTap` and redirect-format tags, are inert
@@ -100,3 +111,121 @@ Translation only (limb swing and turning stay with the variance clip). `mctaa.m`
 ## 7. Costs and tests
 
 See section 8 (filled from the runs below).
+
+## 8. Integration checklist (for the M3 integration)
+
+Written 2026-10-07 18:30 from the docs and `git diff m2.1..HEAD` of each branch at these heads (the module agents were still
+finishing them: **re-run the diffs at merge time** and check every row): `m3` (this branch), `vl-stable` 87f9fa2,
+`m3-lights` 201277c, `m3-clouds` c8430bb, `m3-weather` 5bdb27b, `m3-skydims` 152d505. All five module branches start from
+`m2.1`, not from `m3`: none of them knows the entity path, the draw tap or the dynamic-light seam of this branch.
+Merge order (workflow plan): `vl-stable` first, then the modules into `m3`. Rows marked **REAL** are semantic collisions
+(both sides compile, the result is wrong); the others are textual (union both sides).
+
+### 8.1 Bit fields and shared words
+
+| What | Who | Collision | Resolution |
+|---|---|---|---|
+| `ShadeFrame.sunPath.z` (dev bits, float) | M1/M2 dev bits 1-16; weather `SHADE_DEV_WX_*` 1024, 2048, **4096** (`WX_DRY`), 8192, 16384; skydims `SHADE_FLAG_DIMS_LIT` **4096** (OR-ed in by `ShadeDims.pack`) | **REAL**: in the Nether/End with dims lit, terrain also reads "stay dry" and weather's dev branch fires; with `-Dmcopt.shade.dev=4096` in the overworld, terrain takes the Nether/End path | Move `FLAG_DIMS_LIT` (Java `ShadeDims.FLAG_DIMS_LIT` and `shade_dims.metal SHADE_FLAG_DIMS_LIT`) to **65536** (1 << 16; a float holds it exactly). Convention: bits < 1 << 16 = dev toggles, >= 1 << 16 = per-frame state flags. Weather's `devBits()` reads `mcopt.shade.dev` every frame, so keep the OR after `ShadeFrame.pack` |
+| `ShadeLook.tier.y` feature bits | M2: 1-64; clouds `SHADE_FEATURE_CLOUDS` 4096; skydims `DIMS` 1 << 20, `MEDIA` 1 << 21, `SHIMMER` 1 << 22 | none (free: 128-2048, 8192-524288) | Both clouds (`CloudParams`) and skydims (`ShadeDims.pack`) read-modify-write TIER+4 after `ShadeLook.pack`: keep both calls after the pack in `ShadeFrameUpdater` |
+| `ShadeFinalParams.r.w` (final pass) | vl-stable: bit **2** = VL/depth unjitter; skydims: `bridgeUsed ? 1 : 0` (DH drew), read as `P.r.w > 0.5` / `< 0.5` | **REAL**: with TAAU on, vl-stable writes 2, skydims reads "DH drew" (End boss-fog sky skipped, Nether fog leaves LODs) | Make r.w a bit field: `(DH ? 1 : 0) + (unjitter ? 2 : 0)`; skydims tests `(int(P.r.w) & 1) != 0` (`shade_post.metal` lines ~209, 215) |
+| `ShadeFinalParams` size | m2.1 80 B Java buffer / 4 float4 in MSL; skydims adds `float4 x` (XDR) -> 96 B | textual | Take skydims' 96 B + `x`; vl-stable does not change the size |
+| `ShadeFrame.flags` (offset 960) read by the blob-shadow patch (`ShadeMsl.FORMAT_ADAPTER`, `mcoptShadeFrame[60]`) | m3: drops the blob when `flags.z != 0 && flags.x == 0` (overworld with a shadow map) | skydims adds End shadows (`ShadowPass` End key light): entity casters then also cast in the End, but the blob stays | With skydims: `flags.z != 0 && flags.x != SHADE_DIM_NETHER` (any dimension with a sun/key-light shadow map) |
+
+### 8.2 ShadeLook offsets (`shade_look.metal` + `ShadeLook.java`)
+
+| Offset | Field | Owner after merge | Notes |
+|---|---|---|---|
+| 192 | `cloudShadowVP` | clouds | |
+| 496 / 512 | `wet` / `wind` | weather | |
+| 528 / 544 | `clouds0` / `clouds1` | clouds | 560 `clouds2` still free |
+| 608 | `heldLight` | free | m3-lights uses its own buffer(24), not this field |
+| 656 `.w` | `skyGoldZ.w` evening rose | m3 | |
+| 672 `.z` | `night.z` aurora | skydims | |
+| 688 `.y` / `.z` | `ssr.y` prevDepth valid / `ssr.z` weather noise baked | weather | |
+| 752 | `dimTint` | skydims | |
+| 768 | `flash` | **weather** (lightning, overworld) **and skydims** (End flash) | **REAL**: `ShadeDims.pack` runs after `ShadeLook.pack` (which calls `ShadeWeather.pack`) and, when the dims are not lit, writes `flash = (0,1,0,0)`: the overworld lightning flash is erased every frame. Fix: skydims writes `flash` only while dims are lit (End); weather writes it only in the overworld (it already gets `dimension == OVERWORLD`). Consumers: weather's terrain `shadeWxFlash` only in the non-dims branch, skydims' `shadeLitDimsExtra` / End sky only in the End: one writer and one consumer per dimension |
+
+### 8.3 ShadeResources (buffer 19 argument buffer)
+
+| Entry | After merge | From |
+|---|---|---|
+| 0-3 | milkyWay (skydims: `.a` now holds its fbm noise), prevScene, scene, bloom | M2 |
+| 4 | `weatherNoise` | weather (commit 3c93d58, 18:09; WEATHER.md's table still says 4 is free) |
+| 5 | `prevDepth` | weather (written by `ShadePost.beginWorld` from `taa.historyDepth()`) |
+| 6 | `shadowTint` | weather |
+| 7, 8-11, 15 | free | |
+| 12 / 13 / 14 | `cloudShadow` / `cloudDome` / `cloudScreen` | clouds |
+| size | **16** entries: `mcshade.m SHADE_RESOURCES 16` (clouds) + the struct in `shade_look.metal` with weather's names in 4-6 and clouds' 8-15 | |
+
+m3-lights uses none of these: its data is `buffer(24)` (`ShadeDynLights`, vertex + fragment), `texture(23)` visibility,
+`texture(24/25)` irradiance volume, bound by `DynLights.bind` inside `ShadeBindings.bind/rebind`. Free in every shaded
+stage today (entities: game slots from 0, m3's shade slots buffer 16-19, texture 16-17, sampler 12-13). m3's movers use
+`buffer(2)` of the TAA resolve only (own encoder).
+
+### 8.4 Prelude and per-stage code
+
+- `ShadeMsl.prelude()` order: `#define MCOPT_SHADE` + shade_look + shade_common + **shade_clouds** (clouds: shade_m2's
+  `shadeFogAir2` calls it) + shade_m2 + **shade_dims** (skydims) + **`DynLightMsl.prelude()`** (lights: `dynlight.metal`,
+  empty when off) + **shade_dynlight** (m3's seam, last: its body may call the lights module). Weather's prelude stays
+  per terrain fragment (`ShadeMsl.terrain`: prelude + weather + water + source).
+- `shadeFogAir2` gets clouds' optional `constant ShadeResources *R = nullptr`: m3's `shade_entity.metal` calls it without
+  R (fine); pass `&R` there to get the clouds in the entity fog too.
+
+### 8.5 `sodium_terrain.fs.metal` (PolyForm Shield header kept): every branch edits it
+
+1. `sr [[buffer(19)]]` declaration: m3 and clouds made the **same** change (declared for every HDR variant); weather made
+   it `MCOPT_HDR && (SHADE_WATER || SHADE_WEATHER)`. Take m3/clouds' (a superset).
+2. Shadow line: skydims' `endLit` / Nether / `shadowSky` version, then clouds' `shadow *= shadeCloudShadow(...)` (sky > 0.3,
+   HDR).
+3. Vanilla-colour branch (`dims && !shadeDimsLit`): skydims' condition + m3-lights' `SHADE_DYNLIGHT` colour raise inside it.
+4. Non-water branch: weather's `shadeWetSurface` -> `wetAlbedo` -> skydims' `dims ? shadeLit2(sky 0, shadow 0) +
+   shadeLitDimsExtra : shadeLit2` (with `wetAlbedo`) -> m3-lights' `shadeDynamicLightsVol` term (with `wetAlbedo`; skydims
+   note: after the dims line too) -> emissive (skydims' Nether 3.1) -> weather tint delta -> weather flash (**only
+   `!dims`**, see 8.2) -> `shadeWetShade`.
+5. **Dynamic lights: drop m3's two seam call sites** in this file (terrain after `shadeLit2`, water `wi.lit +=`): the stub
+   returns 0 and m3-lights' own calls (`shadeDynamicLightsVol`, `shadeDynamicLightsSpec` for the water glint) are the
+   implementation; keeping both would add the light twice once the seam has a body.
+6. Water: clouds' `wi.res = &sr` / `shadeGlossy(..., &sr, ...)`, weather's ripples (in water.metal), m3-lights' water lit
+   and glint: all additive. Fog line: clouds' `&sr` variant, wrapped in skydims' `if (!dims)`.
+7. `sodium_terrain.vs.metal`: skydims only.
+
+### 8.6 Entities (this branch) x modules
+
+| Module | What m3's entity path needs | Proposal |
+|---|---|---|
+| lights | **REAL**: m3 shades entity **fragments** (`ShadeEntity` patches the HDR variants; the colour is replaced by `shadeEntityShade`, built from the raw vertex colour and UV2/240), while m3-lights patches the same pipelines' **vertex** stages (`DynLightMsl.patchVertex`: `sample_lightmap` -> `shadeDynLightmap`). m3's fragment never reads the vanilla lightmap colour, so m3-lights' entity lighting would be computed and thrown away | (a) In `FORMAT_ADAPTER.vertex`: run `ShadeEntity.vertex` first; apply `DynLightMsl.patchVertex` only when it returned null (glint, emissive, text, beacon, leash...: pipelines m3 does not shade). (b) Give the seam a body for entities: `ShadeEntity.fragment` appends `constant ShadeDynLights& dl [[buffer(24)]], texture3d<half> dlIrr [[texture(24)]], texture3d<half> dlDir [[texture(25)]]` under `SHADE_DYNLIGHT` and `shadeEntityShade` adds `float3(albedo) * f.ambientBlock.xyz * shadeDynamicLightsVol(dl, dlIrr, dlDir, p, n, thin, block)` (per pixel, 2 fetches; the seam signature `(d, f, L, R)` cannot reach those bindings, so either extend it with a `ShadeDynCtx` struct of the three or call the module directly and leave the seam for terrain-less callers). (c) **Hand**: m3-lights' `DynLightEntityRendererMixin` raises the local player's packed light, which m3's lit hand already reads as block light (UV2): do not also add the volume for `SHADE_DYN_HAND` (double light) |
+| clouds | entity sun term under cloud shadow | in `shadeEntityShade`: `shadow *= half(shadeCloudShadow(p, L, R.cloudShadow))` when sky > 0.3 (R is bound: `mcoptSR`). Hand: skip (hand-space p) |
+| weather | lightning on mobs; wetness | optional: `shadeWxFlash` needs weather.metal/weather_surface in the entity prelude (today terrain only). No wet mobs (vanilla has none either) |
+| skydims | Nether/End entities | `shadeEntityShade` returns the game's colour outside the overworld (top of the function, both world and hand variants): with dims lit, use skydims' path instead (`shadeLit2(albedo, n, 0, block, 0, ...) + shadeLitDimsExtra(...)`, no `shadeFogAir2`: the final pass fogs Nether/End), else entities stay vanilla-bright in a re-lit Nether. End shadows: entity casters then cast there too (8.1 blob row) |
+| weather coloured shadows | casters | `mc_shadow_render`: m3 draws the entity casters into cascade 0 after the terrain; weather's tint pass runs after cascade 0 into its own map: order terrain -> entities -> tint pass. Union the two sets of native functions in `mcshadow.m` / `ShadowNative` / `ShadowPass` |
+
+### 8.7 Other shared files (union both sides)
+
+- `vl/ShadeVl.java`, temporal line: vl-stable and m3 both switch `w` to `f.waterTime`. Take vl-stable's line and keep
+  m3's under-water history `VlConfig.TEMPORAL ? (f.underwater ? 0.8f : 0.9f) : 0f`, plus m3's `HDR_WATER 0.6` and
+  `HDR_CARVE_WATER 0.62`. Re-shoot `vl_underwater` after the merge (vl-stable's new clamp box / history-at-depth may want a
+  different under-water weight).
+- `vl.metal`: vl-stable (113 lines, temporal) and clouds (`vl_march` takes ShadeLook 17 + ShadeResources 19, cloud shadow
+  in the march, sky mask = cloud transmittance) edit `vl_march`: hand-merge; the VL encoder must bind 17 and 19.
+- `shade_post.metal` / `ShadePost.java`: vl-stable (unjitter, r.w), skydims (XDR final, r.w, `shade_final` signature), weather
+  (prevDepth publish in `beginWorld`), m3 (`handRedirect`, `EntityCasters.commit` in `beforeHand`).
+- `ShadeFrameUpdater`: order weather update -> look/frame pack -> `ShadeDims.pack` -> clouds params/update -> `DynLights.frame`.
+- `ShadowPass.java`, `mcshadow.m`, `ShadowNative.java`, `shadow.metal`: m3 (entity casters), weather (tint), skydims (End light).
+- `MetalRenderPass.java`: m3 draw tap + redirect tags, clouds skip of vanilla clouds. `MetalSurface.java`, `mcmetal.m`:
+  skydims (XDR present) only.
+- `sky.fs.metal`: skydims aurora (+ `pixel` parameter), weather flash, clouds composite: aurora and flash before the clouds'
+  `sky = sky * clouds.a + clouds.rgb`.
+- `water.metal`: clouds (R pointer), weather (ripples). `shade_m2.metal`: clouds. `sky_lut.metal`: m3 only.
+- `metal/build.gradle`: native sources `+ mcdynlight.m, mcclouds.m, mcxdr.m`, frameworks `+ AppKit` (skydims).
+- `fabric.mod.json`: mixin configs `+ mcopt-metal-shade-light.mixins.json, mcopt-metal-shade-dims.mixins.json`.
+- `tools/shade`: `validate.sh`, `ShadeMslDump.java`, `pipecheck.m` (m3 layout `auto`, skydims `postexcolor` and `mrt`):
+  union, then run `MCOPT_GEN_DIR=<dump> validate.sh` (needs a fresh `-Dmcopt.metal.dumpMsl` dump: entity, DynLightMsl and
+  weather variants are only checked against real game stages).
+- mcbench (one shared checkout): nothing to merge; `REC_PHASES` already lists every module's phases.
+
+### 8.8 After the merge, test
+
+`validate.sh` ALL OK (with a dump) · every module flag off = m2.1 · `mcopt.shade=false` = upstream · entity shots
+(noon, evening, night, hand, motion) · lights `dl_field_mobs` (mobs lit once, by the fragment path) · weather `wx_storm`
+(flash visible, not erased) · dims `nether_*`, `end_island` (mobs lit like the terrain, blob vs entity shadows) · clouds
+`clouds_*` · VL `vl_underwater` · DH sanity on DEV-DH (`shade_final` r.w bits).

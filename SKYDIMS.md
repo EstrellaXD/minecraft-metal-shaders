@@ -5,6 +5,19 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
+## M3.3 Status (2026-10-08 11:50, resumed session, merged in m3-int) - DONE
+
+- **R5** (`bench-results/*-dims-dh5`, DEV-DH, jar 252f407): End + Distant Horizons: v1 (= M3.2) coloured-noise rims and a black
+  void; now the End sky (nebula, stars, beams) everywhere DH leaves the clear colour, island clean; Nether + DH unchanged.
+  `work/release/M3.3-screenshots/dims_end_dh_cielo_antes_despues.jpg`.
+- **R4** (`bench-results/*-dims-r4`, DEV, **battery**, in-session `abtable.py`): aurora: `aurora.half` 6.403 / 6.425 ms vs
+  per-pixel (M3.2) 6.439 / 6.443 vs no aurora 6.027 / 6.041: the half-resolution pass saves only ~0.03 ms (the aurora is ~0.39 ms
+  either way); same look (`aurora_snow` vs v1). Kept (harmless; with the WIP commit d25a90b its size follows the render scale).
+  Nether: ours (lean) 4.62 ms, M2.1 look (`dims.pause`) 4.08, vanilla light 4.83 (no gain). XDR skip, where it engages (vanilla
+  Nether light): 4.72 vs 4.80 ms = -0.08 ms. End blob (`end_mobs`): M3.2 drew the blob under the real shadow, now only the real
+  shadow (`dims_end_mobs_blob_antes_despues.jpg`).
+Defaults: all M3.3 dims flags on (motes, endBlob, dhClear, aurora.half, netherLean, xdrSkip).
+
 ## M3.3 Status (2026-10-08 11:20) — agent "dims", branch `m3.3-dims` (from m3-int 397e241)
 
 Plan (in this order; each item ends done with in-game before/after evidence, or with a precise note):

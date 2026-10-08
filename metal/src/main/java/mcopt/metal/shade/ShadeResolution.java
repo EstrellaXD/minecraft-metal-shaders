@@ -59,10 +59,43 @@ public final class ShadeResolution {
 		return CHOICES[index] != 0;
 	}
 
+	/**
+	 * M3.3 (Gael: "ver la resolución real del mundo"): the world's render size right now, {width, height}, from TAAU's live
+	 * scale (the dynamic resolution's in Auto); null before the first world frame or without TAAU (the world then renders at
+	 * the window's size).
+	 */
+	public static int[] worldSize() {
+		mcopt.metal.shade.taa.ShadeTaa taa = mcopt.metal.shade.taa.ShadeTaa.current();
+		if (taa == null || taa.outWidth() <= 0) return null;
+		float s = taa.scale();
+		return new int[] {Math.round(taa.outWidth() * s), Math.round(taa.outHeight() * s)};
+	}
+
+	/**
+	 * M3.3: the F3 line (ShadeDebugMixin, under the fps line): the world's render size, its share of the window, the pause
+	 * menu's choice and the preset, e.g. "Shaders: mundo 2419x1571 (80 %) · Auto · balanced". F3's "Display" line is the
+	 * window's size, which the render resolution never changes.
+	 */
+	public static String debugLine() {
+		String preset = mcopt.metal.shade.taa.TaaConfig.PRESET.name().toLowerCase(Locale.ROOT);
+		int[] size = worldSize();
+		mcopt.metal.shade.taa.ShadeTaa taa = mcopt.metal.shade.taa.ShadeTaa.current();
+		if (size == null || taa == null) {
+			return "Shaders: mundo a la resolución de la ventana (sin TAAU) · " + preset;
+		}
+		int c = CHOICES[index];
+		String choice = c == 0 ? "Auto" : c < 0 ? "Nativa" : c + "p";
+		return String.format(Locale.ROOT, "Shaders: mundo %dx%d (%d %%) · %s · %s", size[0], size[1], Math.round(taa.scale() * 100f), choice, preset);
+	}
+
 	/** The menu label for the current choice (short: it must fit the pause menu's 204-pixel button). */
 	public static String label(int outWidth, int outHeight) {
 		int c = CHOICES[index];
-		if (c == 0) return "Resolución: Auto (dinámica)";
+		if (c == 0) {
+			// M3.3: in Auto, the height the dynamic resolution renders the world at right now ("Auto (1571p)")
+			int[] size = worldSize();
+			return size == null ? "Resolución: Auto (dinámica)" : "Resolución: Auto (" + size[1] + "p)";
+		}
 		if (c < 0) return "Resolución: Nativa";
 		return "Resolución: " + c + "p";
 	}

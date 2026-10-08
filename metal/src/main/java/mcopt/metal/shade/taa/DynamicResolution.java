@@ -33,8 +33,9 @@ package mcopt.metal.shade.taa;
  * Measured on M3.2 (balanced, perf route, M33_MISC.md): the frame was 8-10 ms of GPU time while the scale sat at the preset's
  * floor 0.60 (98-122 fps): the controller could not go lower, and ~7 ms of the frame do not shrink with the render scale at
  * all (T ~ 6.8 + 7 s^2 ms: clouds, shadow maps, the TAAU resolve and the final pass run at the output resolution), so its s^2
- * model also under-stepped. The hold controller: a floor of {@code mcopt.shade.drsFloor} (0.50, what the pause menu's lowest choice
- * allows) on performance and balanced (quality and ultra keep theirs), a cost model T(s') = T (k + (1 - k) s'^2 / s^2) with k =
+ * model also under-stepped. The hold controller: a floor of {@code mcopt.shade.drsFloor} (0.55 = the pause menu's lowest choice,
+ * 1080p on the 1964-pixel panel; the misc branch had 0.50, but at 0.50 the world reads visibly softer than at 0.60, run mx4
+ * scale shots, and Gael asked for resolution first: 0.55 holds ~120 fps on the heavy route instead of 127) on performance and balanced (quality and ultra keep theirs), a cost model T(s') = T (k + (1 - k) s'^2 / s^2) with k =
  * {@code mcopt.shade.drsFixed} (0.5: the part that does not scale; conservative, the measured part is 0.6-0.8) and a band on
  * the frame budget 1 / fps: down when the average is over 96.5 % of it (124 fps at 120), to the scale the model puts at 90 %
  * (133 fps), up to 0.08 per step after 8 frames; up when the model says the next step stays under 86 % (139 fps), up to
@@ -50,8 +51,8 @@ public final class DynamicResolution {
 	private static final double HOLD_SET = 0.90, HOLD_DOWN = 0.965, HOLD_UP = 0.86;
 	private static final float HOLD_STEP_DOWN = 0.08f, HOLD_STEP_UP = 0.03f;
 	private static final int HOLD_SETTLE_UP = 30;
-	/** M3.3: the hold controller's floor (mcopt.shade.drsFloor, 0.40-1; default 0.50). */
-	public static final float HOLD_FLOOR = TaaConfig.clamp(floatProp("mcopt.shade.drsFloor", 0.5f), 0.4f, 1f);
+	/** M3.3: the hold controller's floor (mcopt.shade.drsFloor, 0.40-1; default 0.55, the pause menu's 1080p on the Retina panel). */
+	public static final float HOLD_FLOOR = TaaConfig.clamp(floatProp("mcopt.shade.drsFloor", 0.55f), 0.4f, 1f);
 	/** M3.3: the share of the frame's GPU time that does not scale with the render scale, for the hold controller's model. */
 	private static final double HOLD_FIXED = TaaConfig.clamp(floatProp("mcopt.shade.drsFixed", 0.5f), 0f, 0.9f);
 

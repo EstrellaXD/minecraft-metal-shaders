@@ -113,6 +113,20 @@ public final class ShadeTaa {
 		return failed;
 	}
 
+	/** M3.3: the TAA state if it was already made (no side effects: for F3 and the pause menu), else null. */
+	public static @Nullable ShadeTaa current() {
+		return failed ? null : instance;
+	}
+
+	/** M3.3: the window size of the last world frame (0 before the first one). */
+	public int outWidth() {
+		return this.outWidth;
+	}
+
+	public int outHeight() {
+		return this.outHeight;
+	}
+
 	/** The TAA state, made on first use on the Metal backend; null when off, on another backend or after a setup failure. */
 	public static @Nullable ShadeTaa get() {
 		if (!ON || instance != null || failed) return instance;

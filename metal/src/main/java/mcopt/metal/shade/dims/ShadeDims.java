@@ -117,13 +117,12 @@ public final class ShadeDims {
 
 	/**
 	 * How far terrain is drawn in the Nether, as a multiple of vanilla's environmental fog end (0 = the whole render
-	 * distance). Sodium stops drawing chunks at the fog's end ("fog occlusion"); pushing vanilla's fog away for ours drew
-	 * the whole render distance (~7x the area of vanilla's 96 blocks at render distance 16: +0.5 ms in the first A/B). Our
-	 * border fog closes the view at this distance instead. performance 1.3x, balanced 1.7x, quality/ultra: everything.
-	 * Override: mcopt.shade.netherView (a multiple; 0 = the render distance).
+	 * distance, the default). Sodium stops drawing chunks where vanilla's fog ends ("fog occlusion"); our fog replaces
+	 * vanilla's, so the whole render distance is drawn. A cut at 1.7x vanilla's end (our border fog closing the view there)
+	 * measured no gain (in-session A/B, runs sdr-r1 vs sdr-r4: the Nether's +0.5 ms is the per-pixel lighting, not the extra
+	 * chunks), so it is off by default; mcopt.shade.netherView=N sets it.
 	 */
-	static final float NETHER_VIEW = DimsConfig.floatFlag("mcopt.shade.netherView",
-		mcopt.metal.shade.Shade.TIER <= 0 ? 1.3f : mcopt.metal.shade.Shade.TIER == 1 ? 1.7f : 0f, 0f, 100f);
+	static final float NETHER_VIEW = DimsConfig.floatFlag("mcopt.shade.netherView", 0f, 0f, 100f);
 	private static volatile float netherCull;
 
 	/** DimsFogMixin, Nether in open air: the distance vanilla's fog (and so Sodium's culling) should end at (0: none). */

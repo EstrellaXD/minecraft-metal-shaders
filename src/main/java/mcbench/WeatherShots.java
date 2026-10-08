@@ -26,7 +26,7 @@ import net.minecraft.world.level.material.Fluids;
  * <li>{@code perf}: two recorded perf phases at the ground pose (results.json perf.wxdry / perf.wxrain, gpu.*): 10 s panning
  * +-25 degrees, clear noon, then in rain (the weather's cost; -Dmcbench.wxSeconds).</li>
  * <li>{@code price}: the same pan as perf with parts of the weather switched off one at a time through the system property
- * mcopt.shade.dev (read by mcopt-shade every frame): wxdry, wxdry_notint (no tint pass/lookup), wxrain, wxrain_nossr, wxrain_noripple, wxrain_plainrain,
+ * mcopt.shade.dev (read by mcopt-shade every frame): wxdry, wxdry_notint (no tint pass/lookup), wxrain, wxrain_nossr, wxrain_nogate, wxrain_analytic, wxrain_noripple, wxrain_plainrain,
  * wxrain_dry (terrain dry, M2 rain), wxrain2 (all on again: drift).</li>
  * <li>{@code wx_rain_ground} (noon, rain): 2.6 blocks above the flat torch-grid site, looking across it toward the village
  * side: wet ground, puddles with reflections and raindrop ripples, slanted lit rain.</li>
@@ -119,6 +119,8 @@ final class WeatherShots {
 					price(extra, "wxdry_notint", false, p.ground, 16384);
 					if (!on("perf")) perf(extra, "wxrain", true, p.ground);
 					price(extra, "wxrain_nossr", true, p.ground, 1024);
+					price(extra, "wxrain_nogate", true, p.ground, 65536); // puddle SSR on every puddle pixel (no Fresnel gate)
+					price(extra, "wxrain_analytic", true, p.ground, 32768); // per-pixel puddle noise instead of the baked tile
 					price(extra, "wxrain_noripple", true, p.ground, 2048);
 					price(extra, "wxrain_plainrain", true, p.ground, 8192);
 					price(extra, "wxrain_dry", true, p.ground, 4096 | 8192 | 16384);

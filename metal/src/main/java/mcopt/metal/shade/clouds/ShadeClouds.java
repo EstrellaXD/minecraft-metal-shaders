@@ -54,6 +54,8 @@ public final class ShadeClouds {
 	private static int frame, domeFrames;
 	private static double lastX, lastY, lastZ;
 	private static int lastDimension = -1;
+	/** M3.3 (robustness, mcopt.shade.clouds.timeSnap): the day time of the last frame, to drop the history on a time jump. */
+	private static long lastTicks = Long.MIN_VALUE;
 	/** ShadePost before-tonemap order (AO 50, clouds 80, VL 100). */
 	public static final int HOOK_ORDER = 80;
 	private static boolean hooked, over;
@@ -137,6 +139,13 @@ public final class ShadeClouds {
 			double dx = f.cameraX - lastX, dy = f.cameraY - lastY, dz = f.cameraZ - lastZ;
 			boolean teleport = dx * dx + dy * dy + dz * dz > 64.0 * 64.0;
 			boolean snap = !wasActive || longGap || teleport || lastDimension != f.dimension;
+			// M3.3 robustness: a jump of the day time (sleeping, /time set) changes the clouds' light and the day's weather at once;
+			// the history kept the old sky and, marched 1/9 of the pixels per frame and blended 1/age, took ~3.5 s at 90 fps
+			// (~11 s at 30 real fps, frame generation) to let go of it: smeared streaky clouds. More than 200 ticks (10 s of game
+			// time) between two frames now drops it like a teleport. mcopt.shade.clouds.timeSnap=false (read every frame): M3.2.
+			long dayTicks = level.getDefaultClockTime();
+			if (lastTicks != Long.MIN_VALUE && Math.abs(dayTicks - lastTicks) > 200 && !"false".equals(System.getProperty("mcopt.shade.clouds.timeSnap"))) snap = true;
+			lastTicks = dayTicks;
 			lastX = f.cameraX;
 			lastY = f.cameraY;
 			lastZ = f.cameraZ;

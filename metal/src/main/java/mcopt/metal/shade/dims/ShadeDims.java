@@ -124,13 +124,6 @@ public final class ShadeDims {
 	 */
 	static final float NETHER_VIEW = DimsConfig.floatFlag("mcopt.shade.netherView", 0f, 0f, 100f);
 	private static volatile float netherCull;
-	/**
-	 * With Distant Horizons loaded the End look is off (M2.1's End): the first DH test (run sdr-dh, 2026-10-07) showed the
-	 * End's frame broken into a grey checkerboard with coloured contours. To investigate after the M3 merge;
-	 * mcopt.shade.dims.endWithDh=true turns it back on.
-	 */
-	public static final boolean END_OFF_WITH_DH = net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("distanthorizons")
-		&& !Boolean.getBoolean("mcopt.shade.dims.endWithDh");
 
 	/** DimsFogMixin, Nether in open air: the distance vanilla's fog (and so Sodium's culling) should end at (0: none). */
 	public static float netherCull(float vanillaEnd) {
@@ -141,7 +134,7 @@ public final class ShadeDims {
 
 	/** Whether Nether/End fog is ours (vanilla's environmental fog is pushed away by DimsFogMixin). */
 	public static boolean ownsFog(int dimension) {
-		return on() && (dimension == ShadeFrame.DIM_NETHER || dimension == ShadeFrame.DIM_END && !END_OFF_WITH_DH);
+		return on() && (dimension == ShadeFrame.DIM_NETHER || dimension == ShadeFrame.DIM_END);
 	}
 
 	/**
@@ -153,7 +146,7 @@ public final class ShadeDims {
 		boolean changed = lastDim != f.dimension;
 		lastDim = f.dimension;
 		float k = snap || changed ? 1f : 1f - (float) Math.exp(-Math.max(dt, 0f) / 3f);
-		dimsLit = on() && (f.dimension == ShadeFrame.DIM_NETHER || f.dimension == ShadeFrame.DIM_END && !END_OFF_WITH_DH);
+		dimsLit = on() && (f.dimension == ShadeFrame.DIM_NETHER || f.dimension == ShadeFrame.DIM_END);
 		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
 			overworld(f, level, camera, dt, snap || changed);
 			return;

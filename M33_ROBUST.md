@@ -1,5 +1,15 @@
 # M3.3 robustness: never-tested paths and frame generation (branch `m3.3-robust`)
 
+## M3.3 Status (2026-10-08 11:55, resumed session, merged in m3-int) - DONE
+
+R6 (`bench-results/20261008-114315-rb6-final`, jar 4b5fd35, frame generation off, 44 shots, no warnings; the only log
+errors are the offline session's Realms/auth 401s): every event passed. Improved Transparency on = the same water and thin
+rain as off (the option is kept off while the shaders run, log line once); day-time jump at 30 fps: M3.2 (`rb_tj_30_m32_5s`)
+smeared streaky clouds 5 s after `time set 12400`, timeSnap (`rb_tj_30_snap_5s`) clean; 3 save-and-quit / rejoin rounds,
+Nether / End / overworld round trips, windowed / small window / fullscreen back, `failCompile=terrain` and `*` (vanilla look,
+vanilla clouds) then restored, GUI (HUD, hand, inventory, chat, F3, pause): all clean. Contact sheet:
+`work/release/M3.3-screenshots/robust_final_verificacion.jpg`. Frame generation stays off and its button hidden (section 3).
+
 ## M3.3 Status (2026-10-08 11:00)
 
 Branch `m3.3-robust` from `m3-int` 397e241 (M3.2 + aurora-lean sky). ROOT = the project folder. Game runs so far: R1, R2, R3,

@@ -5,15 +5,15 @@ and what an integrator merging it with the other M3 branches has to watch. Every
 its own flags; with `mcopt.shade=false` nothing here loads (the mixin plugin, the registry entry and the MetalSurface hook
 all test `Shade.ENABLED`, a `static final false`).
 
-## Status (2026-10-07 18:15)
+## Status (2026-10-07 18:42)
 
-Resumed after the 15:06 pause (account switch). Done since: the WIP terrain refactor is complete (the WIP commit already held
-the finished change: `shadeLit2` is called once for every dimension and `shadeLitDimsExtra` adds the Nether/End light, so
-the overworld path's code size is unchanged); build + `validate.sh` ALL OK. New: XDR pauses its highlights while the
-window's screen is SDR only (an external 1080p monitor), dev switch `mcopt.shade.xdrTest=sdr|flip`; live
-`mcopt.shade.dims.pause` + mcbench DimShots in-session A/B phases (`nether/nether_off/nether2`, `end/end_off/end2`,
-`xdr/xdr_off/xdr2`); XDR dumps capped at 24 (`MCOPT_XDR_DUMP_MAX`); `tools/shade/xdrdump/xdrdump.py` reads them.
-Next: the in-game run with shots + A/B + XDR dump (label `sdr-r1`), judge the looks, fix, fill section 6.
+Done since the 15:06 pause: WIP terrain refactor finished (single `shadeLit2` call); XDR pauses highlights on SDR-only
+screens (+ `mcopt.shade.xdrTest=sdr|flip`); frame generation keeps XDR off (run `sdr-fg`: clean); live
+`mcopt.shade.dims.pause` + DimShots in-session A/B phases; first prices (6.1); Nether view-distance fix (Sodium fog
+culling), End beams sparser/lower, nebula softer, End key -25 %, less lava glow in the Nether haze; final pass split in an
+overworld variant (no dims code, m2.1 cost) and a `_dims` variant; XDR knee 3 -> 2 (the dumps showed nothing above 1.2x).
+Queued: `sdr-r4` (shots + A/B with all of the above), `sdr-flip` (XDR SDR/EDR flip every 10 s + dumps + standard shots).
+Next: check r4 shots/prices and the flip run's log + dumps, fill 6.2, copy shots to work/release/M3-skydims-screenshots.
 
 ## 1. Features
 

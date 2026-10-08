@@ -1,19 +1,31 @@
 # M3 base + entities (branch `m3`, the M3 integration branch)
 
-## Status (2026-10-07 20:10)
+## Status (2026-10-07 22:06, fix round after the skeptic check `check:base`)
 
-- **Done.** All features (section 1), re-verified after the pause: build + `validate.sh` ALL OK (also with `MCOPT_GEN_DIR` =
-  the 402-stage dump: 36 entity/item/particle pipelines build). Fresh shots: entities noon/evening/night, hand, moving mobs,
-  DH sanity: all right (section 7.3).
-- Costs (section 7): M3 base = **0 within noise** vs M2.1 (zoo of ~12 mobs: 6.41 vs 6.42 ms GPU, ~156 fps, balanced, DRS
-  off); entity shadows priced in one session: < 0.05 ms. New per-frame switch `mcopt.shade.entityShadows.pause` + mcbench
-  phases `zoo / zoo_noshadow / zoo2`.
-- Look fix: evening rose warmer (upper sky warm rose instead of mauve, which read lilac-grey next to Complementary).
-- Section 8: integration checklist for the M3 merge (re-checked 20:08; three REAL collisions open in m3-skydims, one design
-  decision for dynamic lights on entities).
-- Next: the integration workflow (vl-stable, then the modules, following section 8); `taaDebug` views in the HDR path
-  (7.3, pre-existing).
-
+- **Done (74e763b, builds):** fix 1 `mcopt.shade.skyRose` (default true, read every frame; false = skyRose 0 = M2.1's evening
+  sky) and `mcopt.shade.vl.waterM3` (default true; false = HDR_WATER 0.45, HDR_CARVE_WATER 0.55, history 0.9, caustics on
+  `gameTimeSeconds` = M2.1). Fix 2: `vlCausticPhases` speeds are whole turns per 4096 s (seamless water-clock wrap): the
+  function is byte-identical to vl-stable's, so that merge is clean there.
+- **Next (exact plan, in order; not started unless marked):**
+  1. Blob shadow (finding "dropped in caves"): the `entity_shadow` vertex's UV2 is constant 15/15 (vanilla
+     `ShadowFeatureRenderer.shadowVertex` writes 15728880), so the GPU cannot gate by sky light. Plan: remove the vertex patch
+     in `ShadeMsl.FORMAT_ADAPTER` (ENTITY_BLOB) and add a mixin `shade/shadow/mixin/EntityBlobShadowMixin` (in
+     `mcopt-metal-shade-shadow.mixins.json`) at HEAD of `EntityRenderer.extractShadowPiece` that cancels a piece when
+     `EntityCasters.dropBlob(level, pos)`: entity casters ready, `ShadowPass.enabled()`, light not the moon, and
+     `level.getBrightness(LightLayer.SKY, pos) >= 5` (receivers' gate: sky <= 0.3 skips the map).
+  2. Entity-caster resources: revert `mc_shadow_new` to m2.1 (no entity pipeline there); new `mc_shadow_entity_init` (pipeline +
+     12 MB buffer) called from `EntityCasters.attach` only when ON, failure logged, terrain shadows kept; tap and commit skip
+     when this frame's cascade is not prepared (Nether/End).
+  3. Prewarm `HAND_FORMAT` (MetalShaderRegistry prewarm returns int[][]; ShadeMsl.prewarm adds the hand set for
+     ShadeEntity.PIPELINES + glint pipelines when HAND).
+  4. ShadeEntity: per-variant ThreadLocal instead of the name-keyed VERTEX_PATCHED set (reset at the top of
+     FORMAT_ADAPTER.vertex); MetalPipeline.dump writes same-named pipelines with different sources as NAME~1, ~2;
+     ShadeMslDump iterates them (validate builds the plain item_cutout pair).
+  5. BASE.md 7.2 wording (all three zoo phases for every jar: on 6.433, off 6.436, M2.1 6.422; entity shadows "not measurable
+     (< ~0.1 ms)"; drop the "every run" warm-up claim).
+  6. mcbench EntityShots: `rose` (sunset pair with `mcopt.shade.skyRose` false/true in one session, `tick freeze` around it)
+     and `cave` (mobs + a torch in a dark cave: blob must show); game run; shots to `release/M3-base-screenshots/`.
+  7. Only if cheap: taaDebug views in the HDR path (7.3).
 
 Branch `m3` starts from `m2.1` (water M2.1) and is where the M3 modules (dynamic lights `m3-lights`, weather/clouds
 `m3-weather`, sky/dimensions `m3-skydims`, ...) merge. Everything here is behind `mcopt.shade=true` and the HDR target; with

@@ -71,15 +71,23 @@ public final class DynLights {
 	/** Blocks short of its reach where a light stops (dynlight.metal SHADE_DL_CUT). */
 	static final double CUT = 2.0;
 	/** The irradiance volume (dynlight.metal SHADE_DL_IRR_*): blocks around the camera, one voxel each. */
-	static final int IRR_X = 80, IRR_Y = 48, IRR_Z = 80;
+	static final int IRR_X = 96, IRR_Y = 64, IRR_Z = 96;
 	/** ShadeDynLights (dynlight.metal): header 64 + lights 64 x 48 + cells 3072 x 8. */
 	static final int LIGHTS_OFFSET = 64, CELLS_OFFSET = LIGHTS_OFFSET + MAX * 48, BYTES = CELLS_OFFSET + GRID_X * GRID_Y * GRID_Z * 8;
-	private static final int RING = 4, VIS_PARAMS = 16 + 64 * 32;
+	/**
+	 * Ring slots of the light buffer and of the occupancy copies: more than the frames that can be in flight
+	 * (-Dmcopt.metal.inFlight, 2 by default) plus the one being written; mcdynlight.m holds at most 8.
+	 */
+	static final int RING = Math.max(4, Math.min(8, Integer.getInteger("mcopt.metal.inFlight", 2) + 2));
+	private static final int VIS_PARAMS = 16 + 64 * 32;
 	/** Fade time constants (s): quick to light up, a little slower to go out. */
 	private static final float TAU_IN = 0.06f, TAU_OUT = 0.18f;
 
 	private static long state;
-	private static boolean failed;
+	private static boolean failed, fallback;
+	/** The occupancy's CPU bits and the generation last copied to the GPU. */
+	private static long occAddress;
+	private static int occUploaded = Integer.MIN_VALUE;
 	private static final ByteBuffer[] ring = new ByteBuffer[RING];
 	private static int slot;
 	private static Occupancy occupancy;
@@ -124,7 +132,7 @@ public final class DynLights {
 
 	/** Binds this frame's lights and the visibility volumes (ShadeBindings.bind / rebind). */
 	public static void bind(long enc) {
-		if (state != 0) DynLightNative.bind(enc);
+		if (state != 0 || fallback) DynLightNative.bind(enc);
 	}
 
 	/**
@@ -145,7 +153,8 @@ public final class DynLights {
 				MemoryUtil.memFree(src);
 			}
 			for (int i = 0; i < RING; i++) ring[i] = MemoryUtil.memByteBuffer(DynLightNative.contents(state, i), BYTES).order(ByteOrder.LITTLE_ENDIAN);
-			occupancy = new Occupancy(MemoryUtil.memByteBuffer(DynLightNative.contents(state, -1), Occupancy.BYTES).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer());
+			occAddress = MemoryUtil.nmemCalloc(1, Occupancy.BYTES);
+			occupancy = new Occupancy(MemoryUtil.memByteBuffer(occAddress, Occupancy.BYTES).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer());
 			visParams = MemoryUtil.nmemCalloc(1, VIS_PARAMS);
 			System.out.println("[mcopt] shade: dynamic lights on (" + DynLightConfig.describe() + ")");
 			return true;
@@ -154,6 +163,12 @@ public final class DynLights {
 			state = 0;
 			System.out.println("[mcopt] shade: dynamic lights failed to start, off: " + e);
 			e.printStackTrace();
+			// the shaders still declare the module's slots: bind zeroed stand-ins (no lights) rather than nothing
+			try {
+				fallback = DynLightNative.fallback(ctx, BYTES);
+			} catch (Throwable f) {
+				System.out.println("[mcopt] shade: dynamic lights fallback bindings failed too: " + f);
+			}
 			return false;
 		}
 	}
@@ -237,7 +252,11 @@ public final class DynLights {
 					fresh = true;
 				}
 				if (s.slab < 0) continue;
-				if (!fresh && s.volGen == gen && s.volReach == s.reach && Math.abs(s.volX - s.x) < 0.04 && Math.abs(s.volY - s.y) < 0.04 && Math.abs(s.volZ - s.z) < 0.04) continue;
+				if (!fresh && s.volReach == s.reach && Math.abs(s.volX - s.x) < 0.04 && Math.abs(s.volY - s.y) < 0.04 && Math.abs(s.volZ - s.z) < 0.04
+					&& (s.volGen == gen || !occupancy.changedSince(s.x, s.y, s.z, s.reach, s.volGen))) {
+					s.volGen = gen; // nothing it reaches changed: keep the slab
+					continue;
+				}
 				int ox = (int) Math.floor(s.x) - 16, oy = (int) Math.floor(s.y) - 16, oz = (int) Math.floor(s.z) - 16;
 				long p = visParams + 16 + dirty * 32L;
 				MemoryUtil.memPutInt(p, ox);
@@ -307,7 +326,13 @@ public final class DynLights {
 		b.asLongBuffer().put(cells);
 		b.position(0);
 		// lights that fall off the list keep the cells' bits clear; unused light slots are never named by a cell
-		if (dirty > 0) DynLightNative.vis(enc, state, visParams, VIS_PARAMS, dirty);
+		if (dirty > 0) {
+			if (occupancy.generation != occUploaded) { // the bits changed since the copy the GPU has: a fresh ring slot
+				DynLightNative.occupancy(state, occAddress);
+				occUploaded = occupancy.generation;
+			}
+			DynLightNative.vis(enc, state, visParams, VIS_PARAMS, dirty);
+		}
 		if (count > 0) { // the terrain's irradiance volume from these lights and slabs, only where they reach (+ last frame's box)
 			int bx0 = IRR_X, by0 = IRR_Y, bz0 = IRR_Z, bx1 = -1, by1 = -1, bz1 = -1;
 			for (int i = 0; i < count; i++) {

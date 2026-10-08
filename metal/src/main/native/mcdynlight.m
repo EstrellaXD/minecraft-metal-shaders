@@ -9,7 +9,9 @@
 // Native shading's dynamic lights (-Dmcopt.shade=true, mcopt.shade.dynLights; Java side mcopt.metal.shade.light.DynLights,
 // shader side resources/mcopt/shade/dynlight.metal and dynlight_vis.metal):
 //   - a ring of shared buffers with each frame's lights and light grid (ShadeDynLights, written by the CPU in place),
-//   - the block occupancy around the camera (one shared buffer, 128^3 bits, filled by the CPU from chunk sections),
+//   - the block occupancy around the camera (128^3 bits, kept by the CPU from chunk sections in its own memory and copied
+//     into the next slot of a ring of shared buffers on the frames that compute visibility after it changed: a buffer the GPU
+//     may still be reading is never written),
 //   - the visibility volumes: a 3D R8 texture, 32 x 32 x (32 x slabs), one 32^3 slab per occluded light, computed once per
 //     frame before the world passes (shade_dl_vis),
 // bound on every render encoder native shading binds (ShadeBindings.bind), vertex and fragment stages:
@@ -25,15 +27,18 @@
 typedef struct {
 	id<MTLBuffer> ring[DL_RING_MAX];
 	int ringSize, slot;
-	id<MTLBuffer> occupancy;
+	id<MTLBuffer> occupancy[DL_RING_MAX];
+	int occSlot, occBytes;
 	id<MTLTexture> vis;
 	int slabs;
 	id<MTLComputePipelineState> visPso, irrPso;
 	id<MTLTexture> irr, dir;  // the irradiance volume: rgb light, mean light direction (one voxel per block)
 } DlState;
 
-// The one state mc_dl_bind binds from (set by mc_dl_new).
-static DlState *dl;
+// The one state mc_dl_bind binds from (set by mc_dl_new), or the fallback: when the module failed to start, the shaders
+// still declare its slots, so a zeroed light buffer (no lights: every shader leaves at its first test) and 1-voxel volumes
+// are bound instead of nothing (mc_dl_fallback).
+static DlState *dl, *fb;
 
 // source: dynlight.metal (with SHADE_DL_KERNELS) + dynlight_vis.metal; irrW x irrH x irrD: the irradiance volume; bytes: the ShadeDynLights size; ring: slots (> frames in flight); slabs: visibility volumes
 // (<= 64); occBytes: the occupancy buffer's size. NULL with the compiler's message in err.
@@ -70,9 +75,12 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 			memset(s->ring[i].contents, 0, bytes);
 			s->ring[i].label = @"mcopt shade: dynamic lights";
 		}
-		s->occupancy = [ctx->device newBufferWithLength:occBytes options:MTLResourceStorageModeShared];
-		memset(s->occupancy.contents, 0, occBytes);
-		s->occupancy.label = @"mcopt shade: block occupancy";
+		s->occBytes = occBytes;
+		for (int i = 0; i < s->ringSize; i++) {
+			s->occupancy[i] = [ctx->device newBufferWithLength:occBytes options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
+			memset(s->occupancy[i].contents, 0, occBytes);
+			s->occupancy[i].label = @"mcopt shade: block occupancy";
+		}
 		s->slabs = slabs < 1 ? 1 : slabs > 64 ? 64 : slabs;
 		MTLTextureDescriptor *td = [[MTLTextureDescriptor new] autorelease];
 		td.textureType = MTLTextureType3D;
@@ -100,8 +108,10 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 void mc_dl_free(DlState *s) {
 	if (!s) return;
 	if (dl == s) dl = NULL;
-	for (int i = 0; i < s->ringSize; i++) [s->ring[i] release];
-	[s->occupancy release];
+	for (int i = 0; i < s->ringSize; i++) {
+		[s->ring[i] release];
+		[s->occupancy[i] release];
+	}
 	[s->vis release];
 	[s->visPso release];
 	[s->irrPso release];
@@ -110,10 +120,46 @@ void mc_dl_free(DlState *s) {
 	free(s);
 }
 
-// CPU addresses: ring slot i (0..ring-1), or the occupancy buffer (i = -1).
+// CPU address of ring slot i (0..ring-1).
 void *mc_dl_contents(DlState *s, int i) {
-	if (i < 0) return s->occupancy.contents;
-	return i < s->ringSize ? s->ring[i].contents : NULL;
+	return i >= 0 && i < s->ringSize ? s->ring[i].contents : NULL;
+}
+
+// The CPU's block occupancy (occBytes at src) into the next occupancy slot, which mc_dl_vis reads from now on. Called only on
+// frames that compute visibility after the occupancy changed; the ring (more slots than frames in flight) keeps the slot a
+// frame still on the GPU reads untouched.
+void mc_dl_occupancy(DlState *s, const void *src) {
+	if (!s || !src) return;
+	s->occSlot = (s->occSlot + 1) % s->ringSize;
+	memcpy(s->occupancy[s->occSlot].contents, src, (size_t) s->occBytes);
+}
+
+// The fallback bindings (see fb): a zeroed ShadeDynLights of bytes and 1-voxel volumes. 0 on failure.
+int mc_dl_fallback(Ctx *ctx, int bytes) {
+	if (fb) return 1;
+	@autoreleasepool {
+		DlState *s = calloc(1, sizeof(DlState));
+		s->ringSize = 1;
+		s->ring[0] = [ctx->device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+		if (!s->ring[0]) {
+			free(s);
+			return 0;
+		}
+		memset(s->ring[0].contents, 0, bytes);
+		s->ring[0].label = @"mcopt shade: dynamic lights (off)";
+		MTLTextureDescriptor *td = [[MTLTextureDescriptor new] autorelease];
+		td.textureType = MTLTextureType3D;
+		td.pixelFormat = MTLPixelFormatR8Unorm;
+		td.width = td.height = td.depth = 1;
+		td.storageMode = MTLStorageModePrivate;
+		td.usage = MTLTextureUsageShaderRead;
+		s->vis = [ctx->device newTextureWithDescriptor:td];
+		td.pixelFormat = MTLPixelFormatRGBA16Float;
+		s->irr = [ctx->device newTextureWithDescriptor:td];
+		s->dir = [ctx->device newTextureWithDescriptor:td];
+		fb = s;
+		return 1;
+	}
 }
 
 // The ring slot encoders bind from now on.
@@ -124,7 +170,7 @@ void mc_dl_slot(DlState *s, int slot) {
 // Binds this frame's lights and the visibility volumes into enc's open render encoder (vertex and fragment stages).
 void mc_dl_bind(Enc *enc) {
 	id<MTLRenderCommandEncoder> r = enc->render;
-	DlState *s = dl;
+	DlState *s = dl ? dl : fb;
 	if (!r || !s) return;
 	id<MTLBuffer> b = s->ring[s->slot];
 	[r setVertexBuffer:b offset:0 atIndex:24];
@@ -146,7 +192,7 @@ void mc_dl_vis(Enc *enc, DlState *s, const void *params, int length, int volumes
 		c.label = @"mcopt shade: dynamic light visibility";
 		[c setComputePipelineState:s->visPso];
 		[c setBytes:params length:length atIndex:0];
-		[c setBuffer:s->occupancy offset:0 atIndex:1];
+		[c setBuffer:s->occupancy[s->occSlot] offset:0 atIndex:1];
 		[c setTexture:s->vis atIndex:0];
 		[c dispatchThreads:MTLSizeMake(32, 32, 32 * volumes) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
 		[c endEncoding];

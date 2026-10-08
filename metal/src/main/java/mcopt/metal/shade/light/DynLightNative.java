@@ -33,6 +33,8 @@ final class DynLightNative {
 	private static final MethodHandle SLOT = fn("mc_dl_slot", null, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle BIND = fn("mc_dl_bind", null, JAVA_LONG);
 	private static final MethodHandle VIS = fn("mc_dl_vis", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
+	private static final MethodHandle OCCUPANCY = fn("mc_dl_occupancy", null, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle FALLBACK = fn("mc_dl_fallback", JAVA_INT, JAVA_LONG, JAVA_INT);
 
 	private DynLightNative() {
 	}
@@ -56,7 +58,25 @@ final class DynLightNative {
 		}
 	}
 
-	/** Ring slot i's CPU address, or the occupancy buffer's (i = -1). */
+	/** The CPU's block occupancy (Occupancy.BYTES at address) into the next occupancy slot, read by the next mc_dl_vis. */
+	static void occupancy(long state, long address) {
+		try {
+			OCCUPANCY.invokeExact(state, address);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Zeroed fallback bindings for the module's slots (after a failed start); false when even those failed. */
+	static boolean fallback(long ctx, int bytes) {
+		try {
+			return (int) FALLBACK.invokeExact(ctx, bytes) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Ring slot i's CPU address. */
 	static long contents(long state, int i) {
 		try {
 			return (long) CONTENTS.invokeExact(state, i);

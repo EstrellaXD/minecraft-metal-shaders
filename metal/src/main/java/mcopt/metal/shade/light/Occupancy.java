@@ -26,7 +26,8 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
 
 /**
  * Which blocks around the camera stop light (BlockState.canOcclude: full opaque cubes, slabs, stairs...; not glass, leaves,
- * water), one bit per block in a shared GPU buffer that the visibility kernel reads (dynlight_vis.metal has the layout): a
+ * water), one bit per block in CPU memory (DynLights copies it into a ring slot of GPU buffers on the frames that compute
+ * visibility after it changed; dynlight_vis.metal has the layout): a
  * toroidal window of 8 x 8 x 8 chunk sections (128^3 blocks) that follows the camera section by section. Sections are read
  * from the client's chunks on the render thread within a CPU budget per frame, nearest first; sections the window newly
  * covers read as air until filled; block updates set their bit at once (ClientLevel.sendBlockUpdated, the mixin), section
@@ -47,8 +48,10 @@ final class Occupancy {
 	private int ox = Integer.MIN_VALUE, oy, oz; // the window's min section
 	private int refresh;
 	private ClientLevel level;
-	/** Bumped whenever any bit changes (visibility volumes of static lights may be reused while it stays). */
+	/** Bumped whenever any bit changes (DynLights copies the bits to the GPU when it moved). */
 	int generation;
+	/** Per section slot: the generation of its last change (a light's slab is recomputed only when a section it reaches changed). */
+	private final int[] slotGen = new int[SLOTS];
 	int filledLastFrame, pending;
 	long nanosLastFrame;
 
@@ -95,7 +98,7 @@ final class Occupancy {
 							this.bits.put(s * WORDS, new int[WORDS], 0, WORDS); // air until filled
 							this.dirty[s] = true;
 							this.retry[s] = 0;
-							this.generation++;
+							this.slotGen[s] = ++this.generation;
 						}
 					}
 				}
@@ -192,7 +195,7 @@ final class Occupancy {
 		}
 		if (changed) {
 			this.bits.put(s * WORDS, w, 0, WORDS);
-			this.generation++;
+			this.slotGen[s] = ++this.generation;
 		}
 		return ok;
 	}
@@ -208,8 +211,29 @@ final class Occupancy {
 		int old = this.bits.get(at), now = state.canOcclude() ? old | 1 << (idx & 31) : old & ~(1 << (idx & 31));
 		if (now != old) {
 			this.bits.put(at, now);
-			this.generation++;
+			this.slotGen[s] = ++this.generation;
 		}
+	}
+
+	/**
+	 * Whether any section of the window within r blocks of absolute (x, y, z) (the blocks a light there can see) changed
+	 * after generation gen: its visibility slab must be recomputed. Sections outside the window are not looked at (the
+	 * kernel reads them as whatever the slot holds, as before; lights with a slab are within 40 blocks of the camera, so their
+	 * reach stays inside the window).
+	 */
+	boolean changedSince(double x, double y, double z, double r, int gen) {
+		if (this.ox == Integer.MIN_VALUE) return true;
+		int sx0 = Math.max((int) Math.floor(x - r) >> 4, this.ox), sx1 = Math.min((int) Math.floor(x + r) >> 4, this.ox + SPAN - 1);
+		int sy0 = Math.max((int) Math.floor(y - r) >> 4, this.oy), sy1 = Math.min((int) Math.floor(y + r) >> 4, this.oy + SPAN - 1);
+		int sz0 = Math.max((int) Math.floor(z - r) >> 4, this.oz), sz1 = Math.min((int) Math.floor(z + r) >> 4, this.oz + SPAN - 1);
+		for (int sy = sy0; sy <= sy1; sy++) {
+			for (int sz = sz0; sz <= sz1; sz++) {
+				for (int sx = sx0; sx <= sx1; sx++) {
+					if (this.slotGen[slot(sx, sy, sz)] - gen > 0) return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/** A section changed (chunk data arrived, a bulk update): refill it soon. */

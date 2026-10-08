@@ -38,9 +38,10 @@ using namespace metal;
 #define SHADE_DL_GRID_X 16     // light grid cells (8 blocks each): 128 x 96 x 128 blocks around the camera
 #define SHADE_DL_GRID_Y 12
 #define SHADE_DL_GRID_Z 16
-#define SHADE_DL_IRR_X 80      // the irradiance volume: 80 x 48 x 80 blocks around the camera, one voxel per block
-#define SHADE_DL_IRR_Y 48
-#define SHADE_DL_IRR_Z 80
+#define SHADE_DL_IRR_X 96      // the irradiance volume: 96 x 64 x 96 blocks around the camera, one voxel per block; its
+#define SHADE_DL_IRR_Y 64      // contribution fades out over the outer SHADE_DL_IRR_FADE voxels (full within +-40 / +-24
+#define SHADE_DL_IRR_Z 96      // blocks, gone at +-48 / +-32: no hard plane where the volume ends)
+#define SHADE_DL_IRR_FADE 8.0
 
 struct ShadeDynLight {
 	float4 pos;    // xyz camera-relative position, w reach in blocks (the light level; the light is l - d at distance d)
@@ -132,10 +133,14 @@ static float3 shadeDynamicLights(constant ShadeDynLights &D, texture3d<half> vis
 // blends toward 0.6, as if lit from around). Same units and day/placed-light attenuation as shadeDynamicLights.
 static float3 shadeDynamicLightsVol(constant ShadeDynLights &D, texture3d<half> irr, texture3d<half> dirs, float3 p, float3 n, bool thin, half block) {
 	if (D.info.x == 0u || D.irr.w <= 0.0) return float3(0.0);
-	float3 v = (p + n * 0.5 - D.irr.xyz) * float3(1.0 / SHADE_DL_IRR_X, 1.0 / SHADE_DL_IRR_Y, 1.0 / SHADE_DL_IRR_Z);
-	if (any(v <= 0.0) || any(v >= 1.0)) return float3(0.0);
+	const float3 size = float3(SHADE_DL_IRR_X, SHADE_DL_IRR_Y, SHADE_DL_IRR_Z);
+	float3 q = p + n * 0.5 - D.irr.xyz; // voxel units
+	float3 edge = min(q, size - q);     // distance to the volume's nearest face
+	float fade = saturate((min(min(edge.x, edge.y), edge.z) - 0.5) * (1.0 / (SHADE_DL_IRR_FADE - 0.5)));
+	if (fade <= 0.0) return float3(0.0);
+	float3 v = q / size;
 	constexpr sampler s(filter::linear, address::clamp_to_edge, coord::normalized);
-	float3 e = float3(irr.sample(s, v, level(0.0)).rgb);
+	float3 e = float3(irr.sample(s, v, level(0.0)).rgb) * fade;
 	if (e.x + e.y + e.z < 1e-5) return float3(0.0);
 	float3 dir = float3(dirs.sample(s, v, level(0.0)).xyz);
 	float r = length(dir);
@@ -214,18 +219,28 @@ static float3 shadeDynamicLightsSpec(constant ShadeDynLights &D, texture3d<half>
 	return sum * k;
 }
 
-// For the game's own vertex stages (entities, items, block entities, particles, text, rain; patched by
+// For the game's own vertex stages (entities, items, block entities, particles, text, leashes; patched by
 // mcopt.metal.shade.light.DynLightMsl): raise a vertex's lightmap colour toward what the vanilla lightmap gives at the
-// dynamic block light level reaching it (the larger of the two per light, so a mob standing in placed torchlight isn't
-// lit twice), tinted by each light's colour, with a wrapped N.L (n = 0: no normal, omnidirectional) and the same
-// visibility. lm: the vertex's own sample_lightmap result; uv2: its lightmap coordinates (0..240 block, sky).
+// dynamic block light level reaching it, tinted by the lights' colour, with a wrapped N.L (n = 0: no normal,
+// omnidirectional) and the same visibility. lm: the vertex's own sample_lightmap result; uv2: its lightmap coordinates
+// (0..240 block, sky).
+//
+// Lights combine the way vanilla combines block light: the brightest one wins, the others add only a little (a quarter of
+// their excess), and the result never passes vanilla's own brightest lightmap colour at this sky light (block level 15)
+// in any channel. The colour is display-referred (it multiplies the texture into the game's RGBA8 colour, which the HDR
+// variant then lifts through the inverse tone map), so a sum over several lights, or a saturated tint (soul fire's blue is
+// ~3x its luminance), would clip to white and land at the HDR target's ceiling: a mob among nine lights rendered as a flat
+// white shape with a bloom halo and black smoke particles turned cream (2026-10-07 skeptic check). The tint is the
+// excess-weighted mean of the lights' tints; where it pushes a channel past the ceiling the whole addition is scaled down
+// (hue kept: a soul lantern alone stays cyan, only dimmer than a torch, as on vanilla's curve).
 static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2d<float> lightMap, sampler lightSampler, constant ShadeDynLights &D,
                                texture3d<half> vis) {
 	uint2 m = shadeDlMask(D, p);
 	if ((m.x | m.y) == 0u) return lm;
 	bool hasN = dot(n, n) > 0.01;
 	float3 nn = hasN ? normalize(n) : float3(0.0, 1.0, 0.0);
-	float3 add = float3(0.0);
+	float3 best = float3(0.0), sum = float3(0.0), tints = float3(0.0);
+	float weight = 0.0;
 	float sky = clamp(float(uv2.y) / 256.0 + 0.03125, 0.03125, 0.96875);
 	for (uint k = 0u; k < 2u; k++) {
 		uint bits = k == 0u ? m.x : m.y;
@@ -241,11 +256,24 @@ static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2
 			float lv = max(reach - max(d, 0.75), 0.0); // block light level 0..15
 			float3 dyn = lightMap.sample(lightSampler, float2(clamp(lv * (16.0 / 256.0) + 0.03125, 0.03125, 0.96875), sky), level(0.0)).rgb;
 			float a = dot(L.color.rgb, float3(0.2126, 0.7152, 0.0722));
-			float3 tint = L.color.rgb / max(a, 1e-3);
-			add += max(dyn - lm.rgb, 0.0) * tint * (min(a, 1.0) * w * shadeDlVisibility(D, L, p + nn * 0.3, vis));
+			float3 ex = max(dyn - lm.rgb, 0.0) * (min(a, 1.0) * w * saturate(cut - d) * shadeDlVisibility(D, L, p + nn * 0.3, vis));
+			float y = dot(ex, float3(0.2126, 0.7152, 0.0722));
+			if (y <= 1e-5) continue;
+			best = max(best, ex);
+			sum += ex;
+			tints += (L.color.rgb / max(a, 1e-3)) * y;
+			weight += y;
 		}
 	}
-	return float4(lm.rgb + add * D.params.w, lm.a);
+	if (weight <= 1e-5) return lm;
+	// vanilla's brightest colour at this sky light: the ceiling for the sum and for every channel of the result
+	float3 top = lightMap.sample(lightSampler, float2(0.96875, sky), level(0.0)).rgb;
+	float3 add = min(best + 0.25 * (sum - best), max(top - lm.rgb, 0.0)) * (tints / weight) * D.params.w;
+	float cap = max(max(top.r, top.g), max(top.b, max(max(lm.r, lm.g), lm.b)));
+	float3 room = max(cap - lm.rgb, 0.0);
+	float3 k3 = select(float3(1.0), room / max(add, 1e-6), add > room);
+	add *= saturate(min(min(k3.x, k3.y), k3.z));
+	return float4(lm.rgb + add, lm.a);
 }
 
 #endif

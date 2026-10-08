@@ -1,6 +1,6 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
-## M3.3 Status (2026-10-08 10:20) - branch `m3.3-clouds` from m3-int 397e241
+## M3.3 Status (2026-10-08 10:28) - branch `m3.3-clouds` from m3-int 397e241
 
 Item 1 (comb): **fixed and confirmed in game** (b4ece4e, flag `mcopt.shade.clouds.stable`, default true, read every
 frame; false = M3.2; dev bit 32768 = M3.2 way for in-session pricing). Run 1 (`bench-results/20261008-101319-m33c-1`,
@@ -33,7 +33,12 @@ ones. Changes (each a mode bit, read every frame, with a dev bit back to M3.2's 
 `halfLight` (light march on every other in-cloud sample, the ones between take the mean: look diff mean 0.5-0.7/255),
 `batch` (a sample's fetches issued together incl. its light march and the cirrus' first fetch: same values, max diff
 13/255 on a handful of pixels from float order), `pair` (empty-air tests two at a time: bit-exact). Run 2 (`run2.sh`,
-m33c-2, jar symlink `jars/m3.3-clouds-run2.jar` -> the sha jar at its start) prices each one in session.
+m33c-2, jar symlink `jars/m3.3-clouds-run2.jar` -> f9196f2) prices each one in session; run 3 (`run3.sh`, m33c-3, same
+jar) repeats new / old (all four dev bits) / off in 24 interleaved 4-s spins (MiscShots `-Dmcbench.ab`) because run 1's
+whole-frame numbers jumped by ~2 ms between phases. f9196f2 also: the stable resolve reads its reprojection distance where
+the pixel is (one dependent fetch round less; run 1's timer had the stable resolve at 0.26 vs 0.19 ms), young pixels lean
+toward the upsampled march (less grain where a turn uncovers sky), the sky LUT and the shadow map's samples prefetched.
+Offline after f9196f2 the harsh case (60 fps wind) is clean too (`work/notes/m33-2026-10-08/clouds/` crops).
 
 1. Comb / hatching on soft cloud edges (still camera + wind + 3x3 checkerboard). Reproduce offline first
    (`tools/shade/clouds/run.sh png` with a still camera over a few hundred frames, crops at full size), find the cause

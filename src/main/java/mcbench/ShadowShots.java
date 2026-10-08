@@ -30,7 +30,8 @@ import net.minecraft.server.MinecraftServer;
  * first. M3.2 phases set tintTight and tintSub false explicitly.</li>
  * <li>{@code glass}: with the roof in place, shots {@code sh_glass_<variant>} at WeatherShots' glass pose (noon) and
  * {@code sh_glasseve_<variant>} (11000) for variants m32, tight, sub, lite.</li>
- * <li>{@code far}: shots of the far cascade with mcopt.shade.shadowFarSpread false / true, ticks frozen, at the overview point
+ * <li>{@code far}: shots of the far cascade with mcopt.shade.shadowFarSpread false / true, ticks frozen, volumetric clouds paused
+ * (mcopt.shade.clouds.pause: they move with real time), at the overview point
  * looking along the perf route 14 degrees down at 11000 (long shadows 30-120 blocks away): {@code sh_far_eve_off|on} (still),
  * {@code sh_far_strafe_off|on} (strafing right at 8 blocks/s, shot after 1.5 s), {@code sh_far_turn_off|on} (turning 30
  * degrees/s, shot after 1.5 s).</li>
@@ -75,7 +76,8 @@ final class ShadowShots {
 		steps.add(new BenchDriver.Settle("sh-far", false, 3, 120));
 		steps.add(command("sh-far-freeze", "tick freeze"));
 		for (String v : new String[] {"off", "on"}) {
-			Map<String, String> props = Map.of(SPREAD, v.equals("on") ? "true" : "false");
+			// the volumetric clouds paused (vanilla's, which hold still with the ticks): their shadows would differ between the shots
+			Map<String, String> props = Map.of(SPREAD, v.equals("on") ? "true" : "false", "mcopt.shade.clouds.pause", "true");
 			still(steps, "sh_far_eve_" + v, 11000, o, props);
 			moving(steps, "sh_far_strafe_" + v, 11000, o, 8.0, 0f, props);
 			moving(steps, "sh_far_turn_" + v, 11000, o, 0.0, 30f, props);

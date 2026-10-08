@@ -197,6 +197,16 @@ static float2 shadeWavesTiled(float2 x, float t, float speed, float phase, threa
 	lap = 0.0;
 	height = 0.0;
 	const float base = 6.2831853 / SHADE_WAVE_TILE;
+#ifdef SHADE_WATER_SMOOTH
+	// FT1.3 (style photon): bend the crests with a slow phase warp that still tiles (wave vectors on the lattice; as Photon
+	// perturbs its waves' phase with noise, our own code): long straight crests crossing each other read as a regular diamond
+	// lattice once the surface is calm enough to mirror (sunset_water, wp2)
+	float2 warp = float2(sin(dot(float2(2.0, 1.0) * base, x) + t * shadeWaterOmega(0.05 * speed) + phase),
+	                     sin(dot(float2(-1.0, 3.0) * base, x) - t * shadeWaterOmega(0.04 * speed) + 1.3 + phase)) * 1.7
+	             + float2(sin(dot(float2(5.0, -3.0) * base, x) + t * shadeWaterOmega(0.09 * speed) + 2.1),
+	                      sin(dot(float2(4.0, 6.0) * base, x) - t * shadeWaterOmega(0.07 * speed) + 0.4)) * 0.6;
+	x += warp;
+#endif
 	for (int i = 0; i < SHADE_WAVE_COUNT; i++) {
 		float2 kv = float2(SHADE_WAVE_LATTICE[i]) * base;
 		float k = length(kv);
@@ -701,13 +711,43 @@ static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, 
 	float2 xa = shadeWaterXZ(w.p.xz, f);
 	float2 x = xa - w.flowDir * (t * SHADE_WATER_FLOW_SPEED); // as shadeWaterNormal: flowing water carries its waves downstream
 	float2 cell = (floor(xa * 16.0) + 0.5) * (1.0 / 16.0) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED);
+#ifdef SHADE_WATER_SMOOTH
+	// FT1.3 (style photon): no 1/16-block cells and no crest pattern: each cell tilted the reflection on its own, and mirrored
+	// clouds and shores broke into small rectangles (Gael: "reflejos pixeleados")
+	float q = 0.0, nearP = 0.0;
+#else
 	float near = 1.0 - smoothstep(0.03, 0.065, w.footprint);
 	float q = near * SHADE_WATER_PIXEL;
 	float nearP = 1.0 - smoothstep(0.6 * SHADE_WATER_PATTERN_FAR, SHADE_WATER_PATTERN_FAR, w.footprint);
+#endif
 	float g = (1.0 - q) * (s / SHADE_WAVE_TILE); // a snapped coordinate changes slower across the pixel
 	half4 d = waves.sample(shadeWaveDetailSampler, shadeWaterDetailXZ(mix(x, cell, q)) * (1.0 / SHADE_WAVE_TILE),
 	                       gradient2d(shadeWaterRot(w.dxz.xy) * g, shadeWaterRot(w.dxz.zw) * g));
 	return float4(shadeWaterRotT(float2(d.xy)) * (s * far), float(d.z) * far, -float(d.w) * (nearP / 0.19));
+}
+#endif
+
+#ifdef SHADE_WATER_SMOOTH
+#ifndef SHADE_WATER_CALM
+#define SHADE_WATER_CALM 0.55 // the waves' slopes in clear weather (x the M2.1 set); rain brings them back to 1 (and on, x 2.6)
+#endif
+// FT1.3 (style photon, after Photon's calm, mirror-like water: technique only, our own code): how much of the wave slopes the
+// surface shows at camera-relative p. Calmer in clear weather; patches of calmer and rougher water ~200 blocks across that
+// drift slowly (wind gusts, so a still lake isn't one repeated tile); flatter at grazing view angles, where the far surface
+// mirrors the sky and shores like a calm lake does (and the waves would only alias into noise).
+// x: the long swell's factor; y: the fine ripples' (they make the texture: they break the mirrored images into streaks and
+// the sun into sparkles, as on real water, while the calm swell keeps far shores and clouds readable).
+#ifndef SHADE_WATER_RIPPLE
+#define SHADE_WATER_RIPPLE 1.25 // the fine ripples' slopes in clear weather (x the M2.1 detail layer)
+#endif
+static inline float2 shadeWaterCalm(float3 p, constant ShadeFrame &f, constant ShadeWaterParams &wp) {
+	float t = shadeWaterTime(f);
+	float2 x = shadeWaterXZ(p.xz, f);
+	float patch = shadeWaterValueNoise(x * (1.0 / 190.0) + float2(t * 0.011, t * 0.007));
+	float3 v = normalize(p - shadeEye(f.invViewProj));
+	float graze = 0.35 + 0.65 * smoothstep(0.0, 0.12, abs(v.y));
+	float rain = saturate(wp.state.z);
+	return float2(mix(SHADE_WATER_CALM, 1.0, rain) * (0.6 + 0.8 * patch), mix(SHADE_WATER_RIPPLE, 1.3, rain) * (0.75 + 0.5 * patch)) * graze;
 }
 #endif
 
@@ -727,9 +767,22 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 #ifdef SHADE_WATER_DETAIL
 		if (detail > 0.0) { // M2.1's fine ripples (shadeWaterDetailIn, computed by the caller)
 			pattern = w.detail.w;
+#ifdef SHADE_WATER_SMOOTH
+			float2 calm = shadeWaterCalm(w.p, f, wp); // FT1.3: the swell calm, the ripples a little stronger (texture)
+			height = (float(b.z) * (SHADE_WATER_LONG * calm.x) + w.detail.z * (SHADE_WATER_DETAIL_AMP * detail * calm.y)) * strength;
+			gb = (float2(b.xy) * (SHADE_WATER_LONG * calm.x) + w.detail.xy * (SHADE_WATER_DETAIL_AMP * detail * calm.y)) * strength;
+#else
 			height = (float(b.z) * SHADE_WATER_LONG + w.detail.z * (SHADE_WATER_DETAIL_AMP * detail)) * strength;
 			gb = (float2(b.xy) * SHADE_WATER_LONG + w.detail.xy * (SHADE_WATER_DETAIL_AMP * detail)) * strength;
+#endif
 		}
+#ifdef SHADE_WATER_SMOOTH
+		else {
+			float c = shadeWaterCalm(w.p, f, wp).x;
+			gb *= c;
+			height *= c;
+		}
+#endif
 #endif
 		return normalize(float3(-gb.x, 1.0, -gb.y));
 	}

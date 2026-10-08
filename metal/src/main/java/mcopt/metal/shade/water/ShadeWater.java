@@ -95,7 +95,9 @@ public final class ShadeWater {
 	public static final boolean DETAIL = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterDetail", "true"));
 	/** The fine-ripple layer's bake size (256 or 512) and whether it bakes the 7 extra waves too (dev knobs for pricing). */
 	public static final int DETAIL_SIZE = Integer.getInteger("mcopt.shade.waterDetailSize", 256) >= 512 ? 512 : 256;
-	private static final boolean DETAIL_EXTRAS = Boolean.getBoolean("mcopt.shade.waterDetailExtras");
+	/** (FT1.3: on by default with the photon style, whose stronger ripples showed the 7 main waves' lattice) */
+	private static final boolean DETAIL_EXTRAS = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterDetailExtras",
+		String.valueOf(!"m21".equals(System.getProperty("mcopt.shade.water.style", "photon")))));
 	/** Distance (blocks) beyond which the fine ripples are not sampled (faded from 0.6x of it). */
 	/** Footprint (blocks/pixel) where the pixel pattern ends (dev knob). */
 	private static final String PATTERN_FAR = System.getProperty("mcopt.shade.waterPatternFar", "0.075");
@@ -112,6 +114,16 @@ public final class ShadeWater {
 	 * calm direction as the rendered sky; and SSR hits that last frame did not see (turning) are hazed like the others. false = M3.4.
 	 */
 	public static final boolean EDGE_REFL = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.edgeRefl", "true"));
+	/**
+	 * FT1.3 {@code mcopt.shade.water.style}: "photon" (default; Gael: "reflejos pixeleados", "agua como el mar de Photon"):
+	 * smooth ripples without M2.1's 1/16-block cells and crest pattern, calmer in clear weather (mcopt.shade.water.calm, 0.55
+	 * of the M2.1 slopes; rain brings them back), patches of calmer and rougher water, flatter at grazing angles (a near-mirror
+	 * far surface, sharp reflections). "m21" = M3.4's water.
+	 */
+	public static final boolean SMOOTH = !"m21".equals(System.getProperty("mcopt.shade.water.style", "photon"));
+	static final float CALM = Math.clamp(floatProperty("mcopt.shade.water.calm", 0.55f), 0.05f, 2f);
+	/** FT1.3 style photon: the fine ripples' slopes in clear weather (mcopt.shade.water.ripple, x the M2.1 detail layer). */
+	static final float RIPPLE = Math.clamp(floatProperty("mcopt.shade.water.ripple", 1.25f), 0f, 3f);
 	/**
 	 * M3: the sun glint's distance widening (normals averaging out across a pixel) only at grazing views; from high up the
 	 * widened glint of a low sun was a broad glow cut into bright rectangles by the terrain's shadows (false: M2.1's glint).
@@ -174,6 +186,7 @@ public final class ShadeWater {
 		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
 		if (EDGE_REFL) b.append("#define SHADE_WATER_EDGE_REFL 1\n");
+		if (SMOOTH) b.append("#define SHADE_WATER_SMOOTH 1\n#define SHADE_WATER_CALM ").append(CALM).append("\n#define SHADE_WATER_RIPPLE ").append(RIPPLE).append('\n');
 		if (GLINT_GRAZE) b.append("#define SHADE_WATER_GLINT_GRAZE 1\n");
 		if (BAKE) b.append("#define SHADE_WAVE_BAKE 1\n#define SHADE_WAVE_BAKE_SIZE ").append(BAKE_SIZE).append('\n');
 		// TAAU (mcopt.shade.taa): the world draws into a live sub-rect of fixed-size targets (so do the copies), and the SSR
@@ -199,7 +212,7 @@ public final class ShadeWater {
 				}
 			}
 			System.out.println("[mcopt] shade: water on (ssr " + SSR + (SSR_QUAD ? " quad" : "") + ", " + SSR_STEPS + " steps, " + SSR_DIST + " blocks; waves " + WAVES
-				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ", glint graze " + GLINT_GRAZE + ", edge reflections " + EDGE_REFL + ")");
+				+ ", detail " + DETAIL + ", ssr edges " + SSR_EDGE + ", real-time clock " + CLOCK + ", caustics " + CAUSTICS + ", foam " + FOAM + ", glossy " + GLOSSY + ", prev-frame reflections " + SSR_PREV + ", baked waves " + BAKE + ", glint graze " + GLINT_GRAZE + ", edge reflections " + EDGE_REFL + ", style " + (SMOOTH ? "photon (calm " + CALM + ", ripple " + RIPPLE + ")" : "m21") + ")");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: water setup failed, M1 water from now on: " + e);

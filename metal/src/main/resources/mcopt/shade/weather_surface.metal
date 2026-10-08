@@ -183,7 +183,14 @@ struct ShadeWet {
 	half low;
 	half var;
 	half dark; // extra darkening exponent of the film (ShadeLook.waterAbs.x, look development; 0)
+	half tex;  // the texel's height proxy -1..1 (sodium_terrain.fs.metal, shadeWetTexHeight): + raised (drier), - a crevice (wetter)
 };
+
+// (M3.3 wet ground) the texel's height proxy: its luminance against its sprite's mean (the atlas' coarsest mip), scaled by
+// ShadeLook.waterAbs.z, -1..1: brighter texels stand out of the film, darker ones hold water
+static inline half shadeWetTexHeight(half3 texel, half3 mean, constant ShadeLook &L) {
+	return half(clamp((float(shadeLumaH(texel)) / max(float(shadeLumaH(mean)), 0.02) - 1.0) * L.waterAbs.z, -1.0, 1.0));
+}
 
 // How wet the surface at camera-relative p is. n: snapped face normal (toward the camera); sky: sky light 0..1 (rain only
 // reaches sky light 15: open sky; 14 under an overhang's edge gets a little); thin: crossed plants; foliage: leaves and the
@@ -199,6 +206,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	w.low = 0.0h;
 	w.var = 0.0h;
 	w.dark = 0.0h;
+	w.tex = 0.0h;
 	half open = smoothstep(0.90h, 0.995h, sky);
 	if (open <= 0.0h || shadeDev(f, SHADE_DEV_WX_DRY)) return w;
 	half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h; // walls get wet streaks, undersides stay dry
@@ -459,9 +467,10 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	float film = 0.0;
 	if (w.film > 0.0h) {
 		float soak = saturate(float(w.omega) * 1.15);
-		float rS = clamp(L.water.y + L.water.z * veg - 0.25 * float(w.var), 0.06, 0.6);
+		float tx = float(w.tex) * (1.0 - float(w.low)); // (texel relief: raised texels rougher and partly dry, crevices smoother)
+		float rS = clamp(L.water.y + L.water.z * veg - 0.25 * float(w.var) + 0.18 * tx, 0.06, 0.6);
 		rough = mix(mix(mix(0.8, rS, soak), 0.06, float(w.low)), 0.03, P);
-		film = max(soak * (1.0 - 0.12 * veg), float(w.low)) * L.waterAbs.y;
+		film = max(soak * (1.0 - 0.12 * veg) * (1.0 - 0.35 * saturate(tx)), float(w.low)) * L.waterAbs.y;
 	}
 	float cosV = max(dot(-v, n), 0.02);
 	float F = shadeWxFresnel(cosV, rough);

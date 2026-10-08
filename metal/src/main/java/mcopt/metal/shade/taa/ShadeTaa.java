@@ -123,6 +123,7 @@ public final class ShadeTaa {
 			if (taa == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			instance = new ShadeTaa(encoder, taa);
 			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe()
+				+ (TaaConfig.DRS && DynamicResolution.hold() ? String.format(java.util.Locale.ROOT, "; hold controller (M3.3), floor %.2f on performance/balanced", DynamicResolution.HOLD_FLOOR) : "")
 				+ (FIXED_FOR_DH ? "; Distant Horizons loaded: fixed scale " + TaaConfig.SCALE + " (no dynamic resolution)" : ""));
 		} catch (Throwable e) {
 			failed = true;

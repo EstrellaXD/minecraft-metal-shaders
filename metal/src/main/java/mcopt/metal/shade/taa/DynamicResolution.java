@@ -31,11 +31,11 @@ package mcopt.metal.shade.taa;
  *
  * <p>M3.3 "hold" controller ({@code mcopt.shade.drsHold}, read every frame, default on; false = the controller above, M3.2).
  * Measured on M3.2 (balanced, perf route, M33_MISC.md): the frame was 8-10 ms of GPU time while the scale sat at the preset's
- * floor 0.60 (98-122 fps): the controller could not go lower, and about 60 % of the frame does not shrink with the render
- * scale at all (clouds, shadow maps, the TAAU resolve and the final pass run at the output resolution), so its s^2 model also
- * under-stepped. The hold controller: a floor of {@code mcopt.shade.drsFloor} (0.50, what the pause menu's lowest choice
+ * floor 0.60 (98-122 fps): the controller could not go lower, and ~7 ms of the frame do not shrink with the render scale at
+ * all (T ~ 6.8 + 7 s^2 ms: clouds, shadow maps, the TAAU resolve and the final pass run at the output resolution), so its s^2
+ * model also under-stepped. The hold controller: a floor of {@code mcopt.shade.drsFloor} (0.50, what the pause menu's lowest choice
  * allows) on performance and balanced (quality and ultra keep theirs), a cost model T(s') = T (k + (1 - k) s'^2 / s^2) with k =
- * {@code mcopt.shade.drsFixed} (0.5: the part that does not scale; conservative, the measured part is ~0.6) and a band on
+ * {@code mcopt.shade.drsFixed} (0.5: the part that does not scale; conservative, the measured part is 0.6-0.8) and a band on
  * the frame budget 1 / fps: down when the average is over 96.5 % of it (124 fps at 120), to the scale the model puts at 90 %
  * (133 fps), up to 0.08 per step after 8 frames; up when the model says the next step stays under 86 % (139 fps), up to
  * 0.03 per step after 30 frames. Between the two nothing moves (hysteresis: no hunting), so the frame rate stays above the

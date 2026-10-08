@@ -124,9 +124,11 @@ public final class VlConfig {
 	}
 
 	/**
-	 * M3.3, read every frame (bench A/B in one session): mcopt.shade.vl.sunsetRays, the gain of the sky's dark crepuscular rays in
-	 * the golden hour while the sunset art (mcopt.shade.sunsetArt) is on: its brighter, warmer sky around the sun had made them
-	 * ~18 % weaker than M2.2's. 1 (or false) = M3.2; true = the default.
+	 * M3.3, read every frame (bench A/B in one session): mcopt.shade.vl.sunsetRays, the gain of the sky's dark crepuscular rays over
+	 * the open sky (vl.metal weights it by the pixel's own cloud transmittance squared) in the golden hour while the sunset art
+	 * (mcopt.shade.sunsetArt) is on. Its brighter, warmer aureole had made the rays ~18 % weaker before the volumetric clouds
+	 * (M3_INTEGRATION.md); with them the sky's contrast is back at M2.2's, but the clouds' soft shadows read faintly across the
+	 * clear gaps near the sun (M33_MISC.md). 1 (or false) = M3.2; true = the default.
 	 */
 	public static float sunsetRays() {
 		String v = System.getProperty("mcopt.shade.vl.sunsetRays");

@@ -443,3 +443,22 @@ mip_filter::linear (no gain: two levels), far light samples with the noise mean 
 `clouds.metal`, `CloudConfig/CloudParams/ShadeClouds.java`, `tools/shade/clouds/*` (CLOUDS_DEV),
 `work/mcbench` (`CloudShots.java`, `BenchDriver.REC_PHASES` + clouds_d1..d8; commits 862d838, a52ef55).
 `ShadeLook.clouds1.z` now carries the dev bits (was reserved), `CloudParams.lightDir.w` too.
+
+## M3.3 (2026-10-08, branch `m3.3-clouds` from m3-int 397e241): comb fix and price
+
+### Flags (all read every frame; each off = M3.2's way; `CloudConfig.modeBits()` -> `CloudParams.shadowDir.w`)
+| Flag | Default | Mode bit (shader) | Dev bit back to M3.2 | What |
+|---|---|---|---|---|
+| `mcopt.shade.clouds.stable` | true | 1 `CLOUD_MODE_STABLE` | 32768 | march start offsets from a per-pixel hash (not IGN); resolve `cloud_resolve_st` carries the clouds' distance in the history (R16Uint data: age 4 bits + log2 distance 12 bits), reprojects with the nearest cloud distance of the pixel's 2x2 history neighbourhood, young pixels (age < 3) lean toward this frame's upsampled march. Switching it drops the history once (different data target) |
+| `mcopt.shade.clouds.halfLight` | true | 2 `CLOUD_MODE_LIGHT2` | 65536 | the light march (+ the sky-light sample above) on every other in-cloud sample; the samples between take the mean of their neighbours' |
+| `mcopt.shade.clouds.batch` | true | 4 `CLOUD_MODE_BATCH` | 131072 | a march sample's texture fetches issued together (density + its light march + sky-light sample; the cirrus' first fetch and the sky LUT before the march; the shadow map's six samples): same values |
+| `mcopt.shade.clouds.pair` | true | 8 `CLOUD_MODE_PAIR` | 262144 | empty-air tests two at a time (both fetches together; same tests, same order, bit-exact) |
+All four off at once: `-Dmcopt.shade.clouds.dev=491520` (what the bench's "old" variants use).
+
+### Shared files touched (integration)
+None of the shared list. Clouds-owned only: `clouds.metal` (passes), `native/mcclouds.m` (pipeline `cloud_resolve_st`,
+R16Uint data targets `dataSt[2]` next to the R8 ones, render flag 16), `CloudConfig.java` (flags, mode bits, dev bits),
+`CloudParams.java` (`mode` -> shadowDir.w), `ShadeClouds.java` (mode per frame, history drop when the stable bit changes,
+flag 16), `CloudNative.java` (doc), `tools/shade/clouds/*` (offline preview: turning, wind scale, scenarios inside /
+horizon_sunset, mode-aware resolve, `CLOUDS_DEFS` / `CLOUDS_RES` / `CLOUDS_DUMP` for experiments). `work/mcbench`
+`CloudShots.java` (own file): `-Dmcbench.cloudsVariants`, scenes `turn_south` / `turn_sunset` (commit 89f72df).

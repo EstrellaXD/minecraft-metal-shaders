@@ -850,10 +850,14 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
                             texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
-	// (M3.3 CLOUD_MODE_BATCH: the cirrus' first fetch is issued before the cumulus march and waits alongside it)
+	// (M3.3 CLOUD_MODE_BATCH: the cirrus' first fetch and the sky LUT are fetched before the cumulus march and wait alongside
+	// it; the march is latency-bound, a fetch more costs less than one more wait after it)
 	CloudResult ci, cu;
-	if (cloudMode(c, CLOUD_MODE_BATCH)) {
+	bool batch = cloudMode(c, CLOUD_MODE_BATCH);
+	float3 skyPre = 0.0;
+	if (batch) {
 		CloudCirrusPre pre = cloudCirrusBegin(dir, c, weather);
+		skyPre = shadeSkyLookup(dir, lut, lutS, f);
 		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
 		ci = cloudCirrusEnd(pre, dir, c, weather);
 	} else {
@@ -862,7 +866,7 @@ static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitt
 	}
 	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)
 	if (cu.dist >= 0.0 || ci.dist >= 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH)) {
-		float3 sky = shadeSkyLookup(dir, lut, lutS, f);
+		float3 sky = batch ? skyPre : shadeSkyLookup(dir, lut, lutS, f);
 		float hf = cloudHorizonFade(dir, c);
 		cu = cloudAerial(cu, sky, hf, c);
 		ci = cloudAerial(ci, sky, hf, c);
@@ -1064,10 +1068,14 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 	constexpr sampler gatherS(filter::nearest, address::clamp_to_edge);
 	float2 msz = c.size.zw;
 	float4 g0 = curDist.gather(gatherS, float2(mp) / msz);
+	// the nearest cloud distance the history holds in this pixel's 2x2 neighbourhood, read where the pixel is (not where it
+	// came from, so this fetch waits alongside the march's: a turn does not depend on the distance, and the wind moves the
+	// clouds less than a pixel per frame)
+	uint4 qu = uint4(histData.gather(gatherS, uv)) & 0xfffu;
+	uint qMin = min(min(qu.x, qu.y), min(qu.z, qu.w));
 	float dNow = max(g0.y, 1.0);
 	float3 wnd = float3(c.wind.x, 0.0, c.wind.y);
-	// first guess with this block's march distance (exact for a turning camera: rotation does not depend on the distance)
-	float4 pc = c.prevViewProj * float4(dir * dNow + wnd, 1.0);
+	float4 pc = c.prevViewProj * float4(dir * (qMin != CLOUD_DIST_NONE ? cloudDistDecode(qMin) : dNow) + wnd, 1.0);
 	float2 puv = pc.xy / max(pc.w, 1e-6) * 0.5 + 0.5;
 	bool valid = c.frame.z < 0.5 && pc.w > 1e-4 && all(puv >= 0.0) && all(puv <= 1.0);
 	half4 h = half4(0.0h, 0.0h, 0.0h, 1.0h);
@@ -1075,7 +1083,7 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 	uint qOwn = CLOUD_DIST_NONE;
 	bool ownCloud = false;
 	if (valid) {
-		// the 2x2 history texels around the first guess: (x0,y1) (x1,y1) (x1,y0) (x0,y0)
+		// age and own distance where the pixel came from: (x0,y1) (x1,y1) (x1,y0) (x0,y0)
 		uint4 q = uint4(histData.gather(gatherS, puv));
 		float2 f = fract(puv * c.size.xy - 0.5);
 		float4 ages = float4(q >> 12u);
@@ -1084,12 +1092,6 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 		qOwn = f.y < 0.5 ? (f.x < 0.5 ? qd.w : qd.z) : (f.x < 0.5 ? qd.x : qd.y);
 		ownCloud = qOwn != CLOUD_DIST_NONE;
 		if (ownCloud) dOwn = cloudDistDecode(qOwn);
-		uint qMin = min(min(qd.x, qd.y), min(qd.z, qd.w));
-		if (age > 0.5 && qMin != CLOUD_DIST_NONE) {
-			float4 pc2 = c.prevViewProj * float4(dir * cloudDistDecode(qMin) + wnd, 1.0);
-			float2 p2 = pc2.xy / max(pc2.w, 1e-6) * 0.5 + 0.5;
-			if (pc2.w > 1e-4 && all(p2 >= 0.0) && all(p2 <= 1.0)) puv = p2;
-		}
 		h = cloudCatmullRom(hist, puv, c.size.xy);
 		// (as cloud_resolve) where this frame's march distances jump, keep the history inside their colour range
 		int2 mi = int2(mp), ms = int2(c.size.zw) - 1;
@@ -1118,6 +1120,12 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 		qOut = nowCloud ? cloudDistCode(histCloud ? 1.0 / mix(1.0 / dOwn, 1.0 / dNow, w) : dNow) : histCloud ? qOwn : CLOUD_DIST_NONE;
 	} else if (valid && age > 0.5) {
 		o.color = h;
+		// a pixel the camera uncovered lately holds the mean of few of its own samples (noisy, at 1/9 rate): until its third
+		// visit it also leans toward this frame's march around it (spatially averaged), so a turn's new sky settles faster
+		if (age < 2.5) {
+			float2 mpos = (float2(px) + 0.5 - float2(slot) - 0.5) / float(n) + 0.5;
+			o.color = mix(h, cur.sample(cloudClamp, mpos / c.size.zw), half(0.5 / (age + 1.0)));
+		}
 		ageOut = uint(age + 0.5);
 		qOut = histCloud ? qOwn : CLOUD_DIST_NONE;
 	} else {
@@ -1199,6 +1207,23 @@ fragment half cloud_shadow(CloudVsOut in [[stage_in]], constant CloudParams &c [
 	float ds = (sb - sa) / float(N);
 	float tau = 0.0;
 	float3 base = float3(rel.x, yRef - c.layer.z, rel.y);
+	if (cloudMode(c, CLOUD_MODE_BATCH) && !cloudDev(c, CLOUD_DEV_OLD_MIP)) {
+		// M3.3: the six samples' fetches issued together (same values)
+		half4 w[N], nz[N];
+		float hs[N];
+		float inv = 1.0 / (c.layer.y - c.layer.x);
+		for (int i = 0; i < N; i++) {
+			float s = sa + (float(i) + 0.5) * ds;
+			float3 p = base + float3(L.x, ly, L.z) * s;
+			float y = yRef + ly * s;
+			float2 xz = c.origin.xy + p.xz;
+			hs[i] = (y - c.layer.x) * inv;
+			w[i] = cloudWeatherAt(xz, hs[i], c, weather);
+			nz[i] = noise.sample(cloudRepMip, cloudNoisePos(xz, y, c) * CLOUD_NOISE_SCALE, level(0.0));
+		}
+		for (int i = 0; i < N; i++) tau += cloudDensityMath(w[i], nz[i], nz[i], hs[i], 1, c, 1.0) * ds;
+		return half(exp(-tau * c.shape.z * 0.8));
+	}
 	for (int i = 0; i < N; i++) {
 		float s = sa + (float(i) + 0.5) * ds;
 		float3 p = base + float3(L.x, ly, L.z) * s;

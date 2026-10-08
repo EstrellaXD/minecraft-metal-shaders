@@ -36,7 +36,7 @@ fragment half4 shade_lut_fs(ShadeLutOut in [[stage_in]], constant ShadeFrame &f 
 	float rose = L.skyGoldZ.w;
 	if (rose > 0.0 && dir.y > 0.03) {
 		float up = smoothstep(0.08, 0.6, dir.y);
-		float3 tint = mix(float3(1.55, 1.0, 0.62), float3(1.55, 0.86, 1.0), up); // gold-peach low, rose-mauve high
+		float3 tint = mix(float3(1.6, 1.0, 0.6), float3(1.6, 0.88, 0.86), up); // gold-peach low, warm rose high (was mauve: read lilac-grey)
 		tint /= dot(tint, float3(0.2126, 0.7152, 0.0722));
 		float l = dot(sky, float3(0.2126, 0.7152, 0.0722));
 		// the gold horizon band stays as it is (smoothstep from 0.03): only the sky above it turns

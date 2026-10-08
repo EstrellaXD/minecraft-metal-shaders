@@ -71,7 +71,7 @@ public final class ShadeLook {
 	};
 	public final float[] skyGold = {1f, 1f, 1f, 1f, 1f, 1f};
 	// M3 evening hue shift of the upper sky toward rose / peach (sky LUT, ShadeLook.skyGoldZ.w): sun elevation, weight
-	private static final float[][] SKY_ROSE = {{-6, 0f}, {-3, 0.30f}, {0, 0.58f}, {4, 0.62f}, {9, 0.48f}, {16, 0.24f}, {26, 0.06f}, {34, 0f}};
+	private static final float[][] SKY_ROSE = {{-6, 0f}, {-3, 0.32f}, {0, 0.64f}, {4, 0.70f}, {9, 0.56f}, {16, 0.28f}, {26, 0.07f}, {34, 0f}};
 	/** This frame's rose weight (0 by day and in rain). */
 	public float skyRose;
 	/** Rose strength per look (epic, storybook, natural). */

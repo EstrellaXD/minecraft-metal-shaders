@@ -234,9 +234,10 @@ static float3 shadeDynamicLightsSpec(constant ShadeDynLights &D, texture3d<half>
 // white shape with a bloom halo and black smoke particles turned cream (2026-10-07 skeptic check).
 // Colour: the tints are relative to the terrain's warm block-light colour (ShadeFrame.blockLight, SHADE_DL_WARM), which the
 // lightmap does not have (it is near white at level 15), so a tint applied to the lightmap as is turns soul fire deep blue.
-// Here each light's absolute colour (tint x SHADE_DL_WARM) is scaled to a peak channel of 1 and taken 60 % toward white:
-// a torch is a light warm white, a soul lantern a pale cyan, redstone a pink red, and no channel exceeds the lightmap
-// excess it multiplies (no clipping). The lights' colours are averaged weighted by their excess.
+// Here each light's absolute colour (tint x SHADE_DL_WARM) is scaled to a peak channel of 1 and blended from white toward
+// it, half way for torch-coloured light (a torch is a warm white, close to vanilla's lightmap) up to 90 % for strongly
+// coloured light (a soul lantern is cyan, redstone red), and no channel exceeds the lightmap excess it multiplies (no
+// clipping). The lights' colours are averaged weighted by their excess.
 static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2d<float> lightMap, sampler lightSampler, constant ShadeDynLights &D,
                                texture3d<half> vis) {
 	uint2 m = shadeDlMask(D, p);
@@ -266,7 +267,9 @@ static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2
 			best = max(best, ex);
 			sum += ex;
 			float3 c = L.color.rgb * SHADE_DL_WARM;
-			tints += mix(float3(1.0), c / max(max(c.r, c.g), max(c.b, 1e-4)), 0.6) * y;
+			float hi = max(max(L.color.r, L.color.g), L.color.b), lo = max(min(min(L.color.r, L.color.g), L.color.b), hi * 0.05);
+			float sat = mix(0.5, 0.9, saturate((hi / lo - 1.0) * (1.0 / 3.0)));
+			tints += mix(float3(1.0), c / max(max(c.r, c.g), max(c.b, 1e-4)), sat) * y;
 			weight += y;
 		}
 	}

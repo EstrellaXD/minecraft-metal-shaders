@@ -1,5 +1,17 @@
 # M3.3 shadow passes (branch `m3.3-shadow` from `m3-int` 397e241)
 
+## M3.3 Status (2026-10-08 11:45, resumed session, merged in m3-int) - DONE
+
+Run 3 (`bench-results/20261008-110711-sh3-shadow`, jar 88326c8, AC; `sh3-framespread.txt`, `sh3-tintrounds.txt`):
+- Coloured shadows, 5 clean rounds (M3.2 path / new path / none): **M3.2 +0.142 ms, new +0.111 ms** (median +0.126 / +0.104):
+  the tight rectangle + sub-rectangle pass save ~0.03 ms; the feature stays above the 0.1 ms budget by a hair. Defaults kept.
+- Far spread, route ABBA in session: spike (heaviest frame of every 4 minus the others) off 0.50 / 0.32 ms, on 0.035 / 0.15 ms;
+  whole-frame GPU off 10.63 / 10.77, on 10.83 / 10.82 ms (+0.05-0.2: within this run's drift; runs 1-2 had no average change).
+- Far shots with the clouds paused (`sh_far_{eve,strafe,turn}_{off,on}`): the difference image holds only TAAU edge jitter and
+  water waves (mean 1.1/255 still): same shadows, no seam, no missing part.
+- Run 5 (recording strafe/turn off vs on, `sh5-rec`) is in the resumed chain; the release does not depend on it.
+Defaults: `shadowFarSpread` true, `tintTight` true, `tintSub` true.
+
 ## M3.3 Status (2026-10-08 11:05)
 
 - **Resumed 10:55** after the 10:52 pause (usage limit); run 3 had never started. Code head 88326c8 (build OK, `validate.sh`

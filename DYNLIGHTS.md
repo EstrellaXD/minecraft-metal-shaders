@@ -143,7 +143,56 @@ against `-Dmcopt.shade.dynLights=false`. Validation: `tools/shade/validate.sh` (
 
 ## 7. Results
 
-(see section 8, filled after the in-game runs)
+All at full Retina (3024 x 1964), preset balanced, DRS off (`-Dmcopt.shade.drs=false`), night, a torch in the main hand
+and a soul lantern in the off hand. Screenshots: `work/release/M3-lights-screenshots/` (`on_*` = this module, `off_*` = the
+same poses with `-Dmcopt.shade.dynLights=false`, i.e. M2.1's look).
+
+### 7.1 Cost (in-session A/B: the `lights` / `lights_off` / `lights2` phases)
+
+The mobs scene (hands + 9 lights: 3 mobs holding lights, a burning zombie, a magma cube, a blaze, 3 dropped luminous
+items) panning +-15 degrees, 10 s per phase. In `lights_off` the module is paused at run time (no lights: every shader
+leaves at its first test), so the difference is the module's whole GPU cost in one session, immune to launch-to-launch
+drift. GPU ms per frame:
+
+| Run (build) | Power | CPU during the phases | lights | lights_off | lights2 | Cost (mean of lights, lights2 - off) |
+|---|---|---|---|---|---|---|
+| `20261007-143027-dl-t6-on` (`1e7f6c2`) | battery | clean (java 72 %, total < 350 %) | 8.142 | 8.047 | 8.188 | **+0.12 ms** |
+| `20261007-145128-dl-t6-on2` (`1e7f6c2`) | AC | **contaminated** (Python 87 %, Safari) | 8.455 | 8.301 | 8.510 | +0.18 ms |
+| `20261007-181411-dl-r1-on` (`1e7f6c2`) | AC | clean (total 105-244 %) | 8.131 | 7.979 | 8.144 | **+0.16 ms** |
+R2_ROW
+Control: with the module off (`20261007-144310-dl-t6-off`) the same three phases read 7.722 / 7.767 / 7.772 ms: the
+phase-to-phase noise is ~0.05 ms. **Price: ~0.15 ms GPU for the hands + 9 lights (budget 0.4 ms).** The first version
+(per-pixel loop over the lights, before the irradiance volume) cost ~1 ms in the same scene (`20261007-132040-dl-t5`:
+8.94 / 8.69 / 8.97, +0.27 there on battery with fewer pixels lit, ~1 ms in the earlier t3/t4 runs).
+
+CPU (the render thread, `-Dmcopt.shade.dynLights.log=true`, one line every 2 s, r1): occupancy + gather + packing
+**0.01-0.06 ms per frame** with 2-11 lights (median ~0.03 ms); 0.3 ms (the occupancy budget, 300 us) in the frames where
+the block occupancy fills after a teleport or a dimension change (205 sections in one frame in the Nether), ~0.9 ms once
+at world load. The irradiance compute covers 22 000 voxels (hands only) to 40 000 (mobs scene) instead of the full 307 200.
+Visibility slabs are recomputed only when a light moves more than 0.04 block (walking: every second or third frame
+for the hand lights), so static mobs and items cost nothing after their first frame.
+
+Whole-frame numbers across launches (spin / flight of the same runs) are not comparable today: r1 (AC, clean) read
+11.8 / 11.2 ms GPU against 9.7 / 9.1 in t6-on (battery) for the same build, a launch-to-launch swing far larger than the
+module; clean whole-frame numbers come after integration.
+
+### 7.2 What it looks like (pairs in `M3-lights-screenshots/`)
+
+- `dl_field_hand` (open field at night): with the module the ground lights up around the player, warm, fading smoothly
+  to dark ~10 blocks away like a placed torch; grass blades facing the hand catch more. No block-grid steps on the
+  ground (the volume is interpolated between block centres and sampled half a block in front of each face). Without
+  it the field is moonlit only.
+- `dl_field_mobs`: the villager (lantern), the zombie (torch), the skeleton (soul lantern: whiter-cyan) and the burning
+  zombie light themselves and the grass at their feet; the dropped torch, glowstone and sea lantern too. Without the module
+  the same mobs are dark silhouettes. The skeleton is very bright (white texture at full light level 10 from a lantern in
+  its own hand): it is how vanilla lights a skeleton next to a lantern.
+- `dl_cave_hand` / `dl_cave_walk` (a dark cave): the floor and the walls within ~8 blocks are lit in front of the player
+  with soft falloff; walls facing away stay dark; nothing appears behind the walls. Without the module the cave is black and the
+  held items are black too; with it the held torch and soul lantern are lit.
+- `dl_water` (shore): a bright glint of the torch on the ripples next to the shore and the sand lit. 
+- `dl_nether`: blazes lit (they glow and light themselves), the basalt around the player raised toward the torch light.
+- Soul light: cyan where it is the only source (the skeleton); next to a torch it is mostly hidden, because a level-14
+  torch is ~20x brighter than a level-10 soul lantern at the same distance (vanilla's light curve).
 
 ## 8. Known limits
 

@@ -559,15 +559,13 @@ static half shadeShadowSoft(depth2d_array<float> map, sampler cmp, constant Shad
 	if (nl <= 0.0) return half(1.0);
 	float tanT = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.02), 0.0, 12.0);
 	float3 dir = float3(n) * 0.75 + L * (0.5 + 0.75 * tanT);
-	// one rotation per 4 x 4 pixels (still a new one every frame): neighbours fetch the same texels (a per-pixel rotation scattered
-	// the taps over the map: +0.15 ms on a half-water view)
-	float turn = shadeNoise(floor(pixel * 0.25), f.flags2.x);
-	float m0, m1;
-	float near = shadeShadowCascadeDisc(map, cmp, 0u, f.shadowViewProj[0], p, dir * f.cascadeSplits.z, r, turn, m0);
-	if (m0 < 0.85) return half(near);
+	float turn = shadeNoise(pixel, f.flags2.x);
+	// the far cascade only: its texels are ~4x the near one's, so a disc of a block or two spans a few texels (cache-friendly;
+	// the near cascade's detail is what the softening removes anyway). Points it doesn't cover keep shadeShadow.
+	float m1;
 	float far = shadeShadowCascadeDisc(map, cmp, 1u, f.shadowViewProj[1], p, dir * f.cascadeSplits.w, r, turn, m1);
-	far = mix(far, 1.0, smoothstep(0.85, 1.0, m1));
-	return half(m0 >= 1.0 ? far : mix(near, far, smoothstep(0.85, 1.0, m0)));
+	if (m1 >= 1.0) return shadeShadow(map, cmp, f, p, n, false);
+	return half(mix(far, 1.0, smoothstep(0.85, 1.0, m1)));
 }
 
 #endif

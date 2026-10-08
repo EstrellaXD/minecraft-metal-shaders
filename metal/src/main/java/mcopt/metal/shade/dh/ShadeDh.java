@@ -27,7 +27,7 @@ import mcopt.metal.shade.ShadeMsl;
  * two terrain pipelines (dh_terrain.{vs,fs}.metal) through MetalShaderRegistry, so the LODs get the sun / moon, sky and
  * torch light, cloud shadows and aerial perspective of the near terrain instead of DH's lightmap look and grey fog.</li>
  * <li><b>Its own screen effects off</b> while the shade frame runs: SSAO (two full-screen passes), TAA (a full-screen pass
- * plus a history copy) and the "vanilla fade" (a full-screen pass sampling main colour) cost ~2.5 ms on the M4 at Retina
+ * plus a history copy) cost ~2.5 ms on the M4 at Retina
  * with DH at 40 chunks (run ft1-1: 54 -> 62 fps); our frame has its own AA (TAAU). With our LOD lighting also DH's fog
  * (ours replaces it) and its baked face shading (lodShading; ours lights the faces by N.L).</li>
  * </ul>
@@ -35,7 +35,7 @@ import mcopt.metal.shade.ShadeMsl;
  * screen keep the player's choice); they are cleared when the shade frame stops (fallback, shading off), which gives DH its
  * own settings back. Live flags, read every frame (the bench's in-session A/B sets them): {@code mcopt.shade.dh.ssao},
  * {@code .aa}, {@code .fog}, {@code .shading} = "off" (default) or "dh" (DH's own setting); {@code mcopt.shade.dh.fade} =
- * "NONE" (default), "SINGLE_PASS", "DOUBLE_PASS" or "dh". Reflection on DH's internal config entries
+ * "dh" (default: run ft1-1 priced DH's SINGLE_PASS fade at ~0 ms), "NONE", "SINGLE_PASS" or "DOUBLE_PASS". Reflection on DH's internal config entries
  * (Config.Client.Advanced.Graphics; DH 3.3.3-3.3.4, the versions the Metal path is gated to): no compile-time dependency on
  * DH (LGPL, shipped unmodified). Any failure turns the overrides off for the session and leaves DH's settings alone.
  */
@@ -90,7 +90,7 @@ public final class ShadeDh {
 		try {
 			apply(SSAO, shading ? off("mcopt.shade.dh.ssao") : null);
 			apply(AA, shading ? off("mcopt.shade.dh.aa") : null);
-			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "NONE") : null);
+			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "dh") : null);
 			apply(FOG, shading && LIGHT ? off("mcopt.shade.dh.fog") : null);
 			apply(SHADING, shading && LIGHT && off("mcopt.shade.dh.shading") != null ? named(shadingEnum, "-", "DISABLED") : null);
 		} catch (Throwable t) {

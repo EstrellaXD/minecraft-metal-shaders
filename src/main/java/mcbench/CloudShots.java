@@ -32,6 +32,12 @@ import net.minecraft.server.MinecraftServer;
  * </ul>
  * The poses go to results.json "cloudShots". {@code perf} (only by name) adds the recorded A/B phases clouds / clouds_off /
  * clouds2 before the shots (see {@link #perf}).
+ * <p>
+ * M3.3 (comb study, only by name, not part of {@code all}): {@code turn_south} (noon, the noon_south view reached by turning
+ * at 30 degrees per second for 1.5 s, shot mid-turn) and {@code turn_sunset} (the same toward sunset_west).
+ * {@code -Dmcbench.cloudsVariants=<suffix>:<key=value>[|<key=value>...][;<suffix2>:...]} shoots every listed scene once
+ * per variant as {@code clouds_<scene>_<suffix>}, with those system properties set from the scene's start until its shot
+ * (then restored), e.g. {@code old:mcopt.shade.clouds.stable=false;new:mcopt.shade.clouds.stable=true}.
  */
 final class CloudShots {
 	static final String SPEC = System.getProperty("mcbench.clouds", "").trim();
@@ -48,26 +54,94 @@ final class CloudShots {
 		List<String> names = SPEC.equals("all") || SPEC.equals("true") ? ALL : Arrays.stream(SPEC.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
 		Map<String, Object> json = new LinkedHashMap<>();
 		if (names.contains("perf")) perf(steps);
+		// M3.3: -Dmcbench.cloudsVariants (suffix -> properties); none = one shot per scene, as before
+		Map<String, Map<String, String>> variants = new LinkedHashMap<>();
+		String vSpec = System.getProperty("mcbench.cloudsVariants", "").trim();
+		for (String v : vSpec.isEmpty() ? new String[0] : vSpec.split(";")) {
+			if (v.isBlank()) continue;
+			int c = v.indexOf(':');
+			Map<String, String> props = new LinkedHashMap<>();
+			for (String kv : v.substring(c + 1).split("\\|")) {
+				int e = kv.indexOf('=');
+				if (e > 0) props.put(kv.substring(0, e).trim(), kv.substring(e + 1).trim());
+			}
+			variants.put(v.substring(0, c).trim(), props);
+		}
+		if (variants.isEmpty()) variants.put("", Map.of());
+		else BenchDriver.results.put("cloudsVariants", variants);
 		for (String n : names) {
 			if (n.equals("perf")) continue;
-			if (!ALL.contains(n)) throw new IllegalArgumentException("mcbench.clouds: unknown scene " + n + " (known: " + ALL + ")");
-			Object[] def = scene(n);
+			boolean turn = TURNS.contains(n);
+			if (!ALL.contains(n) && !turn) throw new IllegalArgumentException("mcbench.clouds: unknown scene " + n + " (known: " + ALL + ", " + TURNS + ")");
+			Object[] def = scene(turn ? (n.equals("turn_south") ? "noon_south" : "sunset_west") : n);
 			int time = (Integer) def[0];
 			String weather = (String) def[1];
-			java.util.function.Supplier<Pose> pose = (java.util.function.Supplier<Pose>) def[2];
-			String name = "clouds_" + n;
-			boolean rain = !weather.equals("clear");
-			steps.add(new WeatherScene(name, time, weather, pose));
-			steps.add(new BenchDriver.Settle(name, rain, 3, 120));
-			steps.add(new BenchDriver.Hold(name, rain ? Math.max(BenchDriver.SHOT_WAIT, 5) : Math.max(BenchDriver.SHOT_WAIT, 3)));
-			steps.add(new BenchDriver.Shot(name));
-			Map<String, Object> m = new LinkedHashMap<>();
-			m.put("time", time);
-			m.put("weather", weather);
-			json.put(name, m);
+			java.util.function.Supplier<Pose> end = (java.util.function.Supplier<Pose>) def[2];
+			// a turn ends at the scene's view: it starts 45 degrees before it and turns at 30 degrees per second
+			java.util.function.Supplier<Pose> pose = turn ? () -> {
+				Pose e = end.get();
+				return new Pose(e.x(), e.y(), e.z(), e.yaw() - 45f, e.pitch());
+			} : end;
+			for (Map.Entry<String, Map<String, String>> var : variants.entrySet()) {
+				String name = "clouds_" + n + (var.getKey().isEmpty() ? "" : "_" + var.getKey());
+				Map<String, String> props = var.getValue();
+				Map<String, String> saved = new LinkedHashMap<>();
+				boolean rain = !weather.equals("clear");
+				steps.add(new WeatherScene(name, time, weather, pose) {
+					@Override
+					void start(Minecraft mc, long now) {
+						for (Map.Entry<String, String> e : props.entrySet()) {
+							saved.put(e.getKey(), System.getProperty(e.getKey()));
+							System.setProperty(e.getKey(), e.getValue());
+						}
+						if (!props.isEmpty()) BenchDriver.log("cloud variant " + name + " " + props);
+						super.start(mc, now);
+					}
+				});
+				steps.add(new BenchDriver.Settle(name, rain, 3, 120));
+				steps.add(new BenchDriver.Hold(name, rain ? Math.max(BenchDriver.SHOT_WAIT, 5) : Math.max(BenchDriver.SHOT_WAIT, 3)));
+				if (turn) {
+					steps.add(new BenchDriver.Step("turn-" + name, 0) {
+						@Override
+						void start(Minecraft mc, long now) {
+							Pose o = pose.get();
+							long t0 = now;
+							BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 30.0 * BenchDriver.secs(t - t0)), o.pitch());
+							BenchDriver.log("cloud turn " + name + " from " + o + " at 30 deg/s");
+						}
+
+						@Override
+						boolean poll(Minecraft mc, long now) {
+							return BenchDriver.secs(now - BenchDriver.curStart) >= 1.5;
+						}
+					});
+				}
+				steps.add(new BenchDriver.Shot(name));
+				if (!props.isEmpty()) {
+					steps.add(new BenchDriver.Step("restore-" + name, 0) {
+						@Override
+						boolean poll(Minecraft mc, long now) {
+							for (Map.Entry<String, String> e : saved.entrySet()) {
+								if (e.getValue() == null) System.clearProperty(e.getKey());
+								else System.setProperty(e.getKey(), e.getValue());
+							}
+							return true;
+						}
+					});
+				}
+				Map<String, Object> m = new LinkedHashMap<>();
+				m.put("time", time);
+				m.put("weather", weather);
+				if (turn) m.put("turnDegPerSecond", 30);
+				if (!props.isEmpty()) m.put("properties", props);
+				json.put(name, m);
+			}
 		}
 		BenchDriver.results.put("cloudShots", json);
 	}
+
+	/** M3.3 turning shots (only by name). */
+	static final List<String> TURNS = List.of("turn_south", "turn_sunset");
 
 	/**
 	 * Perf phases "clouds", "clouds_off", "clouds2" (opt-in name {@code perf}, not part of {@code all}): noon, clear, at the
@@ -171,7 +245,7 @@ final class CloudShots {
 	}
 
 	/** Like BenchDriver.Scene, with "weather thunder" too. */
-	static final class WeatherScene extends BenchDriver.Step {
+	static class WeatherScene extends BenchDriver.Step {
 		final int time;
 		final String weather;
 		final java.util.function.Supplier<Pose> p;

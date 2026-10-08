@@ -107,6 +107,8 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_RIPPLE_GATE 64    // raindrop rings only where the puddle mirror shows them (flat Fresnel x puddle >= 0.02)
 #define SHADE_DEV_WX_LITE_RAIN 128     // rain streaks lit by the sky's mean light, no sky-view LUT lookup per fragment
 #define SHADE_DEV_WX_RAIN_TINT 256     // coloured shadows fade out in heavy rain (the direct sun they colour is <= 32 % there)
+#define SHADE_DEV_WX_FILM_SKY 512      // heavy rain: wet films off the puddles reflect the overcast sky's mean light (no LUT lookup)
+#define SHADE_DEV_WX_SSR_GATE2 131072  // puddle reflections marched where F x P >= 0.05 (ramp to 0.09) instead of 0.035 (to 0.07)
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
 
 #define SHADE_DIM_OVERWORLD 0

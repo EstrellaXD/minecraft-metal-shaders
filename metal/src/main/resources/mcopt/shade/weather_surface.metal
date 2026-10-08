@@ -415,13 +415,19 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// rough films see a blurred sky: toward the sky's mean light (ambientSky ~ irradiance / pi); the roughest (soaked grass,
 	// damp ground: rough >= 0.625) see only that, so the sky lookups are skipped there
 	float blur = saturate(rough * 1.6);
+	// (SHADE_DEV_WX_FILM_SKY: in heavy rain the overcast sky is about uniform, so films off the puddles see its mean light)
+	// (fades in over rain 0.6-0.8, so the switch doesn't pop; per frame, so the skip above 0.8 is uniform)
+	if (P <= 0.0 && SHADE_WX_BUDGET(f, SHADE_DEV_WX_FILM_SKY)) blur = max(blur, smoothstep(0.6, 0.8, L.wet.w));
 	float3 refl = blur < 1.0 ? shadeWxSkyRefl(r, in.prevExposure, in.histOk && P > 0.0, f, L, lut, lutS, hist, histDepth) : float3(0.0);
 	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, blur) * open;
 #ifdef SHADE_PUDDLE_SSR
 	// The march only where the mirror shows: the film reflects F (2 % looking straight down, ~10 % at 65 degrees from the
 	// normal, all of it at grazing angles), so where F * P < 0.035 the sky reflection alone is within a few percent of what
 	// the march would add, and the march is skipped (most of the puddle pixels near the feet); a soft ramp up to 0.07.
-	float ssrW = shadeDev(f, SHADE_DEV_WX_NO_SSR_GATE) ? (P > 0.02 ? 1.0 : 0.0) : smoothstep(0.035, 0.07, F * P);
+	// (SHADE_DEV_WX_SSR_GATE2: from F * P 0.05, ramp to 0.09: puddles within ~4.5 blocks of the feet reflect 2-5 % and keep
+	// the sky reflection alone; the grazing views where the mirror shows are marched as before)
+	float2 gate = SHADE_WX_BUDGET(f, SHADE_DEV_WX_SSR_GATE2) ? float2(0.05, 0.09) : float2(0.035, 0.07);
+	float ssrW = shadeDev(f, SHADE_DEV_WX_NO_SSR_GATE) ? (P > 0.02 ? 1.0 : 0.0) : smoothstep(gate.x, gate.y, F * P);
 #ifdef SHADE_PUDDLE_QUAD
 	// quadPuddle first: lanes of a quad without puddles may have returned above, and shuffles must not read them
 	if (quadPuddle && shadeWxQuadMax(ssrW) > 0.0 && in.histOk && in.prevExposure > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_SSR)) { // quad-uniform (quadPuddle, histOk, prevExposure, dev: per frame)

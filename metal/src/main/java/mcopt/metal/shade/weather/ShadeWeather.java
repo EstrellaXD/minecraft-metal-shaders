@@ -50,7 +50,7 @@ import mcopt.metal.shade.ShadeMsl;
  * (1 on performance/balanced, 2 on quality/ultra): drop grids.</li>
  * <li>{@code mcopt.shade.weatherLite} (true on performance/balanced): budget gates that keep the look (no sun highlight on
  * wet surfaces in heavy rain, raindrop rings only where the puddle mirror shows them, rain streaks lit by the sky's mean
- * light); puddle reflections are untouched.</li>
+ * light, coloured shadows and the films' sky lookup off in heavy rain, puddle reflections marched from F x P 0.05).</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
  * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
  * <li>{@code mcopt.shade.lightning} (true): bolts light the scene and the sky, and glow (the game's "Hide Lightning Flashes"
@@ -80,7 +80,10 @@ public final class ShadeWeather {
 	/**
 	 * Budget gates (performance, balanced): no sun highlight on wet surfaces in heavy rain (the sun is behind the clouds),
 	 * raindrop rings only where the puddle mirror shows them, rain streaks lit by the sky's mean light (no sky-view LUT per
-	 * streak fragment). Puddle reflections are untouched. Quality/ultra keep the full shading (dev bits 32/64/128 price it).
+	 * streak fragment), coloured shadows fade out in heavy rain (tint pass skipped), wet films off the puddles see the overcast
+	 * sky's mean light in heavy rain, puddle reflections marched from F x P 0.05 (not 0.035: puddles within ~4.5 blocks of the
+	 * feet reflect 2-5 % and keep the sky alone). The mirror (grazing views) is untouched. Quality/ultra keep the full shading
+	 * (dev bits 32/64/128/256/512/131072 price each gate there).
 	 */
 	public static final boolean LITE = flag("mcopt.shade.weatherLite", Shade.TIER <= 1);
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);

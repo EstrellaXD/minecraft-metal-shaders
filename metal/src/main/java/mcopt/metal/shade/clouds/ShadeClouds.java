@@ -195,7 +195,8 @@ public final class ShadeClouds {
 			// fourth frame, never in the same frame (both after a reset). CloudParams keeps the map's own frame in between.
 			// (M3.1: the dome every 8th frame at performance/balanced, CloudConfig.DOME_EVERY: its 8k rays cost ~0.11 ms per update,
 			// the long horizon rays' latency, not their number)
-			boolean dome = (p.frame & (CloudConfig.DOME_EVERY - 1)) == 1;
+			int domeEvery = (dev & CloudConfig.DEV_OLD_DOME) != 0 ? 4 : CloudConfig.DOME_EVERY;
+			boolean dome = (p.frame & (domeEvery - 1)) == 1;
 			p.shadowUpdate = CloudConfig.SHADOWS && ((p.frame & 3) == 3 || p.reset);
 			p.pack(PACKED, f, WEATHER);
 			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)

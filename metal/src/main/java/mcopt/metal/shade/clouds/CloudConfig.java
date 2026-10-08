@@ -58,8 +58,8 @@ public final class CloudConfig {
 	public static final boolean DOME = flag("mcopt.shade.clouds.dome", true);
 	public static final int DOME_STEPS = clampInt(Integer.getInteger("mcopt.shade.clouds.domeSteps", new int[] {8, 10, 12, 16}[TIER]), 4, 64);
 	public static final int DOME_W = 128, DOME_H = 64;
-	/** Frames between dome updates (4 or 8; mcopt.shade.clouds.domeEvery): M3.1 lean 8 at performance/balanced, else 4 (M3). */
-	public static final int DOME_EVERY = Integer.getInteger("mcopt.shade.clouds.domeEvery", flag("mcopt.shade.clouds.lean", true) && TIER <= 1 ? 8 : 4) >= 8 ? 8 : 4;
+	/** Frames between dome updates (4 or 8; mcopt.shade.clouds.domeEvery): M3.1 8 at performance/balanced, else 4; 4 (M3) without lean. */
+	public static final int DOME_EVERY = Integer.getInteger("mcopt.shade.clouds.domeEvery", TIER <= 1 ? 8 : 4) >= 8 ? 8 : 4;
 	public static final boolean CIRRUS = flag("mcopt.shade.clouds.cirrus", true);
 	/**
 	 * Cloud style: volumetric (default) or blocky (vanilla-style 12-block cells, ray-traced and lit: the Storybook look's
@@ -99,8 +99,9 @@ public final class CloudConfig {
 	public static final boolean LEAN = flag("mcopt.shade.clouds.lean", true);
 	/** Dev bits (mcopt.shade.clouds.dev, read every frame; 0 normally): price parts of the clouds inside one session. */
 	public static final int DEV_NO_SCREEN = 1, DEV_NO_MAPS = 2, DEV_NO_SKY = 4, DEV_NO_FOG = 8, DEV_NO_SHADOW_USE = 16, DEV_NO_VL = 32,
-		DEV_OLD_FOG = 256, DEV_OLD_VL = 512, DEV_OLD_RESOLVE = 1024, DEV_OLD_MARCH = 2048, DEV_SCALE_ALT = 4096, DEV_OLD_MIP = 8192;
-	public static final int DEV_OLD_ALL = DEV_OLD_FOG | DEV_OLD_VL | DEV_OLD_RESOLVE | DEV_OLD_MARCH | DEV_OLD_MIP;
+		DEV_OLD_FOG = 256, DEV_OLD_VL = 512, DEV_OLD_RESOLVE = 1024, DEV_OLD_MARCH = 2048, DEV_SCALE_ALT = 4096, DEV_OLD_MIP = 8192,
+		DEV_OLD_DOME = 16384;
+	public static final int DEV_OLD_ALL = DEV_OLD_FOG | DEV_OLD_VL | DEV_OLD_RESOLVE | DEV_OLD_MARCH | DEV_OLD_MIP | DEV_OLD_DOME;
 	/** The history scale dev bit 4096 switches to (pricing another scale inside one session). */
 	public static final float SCALE_ALT = clamp(floatProperty("mcopt.shade.clouds.scaleAlt", 0.4f), 0.2f, 1f);
 

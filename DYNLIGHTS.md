@@ -161,6 +161,7 @@ drift. GPU ms per frame:
 | `20261007-143027-dl-t6-on` (`1e7f6c2`) | battery | clean (java 72 %, total < 350 %) | 8.142 | 8.047 | 8.188 | **+0.12 ms** |
 | `20261007-145128-dl-t6-on2` (`1e7f6c2`) | AC | **contaminated** (Python 87 %, Safari) | 8.455 | 8.301 | 8.510 | +0.18 ms |
 | `20261007-181411-dl-r1-on` (`1e7f6c2`) | AC | clean (total 105-244 %) | 8.131 | 7.979 | 8.144 | **+0.16 ms** |
+| `20261007-182737-dl-r2-on` (`731a503`, + hysteresis) | AC | **contaminated in `lights_off`** (Chrome 114 % + Python 95 % at its end, total 384 %) | 8.261 | 8.321 | 8.291 | (-0.05: the slowed `off` phase hides the cost; not used) |
 R2_ROW
 Control: with the module off (`20261007-144310-dl-t6-off`) the same three phases read 7.722 / 7.767 / 7.772 ms: the
 phase-to-phase noise is ~0.05 ms. **Price: ~0.15 ms GPU for the hands + 9 lights (budget 0.4 ms).** History of the

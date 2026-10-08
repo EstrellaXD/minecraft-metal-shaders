@@ -47,8 +47,8 @@ struct ShadeLook {
 	float4 clouds0;    // 528  M3 clouds: x cumulus base y, y top y (relative to the camera), z cloud shadow strength (0 off), w 1 = volumetric clouds on (vanilla's off)
 	float4 clouds1;    // 544  M3 clouds: x 1 = the reflection dome holds clouds, y cirrus altitude (relative), zw reserved
 	float4 clouds2;    // 560  reserved
-	float4 water;      // 576  reserved for the water module
-	float4 waterAbs;   // 592  reserved for the water module
+	float4 water;      // 576  (M3.3 wet ground, mcopt.shade.wetAll; was reserved for the water module, unused by it) x 1 = wet-all look, y soaked film roughness, z vegetation's extra roughness, w film reflections' gate (weather_surface.metal)
+	float4 waterAbs;   // 592  (M3.3 wet ground, look development) x extra darkening exponent of the film, y film weight scale, zw 0
 	float4 tintRect;   // 608  (M3 weather) the coloured-shadow casters in the near cascade's light clip space: xy min, zw max (none: min > max); written after the shadow pass (ShadeBindings.setShadowTint)
 	float4 eye;        // 624  xyz camera-relative feet position, w smoothed sky light at the eye 0..1
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0

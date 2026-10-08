@@ -1,5 +1,13 @@
 # Volumetric clouds (M3 module, branch `m3-clouds` from `m2.1`)
 
+## M3.3 Status (2026-10-08 11:05) - resumed (new session after 52efc55)
+
+Plan of the resumed session: (1) item 1 stays done; it is re-shot with the final jar in the last run. (2) Price: the
+remaining lever with a size of ~0.1 ms is fewer march rays: a 4x4 checkerboard (`mcopt.shade.clouds.checker=4`, today
+clamped to 3) priced offline first, then in game with an in-session switch (dev bit) against 3x3; also look for a cheaper
+stable resolve (its +0.03-0.05 ms). Run 3 (robust interleaved price, never ran: `run3.out` empty) is folded into the next
+game run together with the wind=0 look shots old vs new (imgdiff). (3) Horizon layering / far speckle only if cheap.
+
 ## M3.3 Status (2026-10-08 10:28) - branch `m3.3-clouds` from m3-int 397e241
 
 Item 1 (comb): **fixed and confirmed in game** (b4ece4e, flag `mcopt.shade.clouds.stable`, default true, read every

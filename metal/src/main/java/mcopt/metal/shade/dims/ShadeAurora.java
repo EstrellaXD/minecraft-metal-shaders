@@ -24,10 +24,10 @@ import mcopt.metal.shade.ShadeRender;
 import net.minecraft.client.Minecraft;
 
 /**
- * M3.3 (mcopt.shade.aurora.half, default true, read every frame; false = M3.2): the aurora in its own pass at a fraction of
- * the output resolution (mcopt.shade.aurora.scale, default 0.4: 1210x786 on the 3024x1964 panel, about half of the
- * balanced preset's render size), sampled by the sky pass with one tap. The sky pass is a full-screen triangle drawn before
- * the terrain, so in M3.2 every pixel of the frame paid the aurora (8 noise taps) on aurora nights, ~0.4 ms in a sky view
+ * M3.3 (mcopt.shade.aurora.half, default true, read every frame; false = M3.2): the aurora in its own pass at half the
+ * world's render size (SCALE: 1210x786 on the 3024x1964 panel at the balanced preset), sampled by the sky pass with one
+ * tap. The sky pass is a full-screen triangle drawn before the terrain, so in M3.2 every pixel of the frame paid the aurora
+ * (8 noise taps) on aurora nights, ~0.4 ms in a sky view
  * (SKYDIMS.md M3.3). While the pass runs the sky draws with its lean variant (no per-pixel aurora code: ShadeLean
  * LEAN_NOAURORA) plus the one-tap read (ShadeLook bit SHADE_DIMS_AURORA_TEX, set only in frames whose pass ran).
  * Render thread only.
@@ -35,8 +35,12 @@ import net.minecraft.client.Minecraft;
 public final class ShadeAurora {
 	/** ShadeResources entry (shade_look.metal: aurora). */
 	static final int RESOURCE = 11;
-	/** The texture's size as a fraction of the output (window framebuffer) size. */
-	static final float SCALE = Math.max(0.1f, Math.min(1f, Float.parseFloat(System.getProperty("mcopt.shade.aurora.scale", "0.4"))));
+	/**
+	 * The texture's size as a fraction of the output (window framebuffer) size: mcopt.shade.aurora.scale (0.5) x the preset's
+	 * render scale (TAAU; 1 without it), i.e. half the world's render size in each direction (balanced 0.8: 0.4, 1210x786).
+	 */
+	static final float SCALE = Math.max(0.1f, Math.min(1f, Float.parseFloat(System.getProperty("mcopt.shade.aurora.scale", "0.5"))
+		* (mcopt.metal.shade.taa.TaaConfig.ENABLED ? mcopt.metal.shade.taa.TaaConfig.SCALE : 1f)));
 
 	private static long library, pipeline, texture;
 	private static int width, height;

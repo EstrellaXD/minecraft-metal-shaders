@@ -38,6 +38,7 @@ static inline bool shadeDimsLit(constant ShadeFrame &f) { return (int(f.sunPath.
 // M3.3: ShadeLook.dimTint.w = kind + 4 x bits (an exact small float)
 #define SHADE_DIMS_MOTES 1        // Nether: dark suspended particles lifted to a luminance floor (mcopt.shade.dims.motes)
 #define SHADE_DIMS_AURORA_OLD 2   // overworld: M3.2's aurora (every sky pixel pays it in the sky pass; mcopt.shade.aurora.lean=false)
+#define SHADE_DIMS_DH_SKY 4       // End + Distant Horizons: the final pass paints the End sky where the clear colour still shows (mcopt.shade.dhClear)
 static inline int shadeDimKind(constant ShadeLook &L) { return int(L.dimTint.w) & 3; }
 static inline bool shadeDimsBit(constant ShadeLook &L, int b) { return ((int(L.dimTint.w) >> 2) & b) != 0; }
 
@@ -234,10 +235,9 @@ static float3 shadeAuroraQuad(float3 dir, constant ShadeFrame &f, constant Shade
 	return sum * (rays * L.night.z * horizon * 0.12);
 }
 
-static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
+// M3.2's aurora (every pixel takes all eight taps)
+static float3 shadeAuroraFull(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
 	float s = L.night.z;
-	if (s <= 0.002) return float3(0.0);
-	if (!shadeDimsBit(L, SHADE_DIMS_AURORA_OLD)) return shadeAuroraQuad(dir, f, L, mw, pixel);
 	if (dir.y < 0.02) return float3(0.0);
 	// 6 layers through the shell, the sample height dithered per pixel and frame (TAA integrates it)
 	const float h0 = 1.0, h1 = 1.9;
@@ -260,6 +260,11 @@ static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	}
 	float horizon = smoothstep(0.02, 0.18, dir.y);
 	return sum * (rays * s * horizon * 0.12);
+}
+
+static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook &L, texture2d<half> mw, float2 pixel) {
+	if (L.night.z <= 0.002) return float3(0.0);
+	return shadeDimsBit(L, SHADE_DIMS_AURORA_OLD) ? shadeAuroraFull(dir, f, L, mw, pixel) : shadeAuroraQuad(dir, f, L, mw, pixel);
 }
 
 // ---- fog in the Nether and the End (final pass, from depth) ----------------------------------------------------------------

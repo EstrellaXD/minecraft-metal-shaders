@@ -328,7 +328,7 @@ public final class ShadeDims {
 		L.putFloat(ShadeLook.NIGHT + 8, aurora);
 		// M3.3: dimTint.w = kind + 4 x these bits (shade_dims.metal SHADE_DIMS_*), live per frame
 		int dimBits = (!"false".equals(System.getProperty("mcopt.shade.dims.motes")) ? 1 : 0)
-			| ("false".equals(System.getProperty("mcopt.shade.aurora.lean")) ? 2 : 0);
+			| ("false".equals(System.getProperty("mcopt.shade.aurora.lean")) ? 2 : 0) | (DimsDebug.dhClear() ? 4 : 0);
 		if (dimsLit) {
 			boolean nether = dimension == ShadeFrame.DIM_NETHER;
 			// M3.3: the vanilla-light Nether (mcopt.shade.dims.netherLight=vanilla) keeps vanilla's lightmapped colours (no

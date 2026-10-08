@@ -5,6 +5,11 @@ fragment half4 t_aurora(ShadeFsOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float3 dir = normalize(float3(in.uv.x - 0.5, 0.4 + in.uv.y, 0.7));
 	return half4(half3(shadeAurora(dir, f, L, mw, in.position.xy)), 1.0h);
 }
+// M3.3: the aurora before the quad sharing (M3.2's every-pixel version)
+fragment half4 t_aurora_old(ShadeFsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]], texture2d<half> mw [[texture(0)]]) {
+	float3 dir = normalize(float3(in.uv.x - 0.5, 0.4 + in.uv.y, 0.7));
+	return half4(half3(shadeAuroraFull(dir, f, L, mw, in.position.xy)), 1.0h);
+}
 fragment half4 t_endsky(ShadeFsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]], texture2d<half> mw [[texture(0)]]) {
 	float3 dir = normalize(float3(in.uv.x - 0.5, in.uv.y - 0.5, 0.7));
 	return half4(half3(shadeEndSky(dir, f, L, mw, 0.0004)), 1.0h);

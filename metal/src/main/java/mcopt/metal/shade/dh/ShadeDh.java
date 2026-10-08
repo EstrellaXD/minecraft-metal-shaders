@@ -78,7 +78,7 @@ public final class ShadeDh {
 		String fragment = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.fs.metal");
 		for (String name : PIPELINES) {
 			MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(generated -> vertex, generated -> fragment,
-				List.of("vertSharedUniformBlock", "vertUniqueUniformBlock", "fragUniformBlock", "uBlockAtlas")));
+				List.of("vertSharedUniformBlock", "vertUniqueUniformBlock", "fragUniformBlock", "uBlockAtlas", "uLightMap")));
 		}
 		System.out.println("[mcopt] shade dh: Distant Horizons' LOD terrain lit by the shade model (mcopt.shade.dh.light=false: DH's own look)");
 	}

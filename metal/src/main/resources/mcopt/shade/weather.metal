@@ -38,8 +38,9 @@ static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, cons
 	float3 v = normalize(wp.xyz / wp.w);
 	float dist = f.proj[3][2] / max(pixel.z + f.proj[2][2], 1e-7);
 	float l = shadeLuma(c.rgb);
-	float3 sky = shadeSkyLookup(float3(v.x, max(v.y, 0.02), v.z), lut, lutS, f);
 	float3 skyMean = f.ambientSky.rgb;
+	// (SHADE_DEV_WX_LITE_RAIN: the overcast sky's mean light a little raised instead of the LUT in the streak's direction)
+	float3 sky = shadeDev(f, SHADE_DEV_WX_LITE_RAIN) ? skyMean * 1.12 : shadeSkyLookup(float3(v.x, max(v.y, 0.02), v.z), lut, lutS, f);
 	// forward scattering of the sun through the drops (a soft glow toward the sun), and the flash
 	float mu = dot(v, f.lightDirWorld.xyz);
 	float3 sun = f.sunColor.rgb * (0.03 + 0.45 * shadeHG(mu, 0.6));

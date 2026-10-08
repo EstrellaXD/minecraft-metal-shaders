@@ -197,6 +197,14 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		w.puddle = P;
 #ifdef SHADE_RIPPLES
 		float fade = 1.0 - smoothstep(0.03, 0.06, footprint);
+		if (shadeDev(f, SHADE_DEV_WX_RIPPLE_GATE)) {
+			// rings show in what the puddle mirrors: where the flat water's Fresnel x P is ~2 % (looking down near the feet)
+			// they only stir a uniform overcast sky; fade them in over F*P 0.02-0.035 (the march's gate starts at 0.035)
+			float cv = saturate(-p.y * rsqrt(max(dot(p, p), 1e-6)));
+			float m = 1.0 - cv;
+			float Ff = 0.02 + 0.95 * m * m * m * m * m;
+			fade *= smoothstep(0.02, 0.035, Ff * float(P));
+		}
 		if (P > 0.0h && L.wet.w > 0.01 && fade > 0.0 && !shadeDev(f, SHADE_DEV_WX_NO_RIPPLES)) w.slope = shadeWxRipples(xa, f.sunPath.w, min(L.wet.w * 1.1, 1.0), footprint) * (fade * 1.6);
 #endif
 	}
@@ -418,8 +426,12 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	if (wet <= 0.004h) return radiance;
 	// the sun's (or moon's) highlight: a mirror-sharp glint on puddles, a broad sheen on wet ground
 	float a = max(rough * rough, 0.0025);
-	float3 sun = float3(f.sunColor.rgb) * min(shadeWxGgx(n, v, f.lightDirWorld.xyz, a), 60.0) * float(in.shadow)
-		* float(smoothstep(0.3h, 0.8h, in.sky));
+	float3 sun = float3(0.0);
+	// (SHADE_DEV_WX_SUN_GATE: in heavy rain the sun is behind the clouds, the highlight fades out over rain 0.5-0.8 and is not
+	// computed above it; per frame, so the branch is uniform)
+	float sunW = shadeDev(f, SHADE_DEV_WX_SUN_GATE) ? 1.0 - smoothstep(0.5, 0.8, L.wet.w) : 1.0;
+	if (sunW > 0.0) sun = float3(f.sunColor.rgb) * (min(shadeWxGgx(n, v, f.lightDirWorld.xyz, a), 60.0) * float(in.shadow)
+		* float(smoothstep(0.3h, 0.8h, in.sky)) * sunW);
 	float k = mix(float(w.omega) * 0.65 * (1.0 - 0.5 * veg), 1.0, P);
 	return radiance * (1.0 - F * k) + (refl * F + sun * F) * k;
 }

@@ -172,7 +172,7 @@ public final class ShadeSky {
 			float dl = dx * dx + dz * dz, sl = s.sunX * s.sunX + s.sunZ * s.sunZ;
 			float toward = dl > 1e-8f && sl > 1e-8f ? (float) ((dx * s.sunX + dz * s.sunZ) / Math.sqrt(dl * sl)) * 0.5f + 0.5f : 0.5f;
 			float band = (float) Math.pow(Math.max(h, 1e-4f), 9f + (2f - 9f) * toward * toward);
-			float t = toward > 0.5f ? toward * 2f - 1f : toward * 2f;
+			float t = toward > 0.5f ? (float) Math.pow(toward * 2f - 1f, 2.5) : toward * 2f;
 			float[] a = toward > 0.5f ? ART_SIDE : ART_AWAY, b = toward > 0.5f ? ART_TOWARD : ART_SIDE;
 			float sl3 = (float) Math.sqrt(s.sunX * s.sunX + s.sunY * s.sunY + s.sunZ * s.sunZ);
 			float cs = Math.max((dx * s.sunX + dy * s.sunY + dz * s.sunZ) / Math.max(sl3, 1e-6f), 0f);
@@ -182,6 +182,14 @@ public final class ShadeSky {
 				float col = a[c] + (b[c] - a[c]) * t;
 				col += (ART_HALO[c] - col) * glow * 0.4f;
 				out[c] *= 1f + (col - 1f) * k;
+			}
+			// shade_common.metal shadeSunsetChroma
+			float mx = Math.max(out[0], Math.max(out[1], out[2])), mn = Math.min(out[0], Math.min(out[1], out[2]));
+			if (gh > 0f && mx > 1e-6f) {
+				float kc = smoothstep(0.55f, 1f, 1f - mn / mx) * gh, lc = luma(out[0], out[1], out[2]);
+				float cr = (out[0] - lc) * (1f - 0.5f * kc), cg = (out[1] - lc) * (1f - 0.5f * kc), cb = (out[2] - lc) * (1f - 0.5f * kc);
+				cg -= 0.06f * kc * Math.max(cr, 0f);
+				out[0] = Math.max(lc + cr, 0f); out[1] = Math.max(lc + cg, 0f); out[2] = Math.max(lc + cb, 0f);
 			}
 		} else {
 			gh *= 0.55f + 0.45f * h * h * h;

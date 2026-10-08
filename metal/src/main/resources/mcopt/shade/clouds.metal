@@ -375,8 +375,10 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	bool inside = t0 < 1.0;
 	if (inside) t1 = min(t1, 1500.0);
 	float len = t1 - t0;
-	// fewer, longer steps where the stretch is short (straight up) and the far horizon (thin on screen)
-	int n = clamp(int(float(steps) * saturate(len / 600.0) + 0.999), max(steps / 2, 4), steps);
+	// fewer, longer steps where the stretch is short (straight up); along the long grazing stretches toward the horizon the
+	// steps stay at most ~48 blocks (up to 3x the steps): 100-200-block steps there sliced the far clouds into horizontal
+	// stripes of see-through sky at sunset (Gael's report 2026-10-07; steps=60 removed them, a bigger loop budget did not)
+	int n = clamp(int(max(float(steps) * saturate(len / 600.0), len / 48.0) + 0.999), max(steps / 2, 4), 3 * steps);
 	float dt = len / float(n);
 	// the fine detail (a ~30-block tile) fades out where the steps get too coarse to resolve it (it aliases into grain)
 	float detail = saturate((26.0 - dt) / 14.0);
@@ -399,11 +401,7 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	// steps made it a noisy guess that showed the checkerboard)
 	float dtl = inside ? dt * 0.08 : dt;
 	float t = t0 + jitter * dtl;
-	// loop budget: long grazing stretches toward the horizon cross many clouds, each costing a step back and 4 misses on top
-	// of its in-cloud steps; with 3n + 4 the march ran out midway, by a different amount for each row of the horizon band
-	// (2026-10-07: horizontal stripes of see-through sky in the far clouds at sunset, Gael's report). Only those rays get more.
-	int budget = 3 * n + 4 + (inside ? 24 : 0) + (len > 1200.0 ? 2 * n : 0);
-	for (int i = 0; i < budget && t < t1; i++) {
+	for (int i = 0; i < 3 * n + 4 + (inside ? 24 : 0) && t < t1; i++) {
 		if (inside) dtl = dt * clamp((t + 24.0) / 400.0, 0.08, 1.0);
 		float3 p = dir * t;
 		float y = cloudAltitude(r, t);

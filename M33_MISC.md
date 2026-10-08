@@ -1,5 +1,20 @@
 # M3.3 misc: god rays at sunset, dynamic resolution, rain budget (branch `m3.3-misc` from `m3-int` 397e241)
 
+## M3.3 Status (2026-10-08 11:50, resumed session, merged in m3-int)
+
+Run 4 (`bench-results/20261008-105533-mx4-final`, jar e60aac8, AC; `ab_table.py`, `drs_phases.py`):
+- **DRS route A/B**: M3.2 controller 116.3 / 116.4 fps (8.60 ms, pinned at 0.60), hold 126.7 / 127.6 fps (7.87 ms, at 0.50).
+  But the scale shots (`run4/scale_crop.jpg`, 1:1 crops at 0.80 / 0.60 / 0.50) show 0.50 visibly softer than 0.60. Integration
+  decision: **hold floor 0.55** (`mcopt.shade.drsFloor`, = the pause menu's lowest choice, 1080p on the 1964-pixel panel):
+  model T ~ 6.8 + 7 s^2 puts the heavy route at ~8.2 ms (~122 fps) there. Lighter views keep 0.80 (M3.2 stepped down to 0.72).
+- **Rain budget** (all three options vs base, 6 ABAB pairs, DRS paused at 0.80): -0.083 ms (pairs -0.12 .. -0.04); rain = 0.65 ms
+  in this run. At the grazing pose the puddle reflections of the trees are a little weaker and the ripples fade nearer
+  (`run4/graze_crop.jpg`): **left off** (Gael's favourites are reflections; 0.08 ms is ~1 % of the frame). Option kept:
+  `-Dmcopt.shade.rainBudget=gate,ripples,steps`.
+- **Sunset rays** gain 2 vs M3.2: hardly any visible difference at `west` / `rose_sky` (`run4/west_m32_g2.jpg`,
+  `rays_m22_m32_g2.jpg`): the volumetric clouds hide most of the open sky where M2.2's streaks showed. Run 5 (`mx5-sunset`, in
+  the resumed chain) tries the far taps / gain 3-4 / wider falloff; defaults pending it.
+
 ## M3.3 Status (2026-10-08 10:56)
 
 Plan (in this order; nothing of M4 / FT1):

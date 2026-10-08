@@ -399,7 +399,11 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 	// steps made it a noisy guess that showed the checkerboard)
 	float dtl = inside ? dt * 0.08 : dt;
 	float t = t0 + jitter * dtl;
-	for (int i = 0; i < 3 * n + 4 + (inside ? 24 : 0) && t < t1; i++) {
+	// loop budget: long grazing stretches toward the horizon cross many clouds, each costing a step back and 4 misses on top
+	// of its in-cloud steps; with 3n + 4 the march ran out midway, by a different amount for each row of the horizon band
+	// (2026-10-07: horizontal stripes of see-through sky in the far clouds at sunset, Gael's report). Only those rays get more.
+	int budget = 3 * n + 4 + (inside ? 24 : 0) + (len > 1200.0 ? 2 * n : 0);
+	for (int i = 0; i < budget && t < t1; i++) {
 		if (inside) dtl = dt * clamp((t + 24.0) / 400.0, 0.08, 1.0);
 		float3 p = dir * t;
 		float y = cloudAltitude(r, t);

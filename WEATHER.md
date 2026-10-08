@@ -5,7 +5,7 @@ Shader bible E13 (rain, wetness, puddles, ripples, snow) and E08's coloured shad
 are M2.1's (the weather prelude is empty), and `mcopt.shade=false` is upstream.
 
 
-## Status (2026-10-07 22:24)
+## Status (2026-10-07 22:10)
 
 **Fix round 22:00 (pre-integration, from the skeptic check `check:weather` in `work/notes/m3-2026-10-07/prefix-checks.json`):**
 done and committed (builds, validate ALL OK, **not yet tested in game**):
@@ -31,8 +31,10 @@ done and committed (builds, validate ALL OK, **not yet tested in game**):
 **Next, in this order** (the 21:55 task list; item 3 done):
 1. Game test of the above (glass shots: tint still there; price wxdry / wxdry_notint near glass and near water).
 2. Budget in heavy rain at balanced (0.80 ms in wx17 incl. ~0.19 tint): price after item 1; candidates as dev bits 32-512.
-4. Snowfall shot: mcbench WeatherShots `snowfall` pose (nearest snowy biome, like DimShots.aurora's search), look at it.
-5. Moving view: a `wxmove` phase (walk across the puddles) recorded with `-Dmcopt.rec=... -Dmcopt.rec.start=wxmove`.
+4. Snowfall shot: mcbench (commit "WeatherShots wx_snowfall ... wxmove") has `-Dmcbench.weather=...,snow` (`wx_snowfall`) and
+   `move` (phase `wxmove`); run them and look.
+5. Moving view: record `wxmove` with `-Dmcopt.rec=<scratch>/wxmove.mp4 -Dmcopt.rec.start=wxmove -Dmcopt.rec.duration=6
+   -Dmcopt.rec.size=1512x982` (a separate run from the price run).
 6. Integration notes (slot 4 vs lights, tint delta duplicate). 7. WEATHER.md prices and stale "~0" claims (skeptic finding 6).
 
 **Earlier (resume session 18:06-20:50):** the WIP commit (baked puddle/snow noise tile) is finished and kept; puddle SSR only

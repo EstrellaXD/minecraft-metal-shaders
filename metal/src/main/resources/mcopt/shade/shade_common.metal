@@ -528,4 +528,41 @@ static half shadeShadow(depth2d_array<float> map, sampler cmp, constant ShadeFra
 	return half(m0 >= 1.0 ? far : mix(near, far, smoothstep(0.85, 1.0, m0)));
 }
 
+// M3.4 (water, mcopt.shade.waterShadowSoft): one cascade's visibility over a disc of the horizontal plane around p (a water
+// surface): 8 taps on a Vogel disc of radius r blocks, turned per pixel and frame (TAAU averages them), each projected on
+// its own so its depth is the plane's there (no acne on a flat receiver seen by a low sun).
+static inline float shadeShadowCascadeDisc(depth2d_array<float> map, sampler cmp, uint layer, float4x4 vp, float3 p, float3 offset, float r,
+                                           float turn, thread float &m) {
+	float4 c0 = vp * float4(p + offset, 1.0);
+	m = max(abs(c0.x), abs(c0.y));
+	if (c0.z <= 0.0 || c0.z >= 1.0) m = 2.0;
+	if (m >= 1.0) return 1.0;
+	float s = 0.0;
+	for (int i = 0; i < 8; i++) {
+		float a = (float(i) + turn) * 2.39996323, d = r * sqrt((float(i) + 0.5) / 8.0);
+		float4 c = vp * float4(p + offset + float3(cos(a) * d, 0.0, sin(a) * d), 1.0);
+		s += map.sample_compare(cmp, shadeShadowUV(c.xyz), layer, c.z);
+	}
+	return s * 0.125;
+}
+
+// M3.4 (water): shadeShadow for an up-facing water surface with a soft edge of radius r blocks. Distant blocky casters (an
+// island under a low sun) cut the sun's glint on the water along their block outline; real waves and the sun's own size
+// blur that edge over a block or two (water only: sodium_terrain.fs.metal waterFull; r <= 0 = shadeShadow, M3.3).
+static half shadeShadowSoft(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, float3 p, half3 n, float r, float2 pixel) {
+	if (f.flags.z == 0 || shadeDev(f, SHADE_DEV_NO_SHADOW)) return half(1.0);
+	float3 L = f.lightDirWorld.xyz;
+	float nl = dot(float3(n), L);
+	if (nl <= 0.0) return half(1.0);
+	float tanT = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.02), 0.0, 12.0);
+	float3 dir = float3(n) * 0.75 + L * (0.5 + 0.75 * tanT);
+	float turn = shadeNoise(pixel, f.flags2.x);
+	float m0, m1;
+	float near = shadeShadowCascadeDisc(map, cmp, 0u, f.shadowViewProj[0], p, dir * f.cascadeSplits.z, r, turn, m0);
+	if (m0 < 0.85) return half(near);
+	float far = shadeShadowCascadeDisc(map, cmp, 1u, f.shadowViewProj[1], p, dir * f.cascadeSplits.w, r, turn, m1);
+	far = mix(far, 1.0, smoothstep(0.85, 1.0, m1));
+	return half(m0 >= 1.0 ? far : mix(near, far, smoothstep(0.85, 1.0, m0)));
+}
+
 #endif

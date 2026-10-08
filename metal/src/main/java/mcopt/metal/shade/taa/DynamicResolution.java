@@ -54,6 +54,8 @@ public final class DynamicResolution {
 	/** M3.3: the hold controller's floor (mcopt.shade.drsFloor, 0.40-1; default 0.55, the pause menu's 1080p on the Retina panel). */
 	public static final float HOLD_FLOOR = TaaConfig.clamp(floatProp("mcopt.shade.drsFloor", 0.55f), 0.4f, 1f);
 	/** M3.3: the share of the frame's GPU time that does not scale with the render scale, for the hold controller's model. */
+	/** The player set mcopt.shade.scaleMin: the hold controller keeps it instead of its own floor. */
+	private static final boolean USER_MIN = System.getProperty("mcopt.shade.scaleMin") != null;
 	private static final double HOLD_FIXED = TaaConfig.clamp(floatProp("mcopt.shade.drsFixed", 0.5f), 0f, 0.9f);
 
 	private final float min, max;
@@ -154,7 +156,8 @@ public final class DynamicResolution {
 	 * preset's minimum when that is lower; quality and ultra keep their own (they are for sharpness at 80 / 60 fps).
 	 */
 	private float holdMin() {
-		return TaaConfig.PRESET.ordinal() <= TaaConfig.Preset.BALANCED.ordinal() ? Math.min(this.min, HOLD_FLOOR) : this.min;
+		// (an explicit mcopt.shade.scaleMin from the player is kept as the floor: code review M3.4)
+		return TaaConfig.PRESET.ordinal() <= TaaConfig.Preset.BALANCED.ordinal() && !USER_MIN ? Math.min(this.min, HOLD_FLOOR) : this.min;
 	}
 
 	/** The scale at which the model puts the frame at time goal (seconds), from time t at the current scale. */

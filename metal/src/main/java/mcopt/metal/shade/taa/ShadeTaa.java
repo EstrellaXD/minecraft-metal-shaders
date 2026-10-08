@@ -118,6 +118,13 @@ public final class ShadeTaa {
 		return failed ? null : instance;
 	}
 
+	/** M3.4: the last world frame's scale came from Auto (the preset / dynamic resolution), not a fixed pause-menu choice. */
+	public boolean lastAuto() {
+		return this.lastAuto;
+	}
+
+	private boolean lastAuto;
+
 	/** M3.3: the window size of the last world frame (0 before the first one). */
 	public int outWidth() {
 		return this.outWidth;
@@ -174,6 +181,7 @@ public final class ShadeTaa {
 		if (this.outWidth == 0) return; // no world target yet: the first resolve starts the history anyway
 		// M3.1: a resolution the player fixed in the pause menu (ShadeResolution) wins over the preset's dynamic resolution
 		float chosen = mcopt.metal.shade.ShadeResolution.scale(this.outHeight);
+		this.lastAuto = chosen <= 0f;
 		if (chosen > 0f) this.scale = FIXED_FOR_DH ? Math.min(chosen, this.allocScale) : chosen;
 		else if (TaaConfig.DRS && !FIXED_FOR_DH) {
 			// M3.3 dev (mcbench A/B phases, read every frame): mcopt.shade.drs.pause=true holds the preset's start scale (as

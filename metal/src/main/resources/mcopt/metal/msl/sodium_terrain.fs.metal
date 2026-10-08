@@ -195,7 +195,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #endif
     half shadowSky = endLit ? half(1.0) : in.v_Light.y;
     half shadow = (in.v_Light.y <= 0.3h && !endLit) || netherLit ? half(1.0)
-        : waterFull ? shadeShadow(shadowMap, shadowCompare, sf, p, n, false)
+        // M3.4 (mcopt.shade.waterShadowSoft, ShadeLook.waterShadow.x, read every frame): up-facing water gets a soft-edged shadow
+        : waterFull ? (n.y > 0.5h && sl.waterShadow.x > 0.0 ? shadeShadowSoft(shadowMap, shadowCompare, sf, p, n, sl.waterShadow.x, fragCoord.xy)
+                                                            : shadeShadow(shadowMap, shadowCompare, sf, p, n, false))
         : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
 #ifdef MCOPT_HDR
     // M3: the volumetric clouds' shadows (shade_clouds.metal; 1 when they are off); overworld only

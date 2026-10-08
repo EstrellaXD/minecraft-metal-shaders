@@ -72,7 +72,7 @@ public final class ShadeResolution {
 	}
 
 	/**
-	 * M3.3: the F3 line (ShadeDebugMixin, under the fps line): the world's render size, its share of the window, the pause
+	 * M3.3: the F3 line (ShadeDebugMixin; top of F3's right column): the world's render size, its share of the window, the pause
 	 * menu's choice and the preset, e.g. "Shaders: mundo 2419x1571 (80 %) · Auto · balanced". F3's "Display" line is the
 	 * window's size, which the render resolution never changes.
 	 */
@@ -92,9 +92,11 @@ public final class ShadeResolution {
 	public static String label(int outWidth, int outHeight) {
 		int c = CHOICES[index];
 		if (c == 0) {
-			// M3.3: in Auto, the height the dynamic resolution renders the world at right now ("Auto (1571p)")
+			// M3.3: in Auto, the height the dynamic resolution renders the world at right now ("Auto (1571p)"); M3.4: only from
+			// a frame Auto drew (right after cycling to Auto the last frame still had the fixed choice's height)
 			int[] size = worldSize();
-			return size == null ? "Resolución: Auto (dinámica)" : "Resolución: Auto (" + size[1] + "p)";
+			mcopt.metal.shade.taa.ShadeTaa taa = mcopt.metal.shade.taa.ShadeTaa.current();
+			return size == null || taa == null || !taa.lastAuto() ? "Resolución: Auto (dinámica)" : "Resolución: Auto (" + size[1] + "p)";
 		}
 		if (c < 0) return "Resolución: Nativa";
 		return "Resolución: " + c + "p";

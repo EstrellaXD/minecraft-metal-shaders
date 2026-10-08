@@ -110,6 +110,25 @@ public final class ShadeWater {
 	 * widened glint of a low sun was a broad glow cut into bright rectangles by the terrain's shadows (false: M2.1's glint).
 	 */
 	public static final boolean GLINT_GRAZE = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterGlintGraze", "true"));
+	/**
+	 * M3.4 (Gael, 2026-10-08: "sombras cuadradas en el agua" at sunset): the radius in blocks over which the shadow on an
+	 * up-facing water surface is softened (shade_common.metal shadeShadowSoft: 8 taps on the water plane, turned per pixel and
+	 * frame). The long shadows of blocky terrain under a low sun cut the sun's glint on the water along their block outline;
+	 * waves and the sun's size blur that edge in reality. mcopt.shade.waterShadowSoft (read every frame): 0 = M3.3.
+	 */
+	public static float shadowSoft() {
+		if (!ON) return 0f;
+		String v = System.getProperty("mcopt.shade.waterShadowSoft");
+		if (v == null) return SHADOW_SOFT_DEFAULT;
+		try {
+			return Math.clamp(Float.parseFloat(v.trim()), 0f, 8f);
+		} catch (NumberFormatException e) {
+			return SHADOW_SOFT_DEFAULT;
+		}
+	}
+
+	/** M3.4: the default soft shadow radius on water (blocks). */
+	static final float SHADOW_SOFT_DEFAULT = 2f;
 	/** M2.1: the water animates on a real-time clock instead of the (server-corrected, tick-based) game time. */
 	public static final boolean CLOCK = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterClock", "true"));
 	/** The pipeline whose first use in a main pass triggers the scene copy. */

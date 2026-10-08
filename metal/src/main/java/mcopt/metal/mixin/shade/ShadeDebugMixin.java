@@ -20,7 +20,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * M3.3: a line under F3's fps line with the world's real render resolution (ShadeResolution.debugLine): F3's "Display" is the
+ * M3.3: a priority line with the world's real render resolution (ShadeResolution.debugLine; F3 alternates priority lines
+ * between its columns, so it shows at the top of the right one, next to the fps line): F3's "Display" is the
  * window's size, which the pause menu's resolution choice and the dynamic resolution never change. The fps entry is in both
  * of F3's default profiles. Only with mcopt.shade=true (ShadeMixinPlugin); mcopt.shade.f3=false: no line.
  */

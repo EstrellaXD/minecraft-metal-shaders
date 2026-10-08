@@ -178,7 +178,7 @@ public final class ShadeXdr {
 			System.out.println("[mcopt] shade: XDR skip: " + framesXdr + " frames with highlights, " + framesSdr + " skipped");
 	}
 
-	private static final boolean LOG_SKIP = !"false".equals(System.getProperty("mcopt.shade.xdrSkip.log"));
+	private static final boolean LOG_SKIP = Boolean.getBoolean("mcopt.shade.xdrSkip.log"); // (M3.4: off by default, it logged every transition)
 
 	/** The highlight peak this frame, in multiples of SDR white (1 = SDR). */
 	public static float peak() {

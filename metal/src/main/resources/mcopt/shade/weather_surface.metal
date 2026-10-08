@@ -172,7 +172,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 #ifdef SHADE_PUDDLES
 	if (puddly) {
 		float field = fields.x;
-		float t = mix(0.80, 0.60, float(L.wet.y));
+		float t = mix(0.80, 0.575, float(L.wet.y)); // ~30 % of open ground at full puddles (25 % at 0.60)
 		half P = half(smoothstep(t, t + 0.035, field)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);

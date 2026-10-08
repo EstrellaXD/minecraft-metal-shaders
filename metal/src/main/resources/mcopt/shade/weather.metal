@@ -31,6 +31,7 @@ static float4 shadeWeather3(float4 c, float4 pixel, constant ShadeFrame &f, cons
                             sampler lutS) {
 	if (f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a > 0.5) return float4(shadeVanillaOut(c.rgb, L), c.a);
 	if (shadeDev(f, SHADE_DEV_WX_PLAIN_RAIN)) return shadeWeather(c, f, L, g);
+	if (c.a < 0.004) return float4(0.0); // the rain texture is mostly clear: no lighting for the empty texels between streaks
 	// the view direction (GL row order: the pixel row counts from the bottom of the view) and the distance (reversed Z)
 	float2 ndc = float2(pixel.x * f.screen.z * 2.0 - 1.0, pixel.y * f.screen.w * 2.0 - 1.0);
 	float4 wp = f.invViewProj * float4(ndc, 0.5, 1.0);

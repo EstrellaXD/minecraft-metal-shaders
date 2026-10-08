@@ -112,11 +112,27 @@ public final class ShadeMsl {
 		// M3 weather (ShadeWeather.prelude: wet surfaces, puddles, ripples, shadow tint) goes in front of every terrain fragment,
 		// before the water module (whose surface uses its ripples)
 		String weather = source.contains("fragment main0_out main0(") ? ShadeWeather.prelude(source.startsWith(TRANSLUCENT_DEFINE)) : "";
-		if (water && source.startsWith(TRANSLUCENT_DEFINE) && source.contains("fragment main0_out main0(")) return prelude() + weather + ShadeWater.prelude() + source;
-		return prelude() + weather + source;
+		String lean = source.contains("fragment main0_out main0(") ? LEAN_TEST : "";
+		if (water && source.startsWith(TRANSLUCENT_DEFINE) && source.contains("fragment main0_out main0(")) return lean + prelude() + weather + ShadeWater.prelude() + source;
+		return lean + prelude() + weather + source;
 	}
 
 	private static final String TRANSLUCENT_DEFINE = "#define ALPHA_CUTOUT 0.01";
+	/** M3.1 experiment (-Dmcopt.shade.leanTest=ow,dry,nodl): those lean defines in every terrain fragment, always. */
+	private static final String LEAN_TEST = leanTest(System.getProperty("mcopt.shade.leanTest", ""));
+
+	private static String leanTest(String v) {
+		StringBuilder b = new StringBuilder();
+		for (String t : v.split(",")) {
+			switch (t.trim()) {
+				case "ow" -> b.append("#define SHADE_LEAN_OW\n");
+				case "dry" -> b.append("#define SHADE_LEAN_DRY\n");
+				case "nodl" -> b.append("#define SHADE_LEAN_NODL\n");
+				default -> { }
+			}
+		}
+		return b.toString();
+	}
 
 	/** One of the sky pipelines' replacement stages (the vanilla uniform blocks come with them). */
 	public static String skyStage(String file) {

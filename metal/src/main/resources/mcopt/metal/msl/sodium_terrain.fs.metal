@@ -60,6 +60,13 @@ static float4 sampleNearest(texture2d<float> source, sampler s, float2 uv, float
 
 constant float2 RGSS[4] = { float2(0.125, 0.375), float2(-0.125, -0.375), float2(0.375, -0.125), float2(-0.375, 0.125) };
 
+// M3.1 lean variants (ShadeMsl.terrain / the world redirect's format tag): code this frame cannot use is compiled out
+// (SHADE_LEAN_OW: overworld, no Nether/End paths; SHADE_LEAN_DRY: no rain, wetness or snow cover; SHADE_LEAN_NODL: no
+// dynamic light in range). Runtime branches alone leave that code in the shader, which weighs on every terrain pixel.
+#ifdef SHADE_LEAN_NODL
+#undef SHADE_DYNLIGHT
+#endif
+
 fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffer(0)]], texture2d<float> u_BlockTex [[texture(3)]], sampler u_BlockTexSmplr [[sampler(3)]]
 #ifdef MCOPT_SHADE
                          , constant ShadeFrame& sf [[buffer(16)]], constant ShadeLook& sl [[buffer(17)]], constant ShadeGpu& sg [[buffer(18)]],
@@ -130,7 +137,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     if (!thin) n = half3(a.x == amax ? sign(n.x) : 0.0h, a.x != amax && a.y == amax ? sign(n.y) : 0.0h, a.x != amax && a.y != amax ? sign(n.z) : 0.0h);
     main0_out out;
     // outside the overworld: vanilla's lightmapped colour, unless the dims module (M3, shade_dims.metal) lights it below
+#ifdef SHADE_LEAN_OW
+    const bool dims = false;
+#else
     bool dims = sf.flags.x != SHADE_DIM_OVERWORLD;
+#endif
     if (dims && !shadeDimsLit(sf)) {
         color.rgb *= float(shadeVanillaFace(n, sf.flags.x)); // the face-shade-off mixins removed it from the vertices
 #ifdef SHADE_DYNLIGHT
@@ -173,9 +184,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4); the water
     // module only gates its glint and caustics with it: M1's 4-tap tent there instead of PCSS
     // (the End has no sky light: its key light's map is looked up everywhere, with full sky for the far fallback)
-    bool endLit = sf.flags.x == SHADE_DIM_END;
+#ifdef SHADE_LEAN_OW
+    const bool endLit = false, netherLit = false;
+#else
+    bool endLit = sf.flags.x == SHADE_DIM_END, netherLit = sf.flags.x == SHADE_DIM_NETHER;
+#endif
     half shadowSky = endLit ? half(1.0) : in.v_Light.y;
-    half shadow = (in.v_Light.y <= 0.3h && !endLit) || sf.flags.x == SHADE_DIM_NETHER ? half(1.0)
+    half shadow = (in.v_Light.y <= 0.3h && !endLit) || netherLit ? half(1.0)
         : waterFull ? shadeShadow(shadowMap, shadowCompare, sf, p, n, false)
         : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
 #ifdef MCOPT_HDR
@@ -266,7 +281,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         alpha = w.a;
 #endif
     } else {
-#ifdef SHADE_WEATHER
+#if defined(SHADE_WEATHER) && !defined(SHADE_LEAN_DRY)
         // M3 weather (weather_surface.metal): rain-soaked, darker albedo, puddles on open top faces, snow cover
 #ifdef MCOPT_HDR
         ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, sr.weatherNoise, sl.ssr.z > 0.5);
@@ -287,15 +302,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block (stronger in the Nether).
         half tl = shadeLumaH(half3(texel.rgb));
         if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12)
-            radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * (sf.flags.x == SHADE_DIM_NETHER ? 3.1 : 2.2);
+            radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * (netherLit ? 3.1 : 2.2);
 #ifdef SHADE_WEATHER
 #if defined(SHADE_COLOR_SHADOW) && defined(MCOPT_HDR)
         // light that came through stained glass, ice or water takes their colour (the shadow pass's tint map, near cascade)
         if (!dims && shadow > 0.0h && in.v_Light.y > 0.3h && sl.ssr.w > 0.5 && !shadeDev(sf, SHADE_DEV_WX_NO_TINT)) radiance += shadeShadowTintDelta(wetAlbedo, n, in.v_Light.y, shadow, shadeShadowTint(p, n, sf, sl, sr.shadowTint), thin, foliage, sf);
 #endif
-#ifdef SHADE_LIGHTNING
+#if defined(SHADE_LIGHTNING) && !defined(SHADE_LEAN_DRY)
         if (!dims) radiance += shadeWxFlash(wetAlbedo, n, in.v_Light.y, sl); // ShadeLook.flash is the End flash in the End
 #endif
+#ifndef SHADE_LEAN_DRY
         {
             ShadeWetLight wl;
             wl.p = p;
@@ -314,6 +330,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #endif
         }
         if (debug == 8) radiance = float3(float(wet.omega), float(wet.puddle), float(wet.snow)) * 0.25 / max(ex, 1e-3);
+#endif
 #endif
 #if defined(SHADE_WATER) && defined(SHADE_GLOSSY)
         // the water module's glossy translucents (stained glass, ice, slime, honey): mirror reflection over the lit colour

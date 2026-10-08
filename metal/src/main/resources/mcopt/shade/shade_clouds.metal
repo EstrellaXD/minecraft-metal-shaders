@@ -32,6 +32,31 @@ static inline float shadeCloudShadow(float3 p, constant ShadeLook &L, texture2d<
 	return mix(1.0, t, L.clouds0.z * edge * above);
 }
 
+// The same for points dir * t along a ray from the camera (a march): the map coordinate is affine in t (cloudShadowVP has
+// w = 1), so the march sets the ray up once and pays one fetch per step, without the matrix.
+struct ShadeCloudRay {
+	float2 uv0, duv;
+	float dy;
+};
+
+static inline ShadeCloudRay shadeCloudRay(float3 dir, constant ShadeLook &L) {
+	ShadeCloudRay r;
+	r.uv0 = (L.cloudShadowVP * float4(0.0, 0.0, 0.0, 1.0)).xy;
+	r.duv = (L.cloudShadowVP * float4(dir, 0.0)).xy;
+	r.dy = dir.y;
+	return r;
+}
+
+static inline float shadeCloudShadowRay(ShadeCloudRay r, float t, constant ShadeLook &L, texture2d<half> map) {
+	if (L.clouds0.z <= 0.0) return 1.0;
+	float2 uv = r.uv0 + r.duv * t;
+	float2 e = abs(uv - 0.5);
+	float edge = saturate((0.5 - max(e.x, e.y)) * 12.0);
+	float above = 1.0 - smoothstep(L.clouds0.x - 16.0, L.clouds0.x + 40.0, r.dy * t);
+	float s = float(map.sample(shadeCloudSampler, uv, level(0.0)).r);
+	return mix(1.0, s, L.clouds0.z * edge * above);
+}
+
 // The clouds toward unit dir in this frame's view: rgb scattered light (before exposure), a transmittance; (0, 1) when off
 // or off screen. Composite: c = c * a + rgb (before exposure).
 static inline float4 shadeCloudsScreen(float3 dir, constant ShadeLook &L, texture2d<half> tex) {

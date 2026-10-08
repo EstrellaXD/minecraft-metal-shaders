@@ -240,6 +240,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float3 c0o = (f.shadowViewProj[0] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c0d = (f.shadowViewProj[0] * float4(dir, 0.0)).xyz;
 	float3 c1o = (f.shadowViewProj[1] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c1d = (f.shadowViewProj[1] * float4(dir, 0.0)).xyz;
 	bool shadows = f.flags.z != 0;
+	ShadeCloudRay cloudRay = {};
+	if (VL_HDR) cloudRay = shadeCloudRay(dir, sl); // (ShadeLook is read only in the HDR variant)
 
 	if (!underwater) {
 		float D = min(dist, p.shape.y);
@@ -262,7 +264,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float sigma = sOpen + sLocal;
 			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
 			// M3: the volumetric clouds' shadows carve the air into shafts too (crepuscular rays from cloud gaps)
-			if (VL_HDR) v *= shadeCloudShadow(dir * t, sl, sr.cloudShadow);
+			// (only where the sun reaches: no fetch in the terrain's shadow)
+			if (VL_HDR && v > 0.0) v *= shadeCloudShadowRay(cloudRay, t, sl, sr.cloudShadow);
 			// energy-conserving segment integral: (1 - e^-sigma dt) / sigma, times the transmittance so far, split by layer
 			float seg = trans * (1.0 - exp(-sigma * dt)) / max(sigma, 1e-9);
 			sumOpen += sOpen * seg;

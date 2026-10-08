@@ -46,8 +46,29 @@ Done so far (10:05):
   a plain golden-hour gain (g1.5-3, `sunsetRays` first version) mostly darkened the clouds (mean -8 -> -14 luma). Second
   version (abb535d): the gain only over the open sky (x the pixel's own cloud transmittance squared). Pending: run 3.
 
-Next: run 3 (`mx3-hold`): hold vs M3.2 controller in one session (route, lighter wxdry pan), rain ABAB again, open-sky ray
-gains with frame pairs, rain shots incl. a grazing view; then decide defaults (sunsetRays, rainBudget).
+Run 3 (`bench-results/20261008-095925-mx3-hold`, jar abb535d, AC; 10:00-10:10):
+- **DRS, in-session A/B on the perf route** (each phase restarted at 0.80; `drs_phases.py`, chart `drs_chart.py`):
+  M3.2 controller 111.7 / 114.0 fps (8.95 / 8.78 ms, at its floor 0.60 the whole time); hold 127.2 fps (7.86 ms, at 0.50)
+  in the clean repeat; the first hold phase (115.1) had 14 s of GPU contention from macOS `mediaanalysisd` (10.5-11.4 ms per
+  frame at 0.50, more than M3.2 at 0.60, then 7.7 ms again at once). Standard perf route with hold: spin 119.2 / flight
+  126.3 fps (run 1, M3.2: 109.6 / 115.6). Lighter view (weather ground pan, dry): M3.2 140.6 / 141.1 fps but it stepped
+  *down* to 0.72-0.75 (it aims at 139 fps); hold 137.5 / 136.7 fps and stays at 0.80-0.81 (sharper, 0-1 changes per phase).
+  After the route (lighter scene) hold climbs back 0.50 -> 0.78 in ~6 s.
+  At 0.50 the spin still costs 8.6-9.2 ms: ~7 ms of the M3 frame does not depend on the render scale (T ~ 6.8 + 7 s^2:
+  clouds, shadow maps, TAAU resolve and final pass at the output resolution), so on the heaviest route no render scale
+  holds 120 on every second; the rest is for the fixed costs (clouds agent, M33_SHADOW).
+- **Rain**, 4 ABAB pairs, DRS paused at 0.80: base 8.841 / 8.845 / 8.836 / 8.890, all three options 8.761 / 8.839 / 8.802 /
+  8.814: **-0.049 ms** (pairs -0.080 / -0.006 / -0.034 / -0.076); gate, ripples, steps alone 8.849 / 8.847 / 8.850 (each
+  ~0, below noise); dry 8.324: **rain = 0.53 ms**. Shots (ground, grazing, night with torches): no visible difference at
+  full resolution; image differences equal the rain streaks' own motion.
+- **Sunset shafts with the open-sky gain** (frozen pose, clouds without wind): in the west view (overview toward the sun) the
+  clear gap above the sun gets visible shadow shafts fanning from the sun at gain 2-4 (added structure vs M3.2: std 1.5 / 3.0
+  / 4.4 luma, frame-pair noise 0.4); the clouds are unchanged; pair noise (flicker) unchanged (0.22-0.31 at every gain).
+  Gain 3-4 tint the shafts blue-violet and darken soft cloud edges a little; **gain 2 chosen as default** (23caaef).
+  Note: the first shot after the freeze is not settled (pair noise 1.1-1.9 vs 0.2-0.4): run 4 takes a warm-up shot first.
+
+Next: run 4 (`mx4-final`, jar 23caaef): candidate defaults; DRS A/B repeat; rain all-vs-base x6; clean before/after shots
+(west, rose_sky, morning east), the look at render scale 0.80 / 0.60 / 0.50, rain at a low grazing pose.
 
 ## Flags (M3.3 misc)
 

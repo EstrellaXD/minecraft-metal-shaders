@@ -163,13 +163,13 @@ public final class CloudConfig {
 	/**
 	 * M3.4 (Gael: cloud edges look pixelated and flicker at sunset): the sky, fog and VL read the clouds' history (0.45 of the
 	 * screen at balanced, magnified ~2.2x) with a cubic B-spline (4 bilinear taps) instead of one bilinear tap: no texel
-	 * blocks on soft edges, and the march's per-pixel grain smoothed. mcopt.shade.clouds.smooth (read every frame): false = M3.3.
+	 * blocks on soft edges, and the march's per-pixel grain smoothed. mcopt.shade.clouds.smooth (read every frame, default false = M3.3).
 	 */
 	public static boolean smooth() {
 		return flag("mcopt.shade.clouds.smooth", SMOOTH_DEFAULT);
 	}
 
-	static final boolean SMOOTH_DEFAULT = true;
+	static final boolean SMOOTH_DEFAULT = false; // (run cl1: +0.21 ms with every cloud read smoothed, and the edge specks stay: off)
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");
 

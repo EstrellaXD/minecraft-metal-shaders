@@ -87,7 +87,17 @@ final class DimShots {
 					extra.add(new DimScene(e.getKey(), x));
 					extra.add(new BenchDriver.Settle(e.getKey(), false, 4, 40)); // Nether chunks keep loading around: 40 s is plenty
 					extra.add(new BenchDriver.Hold(e.getKey(), Math.max(BenchDriver.SHOT_WAIT, 3)));
+					extra.add(new Props("passlog-" + e.getKey(), "mcopt.shade.passLog=" + e.getKey())); // M3.3: mcopt-shade logs that frame's passes (dev)
 					extra.add(new BenchDriver.Shot(e.getKey()));
+					// M3.3: the same pose again under each -Dmcbench.dimsVariants entry (live mcopt properties), shot <scene>_v<i>
+					for (int i = 0; i < VARIANTS.size(); i++) {
+						String v = VARIANTS.get(i), shot = e.getKey() + "_v" + (i + 1);
+						extra.add(new Props("variant-" + shot, v));
+						extra.add(new BenchDriver.Hold(shot, Math.max(BenchDriver.SHOT_WAIT, 4)));
+						extra.add(new Props("passlog-" + shot, "mcopt.shade.passLog=" + shot));
+						extra.add(new BenchDriver.Shot(shot));
+						extra.add(new Props("variant-end-" + shot, v.replaceAll("=[^:]*", "=")));
+					}
 					if (!x.teardown.isEmpty()) extra.add(new Cmd("teardown-" + e.getKey(), x.teardown));
 					// opt-in perf spin at the first Nether / End scene (-Dmcbench.dimsPerf=SECONDS): phases "nether" / "end"
 					String phase = e.getKey().equals("nether_wastes") ? "nether" : e.getKey().equals("end_island") ? "end" : null;
@@ -102,6 +112,8 @@ final class DimShots {
 				Pose o = BenchDriver.spot.overview;
 				extra.add(new DimScene("dims-return", new Found("minecraft:overworld", o, 6000, "", "")));
 				extra.add(new BenchDriver.Settle("dims-return", false, 2, 60));
+				extra.add(new Props("passlog-overworld", "mcopt.shade.passLog=overworld"));
+				extra.add(new BenchDriver.Hold("dims-return", 1));
 				// XDR highlights price at the overworld spot (noon): on / as on an SDR-only screen (mcopt.shade.xdrTest=sdr) / on
 				if (PERF > 0) {
 					extra.add(new DimSpin("xdr", o, PERF, "mcopt.shade.xdrTest", ""));
@@ -147,6 +159,39 @@ final class DimShots {
 	}
 
 	static final double PERF = Double.parseDouble(System.getProperty("mcbench.dimsPerf", "0"));
+	/**
+	 * M3.3: -Dmcbench.dimsVariants=a=1:b=2+c=true: after each scene's shot, one more shot per '+'-separated entry with its
+	 * ':'-separated system properties set (read live by mcopt-shade), then cleared again.
+	 */
+	static final List<String> VARIANTS = System.getProperty("mcbench.dimsVariants", "").isBlank() ? List.of()
+		: List.of(System.getProperty("mcbench.dimsVariants").trim().split("\\+"));
+
+	/** Sets (or, with an empty value, clears) ':'-separated system properties "k=v". */
+	static final class Props extends BenchDriver.Step {
+		final String spec;
+
+		Props(String name, String spec) {
+			super(name, 0);
+			this.spec = spec;
+		}
+
+		@Override
+		void start(Minecraft mc, long now) {
+			for (String kv : spec.split(":")) {
+				int eq = kv.indexOf('=');
+				if (eq <= 0) continue;
+				String k = kv.substring(0, eq).trim(), v = kv.substring(eq + 1).trim();
+				if (v.isEmpty()) System.clearProperty(k);
+				else System.setProperty(k, v);
+			}
+			BenchDriver.log("props " + spec);
+		}
+
+		@Override
+		boolean poll(Minecraft mc, long now) {
+			return true;
+		}
+	}
 
 	/**
 	 * A recorded perf segment at a dimension pose: 360 degrees of yaw over sec seconds (like the overworld spin). With a

@@ -243,7 +243,7 @@ static inline float3 shadeSunsetChroma(float3 sky, float sunY, float rain) {
 	if (w <= 0.0 || mx <= 1e-6) return sky;
 	float k = smoothstep(0.55, 1.0, 1.0 - mn / mx) * w;
 	float l = dot(sky, float3(0.2126, 0.7152, 0.0722));
-	float3 c = (sky - l) * (1.0 - 0.5 * k);
+	float3 c = (sky - l) * (1.0 - 0.36 * k);
 	c.g -= 0.06 * k * max(c.r, 0.0); // lemon -> peach
 	return max(l + c, 0.0);
 }

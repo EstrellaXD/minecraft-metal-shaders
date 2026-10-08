@@ -187,7 +187,7 @@ public final class ShadeSky {
 			float mx = Math.max(out[0], Math.max(out[1], out[2])), mn = Math.min(out[0], Math.min(out[1], out[2]));
 			if (gh > 0f && mx > 1e-6f) {
 				float kc = smoothstep(0.55f, 1f, 1f - mn / mx) * gh, lc = luma(out[0], out[1], out[2]);
-				float cr = (out[0] - lc) * (1f - 0.5f * kc), cg = (out[1] - lc) * (1f - 0.5f * kc), cb = (out[2] - lc) * (1f - 0.5f * kc);
+				float cr = (out[0] - lc) * (1f - 0.36f * kc), cg = (out[1] - lc) * (1f - 0.36f * kc), cb = (out[2] - lc) * (1f - 0.36f * kc);
 				cg -= 0.06f * kc * Math.max(cr, 0f);
 				out[0] = Math.max(lc + cr, 0f); out[1] = Math.max(lc + cg, 0f); out[2] = Math.max(lc + cb, 0f);
 			}

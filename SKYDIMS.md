@@ -115,4 +115,26 @@ present (mcmetal.m pqFill / mc_present): compose pass -> RGBA16F staging slot (o
 
 ## 6. Results
 
-(filled in below by the test runs)
+### 6.1 Price, in-session A/B (run `20261007-182336-sdr-r1`, AC power, balanced preset, DRS off, 3024x1964)
+
+Each price is measured inside one game session: the same 10 s camera spin with the feature on, paused, and on again
+(`mcopt.shade.dims.pause` / `mcopt.shade.xdrTest=sdr`, switched live by mcbench DimShots), so launch-to-launch drift and
+other agents' load mostly cancel. GPU ms per frame (lower is better) and fps:
+
+| Scene | On | Paused (= M2.1 look) | On again | Price |
+|---|---|---|---|---|
+| Nether (wastes, spin) | 4.65 ms (215 fps) | 4.10 ms (244 fps) | 4.60 ms (218 fps) | **+0.53 ms** (before the view-distance fix, see below) |
+| End (main island, spin) | 4.20 ms (238 fps) | 3.10 ms (322 fps) | 4.21 ms (238 fps) | **+1.10 ms** (End shadows + sky + light) |
+| Overworld noon, XDR highlights | 11.88 ms | 11.56 ms (SDR-screen mode) | 11.55 ms | **~0** (on-again equals paused; the first segment was still settling) |
+
+Why the Nether cost +0.5 ms: Sodium stops drawing chunks where vanilla's fog ends ("fog occlusion", ~96 blocks in the
+Nether). Our own fog replaced vanilla's, so Sodium drew the whole render distance (~7x the area). Fixed in `5d6b17f`:
+Sodium's cut is kept at 1.3x (performance) / 1.7x (balanced) vanilla's fog end and our border fog closes the view there;
+quality/ultra still draw everything (`mcopt.shade.netherView` overrides). The new price is in 6.2.
+
+The End's +1.1 ms buys what the overworld already pays for: a shadow-casting key light (cascades, far one cached), the
+sky (nebula, stars, beams) and per-pixel light. The End frame (4.2 ms, ~240 fps) stays far below the overworld's (~11.5 ms
+at noon with all M2 effects), and below the bible's End budget ("like the overworld minus clouds").
+
+### 6.2 (pending) after the fixes
+

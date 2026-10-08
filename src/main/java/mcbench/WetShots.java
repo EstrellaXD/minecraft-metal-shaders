@@ -39,6 +39,11 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * <li>{@code ground_low} (noon, rain): the ground pose 1 block lower and level (pitch 6): grazing view over the wet meadow.</li>
  * </ul>
  * Poses go to results.json "wetShots".
+ * <p>{@code -Dmcbench.wetPerf=<scene>@<seconds>@<phase>;<phase>...} (groups separated by {@code /}): recorded perf phases at
+ * one of these scenes (its time, weather and pose, panning +-25 degrees over the phase), each phase with its own system
+ * properties (MiscShots' phase syntax), after an unrecorded warm-up phase with the first phase's properties. The phases are
+ * MiscShots' {@code abN} slots (numbered after MiscShots' own; results.json "ab" says scene and properties, perf.abN / gpu.abN
+ * hold the numbers), so they need no new recorder phases.
  */
 final class WetShots {
 	static final String SPEC = System.getProperty("mcbench.wet", "").trim();
@@ -47,6 +52,7 @@ final class WetShots {
 	static final String SUNSET_WET = System.getProperty("mcbench.wetSunsetWetness", "0.85");
 	static final Map<String, Object> JSON = new LinkedHashMap<>();
 	static final String[] ALL = {"ground", "ground_low", "sunset", "night", "storm", "path", "sand", "stone"};
+	static final String PERF = System.getProperty("mcbench.wetPerf", "").trim();
 
 	record Found(Pose path, Pose sand, Pose stone) {
 	}
@@ -65,7 +71,7 @@ final class WetShots {
 
 	/** Called from BenchDriver.buildPlan after the other shots. */
 	static void plan(java.util.Deque<BenchDriver.Step> steps) {
-		boolean any = false;
+		boolean any = !PERF.isEmpty();
 		for (String s : ALL) any |= on(s);
 		if (!any) return;
 		BenchDriver.results.put("wetShots", JSON);
@@ -94,6 +100,7 @@ final class WetShots {
 				BenchDriver.log("wet poses " + WeatherShots.poses + " " + found);
 				WeatherShots.Poses p = WeatherShots.poses;
 				List<BenchDriver.Step> extra = new ArrayList<>();
+				for (String group : PERF.split("/")) if (!group.isBlank()) perf(extra, group.trim(), p);
 				if (on("ground") && p.ground() != null) scene(extra, "ground", 6000, "rain", p.ground(), null, vs);
 				if (on("ground_low") && p.ground() != null) {
 					Pose g = p.ground();
@@ -148,6 +155,101 @@ final class WetShots {
 		extra.add(command(sc + "-unfreeze", "tick unfreeze"));
 		if (wetness != null) extra.add(prop(sc + "-unwet", () -> set("mcopt.shade.wetness", wetBefore[0])));
 		JSON.put(name, json);
+	}
+
+	/** The scene's time, weather, pose and held wetness (null: from the weather). */
+	private record Where(int time, String weather, Pose pose, String wetness) {
+	}
+
+	private static Where where(String name, WeatherShots.Poses p) {
+		Pose g = p.ground();
+		return switch (name) {
+			case "ground" -> new Where(6000, "rain", g, null);
+			case "ground_low" -> g == null ? null : new Where(6000, "rain", new Pose(g.x(), g.y() - 1, g.z(), g.yaw(), 6f), null);
+			case "sunset" -> new Where(12000, "clear", g, SUNSET_WET);
+			case "night" -> new Where(18000, "rain", g, null);
+			case "storm" -> new Where(6000, "thunder", p.storm(), null);
+			case "path" -> new Where(6000, "rain", found.path, null);
+			case "sand" -> new Where(6000, "rain", found.sand, null);
+			case "stone" -> new Where(6000, "rain", found.stone, null);
+			default -> throw new IllegalArgumentException("mcbench.wetPerf: unknown scene " + name);
+		};
+	}
+
+	/** Recorded phases (MiscShots' abN slots) at one scene, panning +-25 degrees, each with its own properties. */
+	private static void perf(List<BenchDriver.Step> extra, String group, WeatherShots.Poses p) {
+		String[] f = group.split("@", 3);
+		if (f.length < 3) throw new IllegalArgumentException("mcbench.wetPerf: bad group " + group + " (scene@seconds@phase;phase...)");
+		Where w = where(f[0].trim(), p);
+		if (w == null || w.pose == null) {
+			BenchDriver.warnings.add("wetPerf: no pose for " + f[0]);
+			return;
+		}
+		double sec = Double.parseDouble(f[1].trim());
+		List<MiscShots.Phase> phases = new ArrayList<>();
+		for (String s : f[2].split(";")) if (!s.isBlank()) phases.add(MiscShots.Phase.parse(s));
+		if (phases.isEmpty()) return;
+		BenchDriver.results.put("ab", MiscShots.AB_JSON);
+		boolean rain = !w.weather.equals("clear");
+		String sc = "wetperf-" + f[0].trim();
+		String[] wetBefore = new String[1];
+		if (w.wetness != null) extra.add(prop(sc + "-wet", () -> {
+			wetBefore[0] = System.getProperty("mcopt.shade.wetness");
+			System.setProperty("mcopt.shade.wetness", w.wetness);
+		}));
+		extra.add(new CloudShots.WeatherScene(sc, w.time, w.weather, () -> w.pose));
+		extra.add(new BenchDriver.Settle(sc, rain, 3, 150));
+		extra.add(new BenchDriver.Hold(sc, rain ? 4 : 1));
+		extra.add(new BenchDriver.Warmup(1));
+		phase(extra, sc + "-warm", null, w.pose, sec, phases.get(0));
+		for (MiscShots.Phase ph : phases) {
+			if (MiscShots.abCount >= MiscShots.MAX_AB) throw new IllegalArgumentException("mcbench.wetPerf: more than " + MiscShots.MAX_AB + " ab phases in all");
+			String name = "ab" + (++MiscShots.abCount);
+			Map<String, Object> m = new LinkedHashMap<>();
+			m.put("scene", sc);
+			m.put("seconds", sec);
+			m.put("label", ph.label());
+			m.put("props", ph.props());
+			MiscShots.AB_JSON.put(name, m);
+			phase(extra, name, name, w.pose, sec, ph);
+		}
+		if (w.wetness != null) extra.add(prop(sc + "-unwet", () -> set("mcopt.shade.wetness", wetBefore[0])));
+	}
+
+	private static void phase(List<BenchDriver.Step> extra, String name, String rec, Pose o, double sec, MiscShots.Phase ph) {
+		Map<String, String> before = new LinkedHashMap<>();
+		extra.add(new BenchDriver.Step(name, 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				BenchDriver.setPhase(rec == null ? "WARMUP" : name.toUpperCase(java.util.Locale.ROOT));
+				before.clear();
+				for (var e : ph.props().entrySet()) {
+					before.put(e.getKey(), System.getProperty(e.getKey()));
+					set(e.getKey(), e.getValue());
+				}
+				long t0 = now;
+				BenchDriver.pose = t -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 25.0 * Math.sin(BenchDriver.secs(t - t0) * 2 * Math.PI / sec)), o.pitch());
+				if (rec != null) {
+					BenchDriver.recPhase = BenchDriver.REC_PHASES.indexOf(rec);
+					if (BenchDriver.recPhase < 0) throw new IllegalStateException("mcbench: " + rec + " is not in BenchDriver.REC_PHASES");
+					BenchDriver.phaseRanges.put(rec, new long[] {now, 0});
+				}
+				BenchDriver.log("wetPerf " + name + " (" + ph.describe() + ") " + sec + " s");
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+				if (rec != null) {
+					BenchDriver.recPhase = -1;
+					BenchDriver.phaseRanges.get(rec)[1] = now;
+				}
+				for (var e : before.entrySet()) set(e.getKey(), e.getValue());
+				Pose last = BenchDriver.pose.apply(now);
+				BenchDriver.pose = t -> last;
+				return true;
+			}
+		});
 	}
 
 	private static void set(String key, String value) {

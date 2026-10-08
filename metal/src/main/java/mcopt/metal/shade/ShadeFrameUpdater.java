@@ -276,6 +276,8 @@ public final class ShadeFrameUpdater {
 		if (mcopt.metal.shade.clouds.ShadeClouds.ON && ShadeConfig.HDR && !ShadeBindings.fallback()) {
 			mcopt.metal.shade.clouds.ShadeClouds.update(ShadeBindings.ctx(), enc, f, ShadeBindings.currentLook());
 		}
+		// FT1: Distant Horizons' own SSAO / TAA / vanilla fade off while the shade frame runs (back to its settings otherwise)
+		if (mcopt.metal.shade.dh.ShadeDh.LOADED) mcopt.metal.shade.dh.ShadeDh.frame(ShadeConfig.HDR && !ShadeBindings.fallback());
 		// M3 dynamic lights: this frame's lights into their ring slot, occupancy refresh, visibility volumes (before the world)
 		if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.frame(ShadeBindings.ctx(), enc, camera, level, partial);
 		ShadeLean.update(f.dimension); // M3.1: which lean terrain variant this frame's world pass draws with

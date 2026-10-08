@@ -130,7 +130,7 @@ public final class BenchDriver {
 	static final long[] frameNs = new long[CAP], frameAt = new long[CAP];
 	static final byte[] framePhase = new byte[CAP];
 	static int frames;
-	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo", "zoo_noshadow", "zoo2", "lights", "lights_off", "lights2", "nether", "end", "nether_off", "nether2", "end_off", "end2", "xdr", "xdr_off", "xdr2", "wxdry", "wxrain", "wxdry_notint", "wxdry2", "wxrain_nossr", "wxrain_nogate", "wxrain_analytic", "wxrain_noripple", "wxrain_plainrain", "wxrain_dry", "wxrain2", "wxrain_c32", "wxrain_c64", "wxrain_c128", "wxrain_c224", "wxrain_notint", "clouds", "clouds_off", "clouds2", "clouds_d1", "clouds_d2", "clouds_d3", "clouds_d4", "clouds_d5", "clouds_d6", "clouds_d7", "clouds_d8"); // clouds*: CloudShots' perf A/B (opt-in) // wxdry, wxrain: WeatherShots' perf pans (opt-in) // nether, end: DimShots' perf spins (opt-in) // zoo: EntityShots' perf segment at the entity site; lights: LightShots' (opt-in)
+	static final List<String> REC_PHASES = List.of("spin", "flight", "zoo", "zoo_noshadow", "zoo2", "lights", "lights_off", "lights2", "nether", "end", "nether_off", "nether2", "end_off", "end2", "xdr", "xdr_off", "xdr2", "wxdry", "wxrain", "wxdry_notint", "wxdry2", "wxrain_nossr", "wxrain_nogate", "wxrain_analytic", "wxrain_noripple", "wxrain_plainrain", "wxrain_dry", "wxrain2", "wxrain_c32", "wxrain_c64", "wxrain_c128", "wxrain_c224", "wxrain_notint", "clouds", "clouds_off", "clouds2", "clouds_d1", "clouds_d2", "clouds_d3", "clouds_d4", "clouds_d5", "clouds_d6", "clouds_d7", "clouds_d8", "ab1", "ab2", "ab3", "ab4", "ab5", "ab6", "ab7", "ab8", "ab9", "ab10", "ab11", "ab12", "ab13", "ab14", "ab15", "ab16", "ab17", "ab18", "ab19", "ab20", "ab21", "ab22", "ab23", "ab24"); // ab*: MiscShots' generic A/B phases (opt-in) // clouds*: CloudShots' perf A/B (opt-in) // wxdry, wxrain: WeatherShots' perf pans (opt-in) // nether, end: DimShots' perf spins (opt-in) // zoo: EntityShots' perf segment at the entity site; lights: LightShots' (opt-in)
 	static int recPhase = -1, prevRecPhase = -1;
 	static long lastFrame;
 
@@ -255,6 +255,7 @@ public final class BenchDriver {
 			LightShots.plan(steps); // opt-in -Dmcbench.dynLights=true|field,mobs,perf,cave,walk,nether (M3 dynamic lights)
 			DimShots.plan(steps); // opt-in -Dmcbench.dims=true|nether,end,aurora,lava,snow (M3 sky/dimensions)
 			UiShots.plan(steps); // opt-in -Dmcbench.ui=true (M3.1: the pause menu's resolution button)
+			MiscShots.plan(steps); // opt-in -Dmcbench.ab=... / -Dmcbench.variantShots=... (M3.3 misc: generic A/B phases and variant shots)
 			RobustShots.plan(steps); // opt-in -Dmcbench.robust=gui,transp,dims,resize,rejoin,fail (M3.3 robustness)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog

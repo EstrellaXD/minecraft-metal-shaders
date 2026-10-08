@@ -167,6 +167,7 @@ drift. GPU ms per frame:
 | `20261007-182737-dl-r2-on` (`731a503`, + hysteresis) | AC | **contaminated in `lights_off`** (Chrome 114 % + Python 95 % at its end, total 384 %) | 8.261 | 8.321 | 8.291 | (-0.05: the slowed `off` phase hides the cost; not used) |
 | `20261007-185356-dl-r3-on` (`8aa4a96`, 12 s phases) | AC | clean in `lights` / `lights_off` (98-160 %); `lights2` ends at 376 % and drifts up | 8.385 | 8.071 | 8.787 | +0.31 (lights vs off; lights2 not trusted) |
 | `20261007-192454-dl-r4-on` (`8aa4a96`, 12 s phases, perf only) | AC | clean (112-151 %) | 8.166 | 7.906 | 8.069 | **+0.21 ms** |
+
 Control: with the module off (`20261007-144310-dl-t6-off`) the same three phases read 7.722 / 7.767 / 7.772 ms: the
 phase-to-phase noise is ~0.05 ms. **Price: ~0.2 ms GPU for the hands + 9 lights (budget 0.4 ms)**: +0.12, +0.16 and +0.21 ms in the three clean runs, +0.31
 in r3, whose phases drifted (its `lights2` alone is 0.4 ms above `lights`). History of the

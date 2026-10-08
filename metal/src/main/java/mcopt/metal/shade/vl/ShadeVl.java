@@ -401,9 +401,10 @@ public final class ShadeVl {
 		put(b, hdr ? HDR_CARVE : 0f, hdr ? HDR_CARVE_WATER : 0f, histU, histV);           // carve; zw: the history's live part (uv scale)
 		// M3.3 art: x the gain of the sky's dark rays (mcopt.shade.vl.skyRays, dev; 1), y their extra gain over the open sky:
 		// mcopt.shade.vl.sunsetRays - 1 in the golden hour while the sunset art is on (its brighter, warmer aureole had weakened
-		// them); 1, 0 = M3.2
+		// them); z that extra from the taps past the pixel's own neighbourhood (sunsetFar), w its falloff (sunsetFall); y = 0 is
+		// M3.2
 		float sunsetArt = mcopt.metal.shade.ShadeSky.sunsetArt ? golden : 0f;
-		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, 0f, 0f); // art
+		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, VlConfig.sunsetFar() ? 1f : 0f, VlConfig.sunsetFall()); // art
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

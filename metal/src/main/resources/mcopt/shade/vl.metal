@@ -73,9 +73,11 @@ struct VlParams {
 	                  //     shafts under water (relative to the light without caustics), zw the part of the history texture
 	                  //     last frame covered (uv scale; the targets are allocated for the largest render scale, size.xy is
 	                  //     this frame's live part)
-	float4 art;       // 256 M3.3 (HDR; 1, 0 = M3.2): x gain of the sky's dark crepuscular rays (mcopt.shade.vl.skyRays, dev), y their
-	                  //     extra gain over the open sky (ShadeVl: mcopt.shade.vl.sunsetRays - 1 in the golden hour with the sunset
-	                  //     art; weighted by the pixel's own cloud transmittance squared, so the clouds keep M3.2's shading), zw spare
+	float4 art;       // 256 M3.3 (HDR; 1, 0, 0, 0 = M3.2): x gain of the sky's dark crepuscular rays (mcopt.shade.vl.skyRays, dev), y
+	                  //     their extra gain over the open sky (ShadeVl: mcopt.shade.vl.sunsetRays - 1 in the golden hour with the
+	                  //     sunset art; weighted by the pixel's own cloud transmittance squared, so the clouds keep M3.2's shading),
+	                  //     z 1: that extra from the taps past the pixel's own neighbourhood (mcopt.shade.vl.sunsetFar), w > 0 its
+	                  //     falloff exponent around the sun (mcopt.shade.vl.sunsetFall; 0 = crep.w)
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -369,6 +371,11 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float2 toV = (p.sunPx.xy - fpos) / scale, fv = in.position.xy;
 		int taps = int(p.crep.y);
 		float open = 0.0, wsum = 0.0, w = 1.0;
+		// M3.3 (art.z): the same taps without the first quarter (the pixel's own neighbourhood): how much of the way toward
+		// the sun is open, for the golden-hour gain over the open sky (a clear pixel's own mask no longer dilutes the
+		// shadow of a cloud between it and the sun)
+		float openFar = 0.0, wFar = 0.0;
+		int kFar = max(taps / 4, 1);
 		// M2.2 (sunPx.w bit 4): each texel's own tap offset (IGN + R1) and a bilinear mask: the shared per-frame offset moved
 		// every tap of a neighbourhood across the leaf holes together, so the neighbourhood clamp could not see that noise and
 		// the dark sky rays and the streaks changed every frame; the mask is small (R8 at VL resolution), so the scattered
@@ -381,23 +388,30 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float s = (float(k) + xc) / float(taps);
 			float2 q = fv + toV * (s * s);
 			if (all(q >= 0.0) && all(q < p.size.xy)) {
-				open += (smoothTaps ? float(prevSky.sample(maskLin, clamp(q, 0.5, p.size.xy - 0.5) * maskTexel).r)
-				                    : float(prevSky.read(uint2(q)).r)) * w;
+				float m = smoothTaps ? float(prevSky.sample(maskLin, clamp(q, 0.5, p.size.xy - 0.5) * maskTexel).r)
+				                     : float(prevSky.read(uint2(q)).r);
+				open += m * w;
+				if (k >= kFar) openFar += m * w;
 			}
 			wsum += w;
+			if (k >= kFar) wFar += w;
 			w *= 0.92;
 		}
 		open /= max(wsum, 1e-4);
+		openFar /= max(wFar, 1e-4);
 		float ang = saturate(mu);
 		float fall = pow(ang, p.crep.w);
 		if (d <= 0.0) {
 			// the sky: the sky model already has the sun's glow; the streaks there are the shadows of the clouds and hills
 			// between the sun and the air (Photon's dark rays across the aureole). Negative light: the final pass subtracts it
 			// (floored at a share of the pixel), so open sky keeps its colour
-			// (M3.3: x art.x (dev) and x (1 + art.y T^2): the golden-hour gain that keeps the rays across the open sky as strong
-			// against the brighter sunset-art aureole as before it; T, this pixel's own cloud transmittance, keeps it off the
-			// clouds, whose bodies this same term shades)
-			if (VL_HDR) scatter -= p.light.rgb * ((1.0 - open) * fall * p.crep.x * p.crep.z * 1.5 * p.art.x * (1.0 + p.art.y * float(skyT * skyT)));
+			// (M3.3: x art.x (dev), plus the golden-hour gain art.y over the open sky, weighted by T^2 (T, this pixel's own cloud
+			// transmittance: the clouds, whose bodies this same term shades, keep M3.2's look); art.z 1: that extra from the taps
+			// past the pixel's own neighbourhood (openFar); art.w > 0: its own falloff exponent around the sun (reaches
+			// further than crep.w). art = (1, 0, 0, 0) is M3.2's line exactly)
+			float fallX = p.art.w > 0.0 ? pow(ang, p.art.w) : fall;
+			float extra = p.art.y * float(skyT * skyT) * (1.0 - (p.art.z > 0.5 ? openFar : open)) * fallX;
+			if (VL_HDR) scatter -= p.light.rgb * (((1.0 - open) * fall + extra) * p.crep.x * p.crep.z * 1.5 * p.art.x);
 			else scatter += p.light.rgb * (open * fall * p.crep.x * p.crep.z * 0.8);
 		} else {
 			// in front of near geometry (a trunk against the low sun gets streaks across it), fading in over the first blocks:

@@ -411,11 +411,13 @@ final class DimShots {
 		if (want("endmobs")) {
 			// M3.3: a few NoAI mobs on the island (the bench world is peaceful: passive ones) under the End key light, seen from
 			// 9 blocks east and 4 up, for the blob shadow next to the real one (removed afterwards)
-			int mx = 18, cy = surface(l, mx + 9, 0);
+			// (M3.3: at x = -18, out of the pillars' shadows: the key light comes from +x +z at 55 degrees, and from x = 18 the
+			// pillar at 36 degrees lies right along it; 3 blocks apart so each shadow, falling north, is seen beside its mob)
+			int mx = -18, cy = surface(l, mx + 9, 0);
 			StringBuilder setup = new StringBuilder();
 			String[] mobs = {"villager", "iron_golem", "cow", "armor_stand", "horse", "sheep"};
 			for (int k = 0; k < mobs.length; k++) {
-				int z = -6 + k * 2 + (k >= 3 ? 1 : 0), y = surface(l, mx, z);
+				int z = -8 + k * 3, y = surface(l, mx, z);
 				if (setup.length() > 0) setup.append(";;");
 				setup.append(String.format(Locale.ROOT, "execute in minecraft:the_end run summon minecraft:%s %d.5 %d %d.5 {NoAI:1b,Silent:1b,Invulnerable:1b,Tags:[\"mcbench_endmob\"],Rotation:[90f,0f]}",
 					mobs[k], mx, y, z));

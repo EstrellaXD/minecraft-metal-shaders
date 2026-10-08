@@ -79,7 +79,8 @@ final class CloudShots {
 	 * {@code -Dmcbench.cloudsDev=<bits>,<bits>,...} (M3.1 price breakdown, up to 8): after "clouds", one more phase per entry,
 	 * "clouds_d1", "clouds_d2"..., each with the system property mcopt.shade.clouds.dev set to its bits (read by mcopt-shade
 	 * every frame: passes or consumers switched off, or an optimisation switched back to the old way; see CLOUDS.md "M3.1
-	 * performance"); the mapping goes to results.json "cloudsDev".
+	 * performance"); an entry "off" pauses the clouds like clouds_off (several on/off pairs against drift); the mapping goes
+	 * to results.json "cloudsDev".
 	 */
 	private static void perf(java.util.Deque<BenchDriver.Step> steps) {
 		double sec = Double.parseDouble(System.getProperty("mcbench.cloudsSeconds", "12"));
@@ -94,7 +95,8 @@ final class CloudShots {
 			String[] bits = devSpec.split(",");
 			for (int i = 0; i < bits.length && i < 8; i++) {
 				String name = "clouds_d" + (i + 1);
-				devs.put(name, Integer.toString(Integer.parseInt(bits[i].trim())));
+				String b = bits[i].trim();
+				devs.put(name, b.equals("off") ? "off" : Integer.toString(Integer.parseInt(b)));
 				phases.add(name);
 			}
 			BenchDriver.results.put("cloudsDev", devs);
@@ -106,8 +108,9 @@ final class CloudShots {
 				@Override
 				void start(Minecraft mc, long now) {
 					BenchDriver.setPhase(phase.toUpperCase(java.util.Locale.ROOT));
-					System.setProperty("mcopt.shade.clouds.pause", Boolean.toString(phase.equals("clouds_off")));
-					System.setProperty("mcopt.shade.clouds.dev", devs.getOrDefault(phase, "0"));
+					String dev = devs.getOrDefault(phase, "0");
+					System.setProperty("mcopt.shade.clouds.pause", Boolean.toString(phase.equals("clouds_off") || dev.equals("off")));
+					System.setProperty("mcopt.shade.clouds.dev", dev.equals("off") ? "0" : dev);
 					Pose p = o.get();
 					long t0 = now;
 					BenchDriver.pose = t -> new Pose(p.x(), p.y(), p.z(), (float) (360.0 * Math.min(1.0, BenchDriver.secs(t - t0) / sec)), -8f);

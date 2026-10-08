@@ -178,5 +178,36 @@ is not in these numbers.
 - **Never breaks presenting**: the EDR layer is used only when its compose/present pipelines built; otherwise the layer
   stays RGBA8 and the Java side turns XDR off.
 
-### 6.4 (pending) final runs
+### 6.4 Final in-session prices (run `20261007-191014-sdr-r6`, final build, AC power, balanced, DRS off)
+
+| Scene | On | Paused (M2.1 look) | On again | Price | Bible budget |
+|---|---|---|---|---|---|
+| Nether (wastes, 360 spin) | 4.66 ms (215 fps) | 4.07 ms (246 fps) | 4.66 ms (215 fps) | **+0.60 ms** | P ~0, Q +0.2 (assumed per-pixel lighting already paid) |
+| End (main island) | 4.41 ms (227 fps) | 3.26 ms (307 fps) | 4.44 ms (225 fps) | **+1.17 ms** | "like the overworld minus clouds" (shadows ~0.7-1.0 + VL beams 0.4-0.5) |
+| Overworld noon, XDR highlights on / SDR-screen mode / on | 11.98 ms | 11.61 ms | 11.77 ms | **~+0.25 ms** | +0.2-0.4 (P) |
+| Aurora | - | - | - | **<= 0.1 ms** estimate: 6 noise taps per sky pixel, only on aurora nights (microbench of the first cut x 1/3) | P 0.06 / Q 0.12 |
+| Camera in lava / powder snow | - | - | - | ~0 (one noise tap per pixel, only while inside) | ~0 |
+
+Three runs (r1, r4, r6) gave the same prices within 0.1 ms. CPU load was normal during the perf segments (median 128 %; the
+peaks are the game's own start-up). Every price is a difference inside one game session, so it is solid even though the
+absolute numbers move between runs (other agents' games and builds share the Mac).
+
+In plain words: **the Nether look costs about half a millisecond, the End look a bit over one millisecond, XDR a
+quarter of a millisecond.** Both dimensions stay far faster than the overworld (Nether ~215 fps, End ~225 fps vs ~85 fps
+at noon with everything on, DRS off), so nobody will feel it. The Nether is over the bible's line because the bible
+assumed its terrain was already lit per pixel; in M2.1 it still used vanilla's flat lightmap.
+
+### 6.5 How it looks (work/release/M3-skydims-screenshots/)
+
+- **Nether**: each biome has its own air: orange glowing haze over the wastes and the lava sea, deep red in the crimson
+  forest, teal in the warped forest, blue-cyan smoke in the soul sand valley, grey ash in the basalt deltas. Distance
+  dissolves into coloured smoke instead of vanilla's flat fog wall; ceilings glow warm from the lava below. The crimson
+  forest is the most monochrome (orange-red everywhere, it is mostly above the lava sea).
+- **End**: pale lilac island under a violet "dead star" with real shadows (the pillars cast them), a deep indigo sky with
+  sharp stars, a faint nebula and a few groups of light beams rising from the void near the horizon. Tuned today: the
+  first cut had a wall of beams all around and bright cyan nebula clouds; now -0.4 EV, sparse low beams, fainter nebula.
+- **Aurora** (forced on for the shots): soft green curtains with violet lower edges and a faint crimson top, drifting
+  slowly; no banding (6 dithered layers smoothed by TAA).
+- **Inside lava**: a glowing, churning orange with darker edges; **inside powder snow**: bright cold frost.
+
 

@@ -134,8 +134,9 @@ at the passes' fragment start/end; upper bounds; runs c11 and c12, 2026-10-07 18
 | dome (`cloud_dome`) | 128x64 | every 4th frame | 0.10-0.17 | ~0.03 |
 | consumers: sky composite (1 fetch per sky pixel), terrain/water/VL cloud shadow (1 fetch per lit pixel / VL step), water dome | full res | every frame | (not timed separately) | |
 
-Notes: **the timer itself costs ~0.2-0.3 ms of whole frame** (counter sampling at stage boundaries serialises the passes):
-with it on, the A/B below read +0.83 ms; without it +0.5-0.65 ms. So price with the timer off. A history scale of 0.4
+Notes: the timer did not change the whole-frame A/B measurably (c12 with it +0.83 ms, c19 without it +0.83 ms, same
+evening); the timed passes add up to ~0.55 ms per frame, the rest of the whole-frame difference is the consumers and the
+passes' overlap with the frame. A history scale of 0.4
 instead of 0.45 (21 % fewer rays and history pixels) did not move the timed passes nor the whole frame measurably (c12:
 +0.84 vs +0.83 ms, both with the timer): at this size the passes are not limited by their pixel count.
 Offline (`tools/shade/clouds/run.sh time`, needs a quiet GPU) the passes scale with: march ~ rays x in-cloud samples;

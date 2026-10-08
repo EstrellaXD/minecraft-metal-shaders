@@ -63,6 +63,36 @@ public final class ShadeClouds {
 	private ShadeClouds() {
 	}
 
+	private static final String DH_API = "com.seibel.distanthorizons.api.";
+	/** DH's own clouds are switched off by us (an API override), or the API is unusable. */
+	private static boolean dhCloudsOff, dhApiFailed;
+
+	/**
+	 * Distant Horizons draws its own clouds (flat, LOD-sized) on top of everything, ours included: while ours draw, switch
+	 * them off through DH's public config API (DhApi.Delayed.configs ... cloudRenderingEnabled; an API override that
+	 * DistantHorizons.toml keeps nothing of), and clear the override when ours stop (pause, other dimension, failure).
+	 * Reflection: no compile-time dependency on DH. Does nothing until DH's API is up, or without DH.
+	 */
+	private static void dhClouds(boolean ours) {
+		if (!DH || dhApiFailed || ours == dhCloudsOff) return;
+		try {
+			ClassLoader cl = ShadeClouds.class.getClassLoader();
+			Object cfg = Class.forName(DH_API + "DhApi$Delayed", true, cl).getField("configs").get(null);
+			if (cfg == null) return; // DH not initialised yet: next frame
+			Object g = Class.forName(DH_API + "interfaces.config.IDhApiConfig", true, cl).getMethod("graphics").invoke(cfg);
+			Object gr = Class.forName(DH_API + "interfaces.config.client.IDhApiGraphicsConfig", true, cl).getMethod("genericRendering").invoke(g);
+			Object v = Class.forName(DH_API + "interfaces.config.client.IDhApiGenericRenderingConfig", true, cl).getMethod("cloudRenderingEnabled").invoke(gr);
+			Class<?> value = Class.forName(DH_API + "interfaces.config.IDhApiConfigValue", true, cl);
+			Object r = ours ? value.getMethod("setValue", Object.class).invoke(v, Boolean.FALSE) : value.getMethod("clearValue").invoke(v);
+			if (Boolean.FALSE.equals(r)) throw new IllegalStateException("DH refused the API value");
+			dhCloudsOff = ours;
+			System.out.println("[mcopt] shade clouds: Distant Horizons' own clouds " + (ours ? "off (ours draw)" : "back to its setting"));
+		} catch (Throwable t) {
+			dhApiFailed = true;
+			System.out.println("[mcopt] shade clouds: could not switch Distant Horizons' clouds (" + t + "); set Clouds off in DH's settings");
+		}
+	}
+
 	/** Whether vanilla's clouds are replaced this frame (MetalRenderPass skips their draw). */
 	public static boolean replacesVanilla() {
 		return ON && active;
@@ -76,6 +106,7 @@ public final class ShadeClouds {
 		active = false;
 		over = false;
 		if (failed) {
+			dhClouds(false);
 			PARAMS.packLook(look, false);
 			return;
 		}
@@ -89,6 +120,7 @@ public final class ShadeClouds {
 			// mcopt.shade.clouds.pause (read every frame; the bench's in-session A/B sets it): as if the module were off
 			boolean want = level != null && f.dimension == ShadeFrame.DIM_OVERWORLD && option && ARGB.alpha(game.levelRenderState.cloudColor) > 0
 				&& !Boolean.getBoolean("mcopt.shade.clouds.pause");
+			dhClouds(want);
 			if (!want) {
 				wasActive = false;
 				PARAMS.packLook(look, false);

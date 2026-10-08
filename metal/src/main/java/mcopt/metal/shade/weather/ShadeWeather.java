@@ -44,9 +44,10 @@ import mcopt.metal.shade.ShadeMsl;
  * <li>{@code mcopt.shade.weather} (true): the module (false: M2.1's rain, dry surfaces; the shaders are byte-identical to
  * M2.1's except for the unused tint bindings).</li>
  * <li>{@code mcopt.shade.puddles} (true), {@code mcopt.shade.puddleSsr} (preset: false for performance, true otherwise),
- * {@code mcopt.shade.puddleQuad} (true except ultra: a 2x2 quad shares one ray), {@code mcopt.shade.puddleSteps} (quad: 12 / 16 / 20;
+ * {@code mcopt.shade.puddleQuad} (true except ultra: a 2x2 quad shares one ray), {@code mcopt.shade.puddleSteps} (quad: 12 / 12 / 20 / 24;
  * per pixel: 8 / 10 / 14 / 20), {@code mcopt.shade.puddleDist} (64 blocks).</li>
- * <li>{@code mcopt.shade.ripples} (true): raindrop rings on puddles and on water under open sky.</li>
+ * <li>{@code mcopt.shade.ripples} (true): raindrop rings on puddles and on water under open sky; {@code mcopt.shade.rippleLayers}
+ * (1 on performance/balanced, 2 on quality/ultra): drop grids.</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
  * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
  * <li>{@code mcopt.shade.lightning} (true): bolts light the scene and the sky, and glow (the game's "Hide Lightning Flashes"
@@ -67,10 +68,12 @@ public final class ShadeWeather {
 	/** The 2x2 quad shares one reflection ray (each lane marches a quarter of it): default except ultra. */
 	public static final boolean PUDDLE_QUAD = flag("mcopt.shade.puddleQuad", Shade.TIER < 3);
 	/** March steps per ray (quad-shared: split over 4 lanes) + 3 bisection steps. */
-	public static final int PUDDLE_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.puddleSteps", PUDDLE_QUAD ? new int[] {12, 16, 20, 24}[Shade.TIER]
+	public static final int PUDDLE_STEPS = Math.clamp(Integer.getInteger("mcopt.shade.puddleSteps", PUDDLE_QUAD ? new int[] {12, 12, 20, 24}[Shade.TIER]
 		: new int[] {8, 10, 14, 20}[Shade.TIER]), 4, 64);
 	public static final float PUDDLE_DIST = Math.clamp(floatFlag("mcopt.shade.puddleDist", 64f), 8f, 256f);
 	public static final boolean RIPPLES = flag("mcopt.shade.ripples", true);
+	/** Raindrop grids: 2 (quality, ultra) or 1 with faster drops (performance, balanced: about half the cost). */
+	public static final int RIPPLE_LAYERS = Integer.getInteger("mcopt.shade.rippleLayers", Shade.TIER >= 2 ? 2 : 1) >= 2 ? 2 : 1;
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);
 	public static final boolean SLANT = flag("mcopt.shade.rainSlant", true);
 	public static final boolean LIGHTNING = flag("mcopt.shade.lightning", true);
@@ -228,7 +231,7 @@ public final class ShadeWeather {
 		if (PUDDLE_SSR && !translucent) s.append("#define SHADE_PUDDLE_SSR\n#define SHADE_PUDDLE_STEPS ").append(PUDDLE_STEPS).append('\n')
 			.append("#define SHADE_PUDDLE_DIST ").append(String.format(Locale.ROOT, "%.1f", PUDDLE_DIST)).append('\n')
 			.append(PUDDLE_QUAD ? "#define SHADE_PUDDLE_QUAD\n" : "");
-		if (RIPPLES) s.append("#define SHADE_RIPPLES\n");
+		if (RIPPLES) s.append("#define SHADE_RIPPLES\n#define SHADE_RIPPLE_LAYERS ").append(RIPPLE_LAYERS).append('\n');
 		if (SNOW) s.append("#define SHADE_SNOW_COVER\n");
 		if (LIGHTNING) s.append("#define SHADE_LIGHTNING\n");
 		if (COLOR_SHADOWS || (!Shade.ENABLED && flag("mcopt.shade.colorShadows", true))) s.append("#define SHADE_COLOR_SHADOW\n");

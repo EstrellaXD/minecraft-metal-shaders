@@ -101,6 +101,9 @@ static inline float2 shadeWxFields(float2 xa, texture2d<half> noise, bool baked)
 // Ring profile: a damped sine packet around the radius rho, h = a sin(2 pi e / lambda) exp(-(e / w)^2), e = r - rho; the
 // slope comes from its analytic derivative. Returns the height gradient (dh/dx, dh/dz) in blocks per block.
 #define SHADE_RIPPLE_CELL 0.7
+#ifndef SHADE_RIPPLE_LAYERS
+#define SHADE_RIPPLE_LAYERS 2
+#endif
 static float2 shadeWxRipples(float2 xa, float t, float rate, float footprint) {
 	float2 g = float2(0.0);
 	// farther away the rings widen with the pixel footprint (a band-limited ring instead of an aliasing one), weaker by the
@@ -108,12 +111,16 @@ static float2 shadeWxRipples(float2 xa, float t, float rate, float footprint) {
 	float widen = max(1.0, footprint * (1.0 / 0.011));
 	const float C = SHADE_RIPPLE_CELL;
 	float lambda = 0.075 * widen, wid = 0.055 * widen, k = 6.2831853 / lambda;
-	for (int layer = 0; layer < 2; layer++) {
+	for (int layer = 0; layer < SHADE_RIPPLE_LAYERS; layer++) {
 		float2 q = xa * (1.0 / C) + (layer == 0 ? float2(0.0) : float2(0.5, 0.37));
 		float2 ci = floor(q);
 		float2 lp = (q - ci) * C;
 		uint h = shadeHash3(int3(int2(ci) & 8191, layer), 0x6a09e667u);
+#if SHADE_RIPPLE_LAYERS < 2
+		float period = 0.33 + 0.28 * shadeHash01(h); // one grid (performance, balanced): drops come faster, about as many rings
+#else
 		float period = 0.45 + 0.4 * shadeHash01(h);
+#endif
 		float ph = t / period + shadeHash01(h ^ 0xbb67ae85u);
 		float n = floor(ph);
 		float age = (ph - n) * period;

@@ -133,7 +133,7 @@ Prices are in-session differences against the mean of `wxrain` and `wxrain2` (wx
 | gates on at balanced | none (candidates priced by dev bit) | sun, ripple, lite rain, rain tint | **all six** |
 | **Rain, everything** (wxrain vs wxrain_dry) | 0.86 | 0.60 | **0.56** |
 | puddle reflections (SSR, quad, 12 steps) | 0.15 | 0.22 | 0.16 |
-| saved by the SSR Fresnel gate | 0.05 (noise) | 0.08 | 0.14 |
+| saved by the SSR Fresnel gate | 0.09 | 0.08 | 0.14 |
 | raindrop ripples (1 grid) | 0.12 | 0.08 | 0.08 |
 | lit, slanted rain streaks (vs M2 rain) | 0.11 | 0.06 | 0.06 |
 | coloured shadows in rain | 0.20 | 0 (skipped in heavy rain) | 0 |
@@ -141,7 +141,7 @@ Prices are in-session differences against the mean of `wxrain` and `wxrain2` (wx
 | candidate: ripple gate (dev 64) | 0.03 | (on) | (on) |
 | candidate: lite rain streaks (dev 128) | 0.11 | (on) | (on) |
 | **Dry: coloured shadows** (wxdry, wxdry2 vs wxdry_notint) | 0.14 | 0.20 | 0.18 |
-| saved by the baked noise | 0.80 | 0.77 | 0.74 |
+| saved by the baked noise | 0.83 | 0.77 | 0.74 |
 
 Plain words: in heavy rain at balanced the weather now costs **~0.56 ms** (was ~0.8-0.9) in a view where 37 % of the ground
 is puddle, and the puddles still mirror the sky, torches and grass. Where the savings came from: the sun's glint on wet

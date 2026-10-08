@@ -49,6 +49,13 @@ import net.minecraft.world.level.levelgen.Heightmap;
  * {@code -Dmcbench.robustFail} (default {@code terrain;*}, ';'-separated), a resource reload (rebuilds the pipelines), a shot
  * ({@code rb_fail_<n>}); then cleared, reloaded again ({@code rb_fail_restored}). Put it last: an injected "*" also fails any
  * module that sets itself up later in the session.</li>
+ * <li>{@code framegen} (with mcopt's {@code -Dmcopt.metal.framegen=true -Dmcopt.metal.framegen.dump=turn,move,first}): for each
+ * entry of {@code -Dmcbench.fgVariants} (default {@code upstream:mcopt.shade.framegen.taau=false;fix:mcopt.shade.framegen.taau=true},
+ * ';'-separated {@code label:key=value,key=value}) the properties are set live, plus {@code mcopt.metal.framegen.dumpTag=<label>}
+ * (re-arms FrameGen's dumps, files prefixed with the label); creative, a torch in the hand, HUD shown; overview at noon: 9 s
+ * still (the dumps' settle), a fast turn (200 degrees/s, 3 s: "turn" dumps need 3+ degrees between real frames), a fast
+ * straight move (40 blocks/s, 2 s: "move"), a slow pan (30 degrees/s, 4 s), a shot of the real frame ({@code rb_fg_<label>}).
+ * FrameGen's own once-a-second report lines in the log fall between the bench's "framegen <label> ..." lines.</li>
  * </ul>
  */
 final class RobustShots {
@@ -73,6 +80,7 @@ final class RobustShots {
 				case "resize" -> resize(steps);
 				case "rejoin" -> rejoin(steps);
 				case "fail" -> fail(steps);
+				case "framegen" -> framegen(steps);
 				default -> throw new IllegalArgumentException("mcbench.robust: unknown event " + e);
 			}
 		}
@@ -419,6 +427,75 @@ final class RobustShots {
 			shot(steps, "rb_rejoin_" + k, 6000, false, () -> BenchDriver.spot.overview);
 			steps.add(step("rb-mem-" + k, 0, mc -> memory("in world after rejoin " + K), 0.5));
 		}
+	}
+
+	// ---- framegen -----------------------------------------------------------------------------------------------------
+
+	static void framegen(Deque<BenchDriver.Step> steps) {
+		String spec = System.getProperty("mcbench.fgVariants", "upstream:mcopt.shade.framegen.taau=false;fix:mcopt.shade.framegen.taau=true");
+		steps.add(new BenchDriver.Scene("rb_fg", 6000, false, () -> BenchDriver.spot.overview));
+		steps.add(new BenchDriver.Settle("rb_fg", false, 3, 120));
+		steps.add(step("rb-fg-hand", 0, mc -> {
+			MinecraftServer s = BenchDriver.server(mc);
+			BenchDriver.cmd(s, "gamemode creative @a");
+			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:torch");
+			if (mc.gui.hud.isHidden()) mc.gui.hud.toggle();
+		}, 1.0));
+		for (String v : spec.split(";")) {
+			if (v.isBlank()) continue;
+			String label = v.substring(0, v.indexOf(':')).trim();
+			String[] props = v.substring(v.indexOf(':') + 1).split(",");
+			steps.add(step("rb-fg-" + label, 0, mc -> {
+				for (String kv : props) {
+					if (kv.isBlank()) continue;
+					String[] a = kv.split("=", 2);
+					System.setProperty(a[0].trim(), a.length > 1 ? a[1].trim() : "");
+				}
+				System.setProperty("mcopt.metal.framegen.dumpTag", label);
+				Pose o = BenchDriver.spot.overview;
+				BenchDriver.pose = t -> o;
+				note("framegen", label + ": " + String.join(",", props) + "; still 9 s");
+			}, 9.0));
+			steps.add(motion("rb-fg-" + label + "-turn", label + " fast turn", 3.0, (o, s) -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 200 * s), 10f)));
+			steps.add(motion("rb-fg-" + label + "-move", label + " fast move", 2.0, (o, s) -> {
+				double yaw = Math.toRadians(o.yaw());
+				return new Pose(o.x() - Math.sin(yaw) * 40 * s, o.y(), o.z() + Math.cos(yaw) * 40 * s, o.yaw(), 10f);
+			}));
+			steps.add(motion("rb-fg-" + label + "-pan", label + " slow pan", 4.0, (o, s) -> new Pose(o.x(), o.y(), o.z(), (float) (o.yaw() + 30 * s), 10f)));
+			steps.add(step("rb-fg-" + label + "-hold", 0, mc -> {
+				Pose o = BenchDriver.spot.overview;
+				BenchDriver.pose = t -> o;
+			}, 1.5));
+			steps.add(new Snap("rb_fg_" + label));
+		}
+		steps.add(step("rb-fg-off", 0, mc -> {
+			MinecraftServer s = BenchDriver.server(mc);
+			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:air");
+			BenchDriver.cmd(s, "gamemode spectator @a");
+			BenchDriver.hideHud(mc);
+			System.clearProperty("mcopt.metal.framegen.dumpTag");
+			note("framegen", "done");
+		}, 0.5));
+	}
+
+	/** A camera motion from the overview pose: pose(overview, seconds since the start) for sec seconds. */
+	static BenchDriver.Step motion(String name, String what, double sec, java.util.function.BiFunction<Pose, Double, Pose> f) {
+		return new BenchDriver.Step(name, 0) {
+			@Override
+			void start(Minecraft mc, long now) {
+				Pose o = BenchDriver.spot.overview;
+				long t0 = now;
+				BenchDriver.pose = t -> f.apply(o, Math.min(sec, BenchDriver.secs(t - t0)));
+				note("framegen", what + " start");
+			}
+
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				if (BenchDriver.secs(now - BenchDriver.curStart) < sec) return false;
+				note("framegen", what + " end");
+				return true;
+			}
+		};
 	}
 
 	// ---- fail ---------------------------------------------------------------------------------------------------------

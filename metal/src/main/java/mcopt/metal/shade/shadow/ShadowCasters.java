@@ -178,6 +178,8 @@ final class ShadowCasters {
 	}
 
 	private final boolean[] sectionIn = new boolean[2];
+	/** M3.3 far spread: the section indices of this frame's part in the region being walked (light mode). */
+	private final int[] partIndex = new int[RenderRegion.REGION_SIZE];
 	/** This build also lists the near cascade's translucent casters (KIND_TRANSLUCENT). */
 	private boolean tint;
 	/**
@@ -291,6 +293,14 @@ final class ShadowCasters {
 		if (!any) return;
 		// M3.3 far spread: a region only the far cascade wants this frame skips the other parts' sections before reading them
 		boolean partOnly = !near && this.farPart >= 0;
+		// light mode, far part only: walk just that part's sections (a quarter of the region's 256), not all of them
+		int partSections = 0;
+		if (partOnly && list == null) {
+			for (int lx = 0; lx < 8; lx++) for (int lz = 0; lz < 8; lz++) {
+				if (part(region.getChunkX() + lx, region.getChunkZ() + lz, this.farParts) != this.farPart) continue;
+				for (int ly = 0; ly < RenderRegion.REGION_HEIGHT; ly++) this.partIndex[partSections++] = lx << 5 | lz << 2 | ly;
+			}
+		}
 		int regionIndex = -1;
 		for (int kind = 0; kind < (this.tint ? 3 : 2); kind++) {
 			TerrainRenderPass pass = kind == KIND_SOLID ? DefaultTerrainRenderPasses.SOLID : kind == KIND_CUTOUT ? DefaultTerrainRenderPasses.CUTOUT
@@ -311,6 +321,9 @@ final class ShadowCasters {
 				if (it != null) {
 					if (!it.hasNext()) break;
 					section = it.nextByteAsInt();
+				} else if (partOnly) {
+					if (i == partSections) break;
+					section = this.partIndex[i];
 				} else {
 					if (i == RenderRegion.REGION_SIZE) break;
 					section = i;

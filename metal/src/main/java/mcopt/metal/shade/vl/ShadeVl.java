@@ -87,6 +87,8 @@ public final class ShadeVl {
 	private static boolean airActive;
 	/** Its march's end (blocks), for the final pass's upsample (the air ratio of texels at another depth). */
 	private static float airEndUsed;
+	/** The shade grid's cell size last frame (a change refreshes all of it). */
+	private static float lastCell = -1f;
 
 	private ShadeVl() {
 	}
@@ -500,10 +502,11 @@ public final class ShadeVl {
 		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.live("mcopt.shade.vl.radialTaps", 0f) : 0f);
 		// look2 (FT2.3): x the screen-space streaks in front of geometry (mcopt.shade.vl.crepGeo, live; FT2.1: 1, now 0)
 		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), 0f, 0f, 0f);
-		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main + near steps:
+		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main steps + half its near
+		// ones: balanced 16, price-w15: the main + near steps cost 0.45 ms more than the old mode over open land;
 		// mcopt.shade.vl.airMin / airGrowth / airSteps, live)
 		put(b, air ? 1f : 0f, VlConfig.live("mcopt.shade.vl.airMin", 8f), VlConfig.live("mcopt.shade.vl.airGrowth", 0.1f),
-			VlConfig.live("mcopt.shade.vl.airSteps", VlConfig.STEPS + VlConfig.NEAR_STEPS));
+			VlConfig.live("mcopt.shade.vl.airSteps", VlConfig.STEPS + VlConfig.NEAR_STEPS / 2));
 		// air2: the march's end (the render distance's fog end, else the preset's distance), the share of the haze's glow the
 		// shadows take out over the sky (mcopt.shade.vl.airSkyCut), gains (airShadow: the shadowed part, airForestGain)
 		// (airSkyCut 0: the final pass draws no haze over the sky, so the shadows have none to take out there; the sky's dark rays
@@ -512,11 +515,12 @@ public final class ShadeVl {
 		// grid (godrays v3): the shade grid's corner (camera-relative; cells snapped to the world: 64 x 32 x 64 cells of
 		// mcopt.shade.vl.airCell blocks, from 3/8 of its height below the camera), and how far around a cell its taps reach
 		// (mcopt.shade.vl.airGridR, live)
+		// (grid2.xyz: the corner cell's place in the wrapped texture, its world cell index mod the grid's size; a cell size change
+		// or a reset refreshes the whole grid)
 		float cell = Math.max(VlConfig.live("mcopt.shade.vl.airCell", 2f), 0.5f);
-		double gx = Math.floor(f.cameraX / cell) * cell - 32 * cell, gy = Math.floor(f.cameraY / cell) * cell - 12 * cell,
-			gz = Math.floor(f.cameraZ / cell) * cell - 32 * cell;
-		put(b, (float) (gx - f.cameraX), (float) (gy - f.cameraY), (float) (gz - f.cameraZ), cell);
-		put(b, 64f, 32f, 64f, Math.max(VlConfig.live("mcopt.shade.vl.airGridR", 4f), 0.5f));
+		long cx = (long) Math.floor(f.cameraX / cell) - 32, cy = (long) Math.floor(f.cameraY / cell) - 12, cz = (long) Math.floor(f.cameraZ / cell) - 32;
+		put(b, (float) (cx * (double) cell - f.cameraX), (float) (cy * (double) cell - f.cameraY), (float) (cz * (double) cell - f.cameraZ), cell);
+		put(b, Math.floorMod(cx, 64), Math.floorMod(cy, 32), Math.floorMod(cz, 64), Math.max(VlConfig.live("mcopt.shade.vl.airGridR", 4f), 0.5f));
 		// air3: the forest air at full density where at most 30 % of the air around is sunlit, none from 85 % (open land), its
 		// fade-in from the camera (blocks) and its sky-lit share (mcopt.shade.vl.airLitLo / airLitHi / airNear / airSky, live)
 		// (gs-w11, Gael's forest: the near field crisp over its first 10 blocks, the sky-lit share 0.05: under the trees most of the
@@ -527,7 +531,12 @@ public final class ShadeVl {
 		// Photon's two lobes over four octaves; airIso: the isotropic share with it), live
 		// (gs-w11: a forward lobe, g 0.85 with 5 % isotropic: the forest air lights up toward the sun, where the shafts are seen along
 		// their length; Photon's broader phase glowed from every side = veil)
-		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0.85f), VlConfig.live("mcopt.shade.vl.airIso", 0.05f), 0f);
+		// (w: which quarter of the shade grid this frame refreshes; -1 = all of it: after a reset, a cell size change, or
+		// mcopt.shade.vl.airGridAll, live)
+		boolean gridAll = reset || cell != lastCell || VlConfig.live("mcopt.shade.vl.airGridAll", 0f) > 0.5f;
+		lastCell = cell;
+		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0.85f), VlConfig.live("mcopt.shade.vl.airIso", 0.05f),
+			gridAll ? -1f : (frame & 3));
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

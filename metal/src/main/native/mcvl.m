@@ -354,7 +354,9 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			mc_shade_bind_compute(c);
 			[c setBytes:params length:paramBytes atIndex:0];
 			[c setTexture:s->shadeGrid atIndex:0];
-			[c dispatchThreadgroups:MTLSizeMake(64 / 4, 32 / 4, 64 / 4) threadsPerThreadgroup:MTLSizeMake(4, 4, 4)];
+			// a quarter of the z slices per frame (VlParams.air4.w, float 111: which; < 0 = all of them, after a reset)
+			int all = paramBytes >= 112 * 4 && local[111] < 0.0f;
+			[c dispatchThreadgroups:MTLSizeMake(64 / 4, 32 / 4, all ? 64 / 4 : 64 / 16) threadsPerThreadgroup:MTLSizeMake(4, 4, 4)];
 			[c endEncoding];
 		}
 		int next = 1 - s->cur;

@@ -106,19 +106,22 @@ struct VlParams {
 	                  //     w gain of the forest air's sunlit part
 	float4 grid;      // 384 (godrays v3) the shade grid (vl_shade_grid): xyz its corner (camera-relative, blocks; snapped to whole cells
 	                  //     in the world, so it holds still as the camera moves), w its cell size (blocks)
-	float4 grid2;     // 400 xyz its cells (VL_GRID_*), w how far around a cell its taps reach (blocks)
+	float4 grid2;     // 400 xyz where the corner cell sits in the texture (the grid wraps around: a cell's texel is its world cell
+	                  //     index mod VL_GRID_*, so a camera move only brings in new cells), w how far around a cell its taps reach
 	float4 air3;      // 416 (godrays v3) the forest air: x the lit share around a point (the grid) at or below which it is at full
 	                  //     density, y the share at or above which it is gone (open sunlit land: no veil), z its fade-in from the
 	                  //     camera (blocks; 0 = none), w its sky-lit share (the canopy hides most of the sky)
 	float4 air4;      // 432 (godrays v3) the forest air: x its share over open sunlit land (0 = only where the shade grid says shade,
 	                  //     1 = everywhere alike), y its phase's forward g (0 = Photon's two lobes over four octaves), z the
-	                  //     isotropic share with that lobe, w 0
+	                  //     isotropic share with that lobe, w which quarter of the grid's cells this frame refreshes (z slices
+	                  //     z % 4 == w; < 0: all of them, after a reset)
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
 #define VL_GRID_Y 32
 #define VL_GRID_Z 64
 #define VL_GRID_TAPS 24
+#define VL_GRID_ROUNDS 4
 #define VL_FAR_STEPS 8
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -252,9 +255,12 @@ kernel void vl_canopy(uint tid [[thread_index_in_threadgroup]], uint lane [[thre
 // the shafts that cross the shade. One thread per cell: VL_GRID_TAPS points around its centre (a 3D R-sequence over a box of
 // +-grid2.w blocks across, from half a block to grid2.w above: taps underground would read open land as shade) looked up in
 // the far cascade (whole-block leaves), lit share -> R8. The taps sit at fixed offsets from cells snapped to the world, so the
-// grid holds still as the camera moves (no flicker; it follows the shadow map's own steps).
-kernel void vl_shade_grid(uint3 gid [[thread_position_in_grid]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
+// grid holds still as the camera moves (no flicker; it follows the shadow map's own steps). The texture wraps around (a cell's
+// texel = its world cell index mod the grid's size), so a quarter of the cells per frame keeps it current (the shade changes
+// slowly; cells that just came in at the far edge, faded there, wait at most 4 frames); after a reset all of them.
+kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
                           depth2d_array<float> map [[texture(16)]], texture3d<half, access::write> grid [[texture(0)]]) {
+	uint3 gid = p.air4.w < 0.0 ? tid : uint3(tid.x, tid.y, tid.z * VL_GRID_ROUNDS + uint(p.air4.w));
 	if (gid.x >= VL_GRID_X || gid.y >= VL_GRID_Y || gid.z >= VL_GRID_Z) return;
 	constexpr sampler cmpLin(coord::normalized, filter::linear, address::clamp_to_edge, compare_func::greater_equal);
 	float3 c = p.grid.xyz + (float3(gid) + 0.5) * p.grid.w;
@@ -271,7 +277,7 @@ kernel void vl_shade_grid(uint3 gid [[thread_position_in_grid]], constant ShadeF
 			else if (h.z > 0.0) lit += map.sample_compare(cmpLin, shadeShadowUV(h.xyz), 1u, h.z);
 		}
 	}
-	grid.write(half4(half(lit / float(VL_GRID_TAPS))), gid);
+	grid.write(half4(half(lit / float(VL_GRID_TAPS))), (gid + uint3(p.grid2.xyz)) % uint3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z));
 }
 
 // Canopy mist: the humid air under trees and overhangs, around the camera, scaled by the canopy factor. Density
@@ -373,13 +379,18 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float sigM = sl.fogM.x, hM = sl.fogM.y, y0M = sl.fogM.z, alM = sl.fogM.w;
 		float local = p.light.w;
 		bool skyPx = d <= 0.0;
-		constexpr sampler gridLin(filter::linear, address::clamp_to_edge);
+		constexpr sampler gridLin(filter::linear, address::repeat);
 		float3 gridSpan = p.grid.w * float3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z);
+		float3 gridWrap = p.grid2.xyz / float3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z);
 		float litK = 1.0 / max(p.air3.y - p.air3.x, 1e-3);
 		float D = min(dist, p.air2.x);
 		int na = clamp(int(p.air.y + p.air.z * D), 2, int(max(p.air.w, 2.0)));
 		float invN = 1.0 / float(na);
-		float3 trans = float3(1.0), hazeAll = 0.0, hazeLit = 0.0, mistAll = 0.0, mistLit = 0.0, forestLit = 0.0, forestAll = 0.0;
+		// (one transmittance for all three channels, from the haze's luminance: its colour matters in what it scatters, its
+		// extinction over the march is at most ~0.1, so a grey one costs nothing visible and a third of the exp per step)
+		float trans = 1.0, mistAll = 0.0, mistLit = 0.0, forestLit = 0.0, forestAll = 0.0;
+		float3 hazeAll = 0.0, hazeLit = 0.0;
+		float lumR = dot(sigR, float3(0.2126, 0.7152, 0.0722));
 		float prevB = 0.0;
 		for (int i = 0; i < na; i++) {
 			// quadratic spacing (dense near the camera, where the trees' shadows are), each texel offset on its own (bit 32)
@@ -387,7 +398,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
 			prevB = b1;
 			float y = yc + dir.y * t;
-			float3 dR = sigR * exp(-max(y - y0R, 0.0) / hR);
+			float fR = exp(-max(y - y0R, 0.0) / hR);
 			float dM = sigM * exp(-max(y - y0M, 0.0) / hM);
 			// the forest air: the lit share around this point (the grid, trilinear) -> full density at or below air3.x, air4.x of it
 			// at or above air3.y (open sunlit land); past the grid (faded over its last 8 blocks) air4.x; faded in from the camera
@@ -398,10 +409,10 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 				float3 edge = min(g, 1.0 - g) * gridSpan;
 				float inGrid = saturate(min(edge.x, min(edge.y, edge.z)) * 0.125); // (outside: air4.x alone)
 				float shade = p.air4.x;
-				if (inGrid > 0.0) shade = mix(p.air4.x, max(saturate((p.air3.y - float(shadeGrid.sample(gridLin, g).r)) * litK), p.air4.x), inGrid);
+				if (inGrid > 0.0) shade = mix(p.air4.x, max(saturate((p.air3.y - float(shadeGrid.sample(gridLin, g + gridWrap).r)) * litK), p.air4.x), inGrid);
 				dF = local * shade * (p.air3.z > 0.0 ? saturate(t / p.air3.z) : 1.0);
 			}
-			float3 ext = dR + dM + dF * p.mist.w;
+			float ext = lumR * fR + dM + dF * p.mist.w;
 			float3 q0 = c0o + c0d * t, q1 = c1o + c1d * t;
 			if (softR > 0.0) {
 				float a = softRot + 2.3999632 * float(i), r = sqrt(fract((float(i) + 0.5) * 0.618034 + softRot));
@@ -418,15 +429,19 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 				v *= cloudHeld;
 			}
 			// energy-conserving segment integral (1 - e^-sigma dt) / sigma, times the transmittance so far
-			float3 seg = trans * (1.0 - exp(-ext * dt)) / max(ext, 1e-9);
-			hazeAll += dR * seg;
-			hazeLit += v * dR * seg;
+			float stepT = exp(-ext * dt);
+			float seg = trans * (1.0 - stepT) / max(ext, 1e-9);
+			float segR = fR * seg;
+			hazeAll += segR;
+			hazeLit += v * segR;
 			mistAll += dM * seg;
 			mistLit += v * dM * seg;
 			forestLit += v * dF * seg;
 			forestAll += dF * seg;
-			trans *= exp(-ext * dt);
+			trans *= stepT;
 		}
+		hazeAll *= sigR;
+		hazeLit *= sigR;
 		// E06's phase functions, multiple-scattering boosts and evening glow (shade_m2.metal shadeHazeInscatter): its sunlit part
 		// times (lit - all) = what the shadows take out of it
 		float phR = 0.0596831 * (1.0 + mu * mu);

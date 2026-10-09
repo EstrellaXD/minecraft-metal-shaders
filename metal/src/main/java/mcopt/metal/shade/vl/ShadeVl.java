@@ -396,7 +396,8 @@ public final class ShadeVl {
 		// mcopt.shade.vl.waterM3=false: M2.1's 0.9 and game time.
 		put(b, VlConfig.TEMPORAL ? (VlConfig.WATER_M3 && f.underwater ? 0.8f : 0.9f) : 0f, reset ? 1f : 0f, frame & 1023, VlConfig.WATER_M3 ? f.waterTime : f.gameTimeSeconds); // temporal
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
-		put(b, 0.7f, hdr ? 2.4f : 1.6f, VlConfig.CANOPY, VlConfig.DEBUG);                // gate: open air, canopy mist, override, debug
+		put(b, 0.7f * VlConfig.live("mcopt.shade.vl.openGain", 1f), (hdr ? 2.4f : 1.6f) * VlConfig.live("mcopt.shade.vl.canopyGain", 1f),
+			VlConfig.CANOPY, VlConfig.DEBUG);                                            // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)

@@ -79,10 +79,10 @@ public final class ShadeMsl {
 	/**
 	 * FT1.3 (Gael: far terrain at the sunset horizon dotted and oddly white): mcopt.shade.hazeEdge (true) = the final pass's
 	 * haze from the 2x2 depth texels along silhouettes (not the nearest: a rim of dots against the resolved image);
-	 * mcopt.shade.hazeMieG (0.66; 0.76 = M3.4) = the haze's forward lobe toward the sun (0.76 washed far terrain out to cream).
+	 * mcopt.shade.hazeMieG (0.5; 0.76 = M3.4) = the haze's forward lobe toward the sun (0.76 washed far terrain out to cream).
 	 */
 	static final String HAZE_DEFINES = (Boolean.parseBoolean(System.getProperty("mcopt.shade.hazeEdge", "true")) ? "#define SHADE_HAZE_EDGE 1\n" : "")
-		+ "#define SHADE_HAZE_MIE_G " + Math.clamp(Float.parseFloat(System.getProperty("mcopt.shade.hazeMieG", "0.66")), 0f, 0.95f) + "\n";
+		+ "#define SHADE_HAZE_MIE_G " + Math.clamp(Float.parseFloat(System.getProperty("mcopt.shade.hazeMieG", "0.5")), 0f, 0.95f) + "\n";
 
 	public static String prelude() {
 		if (prelude == null) {

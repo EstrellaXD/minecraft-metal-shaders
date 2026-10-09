@@ -227,7 +227,7 @@ static float3 shadeHazeInscatter(float3 p, constant ShadeFrame &f, constant Shad
 #ifndef SHADE_HAZE_MIE_G
 #define SHADE_HAZE_MIE_G 0.76
 #endif
-	// (FT1.3: 0.66 by default, mcopt.shade.hazeMieG: toward a low sun 0.76 washed far terrain out to cream white, Gael)
+	// (FT1.3: 0.5 by default, mcopt.shade.hazeMieG: toward a low sun 0.76 washed far terrain out to cream white, Gael)
 	float phM = 0.8 * shadeHG(nu, SHADE_HAZE_MIE_G) + 0.2 * shadeHG(nu, -0.2);
 	float3 E = f.sunColor.rgb * 3.14159265 * sunVis;    // irradiance from the light (sunColor is light / pi)
 	float3 sky = f.ambientSky.rgb * 0.9;                 // mean sky radiance (ambientSky ~ irradiance / pi)

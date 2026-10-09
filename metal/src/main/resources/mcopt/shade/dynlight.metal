@@ -210,6 +210,9 @@ static float3 shadeDynamicLightsSpec(constant ShadeDynLights &D, texture3d<half>
 			uint i = ctz(bits) + 32u * k;
 			bits &= bits - 1u;
 			float3 c = shadeDlOne(D, D.lights[i], p, n, false, vis, l, d);
+			// (FT2.8, audit idx 81) a light out of reach returns before writing l: its specular term would read garbage (or NaN, which
+			// the TAA history spreads) times 0
+			if (all(c == 0.0)) continue;
 			sum += c;
 			float3 h = normalize(l + v);
 			specOut += c * (D.lights[i].color.w * norm * pow(saturate(dot(n, h)), shininess));

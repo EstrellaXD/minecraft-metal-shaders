@@ -214,7 +214,8 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	float3 rgb = taaExpand(float3(resolved));
 	half newAge = min(age + 1.0h, half(p.blend.z));
 	o.color = half4(half3(max(rgb, 0.0)), newAge);
-	if (!all(isfinite(o.color))) o.color = half4(current, 1.0h);
+	// (FT2.8, audit idx 72) the fallback in the history's own (linear) encoding, not the range-compressed current
+	if (!all(isfinite(o.color))) o.color = half4(half3(clamp(taaExpand(float3(current)), 0.0, 60000.0)), 1.0h);
 	int view = int(p.misc.w);
 	if (view == 5) debug = half3(saturate(abs(moved) * 4.0));                                                         // M3 movers: per-object motion
 	else if (view == 1) debug = half3(mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z)));   // history age

@@ -92,7 +92,9 @@ final class ShadeMotion {
 				if (m2 > 1e-8 && m2 < JUMP * JUMP) {
 					AABB b = e.getBoundingBox();
 					double ox = x - e.getX() - camera.x, oy = y - e.getY() - camera.y, oz = z - e.getZ() - camera.z;
-					double[] m = {d2, b.minX + ox - PAD, b.minY + oy - PAD * 0.5, b.minZ + oz - PAD, b.maxX + ox + PAD, b.maxY + oy + PAD,
+					// (FT2.8, audit idx 66: from just above the surface it stands on, no padding below: the ground under a walking mob
+					// was reprojected with its motion and smeared with it)
+					double[] m = {d2, b.minX + ox - PAD, b.minY + oy + 0.02, b.minZ + oz - PAD, b.maxX + ox + PAD, b.maxY + oy + PAD,
 						b.maxZ + oz + PAD, dx, dy, dz};
 					if (planes == null || onScreen(planes, m)) this.movers.add(m);
 				}

@@ -361,8 +361,10 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	}
 	// Purkinje: dim light (scene luminance, not exposed) shifts toward the rods' cool grey
 	lum = shadeLuma(c) / ex;
-	float rods = (1.0 - smoothstep(0.004, 0.04, lum)) * L.grade1.w;
-	c = mix(c, float3(shadeLuma(c)) * float3(0.72, 0.88, 1.3), rods);
+	if (lum < 0.04 && L.grade1.w > 0.0) { // (FT2.8, audit idx 39: elsewhere a mix by 0, the same pixel)
+		float rods = (1.0 - smoothstep(0.004, 0.04, lum)) * L.grade1.w;
+		c = mix(c, float3(shadeLuma(c)) * float3(0.72, 0.88, 1.3), rods);
+	}
 	// vignette (sparing what is bright)
 	float2 r = (in.uv - 0.5) * float2(float(scene.get_width()) / float(scene.get_height()), 1.0);
 	float vr = pow(saturate(length(r) * 1.25), 2.4);
@@ -378,7 +380,8 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 // The SDR display value -> what main stores: black floor, sRGB, triangular dither (+-1 LSB), debug view 4.
 static inline float3 shadeFinalEncode(float3 y, float4 position, constant ShadeFinalParams &P, constant ShadeLook &L, float lum) {
 	float phi = L.grade2.w;
-	y += phi * exp(-3.0 * y / max(phi, 1e-6));
+	// (FT2.8, audit idx 39) only near black: from 8 phi up the term is under half an ulp of y (and 0 when phi is 0)
+	if (any(y < 8.0 * phi)) y += phi * exp(-3.0 * y / max(phi, 1e-6));
 	float3 srgb = shadeLinearToSrgbExact(saturate(y));
 	// triangular dither, +-1 LSB
 	float n0 = shadeNoise(position.xy, int(P.p.z)), n1 = shadeNoise(position.xy + 17.0, int(P.p.z) + 7);
@@ -417,9 +420,14 @@ static inline ShadeFinalXdrOut shadeFinalXdr(ShadeFsOut in, texture2d<half> scen
 	float lum;
 	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum);
 	float3 y = shadeDisplay(c, L);
-	float h = saturate(log2(max(shadeLuma(c), 1e-6) / P.x.z) / P.x.w);
-	float boost = (P.x.y - 1.0) * h * h * (3.0 - 2.0 * h);
-	float3 excess = y / max(shadeLuma(y), 0.05) * boost;
+	// (FT2.8, audit idx 39) only above the knee with a peak over SDR white: elsewhere h, boost and the excess are 0
+	float lc = shadeLuma(c), h = 0.0, boost = 0.0;
+	float3 excess = float3(0.0);
+	if (lc > P.x.z && P.x.y > 1.0) {
+		h = saturate(log2(max(lc, 1e-6) / P.x.z) / P.x.w);
+		boost = (P.x.y - 1.0) * h * h * (3.0 - 2.0 * h);
+		excess = y / max(shadeLuma(y), 0.05) * boost;
+	}
 	ShadeFinalXdrOut o;
 	o.sdr = float4(shadeFinalEncode(y, in.position, P, L, lum), 0.0);
 	if (P.p.w == 8.0) o.sdr = float4(saturate(float3(boost / max(P.x.y - 1.0, 1e-3), h, 0.0)), 0.0); // debug: XDR boost, knee

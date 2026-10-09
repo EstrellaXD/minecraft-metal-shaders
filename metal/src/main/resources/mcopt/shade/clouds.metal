@@ -85,6 +85,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
                             // (tried on the shadow map's six samples too: twice as slow there, run m33c-2's timer: removed)
 #define CLOUD_MODE_PAIR 8   // the march's empty-air tests two at a time (both fetches issued together): same tests, same values
 #define CLOUD_MODE_EDGE 16  // the stable resolve's history clamp only where the reprojection depends on the distance (FT1.2)
+#define CLOUD_MODE_ZOOM 64  // (FT2.8, audit idx 12) a zoom in (spyglass, FOV) lowers the history's age by how magnified it is
 #define CLOUD_MODE_DRIFT 32 // the stable resolve trusts less a history that drifts against a pure turn (near clouds: FT2.6)
 static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
@@ -1114,6 +1115,15 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 		float2 f = fract(puv * c.size.xy - 0.5);
 		float4 ages = float4(q >> 12u);
 		age = mix(mix(ages.w, ages.z, f.x), mix(ages.x, ages.y, f.x), f.y);
+		if (cloudMode(c, CLOUD_MODE_ZOOM)) {
+			// zoom (spyglass x0.1, FOV effects): how many old history pixels one new pixel spans. Below 1 the history is a
+			// magnified copy of coarser content and counts as fewer visits (the factor multiplies frame after frame: the drop
+			// follows the total zoom, not the frame rate). Zooming out and plain turns (s ~ 1) change nothing
+			float3 dirR = cloudDirection(uv + float2(1.0 / c.size.x, 0.0), c);
+			float4 a0 = c.prevViewProj * float4(dir, 0.0), a1 = c.prevViewProj * float4(dirR, 0.0);
+			float sz = a0.w > 1e-4 && a1.w > 1e-4 ? length((a1.xy / a1.w - a0.xy / a0.w) * 0.5 * c.size.xy) : 1.0;
+			age *= min(1.0, sz * sz);
+		}
 		uint4 qd = q & 0xfffu;
 		qOwn = f.y < 0.5 ? (f.x < 0.5 ? qd.w : qd.z) : (f.x < 0.5 ? qd.x : qd.y);
 		ownCloud = qOwn != CLOUD_DIST_NONE;

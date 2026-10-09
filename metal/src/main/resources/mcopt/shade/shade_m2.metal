@@ -439,12 +439,16 @@ static float3 shadeSkyRadiance2(float3 dir, texture2d<half> lut, sampler s, cons
 		float clear = (1.0 - rain) * above;
 		float airmass = 1.0 / max(dir.y, 0.05);
 		float ext = exp(-0.12 * min(airmass, 12.0));
+		// (FT2.8, audit idx 79) what lies BEHIND the moon (stars, Milky Way) kept apart: the disc hides it, not the air in front
+		float3 behind = float3(0.0);
 		if (night > 0.0 && clear > 0.0) {
 			float sigma = clamp(0.7 * pixelAngle / (1.5707963 / 420.0), 0.25, 0.8);
 			float3 stars = shadeStars(st, airmass, f.time.y, sigma);
 			float3 mw = shadeMilkyWay(st, milkyWay) * L.night.y;
-			sky += (stars * 0.9 + mw) * (night * clear * ext);
+			behind = (stars * 0.9 + mw) * (night * clear * ext);
 		}
+		float cover = 0.0;
+		float3 moonLight = float3(0.0);
 		// moon
 		float3 md = f.moonDirWorld.xyz;
 		float rm = L.sunGeom.z;
@@ -456,9 +460,13 @@ static float3 shadeSkyRadiance2(float3 dir, texture2d<half> lut, sampler s, cons
 			if (dot(q, q) < 1.0) {
 				float3 moon = shadeMoonDisc(q, md, up, L.night.w) * float3(0.92, 0.96, 1.05);
 				float moonUp = smoothstep(-0.02, 0.02, md.y);
-				sky = mix(sky, sky * 0.2 + moon * 0.9 * (1.0 - 0.85 * rain), moonUp * (1.0 - smoothstep(0.9, 1.0, length(q))));
+				// (the whole sky x 0.2 inside the disc darkened the twilight air in front of it: a dark disc above the antisolar
+				// horizon at dusk, on the unlit part of the moon)
+				cover = moonUp * (1.0 - smoothstep(0.9, 1.0, length(q)));
+				moonLight = moon * 0.9 * (1.0 - 0.85 * rain);
 			}
 		}
+		sky += behind * (1.0 - cover) + moonLight * cover;
 	}
 	return sky;
 }

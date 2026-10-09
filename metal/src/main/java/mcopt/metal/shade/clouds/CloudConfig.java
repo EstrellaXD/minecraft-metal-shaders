@@ -161,6 +161,11 @@ public final class CloudConfig {
 	 * and caps its age low; far clouds don't drift, so they keep their history as before.
 	 */
 	public static final int MODE_DRIFT = 32;
+	/**
+	 * FT2.8 {@link #MODE_ZOOM} (mcopt.shade.clouds.zoomAge, default true; audit idx 12): zooming in (spyglass, FOV effects) keeps a
+	 * magnified history at full age, so the clouds stayed blurry and blocky for 1-2 s; the resolve lowers its age by the magnification.
+	 */
+	public static final int MODE_ZOOM = 64;
 
 	/**
 	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bits 32768 /
@@ -175,7 +180,8 @@ public final class CloudConfig {
 			| (flag("mcopt.shade.clouds.batch", true) && (dev & DEV_OLD_BATCH) == 0 ? MODE_BATCH : 0)
 			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0)
 			| (flag("mcopt.shade.clouds.edgeGate", true) ? MODE_EDGE : 0)
-			| (flag("mcopt.shade.clouds.driftClamp", true) ? MODE_DRIFT : 0);
+			| (flag("mcopt.shade.clouds.driftClamp", true) ? MODE_DRIFT : 0)
+			| (flag("mcopt.shade.clouds.zoomAge", true) ? MODE_ZOOM : 0);
 	}
 	/**
 	 * M3.4 (Gael: cloud edges look pixelated and flicker at sunset): the sky, fog and VL read the clouds' history (0.45 of the

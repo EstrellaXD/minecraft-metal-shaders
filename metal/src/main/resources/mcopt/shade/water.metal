@@ -539,7 +539,8 @@ static float3 shadeWaterHitColor(float2 uv, float3 o, float exposure, float prev
 		float z = depth.read(uint2(clamp(uv * size, float2(0.0), size - 1.0)));
 		float4 wp = f.invViewProj * float4(uv * 2.0 - 1.0, z, 1.0);
 		float3 pw = wp.xyz / wp.w;
-		float4 pc = f.prevViewProj * float4(pw, 1.0);
+		// (FT2.8, audit idx 35) last frame's image is the TAA history: steady, unjittered (as the puddles read it)
+		float4 pc = (L != nullptr ? L->prevViewProjNoJitter : f.prevViewProj) * float4(pw, 1.0);
 		float2 uvp = pc.xy / pc.w * 0.5 + 0.5;
 		if (pc.w > 0.0 && all(uvp > 0.0) && all(uvp < 1.0)) {
 			float3 cp = float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure;
@@ -613,7 +614,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float3 o, float prevExposur
 					if (!cloud) wgt *= smoothstep(160.0, 320.0, shadeLinearW(z, f));
 				}
 				if (wgt > 0.0) {
-					float4 pc = f.prevViewProj * float4(rs, 0.0);
+					float4 pc = (L != nullptr ? L->prevViewProjNoJitter : f.prevViewProj) * float4(rs, 0.0); // (FT2.8, idx 35)
 					float2 uvp = pc.xy / max(pc.w, 1e-4) * 0.5 + 0.5;
 					float3 s = float3(prev.sample(shadeWaterLinear, saturate(uvp)).rgb) / prevExposure;
 					if (z > 0.0) {
@@ -919,6 +920,18 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 #endif
 	float lap;
 	float2 g = shadeWaves(x, t, strength, w.footprint, lap, height);
+#if defined(SHADE_WAVE_BAKE) && defined(SHADE_WATER_SMOOTH)
+	// (FT2.8, audit idx 37) the frame water comes back after frames without it the bake was skipped: the analytic waves, scaled as
+	// the baked path scales its swell (calm; x SHADE_WATER_LONG where the ripples take over), not ~3x steeper for that frame
+	{
+		float k = shadeWaterCalm(w.p, f, wp).x;
+#ifdef SHADE_WATER_DETAIL
+		if (detail > 0.0) k *= SHADE_WATER_LONG;
+#endif
+		g *= k;
+		height *= k;
+	}
+#endif
 	return normalize(float3(-g.x, 1.0, -g.y));
 }
 

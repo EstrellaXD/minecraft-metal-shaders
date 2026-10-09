@@ -428,8 +428,19 @@ public final class ShadeVl {
 		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)
 		// (veil4 i4: the uniform glow x0.2, a beam at twice its surroundings x1.4, at 3x x1.53; notes/godrays-veil-2026-10-09)
 		put(b, VlConfig.look("mcopt.shade.vl.hpKeep", 0.2f, 1f), VlConfig.look("mcopt.shade.vl.hpGain", 1.8f, 1f),
-			VlConfig.live("mcopt.shade.vl.hpRadius", 2f), hdr && VlConfig.FOLD ? VlConfig.look("mcopt.shade.vl.hp", 1f, 0f) : 0f);
+			VlConfig.live("mcopt.shade.vl.hpRadius", 2f), hdr && VlConfig.FOLD && underTrees() ? VlConfig.look("mcopt.shade.vl.hp", 1f, 0f) : 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
+	}
+
+	/**
+	 * Whether the canopy factor the GPU measured (as of the last completed frame) is above ~0: the shafts' local contrast (hp)
+	 * only acts under trees, so its three small passes (~0.1 ms, pricevl2) are skipped in the open; it rises over ~1.5 s when
+	 * the camera steps under trees, so starting a frame late is invisible (the fold skips it once while the veil is stale).
+	 */
+	private static boolean underTrees() {
+		if (state == 0) return false;
+		VlNative.canopy(state, CANOPY_OUT);
+		return Math.max(MemoryUtil.memGetFloat(CANOPY_OUT), VlConfig.live("mcopt.shade.vl.canopyMin", 0f)) > 0.005f || VlConfig.CANOPY > 0.005f;
 	}
 
 	/** How much sky the camera sees, 0 (cave) .. 1 (outdoors), from the sky light at the eye. */

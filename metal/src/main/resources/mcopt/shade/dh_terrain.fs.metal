@@ -152,13 +152,21 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			// Faded out over the last 1/8 of the screen. Needs TAAU's depth of that image (ShadeLook.ssr.y).
 			if (sl.ssr.x > 0.5 && sl.ssr.y > 0.5) {
 				float3 rm = float3(v.x, -v.y, v.z);
-				float4 c = sf.viewProj * float4(rm, 0.0), pc = sl.prevViewProjNoJitter * float4(rm, 0.0); // (FT2.8, as audit idx 35: the TAA history is unjittered)
-				if (c.w > 1e-4 && pc.w > 1e-4) {
-					float2 uv = c.xy / c.w * 0.5 + 0.5;
-					float wgt = saturate(min(uv.x, 1.0 - uv.x) * 8.0) * saturate(min(uv.y, 1.0 - uv.y) * 8.0);
-					float2 uvp = saturate(pc.xy / pc.w * 0.5 + 0.5);
+				float4 pc = sl.prevViewProjNoJitter * float4(rm, 0.0); // (FT2.8, as audit idx 35: the TAA history is unjittered)
+				if (pc.w > 1e-4) {
+					// (FT2.8, audit idx 117) the edge fade from where the texel is actually read (last frame's, unclamped), not this
+					// frame's position: border pixels smeared in while turning
+					float2 uvp0 = pc.xy / pc.w * 0.5 + 0.5;
+					float wgt = saturate(min(uvp0.x, 1.0 - uvp0.x) * 8.0) * saturate(min(uvp0.y, 1.0 - uvp0.y) * 8.0);
+					float2 uvp = saturate(uvp0);
 					constexpr sampler lin(filter::linear, address::clamp_to_edge, coord::normalized);
-					if (wgt > 0.0) wgt *= smoothstep(400.0, 600.0, float(sr.prevDepth.sample(lin, uvp).r));
+					// (FT2.8, audit idx 105) the nearest surface of the footprint, not a bilinear mean: at a near hill's silhouette the
+					// mean of sky and hill passed as sky and pulled the hill into the far sea's reflection
+					constexpr sampler nearestClamp(filter::nearest, address::clamp_to_edge, coord::normalized);
+					if (wgt > 0.0) {
+						half4 dz = sr.prevDepth.gather(nearestClamp, uvp);
+						wgt *= smoothstep(400.0, 600.0, float(min(min(dz.x, dz.y), min(dz.z, dz.w))));
+					}
 					// (FT2.8, audit idx 104) not the sun's / moon's disc: the glint below already stands for the sun on this wavy sea, and
 					// the disc mirrored sharp from last frame's image counted it twice (and popped at the screen-edge fade)
 					wgt *= 1.0 - smoothstep(cos(4.0 * sl.sunGeom.y), cos(1.5 * sl.sunGeom.y), dot(rm, sf.sunDirWorld.xyz));

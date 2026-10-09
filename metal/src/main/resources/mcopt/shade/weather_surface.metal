@@ -609,7 +609,7 @@ static inline float3 shadeShadowTintDelta(half3 albedo, half3 n, half sky, half 
 		: foliage ? half(0.25) + half(0.75) * saturate(nl) + half(0.5) * saturate(-nl)
 		: (nl > half(0.0) ? (nl + half(0.08)) / half(1.08) : half(0.0));
 	half gate = smoothstep(half(0.3), half(0.8), sky);
-	if (f.flags2.y != 0) gate *= 0.5h;
+	if (SHADE_CAMERA_UNDERWATER(f)) gate *= 0.5h;
 	return float3(albedo * half3(f.sunColor.rgb) * (ndl * shadow * gate) * (tint - 1.0h));
 }
 

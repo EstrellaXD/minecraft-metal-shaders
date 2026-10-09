@@ -21,22 +21,50 @@ package mcopt.metal.shade;
 public final class ShadeLean {
 	/** mcopt.shade.lean (true): false draws every frame with the full terrain (M3.0). */
 	public static final boolean ON = ShadeConfig.flag("mcopt.shade.lean", true);
+	/**
+	 * mcopt.shade.leanAbove (true, 2026-10-08; read every frame, for in-session prices): the water's variant without its view
+	 * from below while the camera is above water.
+	 */
+	static boolean above() {
+		return ON && !"false".equals(System.getProperty("mcopt.shade.leanAbove"));
+	}
 	/** mcopt.shade.leanSky (true): the sky's variant without the aurora code while no aurora shows (LEAN_NOAURORA). */
 	public static final boolean SKY = ShadeConfig.flag("mcopt.shade.leanSky", true);
+	/**
+	 * 2026-10-08 (optimisation pricing, off unless set): -Dmcopt.shade.leanDev=NAME[,NAME...] defines those in the translucent
+	 * terrain's LEAN_DEV variants, which the world pass uses while the system property mcopt.shade.leanDev.on is true (read every
+	 * frame): compile-time variants of the water A/B'd inside one session (mcbench.ab phases).
+	 */
+	public static final String DEV_DEFINES = devDefines(System.getProperty("mcopt.shade.leanDev", ""));
 	private static volatile int tag;
+
+	private static String devDefines(String v) {
+		StringBuilder b = new StringBuilder();
+		for (String d : v.split(",")) {
+			String t = d.trim();
+			if (t.matches("[A-Z][A-Z0-9_]*")) b.append("#define ").append(t).append(" 1\n");
+		}
+		return b.toString();
+	}
 
 	private ShadeLean() {
 	}
 
 	/** This frame's lean tag (ShadeMsl.LEAN_OW | LEAN_DRY | LEAN_NODL | LEAN_NETHER), 0 when off. */
 	public static int tag() {
-		return (ON ? tag & ShadeMsl.LEAN_TERRAIN : 0) | (SKY ? tag & ShadeMsl.LEAN_NOAURORA : 0);
+		return (ON ? tag & (ShadeMsl.LEAN_TERRAIN | ShadeMsl.LEAN_WATER) : 0) | (SKY ? tag & ShadeMsl.LEAN_NOAURORA : 0);
 	}
 
 	/** Once per frame, after the weather and the dynamic lights updated, before the world pass (ShadeFrameUpdater). */
-	static void update(int dimension) {
+	static void update(int dimension, boolean underwater) {
 		int t = 0;
 		if (dimension == ShadeFrame.DIM_OVERWORLD) t |= ShadeMsl.LEAN_OW;
+		// 2026-10-08: the camera above water (the overworld; the variants are prewarmed with OW only): the translucent terrain
+		// without the surface seen from below (it only runs with the camera under water)
+		if (dimension == ShadeFrame.DIM_OVERWORLD && !underwater && above()) {
+			t |= ShadeMsl.LEAN_ABOVE;
+			if (!DEV_DEFINES.isEmpty() && Boolean.getBoolean("mcopt.shade.leanDev.on")) t |= ShadeMsl.LEAN_DEV;
+		}
 		if (dimension == ShadeFrame.DIM_NETHER && mcopt.metal.shade.dims.ShadeDims.netherLean()) t |= ShadeMsl.LEAN_NETHER; // M3.3 (dims)
 		if (!mcopt.metal.shade.weather.ShadeWeather.ON || mcopt.metal.shade.weather.ShadeWeather.dry()) t |= ShadeMsl.LEAN_DRY;
 		if (!mcopt.metal.shade.light.DynLights.ON || mcopt.metal.shade.light.DynLights.activeCount() == 0) t |= ShadeMsl.LEAN_NODL;

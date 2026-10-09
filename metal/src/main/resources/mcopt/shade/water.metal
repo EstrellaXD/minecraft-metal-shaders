@@ -355,7 +355,7 @@ static inline bool shadeSsrSegment(float3 p0, float3 r, float maxDist, constant 
 #else
 #define SHADE_SSR_N SHADE_SSR_STEPS
 #endif
-#ifdef SHADE_SSR_RAWZ
+#if defined(SHADE_SSR_RAWZ) && !defined(SHADE_SSR_NORAWZ) // (NORAWZ: -Dmcopt.shade.leanDev=SHADE_SSR_NORAWZ, in-session A/B)
 // 2026-10-08 (mcopt.shade.water.rawz, default on): the same march deciding in reversed-Z depth itself. View depth is
 // w = B / (z + A), decreasing in z, so "the ray is still in front of the scene" (w_ray < w_scene) is z_ray > z_scene, sky
 // (z 0) included, and the crossing tests need no division per step (nor the steps' parameters kept in an array). Only the
@@ -1114,7 +1114,7 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 // Entry point for the translucent terrain fragment: picks the side the camera is on.
 static float3 shadeWaterSurface(ShadeWaterIn w, constant ShadeFrame &f, constant ShadeWaterParams &wp, texture2d<half> lut, sampler lutS,
                                 texture2d<half> scene, depth2d<float> depth, texture2d<half> prev, texture2d<half> waves, texture2d<float> hz) {
-	if (f.flags2.y != 0 && w.nFace.y < -0.5) return shadeWaterBelow(w, f, wp, lut, lutS, scene, depth, prev, waves, hz);
+	if (SHADE_CAMERA_UNDERWATER(f) && w.nFace.y < -0.5) return shadeWaterBelow(w, f, wp, lut, lutS, scene, depth, prev, waves, hz);
 	return shadeWaterAbove(w, f, wp, lut, lutS, scene, depth, prev, waves, hz);
 }
 

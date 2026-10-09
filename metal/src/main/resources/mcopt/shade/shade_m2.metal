@@ -105,7 +105,7 @@ static float3 shadeLit2(half3 albedo, half3 n, half sky, half block, half shadow
 	half day = half(saturate(f.sunDirWorld.w * 4.0 + 0.2));
 	half3 torch = half3(f.ambientBlock.xyz) * F * (half(1.0) - half(0.25) * smoothstep(half(0.5), half(1.0), sky) * day);
 	half3 minimum = half(f.ambientBlock.w) * mix(half3(0.9h, 1.0h, 1.38h), half3(1.0h), g); // caves: a cool floor
-	if (f.flags2.y != 0) { // the camera is under water: daylight arrives filtered by the water above
+	if (SHADE_CAMERA_UNDERWATER(f)) { // the camera is under water: daylight arrives filtered by the water above
 		direct *= half3(0.22h, 0.5h, 0.62h);
 		ambient *= half3(0.35h, 0.62h, 0.8h);
 		fill *= half3(0.3h, 0.55h, 0.7h);

@@ -214,7 +214,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     // the translucent pass: water (a top face tinted by the biome's water colour; stained glass and ice have white vertex
     // colours) gets its own body colour, a sky reflection and a sun glint, seen from above water
     half3 tint = in.v_Color.rgb;
-    bool water = ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && sf.flags2.y == 0
+    bool water = ALPHA_CUTOUT < 0.25 && n.y > 0.5h && max3(tint.r, tint.g, tint.b) - min3(tint.r, tint.g, tint.b) > 0.08h && !SHADE_CAMERA_UNDERWATER(sf)
         && !shadeDev(sf, SHADE_DEV_NO_WATER);
 #ifdef SHADE_WATER
     if (waterSprite == 0) water = false;
@@ -240,7 +240,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
-        if (shadeWdev(sf) != SHADE_WDEV_NO_DETAIL && (n.y > 0.5h || (n.y < -0.5h && sf.flags2.y != 0)) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
+        if (shadeWdev(sf) != SHADE_WDEV_NO_DETAIL && (n.y > 0.5h || (n.y < -0.5h && SHADE_CAMERA_UNDERWATER(sf))) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
 #ifdef SHADE_DYNLIGHT
@@ -265,13 +265,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.look = nullptr;
 #endif
         wi.res = &sr;
-        wi.fog = sf.flags2.y != 0 ? shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6) : float3(0.0); // only read from below
+        wi.fog = SHADE_CAMERA_UNDERWATER(sf) ? shadeLdrToHdr(sf.fogColor.rgb, sl) / max(ex, 1e-6) : float3(0.0); // only read from below
         texture2d<half> prevScene = sr.prevScene;
 #else
         wi.prevExposure = 0.0;
         wi.look = nullptr;
         wi.res = nullptr;
-        wi.fog = sf.flags2.y != 0 ? shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex) : float3(0.0);
+        wi.fog = SHADE_CAMERA_UNDERWATER(sf) ? shadeWaterDisplayRadiance(half3(sf.fogColor.rgb), ex) : float3(0.0);
         texture2d<half> prevScene = sceneCopy;
 #endif
         radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy, prevScene, waterWaves, waterCoarse);

@@ -114,6 +114,13 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_RIPPLE_NEAR 524288 // raindrop rings fade out over 0.02-0.045 blocks per pixel (~10 blocks) instead of 0.03-0.06
 #define SHADE_DEV_WX_SSR_STEPS8 1048576 // puddle reflections: 8 march steps (2 per quad lane) instead of SHADE_PUDDLE_STEPS
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
+// The camera is under water (ShadeFrame.flags2.y). 2026-10-08: the translucent terrain's LEAN_ABOVE variant (ShadeLean) is
+// only drawn while it is not, so there the view-from-below code compiles out.
+#ifdef SHADE_LEAN_ABOVE
+#define SHADE_CAMERA_UNDERWATER(f) false
+#else
+#define SHADE_CAMERA_UNDERWATER(f) ((f).flags2.y != 0)
+#endif
 // 2026-10-08 optimisation pricing (water.metal, terrain): bits 21-23 of mcopt.shade.dev hold one variant number (0 = none;
 // sunPath.z is a float, exact up to 2^24, so there is no room for more single bits). SHADE_WDEV_*: what that variant leaves out.
 #define SHADE_WDEV_NO_SSR 1       // water: no screen-space march (sky / rendered-sky reflection only)
@@ -382,7 +389,7 @@ static float3 shadeLit(half3 albedo, half3 n, half sky, half block, half shadow,
 	half3 ambient = n.y >= half(0.0) ? mix(side, half3(f.ambientSky.xyz), n.y) : mix(side, half3(f.ambientGround.xyz), -n.y);
 	ambient *= shadeSkyCurve(sky) * (foliage ? half(1.35) : half(1.0)); // leaves scatter the sky's light too
 	half3 torch = half3(f.ambientBlock.xyz) * shadeBlockCurve(block);
-	if (f.flags2.y != 0) { // the camera is under water: daylight arrives filtered by the water above, blue-green and weaker
+	if (SHADE_CAMERA_UNDERWATER(f)) { // the camera is under water: daylight arrives filtered by the water above, blue-green and weaker
 		direct *= half3(0.22h, 0.5h, 0.62h);
 		ambient *= half3(0.35h, 0.62h, 0.8h);
 	}

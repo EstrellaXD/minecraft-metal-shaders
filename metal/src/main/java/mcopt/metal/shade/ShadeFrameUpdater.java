@@ -280,7 +280,7 @@ public final class ShadeFrameUpdater {
 		if (mcopt.metal.shade.dh.ShadeDh.LOADED) mcopt.metal.shade.dh.ShadeDh.frame(ShadeConfig.HDR && !ShadeBindings.fallback());
 		// M3 dynamic lights: this frame's lights into their ring slot, occupancy refresh, visibility volumes (before the world)
 		if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.frame(ShadeBindings.ctx(), enc, camera, level, partial);
-		ShadeLean.update(f.dimension); // M3.1: which lean terrain variant this frame's world pass draws with
+		ShadeLean.update(f.dimension, f.underwater); // M3.1: which lean terrain variant this frame's world pass draws with
 		if (mcopt.metal.shade.water.ShadeWater.ON) mcopt.metal.shade.water.ShadeWater.bake(ShadeBindings.ctx(), enc);
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) mcopt.metal.shade.weather.ShadeWeather.bakeNoise(enc);
 		if (ShadeConfig.HDR && !ShadeBindings.fallback()) ShadePost.beginWorld(encoder, enc, mc.gameRenderer.mainRenderTarget());

@@ -1187,6 +1187,12 @@ fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[b
 	// mode 1 (Distant Horizons drew this frame): its LODs are not in the world depth, so an empty pixel below the horizon is
 	// taken as far terrain behind the clouds (true sky there gets the clouds a second time: rare with the LODs to the horizon)
 	if (d <= 0.0 && mode == 0u) discard_fragment();
+	// (FT2.7, audit idx 9) ...but only from inside or above the layer: from under its base the clouds below the horizon are the
+	// curved world's far deck, which shadeFogAir2 already puts BEHIND the LODs (wc = smoothstep(0, 24, base - camY)); here its
+	// complement, so they are never drawn twice (a hazy band of far clouds over the LOD mountains under the horizon, popping in
+	// at camY = base - 48)
+	float kEmpty = d > 0.0 ? 1.0 : 1.0 - smoothstep(0.0, 24.0, L.clouds0.x);
+	if (kEmpty <= 0.001) discard_fragment();
 	float2 ndc = in.position.xy * f.screen.zw * 2.0 - 1.0;
 	float4 w = f.invViewProj * float4(ndc, d > 0.0 ? d : 0.5, 1.0);
 	float3 p = w.xyz / w.w - shadeEye(f.invViewProj); // from the eye (view bobbing moves it): the ray cloudDirection holds
@@ -1206,7 +1212,7 @@ fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[b
 	uint2 d0 = uint2(dp), d1 = min(d0 + 1u, uint2(dsz) - 1u);
 	float2 fw = dp - float2(d0);
 	float cd = mix(mix(cdist.read(d0).r, cdist.read(uint2(d1.x, d0.y)).r, fw.x), mix(cdist.read(uint2(d0.x, d1.y)).r, cdist.read(d1).r, fw.x), fw.y);
-	float k = smoothstep(cd * 0.8, cd * 1.05, dist);
+	float k = smoothstep(cd * 0.8, cd * 1.05, dist) * kEmpty;
 	if (k <= 0.001) discard_fragment();
 	half4 cl = hist.sample(cloudClamp, uv);
 	float T = mix(1.0, float(cl.a), k);

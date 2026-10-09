@@ -120,6 +120,8 @@ struct VlParams {
 	float4 air5;      // 448 (FT2.6) the forest air's fade-out with the distance from the camera: x from, y to (blocks; y <= x: none); z its
 	                  //     share with the camera in the open (canopy factor 0; 1 = everywhere alike, FT2.5), w how far sideways the shade
 	                  //     grid's canopy test reaches (blocks; 0 = grid2.w)
+	float4 air6;      // 464 (FT2.7, audit idx 16) the canopy test as columns: x how many (0 = FT2.6's solid box), y taps up each one,
+	                  //     z their distance from the cell's axis (blocks; 0 = 3/4 of the canopy test's reach), w 0
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -296,14 +298,37 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 	// sunlit land
 	// (air5.w > 0: the box reaches that far sideways, else r: wide enough to hold the ring of leaves around a big gap in the canopy,
 	// where the shafts are)
+	// (FT2.7, air6.x > 0: audit idx 16) as columns, not a box: oak and birch leaves sit 3-7 blocks above the ground, so most of
+	// the box (4-16 blocks above a cell near the ground) lay above them, in the sun, and the autumn forest read as sunlit land
+	// (its shafts were gone). A column is open only where all its taps are lit (one shaded tap = leaves or an overhang above
+	// the cell, at any height up to look2.y); its taps are packed toward the low end (where short canopies are) and it stops
+	// at its first shaded one. The open share of the columns plays the box's lit share.
 	float up = p.look2.y, rUp = p.air5.w > 0.0 ? p.air5.w : r;
 	if (up > r && f.flags.z != 0) {
-		float litUp = 0.0;
-		for (int k = 0; k < VL_GRID_TAPS_UP; k++) {
-			float3 u = fract(0.5 + (float(k) + 0.37) * float3(0.8191725134, 0.6710436067, 0.5497004779));
-			litUp += vlGridTap(c + float3((u.x * 2.0 - 1.0) * rUp, r + u.y * (up - r), (u.z * 2.0 - 1.0) * rUp), f, map);
+		float open = 0.0;
+		int cols = min(int(p.air6.x), 12);
+		if (cols > 0) {
+			int taps = clamp(int(p.air6.y), 2, 6);
+			float rho = p.air6.z > 0.0 ? p.air6.z : 0.75 * rUp;
+			for (int i = 0; i < cols; i++) {
+				float a = (float(i) + 0.5) * (6.2831853 / float(cols));
+				float2 o = float2(cos(a), sin(a)) * rho;
+				float col = 1.0;
+				for (int j = 0; j < taps && col > 0.02; j++) {
+					float s = float(j) / float(taps - 1);
+					col = min(col, vlGridTap(c + float3(o.x, r + s * s * (up - r), o.y), f, map));
+				}
+				open += col;
+			}
+			open /= float(cols);
+		} else {
+			for (int k = 0; k < VL_GRID_TAPS_UP; k++) {
+				float3 u = fract(0.5 + (float(k) + 0.37) * float3(0.8191725134, 0.6710436067, 0.5497004779));
+				open += vlGridTap(c + float3((u.x * 2.0 - 1.0) * rUp, r + u.y * (up - r), (u.z * 2.0 - 1.0) * rUp), f, map);
+			}
+			open /= float(VL_GRID_TAPS_UP);
 		}
-		share = max(share, smoothstep(p.look2.z, p.look2.w, litUp / float(VL_GRID_TAPS_UP)));
+		share = max(share, smoothstep(p.look2.z, p.look2.w, open));
 	}
 	grid.write(half4(half(share)), (gid + uint3(p.grid2.xyz)) % uint3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z));
 }

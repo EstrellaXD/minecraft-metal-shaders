@@ -124,10 +124,13 @@ static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sun
 // 2026-10-08 optimisation pricing (water.metal, terrain): bits 21-23 of mcopt.shade.dev hold one variant number (0 = none;
 // sunPath.z is a float, exact up to 2^24, so there is no room for more single bits). SHADE_WDEV_*: what that variant leaves out.
 #define SHADE_WDEV_NO_SSR 1       // water: no screen-space march (sky / rendered-sky reflection only)
-#define SHADE_WDEV_FREE2 2        // (price3: no bisection -0.18 ms, 2 steps -0.07)
-#define SHADE_WDEV_FREE3 3
-#define SHADE_WDEV_FREE4 4        // (price3 "notex": the block texture is no longer sampled on water pixels, -0.11 ms)
-#define SHADE_WDEV_FREE5 5        // (price3: the crossing refined by 2 rounds of 3 parallel reads instead of 4 dependent ones: -0.05 ms)
+#define SHADE_WDEV_SSR_OLD 2      // (FT2.6) water SSR: FT2.5's thickness (1 step) and no fallback behind (was free: price3, no
+                                  // bisection -0.18 ms, 2 steps -0.07)
+#define SHADE_WDEV_SSR_THICK 3    // (FT2.6) water SSR: thickness 3 steps, no fallback behind
+#define SHADE_WDEV_SSR_BEHIND 4   // (FT2.6) water SSR: thickness 1 step, a miss takes the first crossing behind something (was free:
+                                  // price3 "notex", the block texture no longer sampled on water pixels, -0.11 ms)
+#define SHADE_WDEV_SSR_BOTH 5     // (FT2.6) water SSR: both (was free: price3, the crossing refined by 2 rounds of 3 parallel
+                                  // reads instead of 4 dependent ones: -0.05 ms)
 #define SHADE_WDEV_NO_FOG 6       // water: no air fog on the water pixel itself (shadeFogAir2)
 #define SHADE_WDEV_NO_DETAIL 7    // water: no fine-ripple sample (the long swell only)
 // (2026-10-08 price1/price2 within noise: the clouds' dome, the rendered-sky reflection, caustics, M3.4's soft shadow; -0.05 to

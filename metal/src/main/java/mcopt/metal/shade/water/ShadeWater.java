@@ -116,6 +116,13 @@ public final class ShadeWater {
 	 */
 	public static final boolean EDGE_REFL = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.edgeRefl", "true"));
 	/**
+	 * FT2.6 (Gael's FT2.5 lake: white blocks in the mirrored forest): the SSR march's thickness in steps' depth extents
+	 * (mcopt.shade.water.ssrThick; FT2.5 1, Photon MIT allows 3) and, with no hit, the first crossing behind something instead of
+	 * the sky (mcopt.shade.water.ssrBehind). With -Dmcopt.shade.wdev=true, mcopt.shade.dev variants 2-5 switch them live.
+	 */
+	public static final float SSR_THICK = Math.clamp(floatProperty("mcopt.shade.water.ssrThick", 1f), 0.5f, 8f);
+	public static final boolean SSR_BEHIND = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.ssrBehind", "false"));
+	/**
 	 * FT1.3 {@code mcopt.shade.water.style}: "photon" (default; Gael: "reflejos pixeleados", "agua como el mar de Photon"):
 	 * smooth ripples without M2.1's 1/16-block cells and crest pattern, calmer in clear weather (mcopt.shade.water.calm, 0.55
 	 * of the M2.1 slopes; rain brings them back), patches of calmer and rougher water, flatter at grazing angles (a near-mirror
@@ -186,6 +193,7 @@ public final class ShadeWater {
 			if (DETAIL_EXTRAS) b.append("#define SHADE_WATER_DETAIL_EXTRAS 1\n");
 		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
+		b.append("#define SHADE_SSR_THICK_K ").append(SSR_THICK).append("\n#define SHADE_SSR_BEHIND ").append(SSR_BEHIND ? 1 : 0).append('\n');
 		// 2026-10-08: the SSR march decides in reversed-Z depth (same decisions, no division per step); false = FT1.3's march
 		if (Boolean.parseBoolean(System.getProperty("mcopt.shade.water.rawz", "true"))) b.append("#define SHADE_SSR_RAWZ 1\n");
 		// 2026-10-08: the live pricing switches (bits 21-23 of mcopt.shade.dev) only with -Dmcopt.shade.wdev=true (they cost ~0.09 ms

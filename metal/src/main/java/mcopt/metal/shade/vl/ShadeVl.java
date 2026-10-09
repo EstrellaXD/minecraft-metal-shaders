@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 448; // VlParams (vl.metal), 28 x float4 since godrays v3
+	private static final int PARAM_BYTES = 464; // VlParams (vl.metal), 29 x float4 since FT2.6
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -501,8 +501,10 @@ public final class ShadeVl {
 		float vm = Math.max(Math.max(Math.abs(clip.x), Math.abs(clip.y)), Math.max(Math.abs(clip.w), 1e-6f));
 		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.live("mcopt.shade.vl.radialTaps", 0f) : 0f);
 		// look2 (FT2.3): x the screen-space streaks in front of geometry (mcopt.shade.vl.crepGeo, live; FT2.1: 1, now 0)
-		// y (FT2.6): how high above a shade grid cell its taps reach (mcopt.shade.vl.airGridUp, live; 0 = airGridR, FT2.5)
-		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), VlConfig.live("mcopt.shade.vl.airGridUp", 0f), 0f, 0f);
+		// yzw (FT2.6): the shade grid's canopy test (vl_shade_grid): the top of its box above a cell (mcopt.shade.vl.airGridUp; 0 =
+		// off, FT2.5) and the sunlit share of that box over which the cell turns into sunlit land (airGateLo / airGateHi), live
+		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), VlConfig.live("mcopt.shade.vl.airGridUp", 0f),
+			VlConfig.live("mcopt.shade.vl.airGateLo", 0.6f), VlConfig.live("mcopt.shade.vl.airGateHi", 0.95f));
 		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main + near steps: balanced
 		// 20. gs-w18: 16 / 20 / 24 look alike in stills, but Gael asked not to trade the look for speed: 20 as before the
 		// optimisation, ~0.1 ms; mcopt.shade.vl.airMin / airGrowth / airSteps, live)
@@ -540,6 +542,10 @@ public final class ShadeVl {
 		lastCell = cell;
 		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0.85f), VlConfig.live("mcopt.shade.vl.airIso", 0.05f),
 			gridAll ? -1f : (frame & 3));
+		// air5 (FT2.6): the forest air's fade-out with the distance from the camera (blocks: mcopt.shade.vl.airFar0 / airFar1, live;
+		// 0 = none, FT2.5)
+		// (z: its share with the camera in the open, the canopy factor 0: mcopt.shade.vl.airOpen, live; 1 = FT2.5)
+		put(b, VlConfig.live("mcopt.shade.vl.airFar0", 0f), VlConfig.live("mcopt.shade.vl.airFar1", 0f), VlConfig.live("mcopt.shade.vl.airOpen", 1f), 0f);
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

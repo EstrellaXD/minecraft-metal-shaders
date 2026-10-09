@@ -36,6 +36,18 @@
 #ifndef MCOPT_SHADE_WATER
 #define MCOPT_SHADE_WATER
 
+// (FT2.6) the live pricing / A/B switches (shade_common.metal SHADE_WDEV_IS): this module's flag defines (SHADE_WDEV_ON among them)
+// come after shade_common.metal, so its test there never saw them and every variant ran as the default; defined again here
+#if defined(SHADE_LEAN_ABOVE) && defined(SHADE_WDEV_ON)
+#undef SHADE_WDEV_IS
+#define SHADE_WDEV_IS(f, k) (shadeWdev(f) == (k))
+#endif
+#ifndef SHADE_SSR_THICK_K
+#define SHADE_SSR_THICK_K 1.0 // (FT2.6, ShadeWater: mcopt.shade.water.ssrThick) the march's thickness in steps' depth extents
+#endif
+#ifndef SHADE_SSR_BEHIND
+#define SHADE_SSR_BEHIND 0 // (FT2.6, ShadeWater: mcopt.shade.water.ssrBehind) a miss takes the first crossing behind something
+#endif
 #ifndef SHADE_SSR_STEPS
 #define SHADE_SSR_STEPS 16
 #endif
@@ -377,6 +389,18 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		float3 s = s0 + ds * shadeSsrT((base + float(i)) * inv);
 		zs[i] = hz.read(uint2(clamp((s.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)) >> 1).r;
 	}
+	// FT2.6 (Gael's FT2.5 lake: white blocks in the mirrored forest): a ray that passed behind the trees' trunks and leaves failed
+	// the thickness test there, marched on into the sky above them and found nothing, so the water took the sky (the clouds'
+	// dome, bright white) where it should mirror the dark forest. thickK: the thickness allows this many times the step's own
+	// depth extent (Photon MIT 26c2906e allows 3 steps' depth); behind: with no hit, the first crossing behind something stands
+	// for what the ray met there (marked w + 10, after any real hit of the quad)
+	float thickK = SHADE_SSR_THICK_K;
+	bool behind = SHADE_SSR_BEHIND != 0;
+	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_OLD)) { thickK = 1.0; behind = false; }
+	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_THICK)) { thickK = 3.0; behind = false; }
+	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_BEHIND)) { thickK = 1.0; behind = true; }
+	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_BOTH)) { thickK = 3.0; behind = true; }
+	float4 back = float4(0.0, 0.0, 0.0, -1.0);
 	for (int i = 1; i <= n; i++) {
 		float hi = shadeSsrT((base + float(i)) * inv);
 		if (s0.z + ds.z * hi > zs[i]) continue; // still in front of what the coarse depth holds there
@@ -393,7 +417,7 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		float wh = zh > 0.0 ? B / max(zh + A, 1e-7) : SHADE_WATER_SKY_W;
 		float wr = B / max(sh.z + A, 1e-7);
 		float wp = B / max(s0.z + ds.z * tPrev + A, 1e-7);
-		float thick = 0.3 + 0.02 * wh + abs(wr - wp);
+		float thick = 0.3 + 0.02 * wh + abs(wr - wp) * thickK;
 		if (wh < SHADE_WATER_SKY_W && wr - wh < thick) {
 #ifdef SHADE_SSR_EDGE
 			float off = abs(sh.x) - 1.0;
@@ -410,8 +434,12 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 			return float4(uv, fade, hi);
 		}
 		// the ray passed behind something thin: keep marching
+		if (behind && back.w < 0.0 && wh < SHADE_WATER_SKY_W) {
+			float bf = smoothstep(0.0, 0.07, min(uv.y, 1.0 - uv.y)) * (1.0 - 0.5 * smoothstep(0.0, 1.0, abs(sh.x) - 1.0));
+			back = float4(clamp(uv.x, 0.5 / size.x, 1.0 - 0.5 / size.x), uv.y, bf, hi + 10.0);
+		}
 	}
-	return float4(0.0, 0.0, 0.0, -1.0);
+	return back;
 }
 #else
 static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int chunks, float jitter, constant ShadeFrame &f,
@@ -634,9 +662,10 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	int chunk = int(q.x & 1u) + 2 * int(q.y & 1u);
 	float jitter = shadeNoise(floor(pixel * 0.5), SHADE_WATER_NOISE_FRAME(f));
 	float4 hit = shadeSsrMarch(s0, ds, screenEnd, chunk, 4, jitter, f, depth, hz);
-	float key = hit.w >= 0.0 ? float(chunk) : 4.0;
+	// (FT2.6: a crossing behind something, w >= 10, counts only where no lane of the quad found a real hit)
+	float key = hit.w >= 10.0 ? float(chunk) + 4.0 : hit.w >= 0.0 ? float(chunk) : 8.0;
 	float best = shadeQuadMin(key);
-	if (best > 3.5) return 0.0;
+	if (best > 7.5) return 0.0;
 	float3 mine = key == best ? hit.xyz : float3(0.0); // exactly one lane holds the nearest hit
 	float3 h = shadeQuadSum(mine);
 #ifdef SHADE_WATER_EDGE_REFL

@@ -48,7 +48,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 28 x float4 = 448 bytes since godrays v3).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 29 x float4 = 464 bytes since FT2.6).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -99,8 +99,9 @@ struct VlParams {
 	                  //     In full from a canopy factor of 0.2 (under trees; open land keeps the plain light). See vlVeilR.
 	float4 radial;    // 320 (FT2.3) the light direction's vanishing point in homogeneous NDC: xy = (viewProj * (L, 0)).xy, z its w
 	                  //     (all scaled alike), w taps on each side of the radial blur (0 = off). See vl_radial.
-	float4 look2;     // 336 (FT2.3) x gain of the screen-space crepuscular streaks in front of geometry (HDR; 0 = none), y (FT2.6) how high
-	                  //     above a shade grid cell its taps reach (blocks; 0 = grid2.w), zw 0
+	float4 look2;     // 336 (FT2.3) x gain of the screen-space crepuscular streaks in front of geometry (HDR; 0 = none); (FT2.6) the shade
+	                  //     grid's canopy test (vl_shade_grid): y the top of its box above a cell (blocks; <= grid2.w: off, FT2.5), zw the
+	                  //     sunlit share of that box from which the cell starts to read as sunlit land, and fully
 	float4 air;       // 352 (godrays v3, HDR) the air mode (x 1 = on, see vl_march): y min steps, z steps per block marched, w max steps
 	float4 air2;      // 368 (godrays v3) x the march's end (blocks: the render distance), y the light the shadows may take out of a
 	                  //     sky pixel (share of the haze's unshadowed sunlit part), z gain of that shadowed part (1 = physical),
@@ -116,12 +117,15 @@ struct VlParams {
 	                  //     1 = everywhere alike), y its phase's forward g (0 = Photon's two lobes over four octaves), z the
 	                  //     isotropic share with that lobe, w which quarter of the grid's cells this frame refreshes (z slices
 	                  //     z % 4 == w; < 0: all of them, after a reset)
+	float4 air5;      // 448 (FT2.6) the forest air's fade-out with the distance from the camera: x from, y to (blocks; y <= x: none); z its
+	                  //     share with the camera in the open (canopy factor 0; 1 = everywhere alike, FT2.5), w 0
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
 #define VL_GRID_Y 32
 #define VL_GRID_Z 64
 #define VL_GRID_TAPS 24
+#define VL_GRID_TAPS_UP 12 // (FT2.6) the canopy test's taps, in the box above (look2.y)
 #define VL_GRID_ROUNDS 4
 #define VL_FAR_STEPS 8
 
@@ -259,31 +263,46 @@ kernel void vl_canopy(uint tid [[thread_index_in_threadgroup]], uint lane [[thre
 // grid holds still as the camera moves (no flicker; it follows the shadow map's own steps). The texture wraps around (a cell's
 // texel = its world cell index mod the grid's size), so a quarter of the cells per frame keeps it current (the shade changes
 // slowly; cells that just came in at the far edge, faded there, wait at most 4 frames); after a reset all of them.
+// One shade grid tap: 1 where the sun reaches point q (far cascade, linear compare), outside the far square or above it lit.
+static inline float vlGridTap(float3 q, constant ShadeFrame &f, depth2d_array<float> map) {
+	constexpr sampler cmpLin(coord::normalized, filter::linear, address::clamp_to_edge, compare_func::greater_equal);
+	float4 h = f.shadowViewProj[1] * float4(q, 1.0);
+	if (max(abs(h.x), abs(h.y)) >= 0.995 || h.z >= 1.0) return 1.0;
+	return h.z > 0.0 ? map.sample_compare(cmpLin, shadeShadowUV(h.xyz), 1u, h.z) : 0.0;
+}
+
 kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
                           depth2d_array<float> map [[texture(16)]], texture3d<half, access::write> grid [[texture(0)]]) {
 	uint3 gid = p.air4.w < 0.0 ? tid : uint3(tid.x, tid.y, tid.z * VL_GRID_ROUNDS + uint(p.air4.w));
 	if (gid.x >= VL_GRID_X || gid.y >= VL_GRID_Y || gid.z >= VL_GRID_Z) return;
-	constexpr sampler cmpLin(coord::normalized, filter::linear, address::clamp_to_edge, compare_func::greater_equal);
 	float3 c = p.grid.xyz + (float3(gid) + 0.5) * p.grid.w;
 	float r = p.grid2.w;
-	// (FT2.6, look2.y > 0) the taps reach that high above the cell (else r, as FT2.5): the shade must come from ABOVE the point, as
-	// under a canopy. With taps only up to r, the air just over a sunlit crest counted as shade (the hill's own shadow lies
-	// beside and below it), so it got the forest's density and glowed toward the sun as white puffs along every ridge (Gael's
-	// FT2.5 screenshots 3-5); with the open sky above it, a taller box reads it as sunlit land
-	float up = p.look2.y > 0.0 ? p.look2.y : r;
 	float lit = 0.0;
 	if (f.flags.z == 0) {
 		lit = float(VL_GRID_TAPS);
 	} else {
 		for (int k = 0; k < VL_GRID_TAPS; k++) {
 			float3 u = fract(0.5 + float(k) * float3(0.8191725134, 0.6710436067, 0.5497004779));
-			float3 q = c + float3((u.x * 2.0 - 1.0) * r, 0.5 + u.y * (up - 0.5), (u.z * 2.0 - 1.0) * r);
-			float4 h = f.shadowViewProj[1] * float4(q, 1.0);
-			if (max(abs(h.x), abs(h.y)) >= 0.995 || h.z >= 1.0) lit += 1.0;
-			else if (h.z > 0.0) lit += map.sample_compare(cmpLin, shadeShadowUV(h.xyz), 1u, h.z);
+			lit += vlGridTap(c + float3((u.x * 2.0 - 1.0) * r, 0.5 + u.y * (r - 0.5), (u.z * 2.0 - 1.0) * r), f, map);
 		}
 	}
-	grid.write(half4(half(lit / float(VL_GRID_TAPS))), (gid + uint3(p.grid2.xyz)) % uint3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z));
+	float share = lit / float(VL_GRID_TAPS);
+	// (FT2.6, look2.y > r) the canopy test: the share of sunlit points in a box above that one, from r up to look2.y blocks. Under
+	// trees the canopy shades it (a gap in the canopy too: its ring of leaves lies within the box); over a sunlit crest, in a wide
+	// clearing or at the sunlit edge of a hill's shadow the sky is open above. There the low box alone read the hill's own
+	// shadow beside and below the air as shade, so the air got the forest's density and glowed toward the sun as white puffs
+	// along every ridge (Gael's FT2.5 screenshots 3-5): where the box above is mostly sunlit (look2.z..w) the cell reads as
+	// sunlit land
+	float up = p.look2.y;
+	if (up > r && f.flags.z != 0) {
+		float litUp = 0.0;
+		for (int k = 0; k < VL_GRID_TAPS_UP; k++) {
+			float3 u = fract(0.5 + (float(k) + 0.37) * float3(0.8191725134, 0.6710436067, 0.5497004779));
+			litUp += vlGridTap(c + float3((u.x * 2.0 - 1.0) * r, r + u.y * (up - r), (u.z * 2.0 - 1.0) * r), f, map);
+		}
+		share = max(share, smoothstep(p.look2.z, p.look2.w, litUp / float(VL_GRID_TAPS_UP)));
+	}
+	grid.write(half4(half(share)), (gid + uint3(p.grid2.xyz)) % uint3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z));
 }
 
 // Canopy mist: the humid air under trees and overhangs, around the camera, scaled by the canopy factor. Density
@@ -417,6 +436,12 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 				float shade = p.air4.x;
 				if (inGrid > 0.0) shade = mix(p.air4.x, max(saturate((p.air3.y - float(shadeGrid.sample(gridLin, g + gridWrap).r)) * litK), p.air4.x), inGrid);
 				dF = local * shade * (p.air3.z > 0.0 ? saturate(t / p.air3.z) : 1.0);
+				// (FT2.6, air5) faded out far from the camera: the humid air of the forest around the player, not puffs over distant
+				// ridges
+				if (p.air5.y > p.air5.x) dF *= 1.0 - smoothstep(p.air5.x, p.air5.y, t);
+				// (FT2.6, air5.z < 1) with the camera in the open (the canopy factor, vl_canopy) only that share of it: the shafts are
+				// strongest in the forest around you (Complementary's "scene-aware" idea), not as lone plumes on a ridge far away
+				dF *= mix(p.air5.z, 1.0, saturate(canopy));
 			}
 			float ext = lumR * fR + dM + dF * p.mist.w;
 			float3 q0 = c0o + c0d * t, q1 = c1o + c1d * t;

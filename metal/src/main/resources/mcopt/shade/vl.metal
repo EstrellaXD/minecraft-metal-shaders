@@ -79,7 +79,9 @@ struct VlParams {
 	                  //     z 1: that extra from the taps past the pixel's own neighbourhood (mcopt.shade.vl.sunsetFar), w > 0 its
 	                  //     falloff exponent around the sun (mcopt.shade.vl.sunsetFall; 0 = crep.w)
 	float4 tune;      // 272 (2026-10-09) x the canopy factor's floor (the canopy mist also outside a canopy, at least this much of
-	                  //     it: shafts through trees seen from the open, mcopt.shade.vl.canopyMin), yzw 0
+	                  //     it: mcopt.shade.vl.canopyMin), y the open-air cut and z the canopy mist's carve away from the light (the
+	                  //     mistAmb.w / carve.x values hold toward it; between by the angle: mcopt.shade.vl.openCutSide / carveSide),
+	                  //     w 0
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -322,8 +324,13 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// The open-air haze's sun glow is already in the sky and M1's aerial haze: keep only what the shadows carve out of
 		// it (the lit part above a share of its unshadowed value) so shafts read as structure, not as a milky veil. The
 		// canopy mist (ours alone) counts fully. Each layer has its art gate.
-		float openPart = max(sumOpenLit - p.mistAmb.w * sumOpen, 0.0);
-		float k = p.carve.x;
+		// (2026-10-09) the cuts by the angle to the light: looking toward it the lit air's forward glow would veil the view (the
+		// sunset washed into gold), so most of it stays out there; from the side that glow is weak and a lower cut lets the
+		// shadowed and lit air read as beams (Gael: "se ven poquito")
+		float sunward = smoothstep(0.35, 0.9, mu);
+		float openCut = mix(p.tune.y, p.mistAmb.w, sunward);
+		float openPart = max(sumOpenLit - openCut * sumOpen, 0.0);
+		float k = mix(p.tune.z, p.carve.x, sunward);
 		sumLocal = max(sumLocal - k * sumLocalAll, 0.0) / (1.0 - k);
 		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * (openPart * p.gate.x + sumLocal * p.gate.y) * p.shape.x);
 	} else {

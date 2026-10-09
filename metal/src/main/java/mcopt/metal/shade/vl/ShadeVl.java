@@ -401,16 +401,18 @@ public final class ShadeVl {
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
-		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK,
-			hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f);          // mistAmb, open glow left out
-		put(b, hdr ? VlConfig.live("mcopt.shade.vl.carve", HDR_CARVE) : 0f, hdr ? HDR_CARVE_WATER : 0f, histU, histV); // carve; zw: the history's live part
+		float openCut = hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f, carve = hdr ? VlConfig.live("mcopt.shade.vl.carve", HDR_CARVE) : 0f;
+		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, openCut); // mistAmb, open glow left out (toward the light)
+		put(b, carve, hdr ? HDR_CARVE_WATER : 0f, histU, histV);                         // carve (toward the light); zw: the history's live part
 		// M3.3 art: x the gain of the sky's dark rays (mcopt.shade.vl.skyRays, dev; 1), y their extra gain over the open sky:
 		// mcopt.shade.vl.sunsetRays - 1 in the golden hour while the sunset art is on (its brighter, warmer aureole had weakened
 		// them); z that extra from the taps past the pixel's own neighbourhood (sunsetFar), w its falloff (sunsetFall); y = 0 is
 		// M3.2
 		float sunsetArt = mcopt.metal.shade.ShadeSky.sunsetArt ? golden : 0f;
 		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, VlConfig.sunsetFar() ? 1f : 0f, VlConfig.sunsetFall()); // art
-		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), 0f, 0f, 0f);              // tune: x the canopy factor's floor
+		// tune: x the canopy factor's floor, yz the open cut and the carve away from the light
+		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), hdr ? VlConfig.live("mcopt.shade.vl.openCutSide", openCut) : openCut,
+			hdr ? VlConfig.live("mcopt.shade.vl.carveSide", carve) : carve, 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

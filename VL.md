@@ -235,3 +235,17 @@ looking out into the low sun), `vl_shelter` (inside a village house looking out 
   floored at 55 % of the pixel in shade_final) instead of an added glow, which had turned the sunset sky into a grey veil;
   in front of geometry only light through gaps (openness above 0.25) is added. Strength 0.08 + 0.12 golden (HDR).
 - The M1/LDR path (`mcopt.shade.hdr=false`) under TAAU passes the live size.
+
+## FT2.2: the shafts' local contrast (2026-10-09)
+
+Gael saw the stronger look of a802352 as "un lente empañado": more canopy-mist light is mostly a uniform glow (with the sun
+under the canopies every ray near the camera crosses lit air), not more shafts, and no per-pixel measure tells the two apart.
+`vl_temporal_fold` now compares each VL texel with the local mean of r = in-scattered luminance / (the canopy mist's optical
+depth along its ray + 0.5) (path-length free, so no halos at depth edges): light = max(gain·l − (gain − keep)·r̄·R, 0) →
+keep × a uniform glow, more for what stands out, nothing for air darker than its surroundings. r̄ = last frame's
+`vl_veil_down` (4×4 means of the history, R16F at a quarter of the VL size) + `vl_veil_blur_h/v` (9 taps, `hpRadius` apart).
+In full from a canopy factor of 0.2; the three passes run only when the factor read back is above 0.005 (~0.1 ms under trees,
+0 in the open). VlParams.hp (320 bytes): `mcopt.shade.vl.hp` / `hpKeep` 0.2 / `hpGain` 1.8 / `hpRadius` 2, live. With it the
+canopy mist is ×2.5 (`canopyGain`), the cuts are FT2.1's, a soft knee 0.4 on the light the final pass adds (`knee`).
+Measurements, tools and rounds: `work/notes/godrays-veil-2026-10-09/README.md` (velo FT2.1 → FT2.2 in the forest views
+−18…−34 %, shafts +4…+18 %).

@@ -184,6 +184,14 @@ static half shadeShadow2(depth2d_array<float> map, sampler cmp, constant ShadeFr
 		} else {
 			nearVis = map.sample_compare(cmp, uv, 0u, c.z); // nothing nearer the light around: lit, unless right at an edge
 		}
+		// (FT2.8, audit idx 98) faded into M1's tent over the last 6 blocks before SHADE_PCSS_FAR, not a step: a ring where the
+		// shadows' softness dropped 2-3x at 40 blocks
+		float lp = length(p);
+		if (lp > SHADE_PCSS_FAR - 6.0) {
+			float mt;
+			float tent = shadeShadowCascade(map, cmp, 0u, f.shadowViewProj[0], p, dir * f.cascadeSplits.z, texelUv, 0.75, mt);
+			nearVis = mix(nearVis, tent, smoothstep(SHADE_PCSS_FAR - 6.0, SHADE_PCSS_FAR, lp));
+		}
 		if (m0 < 0.85) return half(nearVis);
 	}
 	float m1;

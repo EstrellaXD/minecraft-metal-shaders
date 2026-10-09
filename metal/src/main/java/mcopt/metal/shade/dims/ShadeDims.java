@@ -299,7 +299,13 @@ public final class ShadeDims {
 		}
 		long day = Math.floorDiv(level.getDefaultClockTime() + 6000L, 24000L); // a night belongs to the day it starts in
 		float chance = mcHash(day) < 0.35f ? 1f : 0f;
-		float want = DimsConfig.AURORA == 2 ? 1f : cold * chance;
+		// auto (Gael, 2026-10-08, "frecuentes"): every clear night in cold biomes (0.6 in cool ones), and on about one night in
+		// three anywhere else at half strength; rare = M3's auto (cold biomes, those nights only); always = every night
+		float want = switch (DimsConfig.AURORA) {
+			case 2 -> 1f;
+			case 3 -> cold * chance;
+			default -> Math.max(cold, 0.5f * chance);
+		};
 		float night = 1f - smooth(-0.22f, -0.06f, f.sunDir.y);
 		want *= night * (1f - f.rain);
 		float k = snap ? 1f : 1f - (float) Math.exp(-Math.max(dt, 0f) / 4f);

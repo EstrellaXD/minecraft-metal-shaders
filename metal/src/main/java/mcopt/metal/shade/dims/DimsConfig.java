@@ -28,8 +28,9 @@ import mcopt.metal.shade.ShadeConfig;
  * <li>{@code mcopt.shade.dims} (true): the Nether and End looks (bible E24, E25): terrain lit per pixel with a dimension
  * ambient (Nether biome palettes, lava up-light; the End's violet key light with shadows), our own fog from depth in the final
  * pass (Nether: layered glowing haze; End: a thin violet haze), the End sky (gradient, nebula, stars, beams, flash).</li>
- * <li>{@code mcopt.shade.aurora} (auto): auto = some clear nights in cold biomes (hashed per night, ~35%); always = every
- * night in any biome (look-dev); off.</li>
+ * <li>{@code mcopt.shade.aurora} (auto): auto = every clear night in cold biomes (fainter in cool ones) and about one clear
+ * night in three anywhere else, at half strength (Gael, 2026-10-08: "frecuentes"); rare = M3's auto, only some clear nights
+ * (hashed per night, ~35%) in cold biomes; always = every night in any biome (look-dev); off.</li>
  * <li>{@code mcopt.shade.media} (true): camera inside lava / powder snow (E26): a glowing, churning lava medium with heat
  * shimmer; frosted cold powder snow.</li>
  * <li>{@code mcopt.shade.endShadows} (true): the End key light casts shadows (the shadow pass runs in the End; its far
@@ -45,10 +46,11 @@ public final class DimsConfig {
 	/** mcopt.shade.skydims: the module's master switch. */
 	public static final boolean MODULE = Shade.ENABLED && flag("mcopt.shade.skydims", true);
 	public static final boolean DIMS = MODULE && ShadeConfig.HDR && flag("mcopt.shade.dims", true);
-	/** 0 off, 1 auto (cold biomes, some nights), 2 always. */
+	/** 0 off, 1 auto (every clear night in cold biomes, some elsewhere), 2 always, 3 rare (M3's auto: some nights, cold biomes). */
 	public static final int AURORA = MODULE ? switch (System.getProperty("mcopt.shade.aurora", "auto").trim().toLowerCase(Locale.ROOT)) {
 		case "off", "false" -> 0;
 		case "always", "on", "true" -> 2;
+		case "rare" -> 3;
 		default -> 1;
 	} : 0;
 	public static final boolean MEDIA = MODULE && ShadeConfig.HDR && flag("mcopt.shade.media", true);
@@ -80,7 +82,7 @@ public final class DimsConfig {
 	}
 
 	public static String describe() {
-		return (MODULE ? "" : "module off (mcopt.shade.skydims=false): ") + "dims " + DIMS + ", aurora " + new String[] {"off", "auto", "always"}[AURORA] + ", media " + MEDIA + ", end shadows " + END_SHADOWS
+		return (MODULE ? "" : "module off (mcopt.shade.skydims=false): ") + "dims " + DIMS + ", aurora " + new String[] {"off", "auto", "always", "rare"}[AURORA] + ", media " + MEDIA + ", end shadows " + END_SHADOWS
 			+ ", nether shimmer " + NETHER_SHIMMER + ", xdr " + new String[] {"off", "auto", "on"}[XDR] + " (peak cap " + XDR_PEAK + ")";
 	}
 }

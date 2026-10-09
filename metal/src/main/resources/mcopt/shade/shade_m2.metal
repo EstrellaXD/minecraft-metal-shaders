@@ -30,7 +30,8 @@ static inline bool shadeFeature(constant ShadeLook &L, int bit) { return (L.tier
 // Henyey-Greenstein phase (1/sr).
 static inline float shadeHG(float mu, float g) {
 	float g2 = g * g;
-	return 0.0795775 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
+	float x = max(1.0 + g2 - 2.0 * g * mu, 1e-4);
+	return 0.0795775 * (1.0 - g2) / (x * sqrt(x)); // x^1.5 without pow's log and exp (2026-10-08: the haze runs it per pixel)
 }
 
 // ---- output ---------------------------------------------------------------------------------------------------------------
@@ -231,7 +232,7 @@ static float3 shadeHazeInscatter(float3 p, constant ShadeFrame &f, constant Shad
 	float phM = 0.8 * shadeHG(nu, SHADE_HAZE_MIE_G) + 0.2 * shadeHG(nu, -0.2);
 	float3 E = f.sunColor.rgb * 3.14159265 * sunVis;    // irradiance from the light (sunColor is light / pi)
 	float3 sky = f.ambientSky.rgb * 0.9;                 // mean sky radiance (ambientSky ~ irradiance / pi)
-	float glow = 1.0 + L.fogMisc.w * exp(-pow((L.sunGeom.w * 57.29578 + 1.0) / 2.5, 2.0));
+	float glow = 1.0 + L.fogMisc.w; // (ShadeLook: strength x exp(-((sun elevation in degrees + 1) / 2.5)^2), once per frame)
 	float aM = L.fogM.w;
 	float3 sR = (E * phR + sky) * (1.0 / (1.0 - 0.5));
 	float3 sM = (E * phM * glow + sky) * aM / (1.0 - 0.5 * aM);

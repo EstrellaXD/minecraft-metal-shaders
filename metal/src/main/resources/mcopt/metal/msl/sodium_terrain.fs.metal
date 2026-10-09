@@ -105,8 +105,19 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     dv *= mipScale;
 #endif
     float2 texelScreenSize = sqrt(du * du + dv * dv);
-    float4 color = sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
-    if (g.u_UseRGSS != 0u) {
+#if defined(MCOPT_SHADE) && defined(SHADE_WATER)
+    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
+    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
+    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together.
+    // Water pixels never use the block texture (the module shades them from its own waves): not sampled there.
+    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
+    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
+    bool skipTex = waterFull && shadeWdev(sf) == SHADE_WDEV_NO_TEX;
+#else
+    const bool skipTex = false;
+#endif
+    float4 color = skipTex ? float4(1.0) : sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
+    if (g.u_UseRGSS != 0u && !skipTex) {
         float minPixelSize = fast::min(pixelSize.x, pixelSize.y);
         float blendFactor = smoothstep(minPixelSize, minPixelSize * 2.0, fast::max(texelScreenSize.x, texelScreenSize.y));
         float duLength = length(du), dvLength = length(dv);
@@ -174,14 +185,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
     bool foliage = false;
 #endif
-#ifdef SHADE_WATER
-    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
-    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
-    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together
-    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
-    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
-#else
-    bool waterFull = false;
+#ifndef SHADE_WATER
+    bool waterFull = false; // (with the water module: waterSprite / waterFull are found above, before the texture sampling)
 #endif
     // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4); the water
     // module only gates its glint and caustics with it: M1's 4-tap tent there instead of PCSS
@@ -196,7 +201,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half shadowSky = endLit ? half(1.0) : in.v_Light.y;
     half shadow = (in.v_Light.y <= 0.3h && !endLit) || netherLit ? half(1.0)
         // M3.4 (mcopt.shade.waterShadowSoft, ShadeLook.waterShadow.x, read every frame): up-facing water gets a soft-edged shadow
-        : waterFull ? (n.y > 0.5h && sl.waterShadow.x > 0.0 && shadeWdev(sf) != SHADE_WDEV_HARD_SHADOW ? shadeShadowSoft(shadowMap, shadowCompare, sf, p, n, sl.waterShadow.x, fragCoord.xy)
+        : waterFull ? (n.y > 0.5h && sl.waterShadow.x > 0.0 ? shadeShadowSoft(shadowMap, shadowCompare, sf, p, n, sl.waterShadow.x, fragCoord.xy)
                                                             : shadeShadow(shadowMap, shadowCompare, sf, p, n, false))
         : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
 #ifdef MCOPT_HDR
@@ -365,7 +370,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         }
 #endif
     }
-    if (!dims) { // Nether/End: the final pass fogs
+    if (!dims && !(waterFull && shadeWdev(sf) == SHADE_WDEV_NO_FOG)) { // Nether/End: the final pass fogs
 #ifdef MCOPT_HDR
         radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl, &sr);
 #else

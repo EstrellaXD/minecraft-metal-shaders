@@ -197,8 +197,21 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	// scene point jitter.xy / 2 (uv) further on; reading them at in.uv moved them against the steady resolved image by up to
 	// half a render pixel every frame (god rays wobbling at their edges and at the leaves)
 	float2 uv = (rw & 2) != 0 ? clamp(in.uv + 0.5 * f.jitter.xy, 0.0, 1.0) : in.uv;
+#ifdef SHADE_HAZE_EDGE
+	// the 2x2 depth texels around uv (the haze's edge test below) in one gather, and this pixel's own (nearest) texel picked
+	// from them: one fetch instead of five, the same values (tp <= dsize - 1.001 keeps t0 + 1 inside the live rect; the
+	// nearest texel floor(uv * dsize) is t0 + (fw >= 0.5) per axis; gather order: (t0.x, t1.y) (t1.x, t1.y) (t1.x, t0.y) (t0.x, t0.y))
+	float2 tp = clamp(uv * dsize - 0.5, float2(0.0), dsize - 1.001);
+	uint2 t0 = uint2(tp);
+	float2 fw = tp - float2(t0);
+	constexpr sampler gatherClamp(coord::normalized, address::clamp_to_edge, filter::nearest);
+	float4 dg = depth.gather(gatherClamp, (float2(t0) + 1.0) / float2(depth.get_width(), depth.get_height()));
+	float4 dq = float4(dg.w, dg.z, dg.x, dg.y); // t0, (t1.x, t0.y), (t0.x, t1.y), t1
+	float d = fw.y >= 0.5 ? (fw.x >= 0.5 ? dq.w : dq.z) : (fw.x >= 0.5 ? dq.y : dq.x);
+#else
 	uint2 dpx = min(uint2(uv * dsize), uint2(dsize) - 1u);
 	float d = depth.read(dpx);
+#endif
 	bool dims = DIMS && (L.tier.y & SHADE_FEATURE_DIMS) != 0 && L.dimTint.x > 0.0 && f.flags.x != SHADE_DIM_OVERWORLD;
 	uint2 sp = px;
 	if (dims && (L.tier.y & SHADE_FEATURE_SHIMMER) != 0 && shadeDimKind(L) == 1 && d > 0.0) {
@@ -220,11 +233,8 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		// far terrain against the sky (sunset, toward the sun) got a rim of bright and dark dots (Gael). The 2x2 texels around:
 		// where they agree (almost everywhere) one evaluation as before; along an edge each terrain texel's haze is weighted
 		// bilinearly (the sky's texels add none), so the haze fades across the edge as the colour does
-		float2 tp = clamp(uv * dsize - 0.5, float2(0.0), dsize - 1.001);
-		uint2 t0 = uint2(tp);
-		uint2 t1 = min(t0 + 1u, uint2(dsize) - 1u);
-		float2 fw = tp - float2(t0);
-		float4 dq = float4(depth.read(t0), depth.read(uint2(t1.x, t0.y)), depth.read(uint2(t0.x, t1.y)), depth.read(t1));
+		// (dq, t0, fw: read above with the pixel's own depth)
+		uint2 t1 = t0 + 1u;
 		float dlo = min(min(dq.x, dq.y), min(dq.z, dq.w)), dhi = max(max(dq.x, dq.y), max(dq.z, dq.w));
 		if (dhi > 0.0 && (dlo <= 0.0 || dhi > dlo * 1.25)) {
 			float4 wq = float4((1.0 - fw.x) * (1.0 - fw.y), fw.x * (1.0 - fw.y), (1.0 - fw.x) * fw.y, fw.x * fw.y);

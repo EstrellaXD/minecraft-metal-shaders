@@ -261,7 +261,10 @@ public final class ShadeLook {
 		float haze = 1f + 1.0f * f.rain;
 		put4(b, FOG_R, HAZE_SIGMA[0] * haze, HAZE_SIGMA[1] * haze, HAZE_SIGMA[2] * haze, HAZE_H);
 		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, f.rain > 0.5f ? 0.6f : MIST_ALBEDO);
-		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, 0.6f * (1f - f.rain));
+		// w: the haze's evening glow, its strength times its bell around the sun's elevation (-1 degree, 2.5 wide): the same for
+		// every pixel, so made here once instead of in shadeHazeInscatter per pixel (2026-10-08 optimisation)
+		double glowBell = Math.exp(-Math.pow((this.elevation + 1.0) / 2.5, 2.0));
+		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, (float) (0.6 * (1f - f.rain) * glowBell));
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
 		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], ShadeSky.sunsetArt ? 1f : 0f); // w: M3 sunset art

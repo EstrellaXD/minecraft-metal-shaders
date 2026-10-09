@@ -375,11 +375,27 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		// NDC depth is affine in 1/w along the screen segment, so the ray's view depth at any step is B / (z + A)
 		if (B / max(s0.z + ds.z * ts[i] + A, 1e-7) < ws[i]) continue; // still in front of what the depth copy holds there
 		float lo = ts[i - 1], hi = ts[i];
-		for (int j = 0; j < 4; j++) {
+		int wdev = shadeWdev(f);
+		if (wdev == SHADE_WDEV_SSR_PAR) {
+			for (int j = 0; j < 2; j++) {
+				float q = (hi - lo) * 0.25;
+				float3 sa = s0 + ds * (lo + q), sb = s0 + ds * (lo + 2.0 * q), sc = s0 + ds * (lo + 3.0 * q);
+				float wa = shadeWaterSceneW(depth, uint2(clamp((sa.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+				float wb = shadeWaterSceneW(depth, uint2(clamp((sb.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+				float wc = shadeWaterSceneW(depth, uint2(clamp((sc.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
+				if (B / max(sa.z + A, 1e-7) >= wa) hi = lo + q;
+				else if (B / max(sb.z + A, 1e-7) >= wb) { lo = lo + q; hi = lo + q; }
+				else if (B / max(sc.z + A, 1e-7) >= wc) { lo = lo + 2.0 * q; hi = lo + q; }
+				else lo = lo + 3.0 * q;
+			}
+		} else {
+		int nb = wdev == SHADE_WDEV_BISECT0 ? 0 : wdev == SHADE_WDEV_BISECT2 ? 2 : 4;
+		for (int j = 0; j < nb; j++) {
 			float m = 0.5 * (lo + hi);
 			float3 sm = s0 + ds * m;
 			float wm = shadeWaterSceneW(depth, uint2(clamp((sm.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
 			if (B / max(sm.z + A, 1e-7) >= wm) hi = m; else lo = m;
+		}
 		}
 		float3 sh = s0 + ds * hi;
 		float2 uv = sh.xy * 0.5 + 0.5;
@@ -476,11 +492,11 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 #else
 	float3 rd = r;
 #endif
-	if (volumetricClouds && shadeWdev(f) != SHADE_WDEV_NO_DOME) {
+	if (volumetricClouds) {
 		float4 cd = shadeCloudsDome(rd, *L, R->cloudDome);
 		sky = sky * cd.a + cd.rgb;
 	}
-	if (prevExposure > 0.0 && shadeWdev(f) != SHADE_WDEV_NO_RSKY) {
+	if (prevExposure > 0.0) {
 		float4 c = f.viewProj * float4(rs, 0.0); // a direction: the point at infinity
 		if (c.w > 1e-4) {
 			float2 uv = c.xy / c.w * 0.5 + 0.5;
@@ -912,7 +928,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
 	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure);
 #ifdef SHADE_CAUSTICS
-	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0 && f.lightDirWorld.w > 0.5 && shadeWdev(f) != SHADE_WDEV_NO_CAUSTICS) {
+	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0 && f.lightDirWorld.w > 0.5) {
 		float light = smoothstep(0.1, 0.8, float(w.shadow)) * saturate(f.lightDirWorld.y * 4.0) * smoothstep(0.55, 0.9, float(w.sky));
 		float fade = light * exp(-dy * 0.2) * saturate(dy * 3.0) * (1.0 - smoothstep(0.04, 0.12, w.footprint)); // fine lines alias far away
 		if (fade > 0.02) { // deep, shaded or far bottoms: not worth the waves

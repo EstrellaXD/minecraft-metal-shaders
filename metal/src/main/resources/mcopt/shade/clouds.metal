@@ -458,7 +458,8 @@ static float cloudLightDepth(float3 p, float y, float jitter, int steps, constan
 
 static inline float cloudHG(float mu, float g) {
 	float g2 = g * g;
-	return 0.0795775 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
+	float x = max(1.0 + g2 - 2.0 * g * mu, 1e-4);
+	return 0.0795775 * (1.0 - g2) / (x * sqrt(x)); // x^1.5 without pow's log and exp (12 per marched ray)
 }
 
 // Phase: a strong forward lobe, a narrow silver-lining peak and a backward lobe (Photon's mix, our weights); k narrows

@@ -244,8 +244,10 @@ static inline float3 shadeAuroraTex(float3 dir, constant ShadeFrame &f, constant
 // dissolves into coloured smoke (bible E24). End: a thin violet haze that meets the sky's horizon. Both end in a 4th-power
 // fog toward the render distance. c: exposed scene colour; geo: the pixel has depth (wp valid); keepSky: Distant Horizons
 // drew its LODs where the depth is empty (leave those pixels). Returns the exposed colour.
+// (FT2.8, border false: Distant Horizons' LODs, audit idx 101: the medium without the render distance's closing border, whose r^4
+// would turn every LOD into flat smoke)
 static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f, constant ShadeLook &L, float ex, bool keepSky,
-                           texture2d<half> mw) {
+                           texture2d<half> mw, bool border = true) {
 	float sigma = L.dimTint.x;
 	bool nether = shadeDimKind(L) == 1;
 	float yc = f.cameraBlock.y + f.cameraFract.y;
@@ -271,7 +273,7 @@ static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f
 		Sc = S * (0.8 + 0.4 * n) + lava * (0.065 * g); // less lava glow in the haze: less of an orange wash over the lava sea
 	}
 	float3 o = c * T + Sc * ex * (1.0 - T);
-	if (L.dimTint.z > 0.0) {
+	if (border && L.dimTint.z > 0.0) {
 		float r = max(length(wp.xz), abs(wp.y)) / L.dimTint.z;
 		float b = saturate(r * r * r * r);
 		float3 edge = nether ? Sc : f.horizon[3].rgb;

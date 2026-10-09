@@ -169,6 +169,9 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 	if (shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) radiance = float3(albedo) * sf.ambientSky.xyz;
 	if (sf.flags.w == 2) radiance = (float3(n) * 0.5 + 0.5) / ex * 0.18; // debug view 2: normals
 	float3 c = min(max(radiance, 0.0) * ex, 60000.0);
+	// (FT2.8, audit idx 101) the Nether's / End's medium on the LODs too (the final pass gives it to the near terrain from the main
+	// depth, which holds no LODs): sharp unhazed LOD terrain stood behind a wall of smoke at the render distance
+	if (!overworld) c = shadeDimsFog(c, p, true, sf, sl, ex, false, sr.milkyWay, false);
 	// the game's own fog (under water, in lava / powder snow, blindness; outside the overworld) over the environmental range
 	float a = sf.fogColor.a * saturate((d - sf.fogRange.x) / max(sf.fogRange.y - sf.fogRange.x, 1.0));
 	if (a > 0.0) {

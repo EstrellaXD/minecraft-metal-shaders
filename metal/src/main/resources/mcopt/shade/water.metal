@@ -542,7 +542,8 @@ static float3 shadeWaterHitColor(float2 uv, float3 o, float exposure, float prev
 		float4 pc = f.prevViewProj * float4(pw, 1.0);
 		float2 uvp = pc.xy / pc.w * 0.5 + 0.5;
 		if (pc.w > 0.0 && all(uvp > 0.0) && all(uvp < 1.0)) {
-			return shadeWaterHazed(float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure, pw, o, f, L);
+			float3 cp = float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure;
+			return z > 0.0 ? shadeWaterHazed(cp, pw, o, f, L) : cp; // (FT2.8, idx 34: the sky on screen gets no haze)
 		}
 #ifdef SHADE_WATER_EDGE_REFL
 		// FT1.2: where last frame did not see the point (the side the camera turns toward; SSR's edge-column hits past a side)
@@ -693,7 +694,12 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 		float4 cl = f.viewProj * float4(p0Own + rOwn * max(T, 0.0), 1.0);
 		if (cl.w > 1e-4) {
 			float2 uvl = cl.xy / cl.w * 0.5 + 0.5;
-			if (uvl.y > 0.0 && uvl.y < 1.0) h.xy = float2(clamp(uvl.x, 0.5 / sz.x, 1.0 - 0.5 / sz.x), uvl.y);
+			// (FT2.8, audit idx 34) not onto the sky: at a mirrored silhouette a lane's own ray point can be sky, which has no depth
+			// to haze from (it took the far plane's ~900 blocks of haze: a light dotted rim around mirrored crowns and shores)
+			if (uvl.y > 0.0 && uvl.y < 1.0) {
+				float2 ul = float2(clamp(uvl.x, 0.5 / sz.x, 1.0 - 0.5 / sz.x), uvl.y);
+				if (depth.read(uint2(clamp(ul * sz, float2(0.0), sz - 1.0))) > 0.0) h.xy = ul;
+			}
 		}
 	}
 #endif

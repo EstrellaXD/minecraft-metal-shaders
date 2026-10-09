@@ -121,7 +121,12 @@ public final class ShadeDh {
 		try {
 			apply(SSAO, shading ? off("mcopt.shade.dh.ssao") : null);
 			apply(AA, shading ? off("mcopt.shade.dh.aa") : null);
-			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "dh") : null);
+			// (FT2.8, audit idx 100) while DH composites straight into the HDR target, its vanilla fade (DOUBLE_PASS: DH's default and
+			// its Medium/High/Extreme presets) would read main, which no longer holds the frame, and wipe the near world: NONE then,
+			// unless mcopt.shade.dh.fade names a mode
+			Object fade = System.getProperty("mcopt.shade.dh.fade") == null && directFrame ? named(fadeEnum, "-", "NONE")
+				: named(fadeEnum, "mcopt.shade.dh.fade", "dh");
+			apply(FADE, shading ? fade : null);
 			apply(FOG, shading && LIGHT ? off("mcopt.shade.dh.fog") : null);
 			apply(SHADING, shading && LIGHT && off("mcopt.shade.dh.shading") != null ? named(shadingEnum, "-", "DISABLED") : null);
 			// FT2 (2026-10-08 night): how far around the camera DH skips LODs that the vanilla terrain covers (0..1 of the vanilla

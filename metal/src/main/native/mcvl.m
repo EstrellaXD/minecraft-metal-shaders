@@ -264,12 +264,18 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out
 		rp.colorAttachments[1].loadAction = MTLLoadActionDontCare;
 		rp.colorAttachments[1].storeAction = MTLStoreActionStore;
 	}
+	// the live part of the VL targets (TAAU dynamic resolution: they are allocated for the largest render scale); (FT2.7, audit
+	// idx 5) as the render area too, not only the viewport: the tiles past it were loaded and stored for nothing
+	int sub = liveW > 0 && liveH > 0 && (liveW < (int) out.width || liveH < (int) out.height);
+	if (sub) {
+		rp.renderTargetWidth = (NSUInteger) MIN(liveW, (int) out.width);
+		rp.renderTargetHeight = (NSUInteger) MIN(liveH, (int) out.height);
+	}
 	id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 	r.label = label;
 	[r setRenderPipelineState:p];
-	// the live part of the VL targets (TAAU dynamic resolution: they are allocated for the largest render scale)
-	if (liveW > 0 && liveH > 0 && (liveW < (int) out.width || liveH < (int) out.height)) {
-		[r setViewport:(MTLViewport) {0, 0, liveW, liveH, 0, 1}];
+	if (sub) {
+		[r setViewport:(MTLViewport) {0, 0, MIN(liveW, (int) out.width), MIN(liveH, (int) out.height), 0, 1}];
 	}
 	mc_shade_bind_render(r);
 	[r setFragmentBytes:params length:paramBytes atIndex:0];

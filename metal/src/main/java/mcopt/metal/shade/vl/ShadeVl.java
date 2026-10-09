@@ -428,7 +428,8 @@ public final class ShadeVl {
 			// w: the far march's end at the golden hour (sunset rays from cloud gaps; mcopt.shade.vl.farDist, live)
 			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
 		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)
-		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), 0f, 0f);
+		// (z: the shafts' soft edge radius in blocks, mcopt.shade.vl.soft, live; 0 = sharp)
+		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), VlConfig.live("mcopt.shade.vl.soft", 0f), 0f);
 		// hp (2026-10-09, Gael: the stronger shafts veiled the view "como un lente empanado"): the shafts' local contrast under trees
 		// (vl.metal vlVeilR; fold only): x the share of the local mean glow kept, y the gain of what stands out of it, z the veil
 		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)

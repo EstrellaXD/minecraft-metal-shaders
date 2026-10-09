@@ -84,7 +84,8 @@ struct VlParams {
 	                  //     w the far march's end (blocks; 0 = none): past the main march, rays that go on (sky, far terrain) take
 	                  //     VL_FAR_STEPS more steps through the open air with the clouds' shadow only (sunset rays from cloud gaps)
 	float4 tune2;     // 288 x the far march's density gain (the evening haze toward the low sun), y its own cut (the share of its
-	                  //     unshadowed glow left out), zw 0
+	                  //     unshadowed glow left out), z (2026-10-09) the shafts' soft edge: radius (blocks) of a per-step offset
+	                  //     of the shadow lookups across the light direction (0 = sharp, mcopt.shade.vl.soft), w 0
 	float4 hp;        // 304 (2026-10-09) the shafts' local contrast (fold): x keep, the share of the local mean glow kept; y gain of
 	                  //     what stands out of it (a beam); z the veil blur's tap spacing (quarter-resolution texels); w 1 = on.
 	                  //     In full from a canopy factor of 0.2 (under trees; open land keeps the plain light). See vlVeilR.
@@ -265,6 +266,22 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float3 c0o = (f.shadowViewProj[0] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c0d = (f.shadowViewProj[0] * float4(dir, 0.0)).xyz;
 	float3 c1o = (f.shadowViewProj[1] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c1d = (f.shadowViewProj[1] * float4(dir, 0.0)).xyz;
 	bool shadows = f.flags.z != 0;
+	// (2026-10-09, tune2.z) soft shafts: each step looks the shadow up a little across the light direction (a Vogel disk of radius
+	// tune2.z blocks, turned per texel and frame), so a shaft's edge is a gradient of ~2 radii instead of a cut (Gael: the lit air
+	// under a big gap read as a hard-edged glass sheet); the temporal pass averages it. o0/o1: one block along e1/e2 in each
+	// cascade's clip xy
+	float softR = p.tune2.z;
+	float2 o0a = 0.0, o0b = 0.0, o1a = 0.0, o1b = 0.0;
+	float softRot = 0.0;
+	if (softR > 0.0) {
+		float3 e1 = normalize(abs(L.y) < 0.95 ? cross(L, float3(0.0, 1.0, 0.0)) : cross(L, float3(1.0, 0.0, 0.0)));
+		float3 e2 = cross(L, e1);
+		o0a = (f.shadowViewProj[0] * float4(e1 * softR, 0.0)).xy;
+		o0b = (f.shadowViewProj[0] * float4(e2 * softR, 0.0)).xy;
+		o1a = (f.shadowViewProj[1] * float4(e1 * softR, 0.0)).xy;
+		o1b = (f.shadowViewProj[1] * float4(e2 * softR, 0.0)).xy;
+		softRot = 6.2831853 * vlNoise(in.position.xy + 29.0, p.temporal.z);
+	}
 	ShadeCloudRay cloudRay = {};
 	// M3.1: the cloud shadow is fetched on at most every other lit step and held for the next one (its texels are 4 blocks, the
 	// shafts from cloud gaps tens of blocks wide; the steps jitter per frame). SHADE_CLOUD_DEV_OLD_VL: every lit step (M3);
@@ -296,7 +313,14 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			float sOpen = p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w);
 			float sLocal = localMain * vlMistDensity(t, y, p);
 			float sigma = sOpen + sLocal;
-			float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
+			float3 q0 = c0o + c0d * t, q1 = c1o + c1d * t;
+			if (softR > 0.0) {
+				float a = softRot + 2.3999632 * float(i), r = sqrt(fract((float(i) + 0.5) * 0.618034 + softRot));
+				float2 cs = float2(cos(a), sin(a)) * r;
+				q0.xy += o0a * cs.x + o0b * cs.y;
+				q1.xy += o1a * cs.x + o1b * cs.y;
+			}
+			float v = shadows ? vlShadow(map, cmp, q0, q1) : 1.0;
 			// M3: the volumetric clouds' shadows carve the air into shafts too (crepuscular rays from cloud gaps)
 			// (only where the sun reaches: no fetch in the terrain's shadow)
 			if (vlClouds && v > 0.0) {
@@ -341,7 +365,14 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			for (int j = 0; j < nNear; j++) {
 				float t = (float(j) + xn) * dtn;
 				float sLocal = local * vlMistDensity(t, dir.y * t, p);
-				float v = shadows ? vlShadow(map, cmp, c0o + c0d * t, c1o + c1d * t) : 1.0;
+				float3 q0 = c0o + c0d * t, q1 = c1o + c1d * t;
+				if (softR > 0.0) {
+					float a = softRot + 2.3999632 * float(j + 7), r = sqrt(fract((float(j) + 0.25) * 0.618034 + softRot * 0.37));
+					float2 cs = float2(cos(a), sin(a)) * r;
+					q0.xy += o0a * cs.x + o0b * cs.y;
+					q1.xy += o1a * cs.x + o1b * cs.y;
+				}
+				float v = shadows ? vlShadow(map, cmp, q0, q1) : 1.0;
 				float seg = tl * (1.0 - exp(-sLocal * dtn)) / max(sLocal, 1e-9);
 				sumLocal += v * sLocal * seg;
 				sumLocalAll += sLocal * seg;

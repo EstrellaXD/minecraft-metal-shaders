@@ -114,10 +114,10 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		// near water's does; DH's water colour (lit) shows through the rest. No terrain in it (no depth for SSR out here).
 		if (in.face == 1u && in.color.a < 0.99h && !shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
 			float3 v = p / max(d, 1e-4);
-			// the waves a LOD pixel averages over (slope ~0.25): at grazing views the facets that face the eye reflect at a
-			// steeper angle (less: Fresnel ~0.3, not 1) and higher into the sky (bluer than the horizon). As a flat mirror the far
+			// the waves a LOD pixel averages over (slope ~0.2): at grazing views the facets that face the eye reflect at a
+			// steeper angle (less: Fresnel ~0.34, not 1) and higher into the sky (bluer than the horizon). As a flat mirror the far
 			// sea took the whole white horizon haze and read as milk (w1, Gael 2026-10-09: "se ve rara")
-			const float slope2 = 0.25 * 0.25;
+			const float slope2 = 0.2 * 0.2;
 			float cosV = sqrt(v.y * v.y + slope2);
 			float3 r = float3(v.xz * (sqrt(max(1.0 - cosV * cosV, 0.0)) / max(length(v.xz), 1e-4)), cosV).xzy;
 			float open = float(shadeSkyCurve(sky));
@@ -125,7 +125,25 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			float fr = (0.0204 + 0.9796 * m * m * m * m * m) * (0.35 + 0.65 * open);
 			float3 refl = shadeSkyLookup(r, skyLut, skyLutSmplr, sf);
 			float4 cd = shadeCloudsDome(r, sl, sr.cloudDome);
-			refl = (refl * cd.a + cd.rgb) * open;
+			refl = refl * cd.a + cd.rgb;
+			// w3 (Gael: the far sea's reflections looked low quality, a flat colour): where the flat mirror direction is on
+			// screen, the rendered sky there (last frame's HDR image, as the near water's shadeWaterSkyRefl does): the clouds at
+			// full resolution, the sunset's colours, the far islands (LODs are not in the depth: they count as sky). Anything the
+			// depth holds nearer than ~500 blocks (the game's own chunks) is not what the far sea mirrors: the dome / LUT there.
+			// Faded out over the last 1/8 of the screen. Needs TAAU's depth of that image (ShadeLook.ssr.y).
+			if (sl.ssr.x > 0.5 && sl.ssr.y > 0.5) {
+				float3 rm = float3(v.x, -v.y, v.z);
+				float4 c = sf.viewProj * float4(rm, 0.0), pc = sf.prevViewProj * float4(rm, 0.0);
+				if (c.w > 1e-4 && pc.w > 1e-4) {
+					float2 uv = c.xy / c.w * 0.5 + 0.5;
+					float wgt = saturate(min(uv.x, 1.0 - uv.x) * 8.0) * saturate(min(uv.y, 1.0 - uv.y) * 8.0);
+					float2 uvp = saturate(pc.xy / pc.w * 0.5 + 0.5);
+					constexpr sampler lin(filter::linear, address::clamp_to_edge, coord::normalized);
+					if (wgt > 0.0) wgt *= smoothstep(400.0, 600.0, float(sr.prevDepth.sample(lin, uvp).r));
+					if (wgt > 0.0) refl = mix(refl, float3(sr.prevScene.sample(lin, uvp).rgb) / max(sg.exposure.z, 1e-6), wgt);
+				}
+			}
+			refl *= open;
 			// GGX glint (normal up), alpha 0.135: the near water's at 110+ blocks
 			float3 l = sf.lightDirWorld.xyz, h = normalize(l - v);
 			float nh = saturate(h.y), nl = saturate(l.y), nv = max(-v.y, 1e-3);

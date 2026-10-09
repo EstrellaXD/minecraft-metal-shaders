@@ -545,8 +545,10 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// (SHADE_DEV_WX_FILM_SKY: in heavy rain the overcast sky is about uniform, so films off the puddles see its mean light)
 	// (fades in over rain 0.6-0.8, so the switch doesn't pop; per frame, so the skip above 0.8 is uniform)
 	if (P <= 0.0 && SHADE_WX_BUDGET(f, SHADE_DEV_WX_FILM_SKY)) blur = max(blur, smoothstep(0.6, 0.8, L.wet.w));
-	float3 refl = blur < 1.0 ? shadeWxSkyRefl(r, in.prevExposure, in.histOk && P > 0.0, f, L, lut, lutS, hist, histDepth) : float3(0.0);
-	refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, blur) * open;
+	// (FT2.8, audit idx 92) the sky reflection after the march, and only where the march's hit doesn't cover it all (wHit < 1):
+	// the same result, no LUT / history taps under a fully reflected scene
+	float3 hitC = float3(0.0);
+	float wHit = 0.0;
 #ifdef SHADE_PUDDLE_SSR
 	// The march only where the mirror shows: the film reflects F (2 % looking straight down, ~10 % at 65 degrees from the
 	// normal, all of it at grazing angles), so where F * P < 0.035 the sky reflection alone is within a few percent of what
@@ -571,9 +573,16 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 		// (M3.3: a film's rougher reflection is smeared along the screen's vertical, the plane of incidence of a floor)
 		float streak = filmW > 0.0 ? 0.014 * saturate(rough * 3.3) * (1.0 - P) : 0.0;
 		float4 hit = shadeWxHistSsr(in.p, r, in.pixel, SHADE_PUDDLE_DIST, in.prevExposure, f, L, hist, histDepth, streak);
-		refl = mix(refl, hit.rgb, hit.w * ssrW);
+		hitC = hit.rgb;
+		wHit = hit.w * ssrW;
 	}
 #endif
+	float3 refl = float3(0.0);
+	if (wHit < 1.0) {
+		refl = blur < 1.0 ? shadeWxSkyRefl(r, in.prevExposure, in.histOk && P > 0.0, f, L, lut, lutS, hist, histDepth) : float3(0.0);
+		refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, blur) * open;
+	}
+	refl = mix(refl, hitC, wHit);
 	if (wet <= 0.004h) return radiance;
 	// the sun's (or moon's) highlight: a mirror-sharp glint on puddles, a broad sheen on wet ground
 	float a = max(rough * rough, 0.0025);

@@ -142,9 +142,9 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			float open = float(shadeSkyCurve(sky));
 			float m = 1.0 - saturate(cosV);
 			float fr = (0.0204 + 0.9796 * m * m * m * m * m) * (0.35 + 0.65 * open);
-			float3 refl = shadeSkyLookup(r, skyLut, skyLutSmplr, sf);
-			float4 cd = shadeCloudsDome(r, sl, sr.cloudDome);
-			refl = refl * cd.a + cd.rgb;
+			// (FT2.8, audit idx 115) the screen-space part first; the sky LUT and the clouds' dome only where it doesn't cover it all
+			float3 scr = float3(0.0);
+			float wS = 0.0;
 			// w3 (Gael: the far sea's reflections looked low quality, a flat colour): where the flat mirror direction is on
 			// screen, the rendered sky there (last frame's HDR image, as the near water's shadeWaterSkyRefl does): the clouds at
 			// full resolution, the sunset's colours, the far islands (LODs are not in the depth: they count as sky). Anything the
@@ -171,8 +171,17 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 					// the disc mirrored sharp from last frame's image counted it twice (and popped at the screen-edge fade)
 					wgt *= 1.0 - smoothstep(cos(4.0 * sl.sunGeom.y), cos(1.5 * sl.sunGeom.y), dot(rm, sf.sunDirWorld.xyz));
 					wgt *= 1.0 - smoothstep(cos(4.0 * sl.sunGeom.z), cos(1.5 * sl.sunGeom.z), dot(rm, sf.moonDirWorld.xyz));
-					if (wgt > 0.0) refl = mix(refl, float3(sr.prevScene.sample(lin, uvp).rgb) / max(sg.exposure.z, 1e-6), wgt);
+					if (wgt > 0.0) {
+						scr = float3(sr.prevScene.sample(lin, uvp).rgb) / max(sg.exposure.z, 1e-6);
+						wS = wgt;
+					}
 				}
+			}
+			float3 refl = scr;
+			if (wS < 1.0) {
+				float3 skyR = shadeSkyLookup(r, skyLut, skyLutSmplr, sf);
+				float4 cd = shadeCloudsDome(r, sl, sr.cloudDome);
+				refl = mix(skyR * cd.a + cd.rgb, scr, wS);
 			}
 			refl *= open;
 			// GGX glint (normal up), alpha 0.135: the near water's at 110+ blocks

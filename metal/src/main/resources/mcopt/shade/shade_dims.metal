@@ -170,6 +170,8 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	// beams: ridged noise around the horizon, rising from below it
 	float flash = L.flash.w;
 	float az = lon;
+	// (FT2.8, audit idx 93: only where they can show, -0.3 < e < 0.25; the rise below is 0 elsewhere: the same sky)
+	if (e > -0.3 && e < 0.25) {
 	float r1 = shadeDimsNoise(mw, float2(az * 64.0, t * 0.02));
 	float r2 = shadeDimsNoise(mw, float2(az * 160.0, t * 0.035 + 3.0));
 	// sparse: groups of beams where a slow azimuth noise is high (not a wall of stripes all around), low over the horizon
@@ -179,6 +181,7 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float rise = smoothstep(-0.3, -0.04, e) * exp(-max(e + 0.04, 0.0) / (0.05 + 0.07 * r1)) * (1.0 - smoothstep(0.04, 0.25, e));
 	float calm = 1.0 + 1.5 * flash;
 	sky += (f.horizon[4].rgb * beam * 0.3 + f.horizon[5].rgb * fil * 0.2) * (rise * calm);
+	}
 	if (flash > 0.0) {
 		float c = saturate(dot(dir, L.flash.xyz));
 		sky += float3(0.55, 0.7, 1.0) * (flash * (pow(c, 96.0) * 14.0 + pow(c, 6.0) * 0.5)) * length(f.horizon[4].rgb);

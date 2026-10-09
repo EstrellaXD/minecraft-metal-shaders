@@ -566,8 +566,9 @@ public final class ShadePost {
 		else params.putFloat(0f).putFloat(1f).putFloat(1f).putFloat(1f);
 		// a (godrays v3): x the VL air mode's floor (0 = off: the light added is negative only over the sky, floored at 0.55)
 		// (a.y, FT2.7 audit idx 47: the air mode's VL read at the haze edge's own keys (1) and its fallbacks' shadowed part uncapped
-		// (2); mcopt.shade.vl.edgeFix, live)
-		params.putFloat(vl ? vlAirFloor : 0f).putFloat(vl && vlAirFloor > 0f ? mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.edgeFix", 3f) : 0f)
+		// (2); mcopt.shade.vl.edgeFix, live; 0 by default: in Gael's autumn forest at sunrise (ft28-rim) no rim showed to fix and the
+		// edges moved both ways, a flicker risk in motion; kept for a pose where the rim shows)
+		params.putFloat(vl ? vlAirFloor : 0f).putFloat(vl && vlAirFloor > 0f ? mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.edgeFix", 0f) : 0f)
 			.putFloat(0f).putFloat(0f);
 		params.flip();
 		long mainHandle = MetalBridge.textureHandle(out);

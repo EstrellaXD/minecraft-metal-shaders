@@ -213,10 +213,10 @@ static inline float3 shadeHazeTransmittance(float3 p, constant ShadeFrame &f, co
 // Light scattered toward the camera by the haze (Rayleigh-like, bluish) and the mist (Mie, forward-scattering) between the
 // camera and p, and their transmittance: sun (or moon) through the phase function, sky light isotropically, a cheap multiple
 // scattering boost, and the evening glow around sunset. sunVis scales the sun term (the VL module owns the shadowed part).
-static float3 shadeHazeInscatter(float3 p, constant ShadeFrame &f, constant ShadeLook &L, float sunVis, thread float3 &T) {
+// (FT2.7) shadeHazeInscatterFrom: the same over a segment p that starts yc (absolute height) instead of at the camera.
+static float3 shadeHazeInscatterFrom(float3 p, float yc, constant ShadeFrame &f, constant ShadeLook &L, float sunVis, thread float3 &T) {
 	float t = length(p);
 	float3 v = p / max(t, 1e-4);
-	float yc = f.cameraBlock.y + f.cameraFract.y;
 	float dR = shadeLayerDepth(yc, v.y, t, L.fogMisc.x, L.fogR.w);
 	float dM = shadeLayerDepth(yc, v.y, t, L.fogM.z, L.fogM.y);
 	float3 tauR = L.fogR.rgb * dR;
@@ -238,6 +238,9 @@ static float3 shadeHazeInscatter(float3 p, constant ShadeFrame &f, constant Shad
 	float3 sM = (E * phM * glow + sky) * aM / (1.0 - 0.5 * aM);
 	float3 w = (1.0 - T) / max(tau, 1e-6);
 	return w * (tauR * sR + tauM * sM);
+}
+static float3 shadeHazeInscatter(float3 p, constant ShadeFrame &f, constant ShadeLook &L, float sunVis, thread float3 &T) {
+	return shadeHazeInscatterFrom(p, f.cameraBlock.y + f.cameraFract.y, f, L, sunVis, T);
 }
 
 // Air fog for lit surfaces (pre-exposure radiance): M1's aerial blend into the sky behind (sky-view LUT), then the local

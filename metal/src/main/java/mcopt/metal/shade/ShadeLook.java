@@ -262,7 +262,9 @@ public final class ShadeLook {
 		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeConfig.LOOK], 0.06f * (1f + f.rain), 0f);
 		float haze = 1f + 1.0f * f.rain;
 		put4(b, FOG_R, HAZE_SIGMA[0] * haze, HAZE_SIGMA[1] * haze, HAZE_SIGMA[2] * haze, HAZE_H);
-		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, f.rain > 0.5f ? 0.6f : MIST_ALBEDO);
+		// (FT2.7, audit idx 49) the mist's albedo goes to 0.6 with the rain as its other terms do, linearly: a step at rain 0.5 cut its
+		// in-scatter (aM / (1 - aM / 2)) by half in one frame, the fog popped darker as the rain came in
+		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, MIST_ALBEDO + (0.6f - MIST_ALBEDO) * f.rain);
 		// w: the haze's evening glow, its strength times its bell around the sun's elevation (-1 degree, 2.5 wide): the same for
 		// every pixel, so made here once instead of in shadeHazeInscatter per pixel (2026-10-08 optimisation)
 		double glowBell = Math.exp(-Math.pow((this.elevation + 1.0) / 2.5, 2.0));

@@ -520,14 +520,18 @@ static inline float shadeQuadMax(float v) { v = max(v, quad_shuffle_xor(v, 1)); 
 // M2 HDR: last frame's image is taken before the final pass, which adds the height haze and mist from depth (E06). A
 // point read from it (camera-relative p, not the sky) gets that haze here, so mirrored clouds and far shores match what
 // the eye sees on screen (without it, clouds the haze brightens on screen mirror as dark "mud slicks" at sunset).
-static inline float3 shadeWaterHazed(float3 c, float3 p, constant ShadeFrame &f, constant ShadeLook *L) {
-	if (L == nullptr || !shadeFeature(*L, SHADE_FEATURE_HAZE) || f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a >= 0.5 || dot(p, p) <= 4.0) return c;
+// (FT2.7, audit idx 33) only over the leg from the reflecting surface o to the point (from o's height): the final pass hazes the
+// water pixel itself from the camera (the water writes depth), so a haze from the camera here counted that leg twice and far
+// shores mirrored milkier than the shores themselves.
+static inline float3 shadeWaterHazed(float3 c, float3 p, float3 o, constant ShadeFrame &f, constant ShadeLook *L) {
+	float3 s = p - o;
+	if (L == nullptr || !shadeFeature(*L, SHADE_FEATURE_HAZE) || f.flags.x != SHADE_DIM_OVERWORLD || f.fogColor.a >= 0.5 || dot(s, s) <= 4.0) return c;
 	float3 T;
-	float3 S = shadeHazeInscatter(p, f, *L, 1.0, T);
+	float3 S = shadeHazeInscatterFrom(s, f.cameraBlock.y + f.cameraFract.y + o.y, f, *L, 1.0, T);
 	return c * T + S;
 }
 
-static float3 shadeWaterHitColor(float2 uv, float exposure, float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, texture2d<half> scene,
+static float3 shadeWaterHitColor(float2 uv, float3 o, float exposure, float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, texture2d<half> scene,
                                  depth2d<float> depth, texture2d<half> prev) {
 	float2 tex = float2(depth.get_width(), depth.get_height());
 	float2 size = shadeWaterRenderSize(f, tex);
@@ -538,14 +542,14 @@ static float3 shadeWaterHitColor(float2 uv, float exposure, float prevExposure, 
 		float4 pc = f.prevViewProj * float4(pw, 1.0);
 		float2 uvp = pc.xy / pc.w * 0.5 + 0.5;
 		if (pc.w > 0.0 && all(uvp > 0.0) && all(uvp < 1.0)) {
-			return shadeWaterHazed(float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure, pw, f, L);
+			return shadeWaterHazed(float3(prev.sample(shadeWaterLinear, uvp).rgb) / prevExposure, pw, o, f, L);
 		}
 #ifdef SHADE_WATER_EDGE_REFL
 		// FT1.2: where last frame did not see the point (the side the camera turns toward; SSR's edge-column hits past a side)
 		// this frame's opaque copy, hazed like the hits read from last frame (both are taken before the final pass's haze).
 		// Unhazed, the far shore and the render distance's fog band mirrored darker and clearer there: a hard slanted seam
 		// on the water that swept along while turning (recording rf1-base)
-		return shadeWaterHazed(shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure), pw, f, L);
+		return shadeWaterHazed(shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure), pw, o, f, L);
 #endif
 	}
 	return shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uv * size / tex).rgb, exposure);
@@ -556,7 +560,7 @@ static float3 shadeWaterHitColor(float2 uv, float exposure, float prevExposure, 
 // Milky Way, clouds, rain and Distant Horizons' LODs (which the depth copy doesn't hold), so open water mirrors the
 // clouds at sunset and the far mountains. Faded into the LUT toward the screen edges. rs: the direction for the rendered
 // sky (callers pass the calmer SSR direction: mirrored clouds stay readable instead of shredding into blotches).
-static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, constant ShadeResources *R,
+static float3 shadeWaterSkyRefl(float3 r, float3 rs, float3 o, float prevExposure, constant ShadeFrame &f, constant ShadeLook *L, constant ShadeResources *R,
                                 texture2d<half> lut, sampler lutS, depth2d<float> depth, texture2d<half> prev) {
 	float3 sky = shadeSkyLookup(r, lut, lutS, f);
 	// M3: the volumetric clouds in that direction from their reflection dome (off-screen directions; on screen the rendered
@@ -612,7 +616,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 					float2 uvp = pc.xy / max(pc.w, 1e-4) * 0.5 + 0.5;
 					float3 s = float3(prev.sample(shadeWaterLinear, saturate(uvp)).rgb) / prevExposure;
 					if (z > 0.0) {
-						s = shadeWaterHazed(s, pw, f, L);
+						s = shadeWaterHazed(s, pw, o, f, L);
 					} else if (rs.y > 0.02 && !volumetricClouds) {
 						// nothing in the opaque depth copy, but clouds (drawn after it) may be in last frame's image: where it
 						// differs from the plain sky in that direction, haze it as far as the cloud layer (on screen the final
@@ -622,7 +626,7 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 						float cloudy = saturate(abs(shadeLuma(s) - ls) / max(ls, 1e-5) * 4.0);
 						if (cloudy > 0.0) {
 							float tc = min((192.5 - f.cameraBlock.y - f.cameraFract.y) / rs.y, 640.0);
-							if (tc > 2.0) s = mix(s, shadeWaterHazed(s, rs * tc, f, L), cloudy);
+							if (tc > 2.0) s = mix(s, shadeWaterHazed(s, rs * tc, float3(0.0), f, L), cloudy);
 						}
 					}
 					sky = mix(sky, s, wgt);
@@ -693,7 +697,7 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 		}
 	}
 #endif
-	return float4(shadeWaterHitColor(h.xy, exposure, prevExposure, f, L, scene, depth, prev), h.z);
+	return float4(shadeWaterHitColor(h.xy, p0, exposure, prevExposure, f, L, scene, depth, prev), h.z);
 #else
 	if (!shadeSsrSegment(p0, r, maxDist, f, s0, ds, screenEnd)) return 0.0;
 	float4 hit = shadeSsrMarch(s0, ds, screenEnd, 0, 1, shadeNoise(pixel, SHADE_WATER_NOISE_FRAME(f)), f, depth, hz);
@@ -701,7 +705,7 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 #ifdef SHADE_WATER_EDGE_REFL
 	if (shadeSsrBelowStart(hit.xy, p0, r, f, depth)) return 0.0;
 #endif
-	return float4(shadeWaterHitColor(hit.xy, exposure, prevExposure, f, L, scene, depth, prev), hit.z);
+	return float4(shadeWaterHitColor(hit.xy, p0, exposure, prevExposure, f, L, scene, depth, prev), hit.z);
 #endif
 }
 
@@ -1060,7 +1064,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// the LUT sky follows a calmer direction too: the rippled one smeared the low sun's aureole over the near water as a
 	// milky veil (the glint below is what carries the sun's sparkle)
 	float3 rl = normalize(mix(rs, rr, 0.6));
-	float3 refl = shadeWaterSkyRefl(rl, rr, w.prevExposure, f, w.look, w.res, lut, lutS, depth, prev) * open;
+	float3 refl = shadeWaterSkyRefl(rl, rr, w.p, w.prevExposure, f, w.look, w.res, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
 #ifdef SHADE_LEAN_ABOVE
@@ -1197,7 +1201,7 @@ static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, floa
 	float fres = (0.04 + 0.96 * m2 * m2 * m) * wp.tune.z;
 	float open = float(shadeSkyCurve(sky));
 	float3 r = reflect(v, n);
-	float3 refl = shadeWaterSkyRefl(float3(r.x, abs(r.y), r.z), float3(r.x, abs(r.y), r.z), prevExposure, f, L, R, lut, lutS, depth, prev) * open;
+	float3 refl = shadeWaterSkyRefl(float3(r.x, abs(r.y), r.z), float3(r.x, abs(r.y), r.z), p, prevExposure, f, L, R, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
 	if (wp.state.x > 0.5 && shadeQuadMax(fres) > 0.03) { // quad-uniform (SSR's lanes work together)

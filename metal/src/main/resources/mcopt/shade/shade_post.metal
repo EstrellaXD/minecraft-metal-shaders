@@ -109,7 +109,8 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 // M2.2; 0 = M2.1) depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point;
 // x (M3 XDR, shade_final_xdr): x on, y highlight peak (x SDR white), z knee (exposed scene luminance), w octaves to the peak;
 // a (godrays v3): x > 0 the volumetric light's air mode (vl.metal: the shadows take the haze's sunlit glow out of the air, so its
-// light is negative on surfaces too): the floor of a surface's light it may leave (share; the sky keeps 0.55), yzw 0
+// light is negative on surfaces too): the floor of a surface's light it may leave (share; the sky keeps 0.55), y (FT2.7) its edge
+// fix bits (audit idx 47: 1 read at the haze edge's keys, 2 the fallbacks' negative part uncapped), zw 0
 struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; float4 x; float4 a; };
 
 // Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
@@ -138,8 +139,15 @@ static inline half3 shadeSharpen(texture2d<half> img, uint2 px, half3 m, half am
 // texel is at this depth, the bilinear blend of the four, each scaled by its own air ratio (not the closest one alone: on leaves
 // against bright shafts it switched pixel by pixel, the "dots"); 2: plain bilinear (no depth test: halos, no dots); 3: plain
 // bilinear scaled by the air ratio of the footprint's mean distance
+// (FT2.7, audit idx 47; airNeg: the air mode's light, negative where the shadows take the haze's glow out) in the fallbacks below the
+// negative part is scaled by the air ratio uncapped (up to 16): a pixel farther than every texel (a gap between leaves, the far side
+// of a silhouette) gets the final pass's full haze glow, so it needs the full shadowed share of it taken out, not the near texels'
+// (a bright rim on near leaves toward a low sun). The positive part stays capped at 1 (FT2.2: x4 positive extrapolation made rings)
+static inline half3 shadeVlScaled(half3 rgb, half rr, bool airNeg) {
+	return airNeg ? max(rgb, 0.0h) * saturate(rr) + min(rgb, 0.0h) * min(rr, 16.0h) : rgb * saturate(rr);
+}
 static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, float2 uv, float dist, float maxD, float2 uvScale,
-                                    float mode = 0.0, float tolScale = 1.0) {
+                                    float mode = 0.0, float tolScale = 1.0, bool airNeg = false) {
 	// the live part of the VL targets (TAAU dynamic resolution: allocated for the largest scale; uvScale = live / allocated)
 	float2 size = float2(vlT.get_width(), vlT.get_height()) * uvScale;
 	uv = min(uv * uvScale, uvScale - 0.5 / float2(vlT.get_width(), vlT.get_height()));
@@ -190,13 +198,13 @@ static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, fl
 				half4 s = vlT.read(uint2(clamp(base + int2(i, j), int2(0), hi)));
 				half sd = j == 0 ? (i == 0 ? dd.w : dd.z) : (i == 0 ? dd.x : dd.y);
 				half bw = (i == 0 ? 1.0h - fr.x : fr.x) * (j == 0 ? 1.0h - fr.y : fr.y) + 1e-3h;
-				acc += half4(s.rgb * saturate((min(hd, mD) + 0.5h) / (min(sd, mD) + 0.5h)), s.a) * bw;
+				acc += half4(shadeVlScaled(s.rgb, (min(hd, mD) + 0.5h) / (min(sd, mD) + 0.5h), airNeg), s.a) * bw;
 				bsum += bw;
 			}
 		}
 		return acc / bsum;
 	}
-	return half4(bestC.rgb * saturate((min(hd, mD) + 0.5h) / (min(bestD, mD) + 0.5h)), bestC.a);
+	return half4(shadeVlScaled(bestC.rgb, (min(hd, mD) + 0.5h) / (min(bestD, mD) + 0.5h), airNeg), bestC.a);
 }
 
 // Camera-relative world position of the pixel at uv = (pixel + 0.5) / size with reversed-Z depth d. Targets hold GL row
@@ -255,6 +263,10 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
 	float3 wp = d > 0.0 ? shadeWorldFromDepth(uv, d, f) : float3(0.0);
+	// (FT2.7, audit idx 47) where the haze below blends the 2x2 depth texels (an edge), their distances and weights: the air mode's
+	// VL is then read at the same keys, so what its shadows take out matches the haze glow that was added
+	bool hazeEdge = false;
+	float4 dkq = float4(1e4), wqq = float4(0.0);
 #ifdef SHADE_HAZE_EDGE
 	if (hazeOn) {
 		// FT1.3: the depth is this frame's jittered raster at the render scale and the colour the resolved (TAAU) image, so the
@@ -274,12 +286,15 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 					uint2 tk = uint2(k & 1 ? t1.x : t0.x, k & 2 ? t1.y : t0.y);
 					float3 pk = shadeWorldFromDepth((float2(tk) + 0.5) / dsize, dq[k], f);
 					if (dot(pk, pk) > 4.0) Sk = shadeHazeInscatter(pk, f, L, 1.0, Tk);
+					dkq[k] = length(pk);
 				}
 				Ts += Tk * wq[k];
 				Ss += Sk * wq[k];
 			}
 			T = Ts;
 			c = c * Ts + Ss * ex;
+			hazeEdge = true;
+			wqq = wq;
 		} else if (d > 0.0 && dot(wp, wp) > 4.0) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
 			c = c * T + S * ex;
@@ -314,7 +329,17 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float tv = 1.0;
 	if (P.v.x > 0.5) {
 		float2 vlScale = P.v.z > 0.0 ? P.v.zw : float2(1.0);
-		half4 v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale, P.q.y, P.q.z);
+		// (FT2.7, audit idx 47; a.y bits, mcopt.shade.vl.edgeFix: 1 the haze edge's keys, 2 the fallback's negative part uncapped)
+		int edgeFix = P.a.x > 0.0 ? int(P.a.y) : 0;
+		half4 v;
+		if (hazeEdge && (edgeFix & 1) != 0) {
+			v = 0.0h;
+			for (int k = 0; k < 4; k++) {
+				if (wqq[k] > 0.0) v += shadeVlUpsample(vlT, vlD, uv, dkq[k], P.v.y, vlScale, P.q.y, P.q.z, (edgeFix & 2) != 0) * half(wqq[k]);
+			}
+		} else {
+			v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale, P.q.y, P.q.z, (edgeFix & 2) != 0);
+		}
 		tv = float(v.a);
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
 		float3 lit = c * tv;

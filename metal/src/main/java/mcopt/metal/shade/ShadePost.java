@@ -565,7 +565,10 @@ public final class ShadePost {
 		if (xdr) mcopt.metal.shade.dims.ShadeXdr.params(params);
 		else params.putFloat(0f).putFloat(1f).putFloat(1f).putFloat(1f);
 		// a (godrays v3): x the VL air mode's floor (0 = off: the light added is negative only over the sky, floored at 0.55)
-		params.putFloat(vl ? vlAirFloor : 0f).putFloat(0f).putFloat(0f).putFloat(0f);
+		// (a.y, FT2.7 audit idx 47: the air mode's VL read at the haze edge's own keys (1) and its fallbacks' shadowed part uncapped
+		// (2); mcopt.shade.vl.edgeFix, live)
+		params.putFloat(vl ? vlAirFloor : 0f).putFloat(vl && vlAirFloor > 0f ? mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.edgeFix", 3f) : 0f)
+			.putFloat(0f).putFloat(0f);
 		params.flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);

@@ -21,11 +21,14 @@ int mc_shade_bind_compute(id<MTLComputeCommandEncoder> c);
 typedef struct {
 	id<MTLLibrary> lib;
 	id<MTLRenderPipelineState> march, temporal, composite, temporalFold; // temporalFold: M2 fold (flag 16), MRT history + lightT
+	id<MTLRenderPipelineState> veilDown, veilBlurH, veilBlurV;          // fold: the shafts' local contrast (VlParams.hp, vl.metal vlVeilR)
 	MTLPixelFormat compositeFormat;
 	int compositeHdr;
 	id<MTLComputePipelineState> canopy;
 	id<MTLTexture> raw, hist[2], sky[2]; // sky: R8 sky masks (march output, read by the next frame's crepuscular taps)
 	id<MTLTexture> lightT;               // fold: light (before exposure) + canopy mist transmittance, for ShadePost's final pass
+	id<MTLTexture> veil[2];              // fold: the local mean of r at a quarter of the VL resolution (R16F; [0] = the result)
+	int veilRan;                         // the veil passes ran last frame (else veil[0] is stale: the fold skips the contrast once)
 	int width, height, cur, lossy;
 	id<MTLBuffer> state;  // VlState: the canopy factor (GPU-written, read by the march)
 	// GPU timer (flag 8, -Dmcopt.shade.vl.gpuTimer): per-pass fragment start/end timestamps, a ring of 4 frames x 3 passes
@@ -57,6 +60,7 @@ static id<MTLRenderPipelineState> pso(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 	pd.colorAttachments[0].pixelFormat = format;
 	if ([fragment isEqualToString:@"vl_march"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm;
 	if ([fragment isEqualToString:@"vl_temporal_fold"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatRGBA16Float;
+	if ([fragment hasPrefix:@"vl_veil_"]) pd.colorAttachments[0].pixelFormat = MTLPixelFormatR16Float;
 	if ([fragment isEqualToString:@"vl_composite_hdr"]) {
 		pd.colorAttachments[0].blendingEnabled = YES;  // M2: scene * T (source alpha) + light, into the pre-exposed HDR scene
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
@@ -90,6 +94,11 @@ VlState *mc_vl_new(Ctx *ctx, const char *source, int flags, char *err, int errCa
 		s->temporal = s->march ? pso(ctx->device, lib, @"vl_temporal", MTLPixelFormatRGBA16Float, hdr, err, errCap) : nil;
 		if (hdr && s->temporal) {
 			s->temporalFold = pso(ctx->device, lib, @"vl_temporal_fold", MTLPixelFormatRGBA16Float, hdr, err, errCap);
+			// (optional: without them the fold just never applies the shafts' local contrast)
+			char e2[256];
+			s->veilDown = s->temporalFold ? pso(ctx->device, lib, @"vl_veil_down", MTLPixelFormatR16Float, hdr, e2, sizeof(e2)) : nil;
+			s->veilBlurH = s->veilDown ? pso(ctx->device, lib, @"vl_veil_blur_h", MTLPixelFormatR16Float, hdr, e2, sizeof(e2)) : nil;
+			s->veilBlurV = s->veilBlurH ? pso(ctx->device, lib, @"vl_veil_blur_v", MTLPixelFormatR16Float, hdr, e2, sizeof(e2)) : nil;
 			if (!s->temporalFold) {
 				[s->march release];
 				[s->temporal release];
@@ -126,9 +135,14 @@ void mc_vl_free(VlState *s) {
 	[s->temporal release];
 	[s->composite release];
 	[s->temporalFold release];
+	[s->veilDown release];
+	[s->veilBlurH release];
+	[s->veilBlurV release];
 	[s->canopy release];
 	[s->raw release];
 	[s->lightT release];
+	[s->veil[0] release];
+	[s->veil[1] release];
 	[s->hist[0] release];
 	[s->hist[1] release];
 	[s->sky[0] release];
@@ -203,7 +217,7 @@ static id<MTLTexture> target(id<MTLDevice> dev, MTLPixelFormat format, int w, in
 
 static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out1, MTLLoadAction load, id<MTLRenderPipelineState> p,
 	NSString *label, const void *params, int paramBytes, id<MTLBuffer> state, id<MTLTexture> t0, id<MTLTexture> t1,
-	id<MTLCounterSampleBuffer> times, int sample, int liveW, int liveH) {
+	id<MTLCounterSampleBuffer> times, int sample, int liveW, int liveH, id<MTLTexture> t2) {
 	MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
 	if (times) {
 		rp.sampleBufferAttachments[0].sampleBuffer = times;
@@ -232,6 +246,7 @@ static void pass(id<MTLCommandBuffer> cb, id<MTLTexture> out, id<MTLTexture> out
 	if (state) [r setFragmentBuffer:state offset:0 atIndex:1];
 	if (t0) [r setFragmentTexture:t0 atIndex:0];
 	if (t1) [r setFragmentTexture:t1 atIndex:1];
+	if (t2) [r setFragmentTexture:t2 atIndex:2];
 	[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 	[r endEncoding];
 }
@@ -263,17 +278,25 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[s->sky[1] release];
 			[s->lightT release];
 			s->lightT = nil;
+			[s->veil[0] release];
+			[s->veil[1] release];
+			s->veil[0] = s->veil[1] = nil;
 			s->raw = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL march");
 			s->hist[0] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history A");
 			s->hist[1] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history B");
 			s->sky[0] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask A");
 			s->sky[1] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask B");
 			if (s->temporalFold) s->lightT = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL light + T");
+			if (s->veilBlurV) {
+				s->veil[0] = target(dev, MTLPixelFormatR16Float, (vlWidth + 3) / 4, (vlHeight + 3) / 4, 0, @"mcopt shade: VL veil A");
+				s->veil[1] = target(dev, MTLPixelFormatR16Float, (vlWidth + 3) / 4, (vlHeight + 3) / 4, 0, @"mcopt shade: VL veil B");
+			}
+			s->veilRan = 0;
 			s->width = vlWidth;
 			s->height = vlHeight;
 			reset = 1;
 		}
-		float local[80]; // VlParams (272 bytes since M3.3) and room to grow
+		float local[96]; // VlParams (320 bytes since 2026-10-09) and room to grow
 		if (paramBytes > (int) sizeof(local)) paramBytes = sizeof(local);
 		memcpy(local, params, paramBytes);
 		if (reset && paramBytes >= 38 * 4) local[37] = 1.0f; // VlParams.temporal.y: the temporal pass drops the history
@@ -304,16 +327,30 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 		}
 		// the march writes this frame's sky mask and reads last frame's (the crepuscular streaks' occluders)
 		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur],
-			times, base, liveW, liveH);
+			times, base, liveW, liveH, nil);
 		if (fold) {
 			// M2 fold: no full-resolution pass here; ShadePost's final pass upsamples lightT (mc_vl_outputs)
+			// (2026-10-09) VlParams.hp.w (float 79): the shafts' local contrast, from last frame's veil (skipped once when it's stale)
+			int hp = s->veilBlurV && paramBytes >= 80 * 4 && local[79] > 0.5f;
+			if (hp && !s->veilRan) local[79] = 0.0f;
 			pass(cb, s->hist[next], s->lightT, MTLLoadActionDontCare, s->temporalFold, @"mcopt shade: VL temporal", params, paramBytes, s->state,
-				s->raw, s->hist[s->cur], times, base + 2, liveW, liveH);
+				s->raw, s->hist[s->cur], times, base + 2, liveW, liveH, s->veil[0]);
+			if (hp) {
+				// this frame's veil for the next one: the 4x4 means of the new history, then the blur (quarter resolution)
+				int qw = ((liveW > 0 ? liveW : vlWidth) + 3) / 4, qh = ((liveH > 0 ? liveH : vlHeight) + 3) / 4;
+				pass(cb, s->veil[0], nil, MTLLoadActionDontCare, s->veilDown, @"mcopt shade: VL veil", params, paramBytes, nil, s->hist[next], nil,
+					nil, 0, qw, qh, nil);
+				pass(cb, s->veil[1], nil, MTLLoadActionDontCare, s->veilBlurH, @"mcopt shade: VL veil blur", params, paramBytes, nil, s->veil[0], nil,
+					nil, 0, qw, qh, nil);
+				pass(cb, s->veil[0], nil, MTLLoadActionDontCare, s->veilBlurV, @"mcopt shade: VL veil blur", params, paramBytes, nil, s->veil[1], nil,
+					nil, 0, qw, qh, nil);
+			}
+			s->veilRan = hp;
 		} else {
 			pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw,
-				s->hist[s->cur], times, base + 2, liveW, liveH);
+				s->hist[s->cur], times, base + 2, liveW, liveH, nil);
 			pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth,
-				times, base + 4, 0, 0);
+				times, base + 4, 0, 0, nil);
 		}
 		s->cur = next;
 		return 0;

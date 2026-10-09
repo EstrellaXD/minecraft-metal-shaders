@@ -519,10 +519,12 @@ public final class ShadePost {
 		params.clear();
 		boolean vl = vlLight != 0 && vlDist != 0;
 		// q: x bloom level 0's weight, y the volumetric light's upsample mode, z its depth tolerance scale (2026-10-09, live:
-		// mcopt.shade.vl.upMode / upTol, shade_post.metal shadeVlUpsample)
+		// mcopt.shade.vl.upMode / upTol, shade_post.metal shadeVlUpsample), w the knee of the light it adds (exposed luminance;
+		// 0 = linear: mcopt.shade.vl.knee, live)
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0)
 			// (2026-10-09 default: mode 1 with 1.6x the tolerance: no dots where the shafts cross leaves; FT2.1: 0, 1)
-			.putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upMode", 1f, 0f)).putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upTol", 1.6f, 1f)).putFloat(0f);
+			.putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upMode", 1f, 0f)).putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upTol", 1.6f, 1f))
+			.putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.knee", 0f, 0f));
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
 		// w: a bit field (as an exact small float): 1 = Distant Horizons drew into this frame (its LODs are where the depth is

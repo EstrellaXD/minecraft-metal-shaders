@@ -316,7 +316,15 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		tv = float(v.a);
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
 		float3 lit = c * tv;
-		c = max(lit + clamp(float3(v.rgb) * ex, -30000.0, 30000.0), lit * 0.55);
+		float3 add = clamp(float3(v.rgb) * ex, -30000.0, 30000.0);
+		// (2026-10-09, q.w > 0) a soft knee on the light it adds: luminance l -> l / sqrt(1 + (l / knee)^2), linear for the
+		// shafts (small l), at most the knee where a ray crosses tens of blocks of lit mist (a uniform glow that veiled the
+		// view: Gael, "como un lente empanado")
+		if (P.q.w > 0.0) {
+			float la = shadeLuma(max(add, 0.0)) / P.q.w;
+			add *= rsqrt(1.0 + la * la);
+		}
+		c = max(lit + add, lit * 0.55);
 	}
 	if (P.p.y > 0.5) {
 		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb + bloom0.sample(shadeLinearClamp, in.uv).rgb * half(P.q.x)) * P.p.x;

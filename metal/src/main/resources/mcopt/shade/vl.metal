@@ -42,7 +42,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 19 x float4 = 304 bytes since 2026-10-09).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 20 x float4 = 320 bytes since 2026-10-09).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -85,6 +85,9 @@ struct VlParams {
 	                  //     VL_FAR_STEPS more steps through the open air with the clouds' shadow only (sunset rays from cloud gaps)
 	float4 tune2;     // 288 x the far march's density gain (the evening haze toward the low sun), y its own cut (the share of its
 	                  //     unshadowed glow left out), zw 0
+	float4 hp;        // 304 (2026-10-09) the shafts' local contrast (fold): x keep, the share of the local mean glow kept; y gain of
+	                  //     what stands out of it (a beam); z the veil blur's tap spacing (quarter-resolution texels); w 1 = on.
+	                  //     Weighted by the canopy factor (under trees; open land keeps the plain light). See vl_veil_down.
 };
 #define VL_FAR_STEPS 8
 
@@ -580,22 +583,92 @@ struct VlFoldOut {
 	half4 lightT [[color(1)]];
 };
 
+// The shafts' local contrast (2026-10-09, Gael: the stronger god rays veiled the view "como un lente empanado"). Where a ray
+// crosses tens of blocks of lit mist (a low sun under the trees, the lit clearing behind a trunk) the in-scattered light is a
+// uniform glow: no per-pixel measure tells it from a beam (both are lit air along the ray), only its surroundings do. So
+// each VL texel is compared with the local mean of r = (in-scattered luminance) / (the canopy mist's optical depth along the
+// ray + half a block): how lit the air along the ray is, the same for a ray that ends on a leaf a block away and one that
+// crosses the forest (their mean has no halo at depth edges). With rbar that mean, the light becomes
+//   max(gain * l - (gain - keep) * rbar * R, 0):  keep x a uniform glow (r = rbar), more than before for a beam (r > rbar),
+// nothing for air darker than ~(gain - keep) / gain of its surroundings: visible shafts without the veil. rbar = last frame's
+// (vl_veil_down + 2 blur passes at a quarter of the VL resolution, after this pass; low frequency, so one frame late is fine).
+static inline float vlVeilR(float3 light, float3 dir, float dist, constant VlParams &p) {
+	return max(dot(light, float3(0.2126, 0.7152, 0.0722)), 0.0) / (vlMistDepth(dir, min(dist, p.shape.y), p) + 0.5);
+}
+
 fragment VlFoldOut vl_temporal_fold(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
-                                    constant VlState &st [[buffer(1)]], texture2d<half> raw [[texture(0)]], texture2d<half> history [[texture(1)]]) {
+                                    constant VlState &st [[buffer(1)]], texture2d<half> raw [[texture(0)]], texture2d<half> history [[texture(1)]],
+                                    texture2d<half> veil [[texture(2)]]) {
 	VlFoldOut o;
 	o.history = vlTemporal(in, f, p, raw, history);
 	float3 light = float3(o.history.rgb);
 	float T = 1.0;
 	float canopy = p.gate.z >= 0.0 ? p.gate.z : max(st.canopy.x, p.tune.x);
 	float mistK = p.light.w * canopy * p.mist.w * p.mist.z;
-	if (mistK > 1e-5 && p.water2.y < 0.5) {
+	bool air = p.water2.y < 0.5;
+	bool hp = p.hp.w > 0.5 && p.temporal.y < 0.5 && air && canopy > 0.01;
+	if ((mistK > 1e-5 && air) || hp) {
 		float2 fpos = floor(in.position.xy * (p.size.zw / p.size.xy)) + 0.5;
 		float2 ndc = fpos / p.size.zw * 2.0 - 1.0;
-		T = exp2(-1.442695 * mistK * vlMistDepth(vlDirection(ndc, f), min(float(o.history.a), p.shape.y), p));
-		light += p.mistAmb.rgb * (1.0 - T);
+		float3 dir = vlDirection(ndc, f);
+		float dist = float(o.history.a);
+		if (hp) {
+			float l = dot(light, float3(0.2126, 0.7152, 0.0722));
+			if (l > 0.0) {
+				constexpr sampler lin(filter::linear, address::clamp_to_edge);
+				float2 vs = float2(veil.get_width(), veil.get_height());
+				float2 live = ceil(p.size.xy * 0.25);
+				float rbar = float(veil.sample(lin, clamp(in.position.xy * 0.25, float2(0.5), live - 0.5) / vs).r);
+				float keep = mix(1.0, p.hp.x, canopy), gain = mix(1.0, p.hp.y, canopy);
+				float R = vlMistDepth(dir, min(dist, p.shape.y), p) + 0.5;
+				light *= max(gain - (gain - keep) * rbar * R / l, 0.0);
+			}
+		}
+		if (mistK > 1e-5 && air) {
+			T = exp2(-1.442695 * mistK * vlMistDepth(dir, min(dist, p.shape.y), p));
+			light += p.mistAmb.rgb * (1.0 - T);
+		}
 	}
 	o.lightT = half4(half3(min(light, 30000.0)), half(T));
 	return o;
+}
+
+// The veil (see vlVeilR), 1: the mean r of each 4x4 block of this frame's VL history (quarter resolution, R16F).
+fragment half vl_veil_down(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
+                           texture2d<half> history [[texture(0)]]) {
+	int2 base = int2(in.position.xy) * 4, hi = int2(p.size.xy) - 1;
+	float2 scale = p.size.zw / p.size.xy;
+	float sum = 0.0;
+	for (int j = 0; j < 4; j++) {
+		for (int i = 0; i < 4; i++) {
+			int2 q = min(base + int2(i, j), hi);
+			half4 h = history.read(uint2(q));
+			float2 fpos = floor((float2(q) + 0.5) * scale) + 0.5;
+			sum += vlVeilR(float3(h.rgb), vlDirection(fpos / p.size.zw * 2.0 - 1.0, f), float(h.a), p);
+		}
+	}
+	return half(min(sum * (1.0 / 16.0), 60000.0));
+}
+
+// 2 and 3: a separable 9-tap Gaussian (sigma ~ 1.75 taps), taps hp.z quarter-resolution texels apart (bilinear between them),
+// within the live part.
+static inline half vlVeilBlur(float2 pos, float2 axis, constant VlParams &p, texture2d<half> src) {
+	constexpr sampler lin(filter::linear, address::clamp_to_edge);
+	float2 vs = float2(src.get_width(), src.get_height());
+	float2 lo = float2(0.5), hi = ceil(p.size.xy * 0.25) - 0.5;
+	const float w[5] = {0.2270270, 0.1945946, 0.1216216, 0.0540541, 0.0162162};
+	float sum = w[0] * float(src.sample(lin, pos / vs).r);
+	for (int k = 1; k < 5; k++) {
+		float2 o = axis * (float(k) * p.hp.z);
+		sum += w[k] * (float(src.sample(lin, clamp(pos + o, lo, hi) / vs).r) + float(src.sample(lin, clamp(pos - o, lo, hi) / vs).r));
+	}
+	return half(sum);
+}
+fragment half vl_veil_blur_h(VlOut in [[stage_in]], constant VlParams &p [[buffer(0)]], texture2d<half> src [[texture(0)]]) {
+	return vlVeilBlur(in.position.xy, float2(1.0, 0.0), p, src);
+}
+fragment half vl_veil_blur_v(VlOut in [[stage_in]], constant VlParams &p [[buffer(0)]], texture2d<half> src [[texture(0)]]) {
+	return vlVeilBlur(in.position.xy, float2(0.0, 1.0), p, src);
 }
 
 // ---- composite ------------------------------------------------------------------------------------------------------------

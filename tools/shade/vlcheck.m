@@ -47,6 +47,9 @@ int main(int argc, const char **argv) {
 		fail |= build(dev, lib, @"vl_march", MTLPixelFormatRGBA16Float, false);
 		fail |= build(dev, lib, @"vl_temporal", MTLPixelFormatRGBA16Float, false);
 		fail |= build(dev, lib, @"vl_temporal_fold", MTLPixelFormatRGBA16Float, true);
+		fail |= build(dev, lib, @"vl_veil_down", MTLPixelFormatR16Float, true);   // 2026-10-09: the shafts' local contrast
+		fail |= build(dev, lib, @"vl_veil_blur_h", MTLPixelFormatR16Float, true);
+		fail |= build(dev, lib, @"vl_veil_blur_v", MTLPixelFormatR16Float, true);
 		fail |= build(dev, lib, @"vl_composite", MTLPixelFormatRGBA8Unorm, false);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRG11B10Float, true);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRGBA16Float, true);

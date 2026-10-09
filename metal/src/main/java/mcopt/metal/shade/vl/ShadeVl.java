@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 304; // VlParams (vl.metal), 19 x float4 since 2026-10-09
+	private static final int PARAM_BYTES = 320; // VlParams (vl.metal), 20 x float4 since 2026-10-09
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -400,7 +400,7 @@ public final class ShadeVl {
 		put(b, 0.7f * VlConfig.look("mcopt.shade.vl.openGain", 1.15f, 1f), (hdr ? 2.4f : 1.6f) * VlConfig.look("mcopt.shade.vl.canopyGain", 1.8f, 1f),
 			VlConfig.CANOPY, VlConfig.DEBUG);                                            // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
-		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
+		put(b, VlConfig.live("mcopt.shade.vl.mistRange", 16f), 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f); // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		// toward the light the open cut stays (the sunset must not wash into gold) and the canopy carve eases; away from it both
 		// drop (the shafts through the trees read from the side): vl.metal mixes them by the angle
@@ -420,6 +420,11 @@ public final class ShadeVl {
 			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
 		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)
 		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), 0f, 0f);
+		// hp (2026-10-09, Gael: the stronger shafts veiled the view "como un lente empanado"): the shafts' local contrast under trees
+		// (vl.metal vlVeilR; fold only): x the share of the local mean glow kept, y the gain of what stands out of it, z the veil
+		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)
+		put(b, VlConfig.look("mcopt.shade.vl.hpKeep", 0.35f, 1f), VlConfig.look("mcopt.shade.vl.hpGain", 1.6f, 1f),
+			VlConfig.live("mcopt.shade.vl.hpRadius", 2f), hdr && VlConfig.FOLD ? VlConfig.look("mcopt.shade.vl.hp", 1f, 0f) : 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

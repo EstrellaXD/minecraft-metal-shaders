@@ -67,6 +67,12 @@ public class ShadeMslDump {
 		Files.writeString(out.resolve("dh_terrain.vs.metal"), sd + ShadeMsl.prelude() + ShadeMsl.resource("dh_terrain.vs.metal"));
 		Files.writeString(out.resolve("dh_terrain.fs.metal"), sd + ShadeMsl.prelude() + ShadeMsl.resource("dh_terrain.fs.metal"));
 		Files.writeString(out.resolve("dh_terrain_jitter.vs.metal"), sd + ShadeMsl.prelude() + "#define SHADE_DH_JITTER\n#define SHADE_DH_SKY_HIGH\n" + ShadeMsl.resource("dh_terrain.vs.metal"));
+		// FT2: DH's far fade and copy (ShadeDh.DIRECT), DH's uniform orders; the copy also as the HDR target's variant
+		String sf = MetalShaderRegistry.slotDefines(List.of("fragUniformBlock", "uMcColorTexture", "uDhColorTexture", "uDhDepthTexture"));
+		Files.writeString(out.resolve("dh_far_fade.fs.metal"), sf + ShadeMsl.prelude() + ShadeMsl.resource("dh_far_fade.fs.metal"));
+		String sc = MetalShaderRegistry.slotDefines(List.of("uCopyTexture"));
+		Files.writeString(out.resolve("dh_copy.fs.metal"), sc + ShadeMsl.prelude() + ShadeMsl.resource("dh_copy.fs.metal"));
+		Files.writeString(out.resolve("dh_copy_hdr.fs.metal"), "#define MCOPT_HDR\n" + sc + ShadeMsl.prelude() + ShadeMsl.resource("dh_copy.fs.metal"));
 		Files.writeString(out.resolve("sky_lut.metal"), ShadeMsl.lut());
 		// M3 End sky box (mcopt.shade.dims): two uniform orders, LDR and HDR
 		List<List<String>> endOrders = List.of(List.of("Projection", "DynamicTransforms", "Sampler0"), List.of("Sampler0", "DynamicTransforms", "Projection"));

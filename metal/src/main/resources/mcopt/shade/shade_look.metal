@@ -46,7 +46,7 @@ struct ShadeLook {
 	float4 wind;       // 512  (M3 weather) xy wind direction (unit, world xz), z rain slant (blocks per block of fall), w snowfall at the camera 0..1
 	float4 clouds0;    // 528  M3 clouds: x cumulus base y, y top y (relative to the camera), z cloud shadow strength (0 off), w 1 = volumetric clouds on (vanilla's off)
 	float4 clouds1;    // 544  M3 clouds: x 1 = the reflection dome holds clouds, y cirrus altitude (relative), zw reserved
-	float4 waterShadow; // 560  M3.4 x the water surface's soft shadow radius (blocks, mcopt.shade.waterShadowSoft; 0 = M3.3's), yzw reserved
+	float4 waterShadow; // 560  M3.4 x the water surface's soft shadow radius (blocks, mcopt.shade.waterShadowSoft; 0 = M3.3's), y FT2 1 = Distant Horizons composites straight into the HDR target (ShadeDh.directFrame), zw reserved
 	float4 water;      // 576  (M3.3 wet ground, mcopt.shade.wetAll; was reserved for the water module, unused by it) x 1 = wet-all look, y soaked film roughness, z vegetation's extra roughness, w film reflections' gate (weather_surface.metal)
 	float4 waterAbs;   // 592  (M3.3 wet ground, look development) x extra darkening exponent of the film, y vegetation's film share, z texel height proxy strength, w rim band width
 	float4 tintRect;   // 608  (M3 weather) the coloured-shadow casters in the near cascade's light clip space: xy min, zw max (none: min > max); written after the shadow pass (ShadeBindings.setShadowTint)

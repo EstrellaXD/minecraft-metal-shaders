@@ -326,11 +326,24 @@ public final class ShadePost {
 		// Distant Horizons: every one of its passes (also those drawing into its own targets: its far fade samples the main
 		// colour) sees the display-referred image in main and composites there, as without shading
 		String label = d.label().get();
-		if (label != null && label.startsWith("distantHorizons:")) {
-			if (ShadeConfig.DH_BRIDGE && !bridgeOpen && !mcopt.metal.shade.dims.DimsDebug.noBridge()) openBridge();
-			return null;
-		}
 		var colors = d.colorAttachments();
+		if (label != null && label.startsWith("distantHorizons:")) {
+			// FT2 (ShadeDh.direct): DH's own passes draw into its own targets as they are; only its last copy into main (its
+			// composite) is redirected into the HDR target like a world pass (the format adapter turns its display-referred
+			// colours into radiance), so no bridge encodes the HDR image into main before and decodes it after
+			boolean intoMain = colors.size() == 1 && colors.get(0) != null && colors.get(0).textureView().texture() == mainColor;
+			boolean direct = mcopt.metal.shade.dh.ShadeDh.directFrame();
+			if (!(intoMain && direct && !bridgeOpen)) {
+				if (ShadeConfig.DH_BRIDGE && !bridgeOpen && !direct && !mcopt.metal.shade.dims.DimsDebug.noBridge()) openBridge();
+				return null;
+			}
+			bridgeUsed = true; // (the final pass's "DH drew this frame" bit)
+			if (!loggedDh) {
+				loggedDh = true;
+				System.out.println("[mcopt] shade: Distant Horizons passes seen: its composite goes straight into the HDR frame (FT2; mcopt.shade.dh.direct=false: through the bridge)");
+			}
+			mcopt.metal.shade.dims.DimsDebug.note("DH composite straight into the HDR target");
+		}
 		if (colors.size() != 1 || colors.get(0) == null) return null;
 		var attachment = colors.get(0);
 		if (attachment.textureView().texture() != mainColor || attachment.textureView().baseMipLevel() != 0) return null;

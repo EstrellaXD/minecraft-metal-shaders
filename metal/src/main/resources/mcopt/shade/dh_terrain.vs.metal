@@ -83,8 +83,10 @@ vertex DhOut main0(DhIn in [[stage_in]], constant DhShared &u [[buffer(MCOPT_SLO
 #else
 	o.light = half2(half(l >> 4), half(l & 15u)) / 15.0h;
 #endif
-	// (u = block light, v = sky light, texel centres; Nether / End without the dims module, the setup fallback)
-	o.lightmap = half3(lightMap.sample(lightMapSmplr, (float2(o.light) * 15.0 + 0.5) / 16.0, level(0.0)).rgb);
+	// (u = block light, v = sky light, texel centres; Nether / End without the dims module, the setup fallback). FT2: only
+	// where dh_terrain.fs uses it (a texture read per vertex otherwise: the LODs' vertex stage was 1.4 ms, profdh1)
+	bool vanillaLit = sf.flags.x > SHADE_DIM_END || (sf.flags.x != SHADE_DIM_OVERWORLD && !shadeDimsLit(sf));
+	o.lightmap = vanillaLit ? half3(lightMap.sample(lightMapSmplr, (float2(o.light) * 15.0 + 0.5) / 16.0, level(0.0)).rgb) : half3(1.0h);
 	o.face = in.face;
 	o.tile = in.tile;
 	return o;

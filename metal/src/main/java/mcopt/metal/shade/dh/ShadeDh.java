@@ -60,11 +60,32 @@ public final class ShadeDh {
 
 	private static final Entry SSAO = new Entry(CFG, "enableSsao"), AA = new Entry(CFG, "enableAntiAliasing"),
 		FADE = new Entry(CFG + "$Quality", "vanillaFadeMode"), FOG = new Entry(CFG + "$Fog", "enableDhFog"),
-		SHADING = new Entry(CFG + "$Quality", "lodShading");
-	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING};
+		SHADING = new Entry(CFG + "$Quality", "lodShading"), OVERDRAW = new Entry(CFG + "$Culling", "overdrawPrevention");
+	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING, OVERDRAW};
 	private static Method setApi;
 	private static Class<?> fadeEnum, shadingEnum;
 	private static boolean failed, resolved, logged;
+	/**
+	 * FT2 (2026-10-08 night; mcopt.shade.dh.direct, default true): DH's composite goes straight into the HDR world target
+	 * instead of through ShadePost's bridge (the HDR image tone-mapped into main before DH's first pass and decoded back after
+	 * its last: two full-screen passes, 0.7 ms at 0.80 scale, profdh1). Our stages for DH's far fade and copy
+	 * (dh_far_fade.fs, dh_copy.fs): the far fade leaves the LODs' coverage in alpha instead of mixing them over main, and DH's
+	 * last copy, redirected into the HDR target, composites by it there. Live: mcopt.shade.dh.direct=false (read every frame)
+	 * goes back to the bridge, as does anything that keeps the HDR frame from running.
+	 */
+	public static final boolean DIRECT = LIGHT && !"false".equals(System.getProperty("mcopt.shade.dh.direct"));
+	private static volatile boolean directFrame;
+
+	/** FT2: this frame DH composites straight into the HDR target (ShadePost: no bridge; ShadeLook.waterShadow.y = 1). */
+	public static boolean directFrame() {
+		return directFrame;
+	}
+
+	/** Once per frame when ShadeLook is packed: whether this frame composites DH directly (1) or through the bridge (0). */
+	public static float directFlag(boolean hdrFrame) {
+		directFrame = DIRECT && hdrFrame && !"false".equals(System.getProperty("mcopt.shade.dh.direct"));
+		return directFrame ? 1f : 0f;
+	}
 
 	private ShadeDh() {
 	}
@@ -80,6 +101,13 @@ public final class ShadeDh {
 			MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(generated -> vertex, generated -> fragment,
 				List.of("vertSharedUniformBlock", "vertUniqueUniformBlock", "fragUniformBlock", "uBlockAtlas", "uLightMap")));
 		}
+		if (DIRECT) { // FT2: the far fade and the copy, fragment stages only (DH's full-screen vertex stage stays)
+			String fade = ShadeMsl.prelude() + ShadeMsl.resource("dh_far_fade.fs.metal");
+			String copy = ShadeMsl.prelude() + ShadeMsl.resource("dh_copy.fs.metal");
+			MetalShaderRegistry.register("distanthorizons:far_fade", new MetalShaderRegistry.Variant(null, generated -> fade,
+				List.of("fragUniformBlock", "uMcColorTexture", "uDhColorTexture", "uDhDepthTexture")));
+			MetalShaderRegistry.register("distanthorizons:copy", new MetalShaderRegistry.Variant(null, generated -> copy, List.of("uCopyTexture")));
+		}
 		System.out.println("[mcopt] shade dh: Distant Horizons' LOD terrain lit by the shade model (mcopt.shade.dh.light=false: DH's own look)");
 	}
 
@@ -93,6 +121,11 @@ public final class ShadeDh {
 			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "dh") : null);
 			apply(FOG, shading && LIGHT ? off("mcopt.shade.dh.fog") : null);
 			apply(SHADING, shading && LIGHT && off("mcopt.shade.dh.shading") != null ? named(shadingEnum, "-", "DISABLED") : null);
+			// FT2 (2026-10-08 night): how far around the camera DH skips LODs that the vanilla terrain covers (0..1 of the vanilla
+			// render distance; "dh" = DH's own setting): LODs there are rasterized and lit for nothing
+			// (pricedh1, DH 40 chunks, render distance 16: 0.5 -0.48 to -0.69 ms, 0.8 -1.04 / -1.07 ms; no holes in the still shots;
+			// DH warns of holes when flying into terrain not loaded yet: 0.5 by default, with its fast-movement reduction on)
+			apply(OVERDRAW, shading ? number("mcopt.shade.dh.overdraw", "0.5") : null);
 		} catch (Throwable t) {
 			fail(t);
 			return;
@@ -112,6 +145,18 @@ public final class ShadeDh {
 	/** Boolean.FALSE (override off) unless the flag says "dh". */
 	private static Object off(String key) {
 		return "dh".equalsIgnoreCase(System.getProperty(key, "off")) ? null : Boolean.FALSE;
+	}
+
+	/** A Float override from a property ("dh" or unparsable: DH's own setting); the same instance while the value is unchanged. */
+	private static Object number(String key, String def) {
+		String v = System.getProperty(key, def);
+		if ("dh".equalsIgnoreCase(v)) return null;
+		try {
+			float f = Float.parseFloat(v);
+			return OVERDRAW.applied instanceof Float a && a == f ? a : Float.valueOf(f);
+		} catch (NumberFormatException e) {
+			return null;
+		}
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})

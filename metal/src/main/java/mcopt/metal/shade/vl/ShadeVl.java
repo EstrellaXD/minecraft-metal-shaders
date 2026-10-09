@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 480; // VlParams (vl.metal), 30 x float4 since FT2.7
+	private static final int PARAM_BYTES = 496; // VlParams (vl.metal), 31 x float4 since FT2.7
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -557,6 +557,8 @@ public final class ShadeVl {
 		// (w: sky pixels end their air-mode march past the shade grid, where it adds nothing: mcopt.shade.vl.airSkyCull, live; the same image)
 		put(b, VlConfig.live("mcopt.shade.vl.airCols", 0f), VlConfig.live("mcopt.shade.vl.airColTaps", 4f), VlConfig.live("mcopt.shade.vl.airColR", 0f),
 			VlConfig.live("mcopt.shade.vl.airSkyCull", 1f));
+		// air7 (FT2.7): x how high above a cell the canopy test's columns start (mcopt.shade.vl.airColLo, blocks, live; 0 = airGridR)
+		put(b, VlConfig.live("mcopt.shade.vl.airColLo", 0f), 0f, 0f, 0f);
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

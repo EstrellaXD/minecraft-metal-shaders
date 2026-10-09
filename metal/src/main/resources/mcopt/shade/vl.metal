@@ -123,6 +123,7 @@ struct VlParams {
 	float4 air6;      // 464 (FT2.7, audit idx 16) the canopy test as columns: x how many (0 = FT2.6's solid box), y taps up each one,
 	                  //     z their distance from the cell's axis (blocks; 0 = 3/4 of the canopy test's reach), w > 0: sky pixels stop
 	                  //     their air-mode march where it can no longer add anything (audit idx 0)
+	float4 air7;      // 480 (FT2.7) x the canopy test's columns start this high above the cell (blocks; 0 = grid2.w), yzw 0
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -310,14 +311,14 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 		int cols = min(int(p.air6.x), 12);
 		if (cols > 0) {
 			int taps = clamp(int(p.air6.y), 2, 6);
-			float rho = p.air6.z > 0.0 ? p.air6.z : 0.75 * rUp;
+			float rho = p.air6.z > 0.0 ? p.air6.z : 0.75 * rUp, lo = p.air7.x > 0.0 ? p.air7.x : r;
 			for (int i = 0; i < cols; i++) {
 				float a = (float(i) + 0.5) * (6.2831853 / float(cols));
 				float2 o = float2(cos(a), sin(a)) * rho;
 				float col = 1.0;
 				for (int j = 0; j < taps && col > 0.02; j++) {
 					float s = float(j) / float(taps - 1);
-					col = min(col, vlGridTap(c + float3(o.x, r + s * s * (up - r), o.y), f, map));
+					col = min(col, vlGridTap(c + float3(o.x, lo + s * s * (up - lo), o.y), f, map));
 				}
 				open += col;
 			}

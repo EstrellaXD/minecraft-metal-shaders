@@ -99,7 +99,9 @@ final class ShadowCasters {
 	 */
 	boolean tintTight;
 	/** Sections scanned for their translucent blocks: section key -> {signature, frame scanned, x0, y0, z0, x1, y1, z1} (empty: x0 > x1). */
-	private final java.util.HashMap<Long, int[]> tightCache = new java.util.HashMap<>();
+	private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<int[]> tightCache = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>(); // (no boxed keys per lookup)
+	/** tightBox's result (world block coordinates, max exclusive). */
+	private final int[] tightOut = new int[6];
 	private final java.util.IdentityHashMap<BlockState, Boolean> translucentStates = new java.util.IdentityHashMap<>();
 	private @Nullable BlockStateModelSet translucentStatesFor;
 	private int buildFrame;
@@ -232,12 +234,12 @@ final class ShadowCasters {
 	 * M3.3 tintTight: the box of section (sx, sy, sz)'s blocks with a translucent model (stained glass and panes, ice, slime,
 	 * honey...), world block coordinates, max exclusive; null when it holds none. Cached per section, scanned again when its
 	 * translucent geometry (signature: base vertex, vertex counts) changes, and at least every 2 s (an edit that keeps the
-	 * counts). Falls back to the whole section when the level or the models are not there.
+	 * counts). Falls back to the whole section when the level or the models are not there. The box goes into {@link #tightOut}
+	 * (no allocation per section and frame); false when the section holds none.
 	 */
-	private int @Nullable [] tightBox(int sx, int sy, int sz, long ptr) {
-		int[] whole = {sx * 16, sy * 16, sz * 16, sx * 16 + 16, sy * 16 + 16, sz * 16 + 16};
+	private boolean tightBox(int sx, int sy, int sz, long ptr) {
 		ClientLevel level = this.tintLevel;
-		if (level == null || this.tintModels == null) return whole;
+		if (level == null || this.tintModels == null) return this.wholeBox(sx, sy, sz);
 		if (this.translucentStatesFor != this.tintModels) {
 			this.translucentStates.clear();
 			this.tightCache.clear();
@@ -247,11 +249,15 @@ final class ShadowCasters {
 		for (int i = 0; i < 7; i++) sig = sig * 131L + SectionRenderDataUnsafe.getVertexCount(ptr, i);
 		long key = net.minecraft.core.SectionPos.asLong(sx, sy, sz);
 		int[] c = this.tightCache.get(key);
-		if (c != null && c[0] == (int) (sig ^ (sig >>> 32)) && this.buildFrame - c[1] < 240) return c[2] > c[5] ? null : java.util.Arrays.copyOfRange(c, 2, 8);
+		if (c != null && c[0] == (int) (sig ^ (sig >>> 32)) && this.buildFrame - c[1] < 240) {
+			if (c[2] > c[5]) return false;
+			System.arraycopy(c, 2, this.tightOut, 0, 6);
+			return true;
+		}
 		LevelChunk chunk = level.getChunkSource().getChunk(sx, sz, ChunkStatus.FULL, false);
-		if (chunk == null) return whole;
+		if (chunk == null) return this.wholeBox(sx, sy, sz);
 		int si = chunk.getSectionIndexFromSectionY(sy);
-		if (si < 0 || si >= chunk.getSectionsCount()) return whole;
+		if (si < 0 || si >= chunk.getSectionsCount()) return this.wholeBox(sx, sy, sz);
 		net.minecraft.world.level.chunk.LevelChunkSection section = chunk.getSection(si);
 		int x0 = 16, y0 = 16, z0 = 16, x1 = -1, y1 = -1, z1 = -1;
 		if (section.maybeHas(this.translucentModel)) {
@@ -267,9 +273,19 @@ final class ShadowCasters {
 		}
 		this.tightScans++;
 		if (this.tightCache.size() > 4096) this.tightCache.clear();
-		int[] box = {sx * 16 + x0, sy * 16 + y0, sz * 16 + z0, sx * 16 + x1 + 1, sy * 16 + y1 + 1, sz * 16 + z1 + 1};
-		this.tightCache.put(key, new int[] {(int) (sig ^ (sig >>> 32)), this.buildFrame, box[0], box[1], box[2], box[3], box[4], box[5]});
-		return x0 > x1 ? null : box;
+		int[] entry = {(int) (sig ^ (sig >>> 32)), this.buildFrame, sx * 16 + x0, sy * 16 + y0, sz * 16 + z0, sx * 16 + x1 + 1, sy * 16 + y1 + 1, sz * 16 + z1 + 1};
+		this.tightCache.put(key, entry);
+		if (x0 > x1) return false;
+		System.arraycopy(entry, 2, this.tightOut, 0, 6);
+		return true;
+	}
+
+	/** tightBox's fallback: section (sx, sy, sz)'s whole 16^3 box into tightOut. */
+	private boolean wholeBox(int sx, int sy, int sz) {
+		int[] b = this.tightOut;
+		b[0] = sx * 16; b[1] = sy * 16; b[2] = sz * 16;
+		b[3] = b[0] + 16; b[4] = b[1] + 16; b[5] = b[2] + 16;
+		return true;
 	}
 
 	/** M3.3 far spread: the part (0..parts-1) of section column (sx, sz): a lattice, so every 2 x 2 columns hold one of each of 4. */
@@ -341,8 +357,8 @@ final class ShadowCasters {
 					int sx = region.getChunkX() + (section >> 5 & 7), sy = region.getChunkY() + (section & 3), sz = region.getChunkZ() + (section >> 2 & 7);
 					if (this.tintLevel != null && !this.maybeTranslucentBlocks(sx, sy, sz)) continue;
 					if (this.tintTight && this.tintLevel != null) {
-						int[] b = this.tightBox(sx, sy, sz, ptr);
-						if (b == null) continue; // only water (or stale palette entries): nothing tints here
+						if (!this.tightBox(sx, sy, sz, ptr)) continue; // only water (or stale palette entries): nothing tints here
+						int[] b = this.tightOut;
 						this.addTintBox(b[0], b[1], b[2], b[3], b[4], b[5]);
 					} else {
 						this.addTintBox(sx * 16, sy * 16, sz * 16, sx * 16 + 16, sy * 16 + 16, sz * 16 + 16);

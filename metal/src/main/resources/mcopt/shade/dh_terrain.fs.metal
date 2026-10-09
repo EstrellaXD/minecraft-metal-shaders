@@ -96,6 +96,7 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 	bool overworld = sf.flags.x == SHADE_DIM_OVERWORLD;
 	float ex = max(sg.exposure.x, 1e-6);
 	float3 radiance;
+	half outAlpha = in.color.a;
 	if (!overworld) {
 		// Nether / End with the dims module: the dimension's own light (shade_dims.metal), as Sodium's terrain without sky light
 		radiance = shadeLit2(albedo, n, half(0.0), block, half(0.0), false, false, sf, sl);
@@ -105,6 +106,36 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		// the volumetric clouds' shadow
 		half shadow = sky > 0.3h ? half(shadeCloudShadow(p, sl, sr.cloudShadow)) : half(1.0);
 		radiance = shadeLit2(albedo, n, sky, block, shadow, false, false, sf, sl);
+#ifdef SHADE_DH_TRANSLUCENT
+		// FT2.5: the LODs' water (DH's translucent top faces) mirrors the sky like the near water (water.metal): Schlick's
+		// Fresnel for water, the atmosphere and the volumetric clouds (their reflection dome) in the mirrored direction, the
+		// sun's glint with the near water's far roughness (its glitter road goes on past the chunks). A flat surface out
+		// here: waves average out over a LOD pixel. The reflection draws opaque in proportion to its Fresnel weight, as the
+		// near water's does; DH's water colour (lit) shows through the rest. No terrain in it (no depth for SSR out here).
+		if (in.face == 1u && in.color.a < 0.99h && !shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
+			float3 v = p / max(d, 1e-4);
+			float3 r = float3(v.x, abs(v.y), v.z);
+			float open = float(shadeSkyCurve(sky));
+			float m = 1.0 - saturate(-v.y);
+			float fr = (0.0204 + 0.9796 * m * m * m * m * m) * (0.35 + 0.65 * open);
+			float3 refl = shadeSkyLookup(r, skyLut, skyLutSmplr, sf);
+			float4 cd = shadeCloudsDome(r, sl, sr.cloudDome);
+			refl = (refl * cd.a + cd.rgb) * open;
+			// GGX glint (normal up), alpha 0.135: the near water's at 110+ blocks
+			float3 l = sf.lightDirWorld.xyz, h = normalize(l - v);
+			float nh = saturate(h.y), nl = saturate(l.y), nv = max(-v.y, 1e-3);
+			const float a2 = 0.135 * 0.135 * 0.135 * 0.135;
+			float dd = nh * nh * (a2 - 1.0) + 1.0;
+			float vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 1e-5);
+			float mh = 1.0 - saturate(dot(h, -v));
+			float spec = a2 / (dd * dd) * vis * nl * (0.0204 + 0.9796 * mh * mh * mh * mh * mh);
+			float3 glint = sf.sunColor.rgb * min(spec, 60.0) * float(smoothstep(0.15h, 0.85h, shadow)) * open;
+			float ba = float(in.color.a);
+			float aw = fr + (1.0 - fr) * ba;
+			radiance = (refl * fr + radiance * ba * (1.0 - fr) + glint) / max(aw, 1e-3);
+			outAlpha = half(aw);
+		}
+#endif
 		radiance = shadeFogAir2(radiance, p, 0.0, 0.0, skyLut, skyLutSmplr, sf, sl, &sr);
 	}
 	if (shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) radiance = float3(albedo) * sf.ambientSky.xyz;
@@ -116,5 +147,5 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		float3 t = sf.flags.y == 1 ? pow(1.0 - a, float3(2.6, 1.25, 1.0)) : float3(1.0 - a);
 		c = c * t + shadeLdrToHdr(sf.fogColor.rgb, sl) * (1.0 - t);
 	}
-	return float4(shadeLinearToSrgbExact(saturate(shadeDisplay(c, sl))), in.color.a);
+	return float4(shadeLinearToSrgbExact(saturate(shadeDisplay(c, sl))), outAlpha);
 }

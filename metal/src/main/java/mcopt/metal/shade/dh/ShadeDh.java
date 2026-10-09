@@ -97,8 +97,10 @@ public final class ShadeDh {
 			+ (Boolean.getBoolean("mcopt.shade.dh.skyHigh") ? "#define SHADE_DH_SKY_HIGH\n" : "")
 			+ (Boolean.getBoolean("mcopt.shade.dh.noclip") ? "#define SHADE_DH_NOCLIP\n" : ""); // (dev, FT2: the cost of the discard)
 		String vertex = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.vs.metal");
-		String fragment = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.fs.metal");
 		for (String name : PIPELINES) {
+			// FT2.5: the translucent pipeline's water mirrors the sky (mcopt.shade.dh.water=false: lit as terrain, FT2's look)
+			boolean water = name.endsWith("transparent_terrain") && !"false".equals(System.getProperty("mcopt.shade.dh.water"));
+			String fragment = ShadeMsl.prelude() + defines + (water ? "#define SHADE_DH_TRANSLUCENT\n" : "") + ShadeMsl.resource("dh_terrain.fs.metal");
 			MetalShaderRegistry.register(name, new MetalShaderRegistry.Variant(generated -> vertex, generated -> fragment,
 				List.of("vertSharedUniformBlock", "vertUniqueUniformBlock", "fragUniformBlock", "uBlockAtlas", "uLightMap")));
 		}

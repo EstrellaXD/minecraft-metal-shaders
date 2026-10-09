@@ -125,7 +125,8 @@ struct VlParams {
 	                  //     their air-mode march where it can no longer add anything (audit idx 0)
 	float4 air7;      // 480 (FT2.7) x the canopy test's columns start this high above the cell (blocks; 0 = grid2.w), y > 0: only a
 	                  //     blocker within that many blocks toward the light shades a column's tap (leaves above, not a far tree), z > 0:
-	                  //     the columns and FT2.6's box both (the lesser open share), w 0
+	                  //     the columns and FT2.6's box both (the lesser open share), w > 0: the crepuscular taps march last frame's
+	                  //     sky mask where this pixel and the sun were last frame (audit idx 21)
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -709,6 +710,19 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	// (FT2.7, audit idx 3: not on geometry when its streaks' gain look2.x is 0, the HDR default: the taps' result was times 0)
 	if (p.crep.x > 0.0 && p.crep.z > 0.0 && !underwater && p.temporal.y < 0.5 && (d <= 0.0 || !VL_HDR || p.look2.x != 0.0)) {
 		float2 toV = (p.sunPx.xy - fpos) / scale, fv = in.position.xy;
+		// (FT2.7, audit idx 21; air7.w > 0) the mask is last frame's: march its pixels, from where this pixel's direction and the
+		// sun were last frame (a turn maps sky directions by a homography: the segment to the sun stays a segment), at last
+		// frame's live size. This frame's pixels made the dark sky rays lag their clouds and trees by a frame of the turn
+		float2 prevLiveV = p.carve.z > 0.0 ? p.carve.zw * float2(prevSky.get_width(), prevSky.get_height()) : p.size.xy;
+		float2 liveV = p.size.xy;
+		if (p.air7.w > 0.0) {
+			float4 pcP = f.prevViewProj * float4(dir, 0.0), pcS = f.prevViewProj * float4(L, 0.0);
+			if (pcP.w > 1e-4 && pcS.w > 1e-4) {
+				fv = (pcP.xy / pcP.w * 0.5 + 0.5) * prevLiveV;
+				toV = (pcS.xy / pcS.w * 0.5 + 0.5) * prevLiveV - fv;
+				liveV = prevLiveV;
+			}
+		}
 		int taps = int(p.crep.y);
 		float open = 0.0, wsum = 0.0, w = 1.0;
 		// M3.3 (art.z): the same taps without the first quarter (the pixel's own neighbourhood): how much of the way toward
@@ -727,8 +741,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		for (int k = 0; k < taps; k++) {
 			float s = (float(k) + xc) / float(taps);
 			float2 q = fv + toV * (s * s);
-			if (all(q >= 0.0) && all(q < p.size.xy)) {
-				float m = smoothTaps ? float(prevSky.sample(maskLin, clamp(q, 0.5, p.size.xy - 0.5) * maskTexel).r)
+			if (all(q >= 0.0) && all(q < liveV)) {
+				float m = smoothTaps ? float(prevSky.sample(maskLin, clamp(q, 0.5, liveV - 0.5) * maskTexel).r)
 				                     : float(prevSky.read(uint2(q)).r);
 				open += m * w;
 				if (k >= kFar) openFar += m * w;

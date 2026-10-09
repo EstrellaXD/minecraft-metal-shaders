@@ -121,7 +121,8 @@ struct VlParams {
 	                  //     share with the camera in the open (canopy factor 0; 1 = everywhere alike, FT2.5), w how far sideways the shade
 	                  //     grid's canopy test reaches (blocks; 0 = grid2.w)
 	float4 air6;      // 464 (FT2.7, audit idx 16) the canopy test as columns: x how many (0 = FT2.6's solid box), y taps up each one,
-	                  //     z their distance from the cell's axis (blocks; 0 = 3/4 of the canopy test's reach), w 0
+	                  //     z their distance from the cell's axis (blocks; 0 = 3/4 of the canopy test's reach), w > 0: sky pixels stop
+	                  //     their air-mode march where it can no longer add anything (audit idx 0)
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -445,10 +446,21 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float3 hazeAll = 0.0, hazeLit = 0.0;
 		float lumR = dot(sigR, float3(0.2126, 0.7152, 0.0722));
 		float prevB = 0.0;
+		// (FT2.7, audit idx 0; air6.w > 0) a sky pixel with airSkyCut and airBase 0: past the shade grid (and the forest air's
+		// fade-out) every step only feeds sums the sky multiplies by 0 (shadowed *= air2.y below; outside the grid dF = air4.x = 0),
+		// so its march stops there. The same image; the far steps (far cascade, cloud shadows) were ~0.2 ms where half the view is sky
+		float tStop = D;
+		if (skyPx && p.air6.w > 0.0 && p.air2.y == 0.0 && p.air4.x <= 0.0) {
+			float3 ex = select(-p.grid.xyz, p.grid.xyz + gridSpan, dir > 0.0) / max(abs(dir), 1e-6); // the camera is inside the grid
+			tStop = min(min(ex.x, min(ex.y, ex.z)) + 1.0, D);
+			if (p.air5.y > p.air5.x) tStop = min(tStop, p.air5.y);
+			if (local <= 0.0) tStop = 0.0;
+		}
 		for (int i = 0; i < na; i++) {
 			// quadratic spacing (dense near the camera, where the trees' shadows are), each texel offset on its own (bit 32)
 			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
 			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
+			if (t > tStop) break;
 			prevB = b1;
 			float y = yc + dir.y * t;
 			float fR = exp(-max(y - y0R, 0.0) / hR);

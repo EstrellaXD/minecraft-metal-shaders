@@ -554,7 +554,9 @@ public final class ShadeVl {
 			VlConfig.live("mcopt.shade.vl.airGridUpR", 0f));
 		// air6 (FT2.7, audit idx 16): the canopy test as columns (mcopt.shade.vl.airCols: how many, 0 = FT2.6's solid box; airColTaps:
 		// taps up each one; airColR: their distance from the cell's axis, blocks, 0 = 3/4 of the test's reach), live
-		put(b, VlConfig.live("mcopt.shade.vl.airCols", 0f), VlConfig.live("mcopt.shade.vl.airColTaps", 4f), VlConfig.live("mcopt.shade.vl.airColR", 0f), 0f);
+		// (w: sky pixels end their air-mode march past the shade grid, where it adds nothing: mcopt.shade.vl.airSkyCull, live; the same image)
+		put(b, VlConfig.live("mcopt.shade.vl.airCols", 0f), VlConfig.live("mcopt.shade.vl.airColTaps", 4f), VlConfig.live("mcopt.shade.vl.airColR", 0f),
+			VlConfig.live("mcopt.shade.vl.airSkyCull", 1f));
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

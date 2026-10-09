@@ -16,7 +16,12 @@ import net.minecraft.client.gui.screens.PauseScreen;
  * at the end (one full cycle of the seven choices), so the run leaves config/mcopt.properties as it found it.
  */
 final class UiShots {
-	private static final int PRESSES = 4, CHOICES = 7;
+	/**
+	 * -Dmcbench.uiButton (2026-10-09; default "Resolución:"): the label prefix of the button pressed, e.g. "Salida:" (mcopt-shade's
+	 * output resolution: 5 choices, -Dmcbench.uiChoices=5); -Dmcbench.uiChoices: how many choices it cycles through (restore).
+	 */
+	private static final String BUTTON = System.getProperty("mcbench.uiButton", "Resolución:");
+	private static final int PRESSES = 4, CHOICES = Integer.getInteger("mcbench.uiChoices", 7);
 
 	private UiShots() {
 	}
@@ -73,7 +78,7 @@ final class UiShots {
 	private static void press(Minecraft mc) {
 		if (mc.gui.screen() == null) return;
 		for (GuiEventListener l : mc.gui.screen().children()) {
-			if (l instanceof Button b && b.getMessage().getString().startsWith("Resolución:")) {
+			if (l instanceof Button b && b.getMessage().getString().startsWith(BUTTON)) {
 				b.onPress(null);
 				return;
 			}

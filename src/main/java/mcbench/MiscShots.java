@@ -262,13 +262,14 @@ final class MiscShots {
 		double hold = Double.parseDouble(System.getProperty("mcbench.variantHold", "2.5"));
 		String scene = "var-" + tag;
 		steps.add(new CloudShots.WeatherScene(scene, time, weather, pose));
-		// -Dmcbench.variantSetup=cmd;;cmd (2026-10-09): server commands run once, at the first group's pose before it settles (e.g.
+		// -Dmcbench.variantSetup=cmd;;cmd (2026-10-09; '+' = space): server commands run once, at the first group's pose before it settles (e.g.
 		// plant a dense test forest around it with execute positioned ... over motion_blocking_no_leaves run place feature)
 		if (!setupDone) {
 			setupDone = true;
 			String setup = System.getProperty("mcbench.variantSetup", "").trim();
 			int k = 0;
-			if (!setup.isEmpty()) for (String c : setup.split(";;")) if (!c.isBlank()) steps.add(command("var-setup-" + (k++), c.trim()));
+			// ('+' stands for a space: mcbench-run splits its --jvm string on spaces)
+			if (!setup.isEmpty()) for (String c : setup.split(";;")) if (!c.isBlank()) steps.add(command("var-setup-" + (k++), c.trim().replace('+', ' ')));
 		}
 		steps.add(new BenchDriver.Settle(scene, rain, 3, 120));
 		steps.add(new BenchDriver.Hold(scene, rain ? Math.max(BenchDriver.SHOT_WAIT, 5) : Math.max(BenchDriver.SHOT_WAIT, 3)));

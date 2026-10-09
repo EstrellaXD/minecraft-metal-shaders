@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 336; // VlParams (vl.metal), 21 x float4 since FT2.3
+	private static final int PARAM_BYTES = 352; // VlParams (vl.metal), 22 x float4 since FT2.3
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -397,14 +397,15 @@ public final class ShadeVl {
 		// (2026-10-09 look development, live: mcopt.shade.vl.crepGain x the strength, crepTaps, crepFall = the exponent of the falloff
 		// around the light: lower reaches further, the radial rays of Gael's reference photo)
 		// (FT2.3: x2.5, twice the taps and a wider falloff: rays fanning out of the gaps around a visible sun, Gael's reference)
-		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.look("mcopt.shade.vl.crepGain", 2.5f, 1f) : 0f,
-			VlConfig.SS_TAPS > 0 ? VlConfig.look("mcopt.shade.vl.crepTaps", 2f * VlConfig.SS_TAPS, VlConfig.SS_TAPS) : 0f, onScreen, VlConfig.look("mcopt.shade.vl.crepFall", 3f, 6f));
+		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.live("mcopt.shade.vl.crepGain", 1f) : 0f,
+			VlConfig.SS_TAPS > 0 ? VlConfig.live("mcopt.shade.vl.crepTaps", VlConfig.SS_TAPS) : 0f, onScreen, VlConfig.live("mcopt.shade.vl.crepFall", 6f));
 		// sunPx; z the still view's clamp allowance, w bits: 1 the 3x3 clamp box, 2 the history at this point's distance,
 		// 4 per-texel crepuscular taps over a bilinear sky mask, 8 per-texel offsets of the canopy mist's own steps, 16 of the
 		// march under water
 		put(b, sx, sy, VlConfig.TEMPORAL ? VlConfig.STILL : 0f, (VlConfig.BOX3 ? 1 : 0) + (VlConfig.HIST_DEPTH ? 2 : 0)
 			+ (VlConfig.CREP_SMOOTH ? 4 : 0) + (VlConfig.NEAR_DITHER ? 8 : 0) + (VlConfig.WATER_DITHER ? 16 : 0)
-			+ (VlConfig.look("mcopt.shade.vl.marchDither", 1f, 0f) > 0.5f ? 32 : 0)); // 32 (FT2.3): the main march's offset per texel
+			+ (VlConfig.look("mcopt.shade.vl.marchDither", 1f, 0f) > 0.5f ? 32 : 0) // 32 (FT2.3): the main march's offset per texel
+			+ (VlConfig.look("mcopt.shade.vl.farShadow", 1f, 0f) > 0.5f ? 64 : 0)); // 64 (FT2.3): shafts from the far cascade only
 		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		// M3: the caustic curtains run on the water's clock (real time since M2.1: ShadeFrame.waterTime). On the game time the
@@ -455,7 +456,9 @@ public final class ShadeVl {
 		// radial (FT2.3): the light direction's vanishing point (homogeneous NDC, scaled to unit size) and the radial blur's taps
 		// on each side (mcopt.shade.vl.radialTaps, live; 0 = off; vl.metal vl_radial)
 		float vm = Math.max(Math.max(Math.abs(clip.x), Math.abs(clip.y)), Math.max(Math.abs(clip.w), 1e-6f));
-		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.look("mcopt.shade.vl.radialTaps", 12f, 0f) : 0f);
+		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.live("mcopt.shade.vl.radialTaps", 0f) : 0f);
+		// look2 (FT2.3): x the screen-space streaks in front of geometry (mcopt.shade.vl.crepGeo, live; FT2.1: 1, now 0)
+		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), 0f, 0f, 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

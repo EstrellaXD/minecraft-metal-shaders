@@ -42,7 +42,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 21 x float4 = 336 bytes since FT2.3).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 22 x float4 = 352 bytes since FT2.3).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -54,6 +54,7 @@ struct VlParams {
 	                  //     view (share of the neighbourhood mean; 0 = the plain clamp, M2.1), w bits (M2.2; 0 = M2.1): 1 the clamp
 	                  //     box over the 3x3 neighbourhood (else the filter's plus), 2 the history fetched from the texels at
 	                  //     this point's distance (else one bilinear sample), 4 the crepuscular taps offset per texel over a
+	                  //     [FT2.3: 32 the main march's offset per texel, 64 shafts from the far cascade only]
 	                  //     bilinear sky mask (else one offset per frame, point reads), 8 the canopy mist's own steps offset
 	                  //     per texel (else the march's per-frame offset), 16 the same for the march under water
 	float4 water;     // 112 rgb extinction under water (1/block), w scattering (1/block)
@@ -92,6 +93,7 @@ struct VlParams {
 	                  //     In full from a canopy factor of 0.2 (under trees; open land keeps the plain light). See vlVeilR.
 	float4 radial;    // 320 (FT2.3) the light direction's vanishing point in homogeneous NDC: xy = (viewProj * (L, 0)).xy, z its w
 	                  //     (all scaled alike), w taps on each side of the radial blur (0 = off). See vl_radial.
+	float4 look2;     // 336 (FT2.3) x gain of the screen-space crepuscular streaks in front of geometry (HDR; 0 = none), yzw 0
 };
 #define VL_FAR_STEPS 8
 
@@ -132,8 +134,10 @@ static inline float vlDistance(float2 ndc, float depth, constant ShadeFrame &f) 
 // Sun visibility at a point given its two cascade clip positions (ortho: linear in the march distance). Near cascade
 // (alpha-tested leaves: shafts through canopy gaps) where it covers, else the far one; above everything the map holds =
 // lit, below its depth range = shadowed (underground), outside the far square = lit.
-static inline float vlShadow(depth2d_array<float> map, sampler cmp, float3 c0, float3 c1) {
-	if (max(abs(c0.x), abs(c0.y)) < 0.97 && c0.z > 0.0 && c0.z < 1.0) return map.sample_compare(cmp, shadeShadowUV(c0), 0u, c0.z);
+// (FT2.3, farOnly: the far cascade alone, where leaves are whole blocks: shafts only through real gaps in the foliage, not a
+// mini shaft through every hole of the leaf texture, which at the VL resolution read as pixel noise: Gael, "pixeleados")
+static inline float vlShadow(depth2d_array<float> map, sampler cmp, float3 c0, float3 c1, bool farOnly = false) {
+	if (!farOnly && max(abs(c0.x), abs(c0.y)) < 0.97 && c0.z > 0.0 && c0.z < 1.0) return map.sample_compare(cmp, shadeShadowUV(c0), 0u, c0.z);
 	if (max(abs(c1.x), abs(c1.y)) >= 0.995) return 1.0;
 	if (c1.z >= 1.0) return 1.0;
 	if (c1.z <= 0.0) return 0.0;
@@ -269,6 +273,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float3 c0o = (f.shadowViewProj[0] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c0d = (f.shadowViewProj[0] * float4(dir, 0.0)).xyz;
 	float3 c1o = (f.shadowViewProj[1] * float4(0.0, 0.0, 0.0, 1.0)).xyz, c1d = (f.shadowViewProj[1] * float4(dir, 0.0)).xyz;
 	bool shadows = f.flags.z != 0;
+	bool farOnly = (int(p.sunPx.w) & 64) != 0; // (FT2.3) shafts from the far cascade only (see vlShadow)
 	// (2026-10-09, tune2.z) soft shafts: each step looks the shadow up a little across the light direction (a Vogel disk of radius
 	// tune2.z blocks, turned per texel and frame), so a shaft's edge is a gradient of ~2 radii instead of a cut (Gael: the lit air
 	// under a big gap read as a hard-edged glass sheet); the temporal pass averages it. o0/o1: one block along e1/e2 in each
@@ -323,7 +328,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 				q0.xy += o0a * cs.x + o0b * cs.y;
 				q1.xy += o1a * cs.x + o1b * cs.y;
 			}
-			float v = shadows ? vlShadow(map, cmp, q0, q1) : 1.0;
+			float v = shadows ? vlShadow(map, cmp, q0, q1, farOnly) : 1.0;
 			// M3: the volumetric clouds' shadows carve the air into shafts too (crepuscular rays from cloud gaps)
 			// (only where the sun reaches: no fetch in the terrain's shadow)
 			if (vlClouds && v > 0.0) {
@@ -375,7 +380,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 					q0.xy += o0a * cs.x + o0b * cs.y;
 					q1.xy += o1a * cs.x + o1b * cs.y;
 				}
-				float v = shadows ? vlShadow(map, cmp, q0, q1) : 1.0;
+				float v = shadows ? vlShadow(map, cmp, q0, q1, farOnly) : 1.0;
 				float seg = tl * (1.0 - exp(-sLocal * dtn)) / max(sLocal, 1e-9);
 				sumLocal += v * sLocal * seg;
 				sumLocalAll += sLocal * seg;
@@ -487,7 +492,9 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			// only light coming through gaps (above the typical openness), not a uniform glow
 			float reach = saturate((dist + 6.0) / 48.0);
 			float gaps = VL_HDR ? saturate((open - 0.25) / 0.75) : open;
-			scatter += p.light.rgb * (gaps * fall * p.crep.x * p.crep.z * reach);
+			// (FT2.3: x look2.x, 0 by default: these screen-space streaks drew light across trunks in front of the sun, Gael:
+			// "están atravesando el árbol"; the shadow-map shafts already carry the light between the camera and a surface)
+			scatter += p.light.rgb * (gaps * fall * p.crep.x * p.crep.z * reach * (VL_HDR ? p.look2.x : 1.0));
 		}
 	}
 	VlMarchOut o;

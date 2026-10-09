@@ -76,9 +76,17 @@ public final class ShadeMsl {
 	 * the dynamic-lights module (M3, empty when off) and shade_dynlight.metal (M3: the dynamic-lights seam): what goes in front
 	 * of every shaded stage.
 	 */
+	/**
+	 * FT1.3 (Gael: far terrain at the sunset horizon dotted and oddly white): mcopt.shade.hazeEdge (true) = the final pass's
+	 * haze from the 2x2 depth texels along silhouettes (not the nearest: a rim of dots against the resolved image);
+	 * mcopt.shade.hazeMieG (0.66; 0.76 = M3.4) = the haze's forward lobe toward the sun (0.76 washed far terrain out to cream).
+	 */
+	static final String HAZE_DEFINES = (Boolean.parseBoolean(System.getProperty("mcopt.shade.hazeEdge", "true")) ? "#define SHADE_HAZE_EDGE 1\n" : "")
+		+ "#define SHADE_HAZE_MIE_G " + Math.clamp(Float.parseFloat(System.getProperty("mcopt.shade.hazeMieG", "0.66")), 0f, 0.95f) + "\n";
+
 	public static String prelude() {
 		if (prelude == null) {
-			prelude = "#define MCOPT_SHADE\n" + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_clouds.metal") + "\n"
+			prelude = "#define MCOPT_SHADE\n" + HAZE_DEFINES + resource("shade_look.metal") + "\n" + resource("shade_common.metal") + "\n" + resource("shade_clouds.metal") + "\n"
 				+ resource("shade_m2.metal") + "\n"
 				+ resource("shade_dims.metal") + "\n" // M3 sky / dimensions (skydims)
 				+ mcopt.metal.shade.light.DynLightMsl.prelude() // M3 dynamic lights (empty when off)

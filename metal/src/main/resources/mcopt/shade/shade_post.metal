@@ -213,12 +213,47 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
 	float3 wp = d > 0.0 ? shadeWorldFromDepth(uv, d, f) : float3(0.0);
+#ifdef SHADE_HAZE_EDGE
+	if (hazeOn) {
+		// FT1.3: the depth is this frame's jittered raster at the render scale and the colour the resolved (TAAU) image, so the
+		// nearest depth texel switched the haze on and off pixel by pixel along a silhouette that is antialiased in the colour:
+		// far terrain against the sky (sunset, toward the sun) got a rim of bright and dark dots (Gael). The 2x2 texels around:
+		// where they agree (almost everywhere) one evaluation as before; along an edge each terrain texel's haze is weighted
+		// bilinearly (the sky's texels add none), so the haze fades across the edge as the colour does
+		float2 tp = clamp(uv * dsize - 0.5, float2(0.0), dsize - 1.001);
+		uint2 t0 = uint2(tp);
+		uint2 t1 = min(t0 + 1u, uint2(dsize) - 1u);
+		float2 fw = tp - float2(t0);
+		float4 dq = float4(depth.read(t0), depth.read(uint2(t1.x, t0.y)), depth.read(uint2(t0.x, t1.y)), depth.read(t1));
+		float dlo = min(min(dq.x, dq.y), min(dq.z, dq.w)), dhi = max(max(dq.x, dq.y), max(dq.z, dq.w));
+		if (dhi > 0.0 && (dlo <= 0.0 || dhi > dlo * 1.25)) {
+			float4 wq = float4((1.0 - fw.x) * (1.0 - fw.y), fw.x * (1.0 - fw.y), (1.0 - fw.x) * fw.y, fw.x * fw.y);
+			float3 Ts = 0.0, Ss = 0.0;
+			for (int k = 0; k < 4; k++) {
+				float3 Tk = float3(1.0), Sk = float3(0.0);
+				if (dq[k] > 0.0) {
+					uint2 tk = uint2(k & 1 ? t1.x : t0.x, k & 2 ? t1.y : t0.y);
+					float3 pk = shadeWorldFromDepth((float2(tk) + 0.5) / dsize, dq[k], f);
+					if (dot(pk, pk) > 4.0) Sk = shadeHazeInscatter(pk, f, L, 1.0, Tk);
+				}
+				Ts += Tk * wq[k];
+				Ss += Sk * wq[k];
+			}
+			T = Ts;
+			c = c * Ts + Ss * ex;
+		} else if (d > 0.0 && dot(wp, wp) > 4.0) {
+			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
+			c = c * T + S * ex;
+		}
+	}
+#else
 	if (d > 0.0 && hazeOn) {
 		if (dot(wp, wp) > 4.0) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
 			c = c * T + S * ex;
 		}
 	}
+#endif
 	// M3: the End's sky where vanilla drew none (the dragon fight), then the Nether's layered glowing haze / the End's violet
 	// haze (shade_dims.metal), in open air
 	// r.w is a bit field: 1 = Distant Horizons drew into this frame (its LODs sit where depth is empty), 2 = M2.2's VL unjitter

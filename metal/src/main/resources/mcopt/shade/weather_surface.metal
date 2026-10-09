@@ -253,7 +253,8 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 #ifdef SHADE_SNOW_COVER
 	if (snowy) {
 		float drift = fields.y;
-		w.snow = half(smoothstep(1.0 - float(L.wet.z) * 1.15, 1.15 - float(L.wet.z) * 1.15, drift + 0.15)) * open;
+		// (FT2.8, audit idx 90: the last 2.5 % fades out instead of the deepest drifts' cores vanishing in one frame)
+		w.snow = half(smoothstep(1.0 - float(L.wet.z) * 1.15, 1.15 - float(L.wet.z) * 1.15, drift + 0.15) * saturate(float(L.wet.z) * 40.0)) * open;
 		w.omega *= 1.0h - w.snow;
 	}
 #endif
@@ -261,7 +262,9 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	if (puddly) {
 		float field = fields.x;
 		float t = mix(0.80, 0.575, float(L.wet.y)); // ~30 % of open ground at full puddles (25 % at 0.60)
-		half P = half(smoothstep(t, t + 0.035, field)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
+		// (FT2.8, audit idx 90) times the puddles' last 2.5 %: the field's cores (~0.5 % of open ground) stayed full mirrors down to
+		// puddles 0 and blinked out at once when the weather turned dry
+		half P = half(smoothstep(t, t + 0.035, field) * saturate(float(L.wet.y) * 40.0)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
 		w.puddle = P;

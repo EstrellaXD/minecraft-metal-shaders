@@ -306,7 +306,9 @@ public final class DynLights {
 			b.putFloat(at, rx).putFloat(at + 4, ry).putFloat(at + 8, rz).putFloat(at + 12, s.reach);
 			b.putFloat(at + 16, s.r * k).putFloat(at + 20, s.g * k).putFloat(at + 24, s.b * k).putFloat(at + 28, s.spec);
 			if (s.slab >= 0) {
-				int ox = (int) Math.floor(s.x) - 16, oy = (int) Math.floor(s.y) - 16, oz = (int) Math.floor(s.z) - 16;
+				// (FT2.8, audit idx 76) the origin the slab was BUILT with (vol*: a light that moved under 0.04 keeps its slab, and a
+				// block line crossed in between shifted every lookup by a block: the wall's occlusion one block off)
+				int ox = (int) Math.floor(s.volX) - 16, oy = (int) Math.floor(s.volY) - 16, oz = (int) Math.floor(s.volZ) - 16;
 				b.putFloat(at + 32, (float) (ox - camX)).putFloat(at + 36, (float) (oy - camY)).putFloat(at + 40, (float) (oz - camZ)).putFloat(at + 44, s.slab);
 			} else {
 				b.putFloat(at + 32, 0f).putFloat(at + 36, 0f).putFloat(at + 40, 0f).putFloat(at + 44, -1f);

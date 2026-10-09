@@ -82,7 +82,9 @@ public final class ShadeMsl {
 	 * mcopt.shade.hazeMieG (0.5; 0.76 = M3.4) = the haze's forward lobe toward the sun (0.76 washed far terrain out to cream).
 	 */
 	static final String HAZE_DEFINES = (Boolean.parseBoolean(System.getProperty("mcopt.shade.hazeEdge", "true")) ? "#define SHADE_HAZE_EDGE 1\n" : "")
-		+ "#define SHADE_HAZE_MIE_G " + Math.clamp(Float.parseFloat(System.getProperty("mcopt.shade.hazeMieG", "0.5")), 0f, 0.95f) + "\n";
+		+ "#define SHADE_HAZE_MIE_G " + Math.clamp(Float.parseFloat(System.getProperty("mcopt.shade.hazeMieG", "0.5")), 0f, 0.95f) + "\n"
+		// (FT2.8, audit idx 96) the PCSS disc rotated per frame under TAA (mcopt.shade.pcssNoise; false = FT2.7's fixed pattern)
+		+ (mcopt.metal.shade.taa.TaaConfig.ENABLED && Boolean.parseBoolean(System.getProperty("mcopt.shade.pcssNoise", "true")) ? "#define SHADE_PCSS_TAA 1\n" : "");
 
 	public static String prelude() {
 		if (prelude == null) {

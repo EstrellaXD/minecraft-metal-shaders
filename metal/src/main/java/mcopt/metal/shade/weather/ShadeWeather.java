@@ -184,9 +184,11 @@ public final class ShadeWeather {
 			rain = rainTarget;
 			snowfall = snowTarget > 0.05f ? 1f : 0f;
 		} else {
-			wetness = approach(wetness, wetTarget, s, 14f, 75f);
-			puddles = approach(puddles, puddleTarget, s, 10f, 110f);
-			snow = approach(snow, snowTarget, s, 30f, 240f);
+			// (FT2.8, audit idx 90) drying toward slightly below 0, clamped: the values reach exactly 0 in finite time (puddles ~3.4
+			// minutes sooner than the exponential's tail under 0.003, snow ~7), so the terrain's lean dry variant comes back that much earlier
+			wetness = dryTo(wetness, wetTarget, s, 14f, 75f);
+			puddles = dryTo(puddles, puddleTarget, s, 10f, 110f);
+			snow = dryTo(snow, snowTarget, s, 30f, 240f);
 			rain = approach(rain, rainTarget, dt, 1.5f, 3f);
 			snowfall = approach(snowfall, snowTarget > 0.05f ? 1f : 0f, dt, 1.5f, 1.5f);
 		}
@@ -204,6 +206,10 @@ public final class ShadeWeather {
 	}
 
 	/** Exponential approach with separate rise / fall time constants (s). */
+	private static float dryTo(float v, float target, float dt, float rise, float fall) {
+		return target > 0f ? approach(v, target, dt, rise, fall) : Math.max(approach(v, -0.02f, dt, rise, fall), 0f);
+	}
+
 	private static float approach(float v, float target, float dt, float rise, float fall) {
 		float tau = target > v ? rise : fall;
 		return target + (v - target) * (float) Math.exp(-dt / tau);

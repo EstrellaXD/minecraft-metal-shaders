@@ -158,7 +158,13 @@ static half shadeShadow2(depth2d_array<float> map, sampler cmp, constant ShadeFr
 		float zBlocks = 1.0 / max(length(float3(f.shadowViewProj[0][0][2], f.shadowViewProj[0][1][2], f.shadowViewProj[0][2][2])), 1e-6);
 		float tanSun = tan(L.sunGeom.y * 1.6) * (foliage ? 1.5 : 1.0);
 		float searchTex = clamp(tanSun * 16.0 / blocksPerTexel, 1.5, 6.0);
+#ifdef SHADE_PCSS_TAA
+		// (FT2.8, audit idx 96) a new rotation every frame under TAA (the project's rule, as the water's SSR): a fixed one gave each
+		// render pixel the same disc every frame, a screen-locked grain along shadow edges that TAAU converged on instead of averaging
+		float rot = shadeNoise(pixel, f.flags2.x) * 6.2831853;
+#else
 		float rot = shadeNoise(pixel, 0) * 6.2831853;
+#endif
 		float2 cs = float2(cos(rot), sin(rot));
 		float2x2 R = float2x2(cs.x, cs.y, -cs.y, cs.x);
 		constexpr sampler pt(filter::nearest, address::clamp_to_edge);

@@ -87,7 +87,7 @@ struct VlParams {
 	                  //     unshadowed glow left out), zw 0
 	float4 hp;        // 304 (2026-10-09) the shafts' local contrast (fold): x keep, the share of the local mean glow kept; y gain of
 	                  //     what stands out of it (a beam); z the veil blur's tap spacing (quarter-resolution texels); w 1 = on.
-	                  //     Weighted by the canopy factor (under trees; open land keeps the plain light). See vl_veil_down.
+	                  //     In full from a canopy factor of 0.2 (under trees; open land keeps the plain light). See vlVeilR.
 };
 #define VL_FAR_STEPS 8
 
@@ -619,7 +619,10 @@ fragment VlFoldOut vl_temporal_fold(VlOut in [[stage_in]], constant ShadeFrame &
 				float2 vs = float2(veil.get_width(), veil.get_height());
 				float2 live = ceil(p.size.xy * 0.25);
 				float rbar = float(veil.sample(lin, clamp(in.position.xy * 0.25, float2(0.5), live - 0.5) / vs).r);
-				float keep = mix(1.0, p.hp.x, canopy), gain = mix(1.0, p.hp.y, canopy);
+				// in full from a canopy factor of 0.2: walking out of a forest the factor fades over ~4 s, and the canopy mist
+				// (2.5x FT2.1's) must not glow over the clearing meanwhile (final4b: lake right after the overhang)
+				float hw = saturate(canopy * 5.0);
+				float keep = mix(1.0, p.hp.x, hw), gain = mix(1.0, p.hp.y, hw);
 				float R = vlMistDepth(dir, min(dist, p.shape.y), p) + 0.5;
 				light *= max(gain - (gain - keep) * rbar * R / l, 0.0);
 			}

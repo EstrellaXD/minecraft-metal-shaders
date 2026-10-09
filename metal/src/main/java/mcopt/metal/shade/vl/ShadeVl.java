@@ -502,11 +502,11 @@ public final class ShadeVl {
 		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.live("mcopt.shade.vl.radialTaps", 0f) : 0f);
 		// look2 (FT2.3): x the screen-space streaks in front of geometry (mcopt.shade.vl.crepGeo, live; FT2.1: 1, now 0)
 		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), 0f, 0f, 0f);
-		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main steps + half its near
-		// ones: balanced 16, price-w15: the main + near steps cost 0.45 ms more than the old mode over open land;
-		// mcopt.shade.vl.airMin / airGrowth / airSteps, live)
+		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main + near steps: balanced
+		// 20. gs-w18: 16 / 20 / 24 look alike in stills, but Gael asked not to trade the look for speed: 20 as before the
+		// optimisation, ~0.1 ms; mcopt.shade.vl.airMin / airGrowth / airSteps, live)
 		put(b, air ? 1f : 0f, VlConfig.live("mcopt.shade.vl.airMin", 8f), VlConfig.live("mcopt.shade.vl.airGrowth", 0.1f),
-			VlConfig.live("mcopt.shade.vl.airSteps", VlConfig.STEPS + VlConfig.NEAR_STEPS / 2));
+			VlConfig.live("mcopt.shade.vl.airSteps", VlConfig.STEPS + VlConfig.NEAR_STEPS));
 		// air2: the march's end (the render distance's fog end, else the preset's distance), the share of the haze's glow the
 		// shadows take out over the sky (mcopt.shade.vl.airSkyCut), gains (airShadow: the shadowed part, airForestGain)
 		// (airSkyCut 0: the final pass draws no haze over the sky, so the shadows have none to take out there; the sky's dark rays

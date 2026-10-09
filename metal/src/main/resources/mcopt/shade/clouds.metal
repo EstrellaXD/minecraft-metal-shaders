@@ -73,6 +73,7 @@ static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)
 #define CLOUD_DEV_OLD_RESOLVE 1024 // the resolve reads its five march distances one by one (M3)
 #define CLOUD_DEV_OLD_MARCH 2048   // the march looks the sky up for every ray, cloud or not (M3)
 #define CLOUD_DEV_OLD_MIP 8192     // the billow noise from its full-size level at any distance (M3)
+#define CLOUD_DEV_OLD_SHADOW 1048576 // (FT2.7) the shadow map's 6 fixed slices through the slab at any sun height (FT2.6)
 static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.lightDir.w) & bit) != 0; }
 
 // M3.3 mode bits (CloudParams.shadowDir.w; CloudConfig.MODE_*): new behaviour, each bit off = M3.2's way
@@ -1241,7 +1242,11 @@ fragment half cloud_shadow(CloudVsOut in [[stage_in]], constant CloudParams &c [
 	float ly = L.y;
 	float yRef = c.shadow.y;
 	float sa = (c.layer.x - yRef) / ly, sb = (c.layer.y - yRef) / ly;
-	const int N = 6;
+	// (FT2.7, audit idx 13) the slices sized from the light's path through the slab (150 / ly blocks: 214 at 44 degrees, 833 at 10):
+	// 6 fixed ones sat ~140 blocks apart at a low sun, half a cumulus cell, and each one's optical depth is near binary, so the
+	// shadows on the land (and the VL's shafts through cloud gaps) were stacks of offset copies in steps along the sun's azimuth.
+	// ~36-block steps, 6 from ~45 degrees up (midday as before), at most 24; on 1 frame in 4 (~+0.03 ms per frame at sunset)
+	int N = cloudDev(c, CLOUD_DEV_OLD_SHADOW) ? 6 : clamp(int(ceil((sb - sa) / 36.0)), 6, 24);
 	float ds = (sb - sa) / float(N);
 	float tau = 0.0;
 	float3 base = float3(rel.x, yRef - c.layer.z, rel.y);

@@ -542,10 +542,12 @@ public final class ShadeVl {
 		// their length; Photon's broader phase glowed from every side = veil)
 		// (w: which quarter of the shade grid this frame refreshes; -1 = all of it: after a reset, a cell size change, or
 		// mcopt.shade.vl.airGridAll, live)
+		// (FT2.7, audit idx 22: by the WORLD cell z mod 4, not the grid's own z: steady flight along z at a speed in step with
+		// frame & 3 left some world slices never refreshed, stripes of stale forest air every 8 blocks)
 		boolean gridAll = reset || cell != lastCell || VlConfig.live("mcopt.shade.vl.airGridAll", 0f) > 0.5f;
 		lastCell = cell;
 		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0.7f), VlConfig.live("mcopt.shade.vl.airIso", 0.05f),
-			gridAll ? -1f : (frame & 3));
+			gridAll ? -1f : (float) Math.floorMod((long) frame - cz, 4L));
 		// air5 (FT2.6): the forest air's fade-out with the distance from the camera (blocks: mcopt.shade.vl.airFar0 / airFar1, live;
 		// 0 = none, FT2.5)
 		// (z: its share with the camera in the open, the canopy factor 0: mcopt.shade.vl.airOpen, live; 1 = FT2.5)

@@ -201,7 +201,10 @@ int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> d
 		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shade: XDR compose";
 		[r setRenderPipelineState:dst.pixelFormat == MTLPixelFormatRGB9E5Float ? xdrCompose : xdrCompose16];
-		int valid = xdrValid && (void *) cb == xdrCmd && xdrExcess && xdrExcess.width == src.width && xdrExcess.height == src.height;
+		// (FT2.7, audit idx 42/52) no size test: the compose samples the excess by uv, and with outputMode=taau below native the
+		// excess is the output's size, not the window's (the equality dropped every XDR highlight there); this frame's final pass
+		// wrote it (the same command buffer)
+		int valid = xdrValid && (void *) cb == xdrCmd && xdrExcess && xdrExcess.width <= src.width && xdrExcess.height <= src.height;
 		struct { int flip, valid, pad0, pad1; } p = {flip, valid, 0, 0};
 		[r setFragmentTexture:src atIndex:0];
 		[r setFragmentTexture:valid ? xdrExcess : src atIndex:1];

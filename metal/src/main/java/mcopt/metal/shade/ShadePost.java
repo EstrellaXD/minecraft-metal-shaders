@@ -506,6 +506,13 @@ public final class ShadePost {
 		else sizeBloom(width, height);
 		float bloomNorm = 0f, w0 = 0f;
 		int n = bloomLevels.length;
+		// (FT2.7, audit idx 51) the glow as a share of the screen, not in pixels: the look was tuned at 1964 rows (Retina), and each
+		// level's texel is 2^(i+1) output pixels, so at the 1080 output (Gael's monitor, "Salida") the glow was ~1.8x wider = more veil.
+		// Below 1964 rows: the pyramid stops round(shift) levels sooner and the weights move up by the fractional shift (octaves);
+		// at native the same image (mcopt.shade.bloomScale, live; 0 = the width in pixels, FT2.6)
+		float bloomShift = n > 0 && mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.bloomScale", 1f) > 0.5f
+			? Math.max(0f, (float) (Math.log(1964.0 / Math.max(bloomHeight, 1)) / Math.log(2.0))) : 0f;
+		if (n > 4) n = Math.clamp(n - Math.round(bloomShift), 4, n);
 		if (n > 0) {
 			downParams.clear();
 			downParams.putFloat(srcU).putFloat(srcV).putFloat(mcopt.metal.shade.dims.ShadeXdr.hotThreshold()).putFloat(0f).flip(); // z: M3.3 XDR skip
@@ -522,14 +529,14 @@ public final class ShadePost {
 			// U_i = w_i L_i + tent(U_i+1) down to U_1; level 0 (half size) is added in the final pass (w0 L0 + bilinear U1):
 			// one half-size pass less, the biggest one
 			for (int i = n - 1; i >= 1; i--) {
-				float w = (float) Math.pow(i + 1, spectrum);
+				float w = (float) Math.pow(i + 1 + bloomShift, spectrum);
 				sum += w;
 				params.clear();
 				params.putFloat(w).putFloat(i == n - 1 ? 0f : 1f).putFloat(0f).putFloat(0f).flip();
 				long coarser = i == n - 1 ? bloomLevels[i] : bloomAccum[i + 1];
 				pass(psoUp, bloomAccum[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i], coarser}, params, "mcopt shade: bloom up");
 			}
-			w0 = 1f;
+			w0 = (float) Math.pow(1 + bloomShift, spectrum);
 			sum += w0;
 			bloomNorm = 1f / sum;
 		}

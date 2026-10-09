@@ -134,9 +134,9 @@ static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sun
 // -0.1: anisotropic waves, refraction shift, the per-lane hit reprojection, haze on SSR hits. A test inside shadeWaterHazed
 // crashed the Metal compiler service building the HDR translucent pipeline.)
 static inline int shadeWdev(constant ShadeFrame &f) { return (int(f.sunPath.z) >> 21) & 7; }
-// Only the variant for the camera above water carries these switches (the full variant keeps FT1.3's code: the water shader is
-// register-bound, price6); SHADE_WDEV_OFF compiles them out there too (-Dmcopt.shade.leanDev, in-session A/B).
-#if defined(SHADE_LEAN_ABOVE) && !defined(SHADE_WDEV_OFF)
+// Only with -Dmcopt.shade.wdev=true (SHADE_WDEV_ON: present they cost ~0.09 ms in the lake spin, price5c), and only in the
+// variant for the camera above water (the full variant keeps FT1.3's code: the water shader is register-bound, price6).
+#if defined(SHADE_LEAN_ABOVE) && defined(SHADE_WDEV_ON)
 #define SHADE_WDEV_IS(f, k) (shadeWdev(f) == (k))
 #else
 #define SHADE_WDEV_IS(f, k) false

@@ -27,6 +27,8 @@ fragment float4 main0(DhFadeIn in [[stage_in]], constant DhFadeU &u [[buffer(MCO
                       texture2d<float> dhDepth [[texture(MCOPT_SLOT_uDhDepthTexture)]], sampler dhDepthSmplr [[sampler(MCOPT_SLOT_uDhDepthTexture)]],
                       constant ShadeLook &sl [[buffer(17)]]) {
 	float4 c = dh.sample(dhSmplr, in.texCoord);
+	// (FT2.8, audit idx 116) no LOD here (most of the screen): the same result as below without DH's depth and the unprojection
+	if (c.a <= 0.0) return sl.waterShadow.y > 0.5 ? float4(c.rgb, 0.0) : float4(mc.sample(mcSmplr, in.texCoord).rgb, 1.0);
 	float z = dhDepth.sample(dhDepthSmplr, in.texCoord).x;
 	float4 ndc = u.depthZeroToOne != 0u ? float4(in.texCoord * 2.0 - 1.0, z, 1.0) : float4(float3(in.texCoord, z) * 2.0 - 1.0, 1.0);
 	float4 e = u.invMvmProj * ndc;

@@ -75,6 +75,7 @@ public final class ShadeVl {
 	private static boolean hasPrevious;
 	private static long lastNanos, lastLog;
 	private static int frame;
+	private static boolean lastUnderwater;
 	/** The VL targets' size, and the live part of them last frame covered (where the history holds light). */
 	private static int allocW, allocH, prevLiveW, prevLiveH;
 	private static Object lastLevel;
@@ -170,13 +171,18 @@ public final class ShadeVl {
 			return;
 		}
 		// the game's fog wins (lava, powder snow, blindness, darkness): nothing to light
-		if (f.fogColor[3] > 0.5f && !f.underwater) return;
-		if (f.underwater && !VlConfig.UNDERWATER) return;
+		// (FT2.8, audit idx 18: skipped frames drop the history, so the next frame resets instead of reprojecting an old one)
+		if (f.fogColor[3] > 0.5f && !f.underwater || f.underwater && !VlConfig.UNDERWATER) {
+			hasPrevious = false;
+			return;
+		}
 
 		long now = System.nanoTime();
 		float dt = lastNanos == 0 ? 0f : Math.min((now - lastNanos) / 1e9f, 1f);
 		lastNanos = now;
-		boolean reset = !hasPrevious || lastLevel != level || !VlConfig.TEMPORAL;
+		// (and when the camera enters or leaves water: the two histories hold different light)
+		boolean reset = !hasPrevious || lastLevel != level || !VlConfig.TEMPORAL || f.underwater != lastUnderwater;
+		lastUnderwater = f.underwater;
 		double dx = f.cameraX - prevX, dy = f.cameraY - prevY, dz = f.cameraZ - prevZ;
 		if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 8) reset = true;
 		if (reset) {

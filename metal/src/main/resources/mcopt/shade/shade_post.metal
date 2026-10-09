@@ -471,7 +471,8 @@ kernel void shade_histogram(texture2d<half> src [[texture(0)]], device ShadeGpu 
 		uint bin = uint(clamp(t * 64.0, 0.0, 63.0));
 		float2 r = (float2(id) + 0.5) / float2(w, h) - 0.5;
 		float weight = exp(-dot(r, r) / 0.3);
-		if (r.x > 0.2 && r.y > 0.2) weight *= 0.4; // the hand's corner
+		// (FT2.8, audit idx 53: no "hand's corner" de-weight: in GL row order r.y > 0.2 is the TOP right, usually sky, and the hand is
+		// drawn after the final pass, never in this image)
 		atomic_fetch_add_explicit(&bins[bin], uint(weight * 16.0 + 0.5), memory_order_relaxed);
 	}
 	threadgroup_barrier(mem_flags::mem_threadgroup);

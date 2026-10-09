@@ -93,7 +93,7 @@ public final class ShadeDh {
 	/** ShadeMsl.register (HDR shading on): our stages for DH's two terrain pipelines. */
 	public static void register() {
 		if (!LIGHT) return;
-		String defines = (Boolean.getBoolean("mcopt.shade.dh.jitter") ? "#define SHADE_DH_JITTER\n" : "")
+		String defines = (Boolean.getBoolean("mcopt.shade.dh.jitter") ? "#define SHADE_DH_JITTER\n" : "") // (audit idx 109: doubles the jitter, DH already copies the jittered projection; dev only, off)
 			+ (Boolean.getBoolean("mcopt.shade.dh.skyHigh") ? "#define SHADE_DH_SKY_HIGH\n" : "")
 			+ (Boolean.getBoolean("mcopt.shade.dh.noclip") ? "#define SHADE_DH_NOCLIP\n" : ""); // (dev, FT2: the cost of the discard)
 		String vertex = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.vs.metal");

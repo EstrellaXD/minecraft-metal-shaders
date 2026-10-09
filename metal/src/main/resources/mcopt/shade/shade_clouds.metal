@@ -37,8 +37,10 @@ static inline float shadeCloudShadow(float3 p, constant ShadeLook &L, texture2d<
 	float edge = saturate((0.5 - max(e.x, e.y)) * 12.0);
 	// fades out for receivers up in (or above) the cloud layer
 	float above = 1.0 - smoothstep(L.clouds0.x - 16.0, L.clouds0.x + 40.0, p.y);
+	float w = L.clouds0.z * edge * above;
+	if (w <= 0.0) return 1.0; // (FT2.8, audit idx 31: past the map, e.g. DH's LODs, no fetch for a weight of 0)
 	float t = float(map.sample(shadeCloudSampler, uv, level(0.0)).r);
-	return mix(1.0, t, L.clouds0.z * edge * above);
+	return mix(1.0, t, w);
 }
 
 // The same for points dir * t along a ray from the camera (a march): the map coordinate is affine in t (cloudShadowVP has

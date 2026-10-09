@@ -355,7 +355,8 @@ static inline bool shadeSsrSegment(float3 p0, float3 r, float maxDist, constant 
 #else
 #define SHADE_SSR_N SHADE_SSR_STEPS
 #endif
-#if defined(SHADE_SSR_RAWZ) && !defined(SHADE_SSR_NORAWZ) // (NORAWZ: -Dmcopt.shade.leanDev=SHADE_SSR_NORAWZ, in-session A/B)
+// (only in the variant for the camera above water, like the other 2026-10-08 savings: price6 found the full variant 1.5 ms slower)
+#if defined(SHADE_SSR_RAWZ) && !defined(SHADE_SSR_NORAWZ) && defined(SHADE_LEAN_ABOVE) // (NORAWZ: -Dmcopt.shade.leanDev=SHADE_SSR_NORAWZ, in-session A/B)
 // 2026-10-08 (mcopt.shade.water.rawz, default on): the same march deciding in reversed-Z depth itself. View depth is
 // w = B / (z + A), decreasing in z, so "the ray is still in front of the scene" (w_ray < w_scene) is z_ray > z_scene, sky
 // (z 0) included, and the crossing tests need no division per step (nor the steps' parameters kept in an array). Only the
@@ -943,11 +944,13 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	}
 	float cosV = max(dot(-v, n), 0.02);
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
+#ifdef SHADE_LEAN_ABOVE
 	// reflected images stay readable: SSR and the rendered sky follow a calmer normal than the shading (ripples wobble,
 	// don't shred)
 	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
 	rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
-#ifdef SHADE_SSR
+#endif
+#if defined(SHADE_SSR) && defined(SHADE_LEAN_ABOVE)
 	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
 	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together). Marched
 	// first, before the refraction and the body (2026-10-08, price5: -0.08 ms over the lake, the same image): fewer of their
@@ -955,7 +958,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float4 ssrHit = float4(0.0);
 	float ssrW = 0.0;
 	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
-	if (fq > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
+	if (fq > 0.022 && !SHADE_WDEV_IS(f, SHADE_WDEV_NO_SSR)) {
 		ssrHit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
 		ssrW = ssrHit.a * smoothstep(0.022, 0.03, fq);
 	}
@@ -1014,14 +1017,31 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float open = float(shadeSkyCurve(w.sky));
 	float3 r = reflect(v, n);
 	float3 rs = float3(r.x, abs(r.y), r.z);
+#ifndef SHADE_LEAN_ABOVE
+	// reflected images stay readable: SSR and the rendered sky follow a calmer normal than the shading (ripples wobble,
+	// don't shred)
+	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+	rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
+#endif
 	// the LUT sky follows a calmer direction too: the rippled one smeared the low sun's aureole over the near water as a
 	// milky veil (the glint below is what carries the sun's sparkle)
 	float3 rl = normalize(mix(rs, rr, 0.6));
 	float3 refl = shadeWaterSkyRefl(rl, rr, w.prevExposure, f, w.look, w.res, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
+#ifdef SHADE_LEAN_ABOVE
 	hitWeight = ssrW;
 	refl = mix(refl, ssrHit.rgb, hitWeight);
+#else
+	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
+	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together)
+	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
+	if (fq > 0.022 && !SHADE_WDEV_IS(f, SHADE_WDEV_NO_SSR)) {
+		float4 hit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
+		hitWeight = hit.a * smoothstep(0.022, 0.03, fq);
+		refl = mix(refl, hit.rgb, hitWeight);
+	}
+#endif
 #endif
 	// the sun's (or moon's) glint: rougher with distance (normals average out: long glitter roads) and in rain; it carries
 	// its own Fresnel, hidden where SSR found something in front of the sky

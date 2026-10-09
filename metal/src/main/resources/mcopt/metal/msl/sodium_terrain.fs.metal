@@ -105,14 +105,16 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     dv *= mipScale;
 #endif
     float2 texelScreenSize = sqrt(du * du + dv * dv);
-#if defined(MCOPT_SHADE) && defined(SHADE_WATER)
+#if defined(MCOPT_SHADE) && defined(SHADE_WATER) && defined(SHADE_LEAN_ABOVE)
     // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
     // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
     // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together.
-    // Water pixels never use the block texture (the module shades them from its own waves): not sampled there.
+    // Water pixels never use the block texture (the module shades them from its own waves): not sampled there (2026-10-08:
+    // -0.11 ms in the lake spin, price3 "notex"; the same image). Only in the variant for the camera above water: the full
+    // variant keeps FT1.3's code (the water shader is register-bound and small changes move it by up to 1.5 ms, price6)
     int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
     bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
-    bool skipTex = waterFull; // (2026-10-08: -0.11 ms in the lake spin, price3 "notex"; the same image)
+    bool skipTex = waterFull;
 #else
     const bool skipTex = false;
 #endif
@@ -185,8 +187,14 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
     bool foliage = false;
 #endif
-#ifndef SHADE_WATER
-    bool waterFull = false; // (with the water module: waterSprite / waterFull are found above, before the texture sampling)
+#if defined(SHADE_WATER) && !defined(SHADE_LEAN_ABOVE)
+    // the water module: water by its sprites (every face; vertex colour guess while the sprites are unknown), shaded in
+    // full when this frame's scene copy exists, else M1's stand-in for top faces seen from above
+    // quad-uniform (one triangle per 2x2 quad; helper lanes' extrapolated uv may leave the sprite): SSR's lanes work together
+    int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
+    bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
+#elif !defined(SHADE_WATER)
+    bool waterFull = false; // (LEAN_ABOVE: waterSprite / waterFull are found above, before the texture sampling)
 #endif
     // no map lookups where the direct light is gated off anyway (caves, under overhangs: sky light below ~4); the water
     // module only gates its glint and caustics with it: M1's 4-tap tent there instead of PCSS
@@ -240,7 +248,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
-        if (shadeWdev(sf) != SHADE_WDEV_NO_DETAIL && (n.y > 0.5h || (n.y < -0.5h && SHADE_CAMERA_UNDERWATER(sf))) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
+        if (!SHADE_WDEV_IS(sf, SHADE_WDEV_NO_DETAIL) && (n.y > 0.5h || (n.y < -0.5h && SHADE_CAMERA_UNDERWATER(sf))) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
 #ifdef SHADE_DYNLIGHT
@@ -370,7 +378,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         }
 #endif
     }
-    if (!dims && !(waterFull && shadeWdev(sf) == SHADE_WDEV_NO_FOG)) { // Nether/End: the final pass fogs
+    if (!dims && !(waterFull && SHADE_WDEV_IS(sf, SHADE_WDEV_NO_FOG))) { // Nether/End: the final pass fogs
 #ifdef MCOPT_HDR
         radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl, &sr);
 #else

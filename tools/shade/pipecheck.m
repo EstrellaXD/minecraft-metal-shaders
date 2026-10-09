@@ -86,6 +86,7 @@ int main(int argc, const char **argv) {
 		NSMutableArray *vb = [NSMutableArray array], *fb = [NSMutableArray array];
 		for (id<MTLBinding> b in refl.vertexBindings) if (b.used) [vb addObject:[NSString stringWithFormat:@"%@@%lu", b.name, (unsigned long) b.index]];
 		for (id<MTLBinding> b in refl.fragmentBindings) if (b.used) [fb addObject:[NSString stringWithFormat:@"%@@%lu", b.name, (unsigned long) b.index]];
+		if (getenv("PIPECHECK_MTT")) printf("MTT %lu\n", (unsigned long) pso.maxTotalThreadsPerThreadgroup);
 		printf("OK   %s | %s  vertex[%s] fragment[%s]\n", argv[2], argv[3], [[vb componentsJoinedByString:@" "] UTF8String], [[fb componentsJoinedByString:@" "] UTF8String]);
 		return 0;
 	}

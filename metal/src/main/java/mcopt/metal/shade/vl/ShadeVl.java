@@ -445,7 +445,7 @@ public final class ShadeVl {
 		// (z: the shafts' soft edge radius in blocks, mcopt.shade.vl.soft, live; 0 = sharp)
 		// (FT2.3: soft shaft edges, 0.8 blocks: the lit air under a big gap no longer reads as a hard-edged glass sheet)
 		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), VlConfig.look("mcopt.shade.vl.soft", 0.8f, 0f),
-			VlConfig.live("mcopt.shade.vl.radialStep", 1.5f)); // w: the radial blur's tap spacing (VL pixels)
+			VlConfig.live("mcopt.shade.vl.radialStep", 2f)); // w: the radial blur's tap spacing (VL pixels; v3i: 12 x 2 ~ the reference look)
 		// hp (2026-10-09, Gael: the stronger shafts veiled the view "como un lente empanado"): the shafts' local contrast under trees
 		// (vl.metal vlVeilR; fold only): x the share of the local mean glow kept, y the gain of what stands out of it, z the veil
 		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)
@@ -455,7 +455,7 @@ public final class ShadeVl {
 		// radial (FT2.3): the light direction's vanishing point (homogeneous NDC, scaled to unit size) and the radial blur's taps
 		// on each side (mcopt.shade.vl.radialTaps, live; 0 = off; vl.metal vl_radial)
 		float vm = Math.max(Math.max(Math.abs(clip.x), Math.abs(clip.y)), Math.max(Math.abs(clip.w), 1e-6f));
-		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.look("mcopt.shade.vl.radialTaps", 8f, 0f) : 0f);
+		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.look("mcopt.shade.vl.radialTaps", 12f, 0f) : 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

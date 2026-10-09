@@ -240,7 +240,9 @@ public final class ShadeFrameUpdater {
 		// wave speed to whole turns per 4096 s: the wrap is seamless). The game time is
 		// tick-based and the integrated server resets it every second (ClientboundSetTimePacket), so waves driven by it
 		// jump back or forward whenever the server lags (chunk generation): the "choppy" water of M2.
-		if (mcopt.metal.shade.water.ShadeWater.CLOCK) {
+		if (WATER_TIME >= 0f) {
+			f.waterTime = WATER_TIME; // (dev: frozen waves, for image diffs across jars)
+		} else if (mcopt.metal.shade.water.ShadeWater.CLOCK) {
 			waterClock = (waterClock + Math.min(dt, 0.25)) % 4096.0;
 			f.waterTime = (float) waterClock;
 		} else {
@@ -295,6 +297,8 @@ public final class ShadeFrameUpdater {
 
 	/** The water's real-time clock (seconds, wrapped every 4096 s: water.metal SHADE_WATER_CLOCK_WRAP, seamless). */
 	private static double waterClock;
+	/** -Dmcopt.shade.waterTime=SECONDS (dev, 2026-10-08): the waves stand still at that clock (image diffs of two jars). */
+	private static final float WATER_TIME = Float.parseFloat(System.getProperty("mcopt.shade.waterTime", "-1"));
 
 	/** mcopt.shade.log=N: a line with the art layer's state every N seconds (0 = never). */
 	private static final int LOG_EVERY = Integer.getInteger("mcopt.shade.log", 0);

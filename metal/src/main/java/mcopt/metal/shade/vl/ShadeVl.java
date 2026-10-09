@@ -554,16 +554,17 @@ public final class ShadeVl {
 		// (w: how far sideways the shade grid's canopy test reaches: mcopt.shade.vl.airGridUpR, live; 0 = airGridR)
 		put(b, VlConfig.live("mcopt.shade.vl.airFar0", 0f), VlConfig.live("mcopt.shade.vl.airFar1", 0f), VlConfig.live("mcopt.shade.vl.airOpen", 0.4f),
 			VlConfig.live("mcopt.shade.vl.airGridUpR", 0f));
-		// air6 (FT2.7, audit idx 16): the canopy test as columns (mcopt.shade.vl.airCols: how many, 0 = FT2.6's solid box; airColTaps:
-		// taps up each one; airColR: their distance from the cell's axis, blocks, 0 = 3/4 of the test's reach), live
+		// air6 (FT2.7, audit idx 16): the canopy test as columns (mcopt.shade.vl.airCols: how many, 0 = FT2.6's solid box, 1 = the
+		// cell's own axis, the default; airColTaps: taps up each one, 5; airColR: their distance from the cell's axis, blocks, 0 = 3/4
+		// of the test's reach), live
 		// (w: sky pixels end their air-mode march past the shade grid, where it adds nothing: mcopt.shade.vl.airSkyCull, live; the same image)
-		put(b, VlConfig.live("mcopt.shade.vl.airCols", 0f), VlConfig.live("mcopt.shade.vl.airColTaps", 4f), VlConfig.live("mcopt.shade.vl.airColR", 0f),
+		put(b, VlConfig.live("mcopt.shade.vl.airCols", 1f), VlConfig.live("mcopt.shade.vl.airColTaps", 5f), VlConfig.live("mcopt.shade.vl.airColR", 0f),
 			VlConfig.live("mcopt.shade.vl.airSkyCull", 1f));
-		// air7 (FT2.7): x how high above a cell the canopy test's columns start (mcopt.shade.vl.airColLo, blocks, live; 0 = airGridR),
-		// y only a blocker that near toward the light shades a column (mcopt.shade.vl.airColNear, blocks, live; 0 = any)
+		// air7 (FT2.7): x how high above a cell the canopy test's columns start (mcopt.shade.vl.airColLo, blocks, live, 1.5; 0 =
+		// airGridR), y only a blocker that near toward the light shades a column (mcopt.shade.vl.airColNear, blocks, live, 12; 0 = any)
 		// (z: the columns and the box both, the lesser open share: mcopt.shade.vl.airColBox, live)
 		// (w: the crepuscular taps reprojected into last frame's sky mask: mcopt.shade.vl.crepReproj, live)
-		put(b, VlConfig.live("mcopt.shade.vl.airColLo", 0f), VlConfig.live("mcopt.shade.vl.airColNear", 0f), VlConfig.live("mcopt.shade.vl.airColBox", 0f),
+		put(b, VlConfig.live("mcopt.shade.vl.airColLo", 1.5f), VlConfig.live("mcopt.shade.vl.airColNear", 12f), VlConfig.live("mcopt.shade.vl.airColBox", 0f),
 			VlConfig.live("mcopt.shade.vl.crepReproj", 1f));
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;

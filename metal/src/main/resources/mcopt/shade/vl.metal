@@ -320,13 +320,17 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 	// (its shafts were gone). A column is open only where all its taps are lit (one shaded tap = leaves or an overhang above
 	// the cell, at any height up to look2.y); its taps are packed toward the low end (where short canopies are) and it stops
 	// at its first shaded one. The open share of the columns plays the box's lit share.
+	// Default (rounds r1-r4 / gs1-gs4, notes/canopy-cols-2026-10-09): ONE column on the cell's axis from 1.5 blocks up, 5 taps,
+	// counting only a blocker within 12 blocks toward the sun (air7.y: leaves over the cell; at a low sun a far tree's shadow
+	// across the column had made the air over crests forest = halos and plumes). Gael's taiga: the veil at or below FT2.6's
+	// (p3 0.6 -> 0.05, p4 0.7 -> 0.2); his autumn forest: the shafts back (g2 rays 1.83 -> 1.97, FT2.5 1.94).
 	float up = p.look2.y, rUp = p.air5.w > 0.0 ? p.air5.w : r;
 	if (up > r && f.flags.z != 0) {
 		float open = 0.0;
 		int cols = min(int(p.air6.x), 12);
 		if (cols > 0) {
 			int taps = clamp(int(p.air6.y), 2, 6);
-			float rho = p.air6.z > 0.0 ? p.air6.z : 0.75 * rUp, lo = p.air7.x > 0.0 ? p.air7.x : r;
+			float rho = cols == 1 ? 0.0 : p.air6.z > 0.0 ? p.air6.z : 0.75 * rUp, lo = p.air7.x > 0.0 ? p.air7.x : r; // (1: the cell's own axis)
 			float3 m2 = float3(f.shadowViewProj[1][0][2], f.shadowViewProj[1][1][2], f.shadowViewProj[1][2][2]);
 			float zB = 1.0 / max(length(m2), 1e-6), dmax = p.air7.y;
 			for (int i = 0; i < cols; i++) {

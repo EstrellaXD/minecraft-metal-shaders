@@ -154,6 +154,13 @@ public final class CloudConfig {
 	 * the edges into 3x3-block steps and left bright / dark specks (offline: edge error vs a 1x1 reference -15 %, same price).
 	 */
 	public static final int MODE_EDGE = 16;
+	/**
+	 * FT2.6 {@link #MODE_DRIFT} (mcopt.shade.clouds.driftClamp, default true; Gael's FT2.5 screenshots in a cloud: a comet tail
+	 * from the sun): where the reprojection moves a history pixel against a pure turn (the camera's travel and the wind at a
+	 * near cloud's distance: inside a cloud, flying next to one) the stable resolve keeps it inside this frame's march colours
+	 * and caps its age low; far clouds don't drift, so they keep their history as before.
+	 */
+	public static final int MODE_DRIFT = 32;
 
 	/**
 	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bits 32768 /
@@ -167,7 +174,8 @@ public final class CloudConfig {
 			| (flag("mcopt.shade.clouds.halfLight", false) && (dev & DEV_OLD_LIGHT) == 0 ? MODE_LIGHT2 : 0)
 			| (flag("mcopt.shade.clouds.batch", true) && (dev & DEV_OLD_BATCH) == 0 ? MODE_BATCH : 0)
 			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0)
-			| (flag("mcopt.shade.clouds.edgeGate", true) ? MODE_EDGE : 0);
+			| (flag("mcopt.shade.clouds.edgeGate", true) ? MODE_EDGE : 0)
+			| (flag("mcopt.shade.clouds.driftClamp", true) ? MODE_DRIFT : 0);
 	}
 	/**
 	 * M3.4 (Gael: cloud edges look pixelated and flicker at sunset): the sky, fog and VL read the clouds' history (0.45 of the

@@ -84,6 +84,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
                             // (tried on the shadow map's six samples too: twice as slow there, run m33c-2's timer: removed)
 #define CLOUD_MODE_PAIR 8   // the march's empty-air tests two at a time (both fetches issued together): same tests, same values
 #define CLOUD_MODE_EDGE 16  // the stable resolve's history clamp only where the reprojection depends on the distance (FT1.2)
+#define CLOUD_MODE_DRIFT 32 // the stable resolve trusts less a history that drifts against a pure turn (near clouds: FT2.6)
 static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
@@ -1089,6 +1090,18 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 	float age = 0.0, dOwn = dNow;
 	uint qOwn = CLOUD_DIST_NONE;
 	bool ownCloud = false;
+	// FT2.6 (CLOUD_MODE_DRIFT): how far the reprojection moves this pixel's history against a pure turn of the camera (history
+	// pixels): the camera's travel and the wind, seen at the clouds' distance. Inside a cloud or next to one that distance is a
+	// few blocks and the history slides by pixels every frame, while the fog's glow toward the sun hangs on the direction
+	// alone: the reprojected glow slid away with every step and gust, and the 1/age blend (one visit per N^2 frames, age up to
+	// 10) kept it for about a second: a comet tail from the sun (Gael's FT2.5 screenshots 8 and 9, flying in a cloud). Where
+	// it drifts the history is kept inside this frame's march colours around and its age capped low (far clouds: no drift)
+	float drift = 0.0;
+	if (valid && cloudMode(c, CLOUD_MODE_DRIFT)) {
+		float4 pd = c.prevViewProj * float4(dir, 0.0);
+		float2 sep = (puv - (pd.xy / max(pd.w, 1e-6) * 0.5 + 0.5)) * c.size.xy;
+		drift = smoothstep(0.3, 1.5, length(sep));
+	}
 	if (valid) {
 		// age and own distance where the pixel came from: (x0,y1) (x1,y1) (x1,y0) (x0,y0)
 		uint4 q = uint4(histData.gather(gatherS, puv));
@@ -1118,18 +1131,19 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 			float2 sep = (pa.xy / max(pa.w, 1e-6) - pb.xy / max(pb.w, 1e-6)) * 0.5 * c.size.xy;
 			jump = dot(sep, sep) > 0.25; // half a history pixel
 		}
-		if (jump) {
+		if (jump || drift > 0.0) {
 			half4 c1 = cur.read(uint2(ax)), c2 = cur.read(uint2(bx)), c3 = cur.read(uint2(ay)), c4 = cur.read(uint2(by));
 			half4 lo = min(min(min(c1, c2), min(c3, c4)), now), hi = max(max(max(c1, c2), max(c3, c4)), now);
 			half4 pad = (hi - lo) * 0.15h;
-			h = clamp(h, lo - pad, hi + pad);
+			h = jump ? clamp(h, lo - pad, hi + pad) : mix(h, clamp(h, lo - pad, hi + pad), half(drift));
 		}
+		age = min(age, mix(age, 1.0, drift));
 	}
 	const half clear = 0.995h; // transmittance above this: no cloud
 	bool histCloud = valid && age > 0.5 && ownCloud && h.a < clear;
 	CloudResolveStOut o;
 	uint ageOut, qOut;
-	float cap = min(c.frame.w, 15.0);
+	float cap = mix(min(c.frame.w, 15.0), 2.0, drift);
 	if (mine) {
 		float w = valid ? 1.0 / min(age + 1.0, cap) : 1.0;
 		o.color = valid ? mix(h, now, half(w)) : now;

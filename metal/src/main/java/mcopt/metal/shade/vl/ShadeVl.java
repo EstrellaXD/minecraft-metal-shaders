@@ -501,7 +501,8 @@ public final class ShadeVl {
 		float vm = Math.max(Math.max(Math.abs(clip.x), Math.abs(clip.y)), Math.max(Math.abs(clip.w), 1e-6f));
 		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.live("mcopt.shade.vl.radialTaps", 0f) : 0f);
 		// look2 (FT2.3): x the screen-space streaks in front of geometry (mcopt.shade.vl.crepGeo, live; FT2.1: 1, now 0)
-		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), 0f, 0f, 0f);
+		// y (FT2.6): how high above a shade grid cell its taps reach (mcopt.shade.vl.airGridUp, live; 0 = airGridR, FT2.5)
+		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), VlConfig.live("mcopt.shade.vl.airGridUp", 0f), 0f, 0f);
 		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main + near steps: balanced
 		// 20. gs-w18: 16 / 20 / 24 look alike in stills, but Gael asked not to trade the look for speed: 20 as before the
 		// optimisation, ~0.1 ms; mcopt.shade.vl.airMin / airGrowth / airSteps, live)

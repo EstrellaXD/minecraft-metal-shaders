@@ -99,7 +99,8 @@ struct VlParams {
 	                  //     In full from a canopy factor of 0.2 (under trees; open land keeps the plain light). See vlVeilR.
 	float4 radial;    // 320 (FT2.3) the light direction's vanishing point in homogeneous NDC: xy = (viewProj * (L, 0)).xy, z its w
 	                  //     (all scaled alike), w taps on each side of the radial blur (0 = off). See vl_radial.
-	float4 look2;     // 336 (FT2.3) x gain of the screen-space crepuscular streaks in front of geometry (HDR; 0 = none), yzw 0
+	float4 look2;     // 336 (FT2.3) x gain of the screen-space crepuscular streaks in front of geometry (HDR; 0 = none), y (FT2.6) how high
+	                  //     above a shade grid cell its taps reach (blocks; 0 = grid2.w), zw 0
 	float4 air;       // 352 (godrays v3, HDR) the air mode (x 1 = on, see vl_march): y min steps, z steps per block marched, w max steps
 	float4 air2;      // 368 (godrays v3) x the march's end (blocks: the render distance), y the light the shadows may take out of a
 	                  //     sky pixel (share of the haze's unshadowed sunlit part), z gain of that shadowed part (1 = physical),
@@ -265,13 +266,18 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 	constexpr sampler cmpLin(coord::normalized, filter::linear, address::clamp_to_edge, compare_func::greater_equal);
 	float3 c = p.grid.xyz + (float3(gid) + 0.5) * p.grid.w;
 	float r = p.grid2.w;
+	// (FT2.6, look2.y > 0) the taps reach that high above the cell (else r, as FT2.5): the shade must come from ABOVE the point, as
+	// under a canopy. With taps only up to r, the air just over a sunlit crest counted as shade (the hill's own shadow lies
+	// beside and below it), so it got the forest's density and glowed toward the sun as white puffs along every ridge (Gael's
+	// FT2.5 screenshots 3-5); with the open sky above it, a taller box reads it as sunlit land
+	float up = p.look2.y > 0.0 ? p.look2.y : r;
 	float lit = 0.0;
 	if (f.flags.z == 0) {
 		lit = float(VL_GRID_TAPS);
 	} else {
 		for (int k = 0; k < VL_GRID_TAPS; k++) {
 			float3 u = fract(0.5 + float(k) * float3(0.8191725134, 0.6710436067, 0.5497004779));
-			float3 q = c + float3((u.x * 2.0 - 1.0) * r, 0.5 + u.y * (r - 0.5), (u.z * 2.0 - 1.0) * r);
+			float3 q = c + float3((u.x * 2.0 - 1.0) * r, 0.5 + u.y * (up - 0.5), (u.z * 2.0 - 1.0) * r);
 			float4 h = f.shadowViewProj[1] * float4(q, 1.0);
 			if (max(abs(h.x), abs(h.y)) >= 0.995 || h.z >= 1.0) lit += 1.0;
 			else if (h.z > 0.0) lit += map.sample_compare(cmpLin, shadeShadowUV(h.xyz), 1u, h.z);

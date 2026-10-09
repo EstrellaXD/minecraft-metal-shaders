@@ -523,9 +523,11 @@ public final class ShadeVl {
 		put(b, Math.floorMod(cx, 64), Math.floorMod(cy, 32), Math.floorMod(cz, 64), Math.max(VlConfig.live("mcopt.shade.vl.airGridR", 4f), 0.5f));
 		// air3: the forest air at full density where at most 30 % of the air around is sunlit, none from 85 % (open land), its
 		// fade-in from the camera (blocks) and its sky-lit share (mcopt.shade.vl.airLitLo / airLitHi / airNear / airSky, live)
-		// (gs-w11, Gael's forest: the near field crisp over its first 10 blocks, the sky-lit share 0.05: under the trees most of the
-		// sky is hidden, and that share was a uniform bluish veil)
-		put(b, VlConfig.live("mcopt.shade.vl.airLitLo", 0.3f), VlConfig.live("mcopt.shade.vl.airLitHi", 0.85f), VlConfig.live("mcopt.shade.vl.airNear", 10f),
+		// (gs-w11, Gael's forest: the near field crisp, the sky-lit share 0.05: under the trees most of the sky is hidden, and that
+		// share was a uniform bluish veil. trunk-w19, Gael: "un artefacto de luz sobre la parte de arriba del tronco, como si el haz
+		// lo atravesara": the lit forest air 5-8 blocks in front of a trunk lit it up; faded in over 24 blocks instead of 10 the
+		// trunk is clean and the beam past it stays)
+		put(b, VlConfig.live("mcopt.shade.vl.airLitLo", 0.3f), VlConfig.live("mcopt.shade.vl.airLitHi", 0.85f), VlConfig.live("mcopt.shade.vl.airNear", 24f),
 			VlConfig.live("mcopt.shade.vl.airSky", 0.05f));
 		// air4: the forest air's share over open sunlit land (mcopt.shade.vl.airBase), its phase (airG: a forward lobe's g, 0 =
 		// Photon's two lobes over four octaves; airIso: the isotropic share with it), live

@@ -118,7 +118,8 @@ struct VlParams {
 	                  //     isotropic share with that lobe, w which quarter of the grid's cells this frame refreshes (z slices
 	                  //     z % 4 == w; < 0: all of them, after a reset)
 	float4 air5;      // 448 (FT2.6) the forest air's fade-out with the distance from the camera: x from, y to (blocks; y <= x: none); z its
-	                  //     share with the camera in the open (canopy factor 0; 1 = everywhere alike, FT2.5), w 0
+	                  //     share with the camera in the open (canopy factor 0; 1 = everywhere alike, FT2.5), w how far sideways the shade
+	                  //     grid's canopy test reaches (blocks; 0 = grid2.w)
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -293,12 +294,14 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 	// shadow beside and below the air as shade, so the air got the forest's density and glowed toward the sun as white puffs
 	// along every ridge (Gael's FT2.5 screenshots 3-5): where the box above is mostly sunlit (look2.z..w) the cell reads as
 	// sunlit land
-	float up = p.look2.y;
+	// (air5.w > 0: the box reaches that far sideways, else r: wide enough to hold the ring of leaves around a big gap in the canopy,
+	// where the shafts are)
+	float up = p.look2.y, rUp = p.air5.w > 0.0 ? p.air5.w : r;
 	if (up > r && f.flags.z != 0) {
 		float litUp = 0.0;
 		for (int k = 0; k < VL_GRID_TAPS_UP; k++) {
 			float3 u = fract(0.5 + (float(k) + 0.37) * float3(0.8191725134, 0.6710436067, 0.5497004779));
-			litUp += vlGridTap(c + float3((u.x * 2.0 - 1.0) * r, r + u.y * (up - r), (u.z * 2.0 - 1.0) * r), f, map);
+			litUp += vlGridTap(c + float3((u.x * 2.0 - 1.0) * rUp, r + u.y * (up - r), (u.z * 2.0 - 1.0) * rUp), f, map);
 		}
 		share = max(share, smoothstep(p.look2.z, p.look2.w, litUp / float(VL_GRID_TAPS_UP)));
 	}

@@ -116,12 +116,14 @@ public final class ShadeWater {
 	 */
 	public static final boolean EDGE_REFL = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.edgeRefl", "true"));
 	/**
-	 * FT2.6 (Gael's FT2.5 lake: white blocks in the mirrored forest): the SSR march's thickness in steps' depth extents
-	 * (mcopt.shade.water.ssrThick; FT2.5 1, Photon MIT allows 3) and, with no hit, the first crossing behind something instead of
-	 * the sky (mcopt.shade.water.ssrBehind). With -Dmcopt.shade.wdev=true, mcopt.shade.dev variants 2-5 switch them live.
+	 * FT2.6 (Gael's FT2.5 lake: white blocks in the mirrored forest, where rays passed behind trunks and leaves and fell back to
+	 * the clouds' dome): the SSR march's thickness in steps' depth extents (mcopt.shade.water.ssrThick, 3 as Photon MIT allows;
+	 * FT2.5 1) and, with no hit, the first crossing behind something instead of the sky (mcopt.shade.water.ssrBehind, true).
+	 * Lake p6 (bug-ssr3): pixels above 200/255 in the mirrored forest 0.88 % -> 0.05 %; open water (bug-ssrchk): ~1/255. With
+	 * -Dmcopt.shade.wdev=true, mcopt.shade.dev variants 2-5 switch them live.
 	 */
-	public static final float SSR_THICK = Math.clamp(floatProperty("mcopt.shade.water.ssrThick", 1f), 0.5f, 8f);
-	public static final boolean SSR_BEHIND = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.ssrBehind", "false"));
+	public static final float SSR_THICK = Math.clamp(floatProperty("mcopt.shade.water.ssrThick", 3f), 0.5f, 8f);
+	public static final boolean SSR_BEHIND = Boolean.parseBoolean(System.getProperty("mcopt.shade.water.ssrBehind", "true"));
 	/**
 	 * FT1.3 {@code mcopt.shade.water.style}: "photon" (default; Gael: "reflejos pixeleados", "agua como el mar de Photon"):
 	 * smooth ripples without M2.1's 1/16-block cells and crest pattern, calmer in clear weather (mcopt.shade.water.calm, 0.55

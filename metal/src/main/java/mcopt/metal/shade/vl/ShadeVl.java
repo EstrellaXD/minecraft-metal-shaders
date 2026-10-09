@@ -545,7 +545,9 @@ public final class ShadeVl {
 		// air5 (FT2.6): the forest air's fade-out with the distance from the camera (blocks: mcopt.shade.vl.airFar0 / airFar1, live;
 		// 0 = none, FT2.5)
 		// (z: its share with the camera in the open, the canopy factor 0: mcopt.shade.vl.airOpen, live; 1 = FT2.5)
-		put(b, VlConfig.live("mcopt.shade.vl.airFar0", 0f), VlConfig.live("mcopt.shade.vl.airFar1", 0f), VlConfig.live("mcopt.shade.vl.airOpen", 1f), 0f);
+		// (w: how far sideways the shade grid's canopy test reaches: mcopt.shade.vl.airGridUpR, live; 0 = airGridR)
+		put(b, VlConfig.live("mcopt.shade.vl.airFar0", 0f), VlConfig.live("mcopt.shade.vl.airFar1", 0f), VlConfig.live("mcopt.shade.vl.airOpen", 1f),
+			VlConfig.live("mcopt.shade.vl.airGridUpR", 0f));
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

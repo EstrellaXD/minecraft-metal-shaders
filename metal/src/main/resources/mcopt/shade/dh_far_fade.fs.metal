@@ -4,8 +4,8 @@
 // layout and resource names are shared). The pass sees DH's LOD image and depth, and the frame's main colour, and its
 // result is what DH finally copies into main.
 //  - While the shade frame composites DH straight into its HDR world target (ShadeLook.waterShadow.y = 1, ShadeDh.directFrame:
-//    no bridge, so main does not hold the frame): the LOD colour with its coverage as alpha, the LODs' own alpha times the
-//    fade toward DH's far edge. dh_copy.fs composites that over the HDR target (ShadePost redirects DH's last copy there).
+//    no bridge, so main does not hold the frame): the LOD colour with its coverage as alpha, the fade toward DH's far edge
+//    where a LOD is. dh_copy.fs composites that over the HDR target (ShadePost redirects DH's last copy there).
 //  - Otherwise (the bridge put the frame into main; the shade setup's vanilla fallback): DH's composite over main, the LODs
 //    faded into it toward their far edge.
 // Prepended: "#define MCOPT_SHADE", the shade prelude and the MCOPT_SLOT_* defines of the pipeline's uniforms.
@@ -35,7 +35,9 @@ fragment float4 main0(DhFadeIn in [[stage_in]], constant DhFadeU &u [[buffer(MCO
 	float span = u.startFade - u.endFade;
 	float t = abs(span) > 1e-3 ? saturate((dist - u.endFade) / span) : (dist < u.startFade ? 1.0 : 0.0);
 	float keep = t * t * (3.0 - 2.0 * t);
-	if (sl.waterShadow.y > 0.5) return float4(c.rgb, saturate(c.a) * keep);
+	// (DH's alpha is not coverage: its LOD water blends into its image with the usual factors, which leave alpha below 1 over
+	// an opaque bottom; like DH's own composite, any LOD there counts in full: the far ocean washed out into the sky otherwise)
+	if (sl.waterShadow.y > 0.5) return float4(c.rgb, c.a > 0.0 ? keep : 0.0);
 	float4 m = mc.sample(mcSmplr, in.texCoord);
 	return float4(mix(m.rgb, c.a > 0.0 ? c.rgb : m.rgb, keep), 1.0);
 }

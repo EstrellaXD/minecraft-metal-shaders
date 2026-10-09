@@ -51,6 +51,9 @@ final class MetalEncoder implements CommandEncoderBackend {
 	/** -Dmcopt.metal.presentQueue=acquire: also acquire the drawable on the present side, so the render thread never waits in nextDrawable. */
 	static final boolean PRESENT_ACQUIRE = "acquire".equals(System.getProperty("mcopt.metal.presentQueue"));
 	private static final boolean STATS = Boolean.getBoolean("mcopt.metal.stats");
+	/** -Dmcopt.metal.labels=true: every game render encoder named after its passes' labels (merged passes joined with " + "), for GPU traces. */
+	private static final boolean LABELS = Boolean.getBoolean("mcopt.metal.labels");
+	private String passLabel = "";
 
 	final long ctx;
 	final long enc;
@@ -356,6 +359,13 @@ final class MetalEncoder implements CommandEncoderBackend {
 			if (keptDelegate != null) keptDelegate.begin(this.enc, depthHandle != 0);
 			MetalHooks.Labeler labeler = MetalHooks.labeler;
 			if (labeler != null && continued == 0) labeler.label(this.enc, "game " + descriptor.label().get());
+			if (LABELS) {
+				String l = descriptor.label().get();
+				this.passLabel = continued == 0 ? "game " + l : this.passLabel.length() < 200 ? this.passLabel + " + " + l : this.passLabel;
+				try (MemoryStack ls = MemoryStack.stackPush()) {
+					Native.renderLabel(this.enc, MemoryUtil.memAddress(ls.UTF8(this.passLabel)));
+				}
+			}
 			if (this.submitIndex == TRACE_SUBMIT) {
 				StringBuilder targets = new StringBuilder();
 				for (int i = 0; i < colors.size(); i++) {

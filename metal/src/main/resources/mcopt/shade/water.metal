@@ -476,11 +476,11 @@ static float3 shadeWaterSkyRefl(float3 r, float3 rs, float prevExposure, constan
 #else
 	float3 rd = r;
 #endif
-	if (volumetricClouds) {
+	if (volumetricClouds && shadeWdev(f) != SHADE_WDEV_NO_DOME) {
 		float4 cd = shadeCloudsDome(rd, *L, R->cloudDome);
 		sky = sky * cd.a + cd.rgb;
 	}
-	if (prevExposure > 0.0) {
+	if (prevExposure > 0.0 && shadeWdev(f) != SHADE_WDEV_NO_RSKY) {
 		float4 c = f.viewProj * float4(rs, 0.0); // a direction: the point at infinity
 		if (c.w > 1e-4) {
 			float2 uv = c.xy / c.w * 0.5 + 0.5;
@@ -912,7 +912,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
 	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure);
 #ifdef SHADE_CAUSTICS
-	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0 && f.lightDirWorld.w > 0.5) {
+	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0 && f.lightDirWorld.w > 0.5 && shadeWdev(f) != SHADE_WDEV_NO_CAUSTICS) {
 		float light = smoothstep(0.1, 0.8, float(w.shadow)) * saturate(f.lightDirWorld.y * 4.0) * smoothstep(0.55, 0.9, float(w.sky));
 		float fade = light * exp(-dy * 0.2) * saturate(dy * 3.0) * (1.0 - smoothstep(0.04, 0.12, w.footprint)); // fine lines alias far away
 		if (fade > 0.02) { // deep, shaded or far bottoms: not worth the waves
@@ -950,7 +950,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
 	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together)
 	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
-	if (fq > 0.022) {
+	if (fq > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
 		float4 hit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
 		hitWeight = hit.a * smoothstep(0.022, 0.03, fq);
 		refl = mix(refl, hit.rgb, hitWeight);

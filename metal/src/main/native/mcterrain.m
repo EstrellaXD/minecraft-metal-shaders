@@ -444,6 +444,7 @@ void mc_clouds_cull(Enc *enc, Terrain *t, id<MTLBuffer> faces, uint64_t facesOff
 	mc_pre_end_encoders(enc);
 	@autoreleasepool {
 		id<MTLComputeCommandEncoder> c = [mc_pre(enc) computeCommandEncoder];
+		c.label = @"mcopt clouds cull";
 		[c setComputePipelineState:t->clouds];
 		[c setBuffer:faces offset:facesOffset atIndex:0];
 		[c setBytes:&count length:4 atIndex:1];

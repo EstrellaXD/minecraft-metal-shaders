@@ -196,7 +196,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     half shadowSky = endLit ? half(1.0) : in.v_Light.y;
     half shadow = (in.v_Light.y <= 0.3h && !endLit) || netherLit ? half(1.0)
         // M3.4 (mcopt.shade.waterShadowSoft, ShadeLook.waterShadow.x, read every frame): up-facing water gets a soft-edged shadow
-        : waterFull ? (n.y > 0.5h && sl.waterShadow.x > 0.0 ? shadeShadowSoft(shadowMap, shadowCompare, sf, p, n, sl.waterShadow.x, fragCoord.xy)
+        : waterFull ? (n.y > 0.5h && sl.waterShadow.x > 0.0 && shadeWdev(sf) != SHADE_WDEV_HARD_SHADOW ? shadeShadowSoft(shadowMap, shadowCompare, sf, p, n, sl.waterShadow.x, fragCoord.xy)
                                                             : shadeShadow(shadowMap, shadowCompare, sf, p, n, false))
         : shadeShadow2(shadowMap, shadowCompare, sf, sl, p, n, thin || foliage, foliage, fragCoord.xy, shadowSky);
 #ifdef MCOPT_HDR
@@ -235,7 +235,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
-        if ((n.y > 0.5h || (n.y < -0.5h && sf.flags2.y != 0)) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
+        if (shadeWdev(sf) != SHADE_WDEV_NO_DETAIL && (n.y > 0.5h || (n.y < -0.5h && sf.flags2.y != 0)) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
 #ifdef SHADE_DYNLIGHT

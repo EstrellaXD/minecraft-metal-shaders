@@ -166,6 +166,7 @@ int mc_water_capture(Enc *enc, WaterState *s) {
 			[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 			[r endEncoding];
 		}
+		mc_reopen_why = "after water copy";
 		mc_render_reopen(enc);
 	}
 	s->params.state[0] = 1.0f;

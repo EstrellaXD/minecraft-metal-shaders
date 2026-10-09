@@ -114,6 +114,16 @@ struct ShadeFrame {
 #define SHADE_DEV_WX_RIPPLE_NEAR 524288 // raindrop rings fade out over 0.02-0.045 blocks per pixel (~10 blocks) instead of 0.03-0.06
 #define SHADE_DEV_WX_SSR_STEPS8 1048576 // puddle reflections: 8 march steps (2 per quad lane) instead of SHADE_PUDDLE_STEPS
 static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sunPath.z) & bit) != 0; }
+// 2026-10-08 optimisation pricing (water.metal, terrain): bits 21-23 of mcopt.shade.dev hold one variant number (0 = none;
+// sunPath.z is a float, exact up to 2^24, so there is no room for more single bits). SHADE_WDEV_*: what that variant leaves out.
+#define SHADE_WDEV_NO_SSR 1       // water: no screen-space march (sky / rendered-sky reflection only)
+#define SHADE_WDEV_NO_HAZE 2      // (unused: any such test in shadeWaterHazed crashed the Metal compiler service building the HDR translucent pipeline)
+#define SHADE_WDEV_NO_DOME 3      // water: no clouds' reflection dome lookup
+#define SHADE_WDEV_NO_RSKY 4      // water: no rendered-sky reflection (last frame's image in the mirrored direction)
+#define SHADE_WDEV_NO_CAUSTICS 5  // water: no caustics on the bottom
+#define SHADE_WDEV_HARD_SHADOW 6  // water: the plain shadow lookup instead of M3.4's soft one
+#define SHADE_WDEV_NO_DETAIL 7    // water: no fine-ripple sample (the long swell only)
+static inline int shadeWdev(constant ShadeFrame &f) { return (int(f.sunPath.z) >> 21) & 7; }
 
 // ---- view rays ----------------------------------------------------------------------------------------------------------
 // The eye, camera-relative world (blocks) from an inverse view-projection: the camera's origin, except that view bobbing

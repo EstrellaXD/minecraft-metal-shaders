@@ -101,6 +101,7 @@ final class Native {
 	private static final MethodHandle R_DRAW_INDIRECT = fn("mc_r_draw_indirect", true, null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle R_DEBUG_PUSH = fn("mc_r_debug_push", false, null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle R_DEBUG_POP = fn("mc_r_debug_pop", true, null, JAVA_LONG);
+	private static final MethodHandle R_LABEL = fn("mc_r_label", false, null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle CLEAR_RECT = fn("mc_clear_rect", false, null, JAVA_LONG, JAVA_LONG, JAVA_LONG,
 		JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
 	private static final MethodHandle LAYER_CONFIGURE = fn("mc_layer_configure", false, null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
@@ -238,6 +239,7 @@ final class Native {
 	static void drawIndirect(long enc, long buffer, long offset, int drawCount) { try { R_DRAW_INDIRECT.invokeExact(enc, buffer, offset, drawCount); } catch (Throwable t) { throw rethrow(t); } }
 	static void debugPush(long enc, long label) { try { R_DEBUG_PUSH.invokeExact(enc, label); } catch (Throwable t) { throw rethrow(t); } }
 	static void debugPop(long enc) { try { R_DEBUG_POP.invokeExact(enc); } catch (Throwable t) { throw rethrow(t); } }
+	static void renderLabel(long enc, long label) { try { R_LABEL.invokeExact(enc, label); } catch (Throwable t) { throw rethrow(t); } }
 	static void clearRect(long enc, long color, long depth, float r, float g, float b, float a, float depthValue, int x, int y, int w, int h, int mip) { try { CLEAR_RECT.invokeExact(enc, color, depth, r, g, b, a, depthValue, x, y, w, h, mip); } catch (Throwable t) { throw rethrow(t); } }
 	static void layerConfigure(long ctx, long layer, int w, int h, int vsync) { try { LAYER_CONFIGURE.invokeExact(ctx, layer, w, h, vsync); } catch (Throwable t) { throw rethrow(t); } }
 	static long layerNext(long layer) { try { return (long) LAYER_NEXT.invokeExact(layer); } catch (Throwable t) { throw rethrow(t); } }

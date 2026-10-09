@@ -482,6 +482,7 @@ static id<MTLBlitCommandEncoder> blit(Enc *enc) {
 		endRender(enc);
 		@autoreleasepool {
 			enc->blit = [[cmd(enc) blitCommandEncoder] retain];
+			enc->blit.label = @"mcopt blit";
 		}
 	}
 	return enc->blit;
@@ -526,6 +527,7 @@ id<MTLComputeCommandEncoder> mc_pre_compute(Enc *enc) {
 		mc_pre_end_encoders(enc);
 		@autoreleasepool {
 			enc->preCompute = [[mc_pre(enc) computeCommandEncoder] retain];
+			enc->preCompute.label = @"mcopt pre compute";
 		}
 	}
 	return enc->preCompute;
@@ -537,6 +539,7 @@ static id<MTLBlitCommandEncoder> preBlit(Enc *enc) {
 		mc_pre_end_encoders(enc);
 		@autoreleasepool {
 			enc->preBlit = [[mc_pre(enc) blitCommandEncoder] retain];
+			enc->preBlit.label = @"mcopt pre blit";
 		}
 	}
 	return enc->preBlit;
@@ -886,6 +889,12 @@ int mc_render_begin(Enc *enc, int count, id<MTLTexture> const *colors, const flo
 	return 0;
 }
 
+// -Dmcopt.metal.labels (mc_r_label): the last name given, how often its pass was reopened, and why (mc_reopen_why, set by
+// the caller just before mc_render_reopen).
+static NSString *lastLabel;
+static int labelReopens;
+const char *mc_reopen_why = "";
+
 // Terrain occlusion (mcterrain.m) only: ends the open render encoder with every live attachment stored and returns a
 // concurrent compute encoder (dispatches overlap unless a barrier orders them) for work that reads them; mc_render_resume
 // then reopens the pass on the same attachments with their contents loaded back. The reopened encoder has no state but the
@@ -894,13 +903,16 @@ id<MTLComputeCommandEncoder> mc_render_suspend(Enc *enc) {
 	endRender(enc);
 	endBlit(enc);  // MetalTerrain's held arena copies, recorded just before
 	@autoreleasepool {
-		return [[cmd(enc) computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent] retain];
+		id<MTLComputeCommandEncoder> c = [[cmd(enc) computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent] retain];
+		c.label = @"mcopt render suspend";
+		return c;
 	}
 }
 
 void mc_render_resume(Enc *enc, id<MTLComputeCommandEncoder> compute) {
 	[compute endEncoding];
 	[compute release];
+	mc_reopen_why = "after occlusion";
 	mc_render_reopen(enc);
 }
 
@@ -922,6 +934,8 @@ void mc_render_reopen(Enc *enc) {
 			rp.depthAttachment.storeAction = MTLStoreActionUnknown;
 		}
 		openRender(enc, rp);
+		if (lastLabel) enc->render.label = [NSString stringWithFormat:@"%@ | reopened %d %s", lastLabel, ++labelReopens, mc_reopen_why];
+		mc_reopen_why = "";
 	}
 }
 
@@ -1046,6 +1060,17 @@ void mc_r_debug_push(Enc *enc, const char *label) {
 }
 
 void mc_r_debug_pop(Enc *enc) { [enc->render popDebugGroup]; }
+
+// Names the open render encoder (-Dmcopt.metal.labels: game passes by their descriptor label, for GPU traces); a pass
+// mc_render_reopen reopens keeps the name, with why and how many times (labelReopens) appended.
+void mc_r_label(Enc *enc, const char *label) {
+	@autoreleasepool {
+		[lastLabel release];
+		lastLabel = [[NSString stringWithUTF8String:label] retain];
+		labelReopens = 0;
+		if (enc->render) enc->render.label = lastLabel;
+	}
+}
 
 // Clears part of a color and/or depth texture by drawing a scissored full-screen triangle (Metal can only clear whole attachments).
 // depth < 0 leaves the depth texture untouched.

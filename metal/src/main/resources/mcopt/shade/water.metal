@@ -943,6 +943,21 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	}
 	float cosV = max(dot(-v, n), 0.02);
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
+#if defined(SHADE_WATER_SSR_FIRST) && defined(SHADE_SSR)
+	// (2026-10-08 experiment, -Dmcopt.shade.leanDev=SHADE_WATER_SSR_FIRST: the same march before the refraction and the body,
+	// so fewer of their values are live across it; the reflection below takes its result)
+	float4 ssrFirst = float4(0.0);
+	float ssrFirstW = 0.0;
+	{
+		float3 rr0 = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+		rr0 = normalize(float3(rr0.x, max(rr0.y, 0.01), rr0.z));
+		float fq0 = shadeQuadMax(shadeWaterFresnel(cosV));
+		if (fq0 > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
+			ssrFirst = shadeSsr(w.p + n * 0.02, rr0, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
+			ssrFirstW = ssrFirst.a * smoothstep(0.022, 0.03, fq0);
+		}
+	}
+#endif
 
 	// --- what is behind the surface: refraction, absorption, in-scattering, caustics
 	float2 tex = float2(scene.get_width(), scene.get_height());
@@ -1009,12 +1024,17 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #ifdef SHADE_SSR
 	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
 	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together)
+#ifdef SHADE_WATER_SSR_FIRST
+	hitWeight = ssrFirstW;
+	refl = mix(refl, ssrFirst.rgb, hitWeight);
+#else
 	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
 	if (fq > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
 		float4 hit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
 		hitWeight = hit.a * smoothstep(0.022, 0.03, fq);
 		refl = mix(refl, hit.rgb, hitWeight);
 	}
+#endif
 #endif
 	// the sun's (or moon's) glint: rougher with distance (normals average out: long glitter roads) and in rain; it carries
 	// its own Fresnel, hidden where SSR found something in front of the sky

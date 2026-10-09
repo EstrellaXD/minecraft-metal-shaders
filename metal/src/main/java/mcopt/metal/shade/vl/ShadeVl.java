@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 320; // VlParams (vl.metal), 20 x float4 since 2026-10-09
+	private static final int PARAM_BYTES = 336; // VlParams (vl.metal), 21 x float4 since FT2.3
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -187,7 +187,11 @@ public final class ShadeVl {
 		// cover only the live part, VlConfig.SCALE of the live render (so VL gets cheaper with the dynamic resolution)
 		// (2026-10-09 look development: mcopt.shade.vl.scaleLive overrides the preset's scale every frame; the native side
 		// reallocates its targets when the size changes)
-		float vlScale = VlConfig.live("mcopt.shade.vl.scaleLive", VlConfig.SCALE);
+		// (FT2.3: at least ~540 VL rows at a small window, up to half the resolution: on Gael's 1080p monitor a third of the render
+		// made each VL texel ~3 screen pixels and the shafts looked pixelated; at Retina the preset's own scale still decides. From
+		// the allocated height, so the dynamic resolution never reallocates the VL targets)
+		float vlScale = VlConfig.live("mcopt.shade.vl.scaleLive", VlConfig.ft21() ? VlConfig.SCALE
+			: Math.max(VlConfig.SCALE, Math.min(0.5f, 540f / Math.max(texHeight, 1))));
 		int vw = Math.max(1, Math.round(texWidth * vlScale)), vh = Math.max(1, Math.round(texHeight * vlScale));
 		int lw = Math.clamp(Math.round(width * vlScale), 1, vw), lh = Math.clamp(Math.round(height * vlScale), 1, vh);
 		if (vw != allocW || vh != allocH) {
@@ -440,13 +444,18 @@ public final class ShadeVl {
 		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)
 		// (z: the shafts' soft edge radius in blocks, mcopt.shade.vl.soft, live; 0 = sharp)
 		// (FT2.3: soft shaft edges, 0.8 blocks: the lit air under a big gap no longer reads as a hard-edged glass sheet)
-		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), VlConfig.look("mcopt.shade.vl.soft", 0.8f, 0f), 0f);
+		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), VlConfig.look("mcopt.shade.vl.soft", 0.8f, 0f),
+			VlConfig.live("mcopt.shade.vl.radialStep", 1.5f)); // w: the radial blur's tap spacing (VL pixels)
 		// hp (2026-10-09, Gael: the stronger shafts veiled the view "como un lente empanado"): the shafts' local contrast under trees
 		// (vl.metal vlVeilR; fold only): x the share of the local mean glow kept, y the gain of what stands out of it, z the veil
 		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)
 		// (veil4 i4: the uniform glow x0.2, a beam at twice its surroundings x1.4, at 3x x1.53; notes/godrays-veil-2026-10-09)
 		put(b, VlConfig.look("mcopt.shade.vl.hpKeep", 0.2f, 1f), VlConfig.look("mcopt.shade.vl.hpGain", 1.8f, 1f),
 			VlConfig.live("mcopt.shade.vl.hpRadius", 2f), hdr && VlConfig.FOLD && underTrees() ? VlConfig.look("mcopt.shade.vl.hp", 1f, 0f) : 0f);
+		// radial (FT2.3): the light direction's vanishing point (homogeneous NDC, scaled to unit size) and the radial blur's taps
+		// on each side (mcopt.shade.vl.radialTaps, live; 0 = off; vl.metal vl_radial)
+		float vm = Math.max(Math.max(Math.abs(clip.x), Math.abs(clip.y)), Math.max(Math.abs(clip.w), 1e-6f));
+		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.look("mcopt.shade.vl.radialTaps", 8f, 0f) : 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

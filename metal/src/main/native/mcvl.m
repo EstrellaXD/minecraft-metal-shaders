@@ -22,6 +22,7 @@ typedef struct {
 	id<MTLLibrary> lib;
 	id<MTLRenderPipelineState> march, temporal, composite, temporalFold; // temporalFold: M2 fold (flag 16), MRT history + lightT
 	id<MTLRenderPipelineState> veilDown, veilBlurH, veilBlurV;          // fold: the shafts' local contrast (VlParams.hp, vl.metal vlVeilR)
+	id<MTLRenderPipelineState> radial;                                  // fold (FT2.3): the blur along the light's lines (vl_radial)
 	MTLPixelFormat compositeFormat;
 	int compositeHdr;
 	id<MTLComputePipelineState> canopy;
@@ -29,6 +30,8 @@ typedef struct {
 	id<MTLTexture> lightT;               // fold: light (before exposure) + canopy mist transmittance, for ShadePost's final pass
 	id<MTLTexture> veil[2];              // fold: the local mean of r at a quarter of the VL resolution (R16F; [0] = the result)
 	int veilRan;                         // the veil passes ran last frame (else veil[0] is stale: the fold skips the contrast once)
+	id<MTLTexture> lightR;               // fold (FT2.3): lightT blurred along the light's lines (what the final pass reads when it ran)
+	int radialRan;                       // the radial pass ran this frame (mc_vl_outputs hands lightR out)
 	int width, height, cur, lossy;
 	id<MTLBuffer> state;  // VlState: the canopy factor (GPU-written, read by the march)
 	// GPU timer (flag 8, -Dmcopt.shade.vl.gpuTimer): per-pass fragment start/end timestamps, a ring of 4 frames x 3 passes
@@ -61,6 +64,7 @@ static id<MTLRenderPipelineState> pso(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 	if ([fragment isEqualToString:@"vl_march"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatR8Unorm;
 	if ([fragment isEqualToString:@"vl_temporal_fold"]) pd.colorAttachments[1].pixelFormat = MTLPixelFormatRGBA16Float;
 	if ([fragment hasPrefix:@"vl_veil_"]) pd.colorAttachments[0].pixelFormat = MTLPixelFormatR16Float;
+	if ([fragment isEqualToString:@"vl_radial"]) pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
 	if ([fragment isEqualToString:@"vl_composite_hdr"]) {
 		pd.colorAttachments[0].blendingEnabled = YES;  // M2: scene * T (source alpha) + light, into the pre-exposed HDR scene
 		pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
@@ -99,6 +103,7 @@ VlState *mc_vl_new(Ctx *ctx, const char *source, int flags, char *err, int errCa
 			s->veilDown = s->temporalFold ? pso(ctx->device, lib, @"vl_veil_down", MTLPixelFormatR16Float, hdr, e2, sizeof(e2)) : nil;
 			s->veilBlurH = s->veilDown ? pso(ctx->device, lib, @"vl_veil_blur_h", MTLPixelFormatR16Float, hdr, e2, sizeof(e2)) : nil;
 			s->veilBlurV = s->veilBlurH ? pso(ctx->device, lib, @"vl_veil_blur_v", MTLPixelFormatR16Float, hdr, e2, sizeof(e2)) : nil;
+			s->radial = s->temporalFold ? pso(ctx->device, lib, @"vl_radial", MTLPixelFormatRGBA16Float, hdr, e2, sizeof(e2)) : nil;
 			if (!s->temporalFold) {
 				[s->march release];
 				[s->temporal release];
@@ -138,6 +143,8 @@ void mc_vl_free(VlState *s) {
 	[s->veilDown release];
 	[s->veilBlurH release];
 	[s->veilBlurV release];
+	[s->radial release];
+	[s->lightR release];
 	[s->canopy release];
 	[s->raw release];
 	[s->lightT release];
@@ -281,12 +288,15 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[s->veil[0] release];
 			[s->veil[1] release];
 			s->veil[0] = s->veil[1] = nil;
+			[s->lightR release];
+			s->lightR = nil;
 			s->raw = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL march");
 			s->hist[0] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history A");
 			s->hist[1] = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL history B");
 			s->sky[0] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask A");
 			s->sky[1] = target(dev, MTLPixelFormatR8Unorm, vlWidth, vlHeight, 0, @"mcopt shade: VL sky mask B");
 			if (s->temporalFold) s->lightT = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL light + T");
+			if (s->radial) s->lightR = target(dev, MTLPixelFormatRGBA16Float, vlWidth, vlHeight, s->lossy, @"mcopt shade: VL light + T (radial)");
 			if (s->veilBlurV) {
 				s->veil[0] = target(dev, MTLPixelFormatR16Float, (vlWidth + 3) / 4, (vlHeight + 3) / 4, 0, @"mcopt shade: VL veil A");
 				s->veil[1] = target(dev, MTLPixelFormatR16Float, (vlWidth + 3) / 4, (vlHeight + 3) / 4, 0, @"mcopt shade: VL veil B");
@@ -296,7 +306,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			s->height = vlHeight;
 			reset = 1;
 		}
-		float local[96]; // VlParams (320 bytes since 2026-10-09) and room to grow
+		float local[96]; // VlParams (336 bytes since FT2.3) and room to grow
 		if (paramBytes > (int) sizeof(local)) paramBytes = sizeof(local);
 		memcpy(local, params, paramBytes);
 		if (reset && paramBytes >= 38 * 4) local[37] = 1.0f; // VlParams.temporal.y: the temporal pass drops the history
@@ -346,6 +356,12 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 					nil, 0, qw, qh, nil);
 			}
 			s->veilRan = hp;
+			// (FT2.3) VlParams.radial.w (float 83): the blur along the light's lines, lightT -> lightR (the final pass reads lightR)
+			s->radialRan = s->radial && s->lightR && paramBytes >= 84 * 4 && local[83] > 0.5f;
+			if (s->radialRan) {
+				pass(cb, s->lightR, nil, MTLLoadActionDontCare, s->radial, @"mcopt shade: VL radial", params, paramBytes, nil, s->lightT, s->hist[next],
+					nil, 0, liveW, liveH, nil);
+			}
 		} else {
 			pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw,
 				s->hist[s->cur], times, base + 2, liveW, liveH, nil);
@@ -359,7 +375,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 
 // After an mc_vl_render with flag 16 (fold): out[0] = the light + T texture, out[1] = the history it matches (a = distance).
 void mc_vl_outputs(VlState *s, uint64_t *out) {
-	out[0] = (uint64_t) s->lightT;
+	out[0] = (uint64_t) (s->radialRan ? s->lightR : s->lightT);
 	out[1] = (uint64_t) s->hist[s->cur];
 }
 

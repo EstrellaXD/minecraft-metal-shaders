@@ -42,7 +42,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 20 x float4 = 320 bytes since 2026-10-09).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 21 x float4 = 336 bytes since FT2.3).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -85,10 +85,13 @@ struct VlParams {
 	                  //     VL_FAR_STEPS more steps through the open air with the clouds' shadow only (sunset rays from cloud gaps)
 	float4 tune2;     // 288 x the far march's density gain (the evening haze toward the low sun), y its own cut (the share of its
 	                  //     unshadowed glow left out), z (2026-10-09) the shafts' soft edge: radius (blocks) of a per-step offset
-	                  //     of the shadow lookups across the light direction (0 = sharp, mcopt.shade.vl.soft), w 0
+	                  //     of the shadow lookups across the light direction (0 = sharp, mcopt.shade.vl.soft), w (FT2.3) the
+	                  //     radial blur's tap spacing (VL pixels)
 	float4 hp;        // 304 (2026-10-09) the shafts' local contrast (fold): x keep, the share of the local mean glow kept; y gain of
 	                  //     what stands out of it (a beam); z the veil blur's tap spacing (quarter-resolution texels); w 1 = on.
 	                  //     In full from a canopy factor of 0.2 (under trees; open land keeps the plain light). See vlVeilR.
+	float4 radial;    // 320 (FT2.3) the light direction's vanishing point in homogeneous NDC: xy = (viewProj * (L, 0)).xy, z its w
+	                  //     (all scaled alike), w taps on each side of the radial blur (0 = off). See vl_radial.
 };
 #define VL_FAR_STEPS 8
 
@@ -668,6 +671,43 @@ fragment VlFoldOut vl_temporal_fold(VlOut in [[stage_in]], constant ShadeFrame &
 	}
 	o.lightT = half4(half3(min(light, 30000.0)), half(T));
 	return o;
+}
+
+// The shafts' continuity (FT2.3, Gael 2026-10-09: "deberían ser líneas de luz continuas como las de la vida real, las del shader
+// parecen manchas"). Every shaft is a line along the light direction L, so on screen it lies on a line through L's vanishing
+// point V (the sun, the point opposite it behind the camera, or parallel lines when V is at infinity): at NDC x the line's
+// direction is V.xy - x V.w. A symmetric Gaussian blur along that line joins the march's patches (low resolution, jittered steps,
+// leaf-sized gaps) into continuous lines while a shaft's edge across it stays; taps at another depth (a trunk in front of the
+// air) count a tenth. Light + T in, the same out (T, analytic, is kept as is).
+fragment half4 vl_radial(VlOut in [[stage_in]], constant VlParams &p [[buffer(0)]], texture2d<half> lightT [[texture(0)]],
+                         texture2d<half> hist [[texture(1)]]) {
+	constexpr sampler lin(filter::linear, address::clamp_to_edge);
+	float2 pos = in.position.xy;
+	half4 c = lightT.read(uint2(pos));
+	int n = int(p.radial.w);
+	float2 ndc = pos / p.size.xy * 2.0 - 1.0;
+	float2 d = (p.radial.xy - ndc * p.radial.z) * p.size.xy;
+	float len = length(d);
+	if (n <= 0 || len < 1e-4) return c;
+	d *= p.tune2.w / len;
+	float dc = float(hist.read(uint2(pos)).a);
+	float tol = 0.06 * dc + 0.6;
+	float2 tex = 1.0 / float2(lightT.get_width(), lightT.get_height());
+	float2 hi = p.size.xy - 0.5;
+	int2 last = int2(p.size.xy) - 1;
+	float3 sum = float3(c.rgb);
+	float wsum = 1.0, inv = 2.0 / float(n * n);
+	for (int k = 1; k <= n; k++) {
+		float wk = exp(-float(k * k) * inv);
+		for (int sg = -1; sg <= 1; sg += 2) {
+			float2 q = clamp(pos + d * float(k * sg), float2(0.5), hi);
+			float ds = float(hist.read(uint2(clamp(int2(q), int2(0), last))).a);
+			float w = wk * (abs(ds - dc) < tol ? 1.0 : 0.1);
+			sum += float3(lightT.sample(lin, q * tex).rgb) * w;
+			wsum += w;
+		}
+	}
+	return half4(half3(sum / wsum), c.a);
 }
 
 // The veil (see vlVeilR), 1: the mean r of each 4x4 block of this frame's VL history (quarter resolution, R16F).

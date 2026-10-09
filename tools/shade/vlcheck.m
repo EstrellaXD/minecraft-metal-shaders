@@ -50,6 +50,7 @@ int main(int argc, const char **argv) {
 		fail |= build(dev, lib, @"vl_veil_down", MTLPixelFormatR16Float, true);   // 2026-10-09: the shafts' local contrast
 		fail |= build(dev, lib, @"vl_veil_blur_h", MTLPixelFormatR16Float, true);
 		fail |= build(dev, lib, @"vl_veil_blur_v", MTLPixelFormatR16Float, true);
+		fail |= build(dev, lib, @"vl_radial", MTLPixelFormatRGBA16Float, true);      // FT2.3: the blur along the light's lines
 		fail |= build(dev, lib, @"vl_composite", MTLPixelFormatRGBA8Unorm, false);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRG11B10Float, true);
 		fail |= build(dev, lib, @"vl_composite_hdr", MTLPixelFormatRGBA16Float, true);

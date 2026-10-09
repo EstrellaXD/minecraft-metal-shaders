@@ -164,6 +164,14 @@ public final class VlConfig {
 		return v == null ? 1f : clamp(floatProperty("mcopt.shade.vl.skyRays", 1f), 0f, 4f);
 	}
 
+	/**
+	 * 2026-10-09 (Gael: the god rays "se ven poquito", dots where they cross leaves): the look's default, or FT2.1's with
+	 * mcopt.shade.vl.look=ft21 (read every frame, for in-session comparisons); either way the key itself overrides it.
+	 */
+	public static float look(String key, float now, float ft21) {
+		return live(key, "ft21".equals(System.getProperty("mcopt.shade.vl.look")) ? ft21 : now);
+	}
+
 	/** A float system property read every frame (look development in one session: the bench's variant shots set it). */
 	public static float live(String key, float def) {
 		String v = System.getProperty(key);

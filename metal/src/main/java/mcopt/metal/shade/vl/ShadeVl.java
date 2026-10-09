@@ -346,7 +346,8 @@ public final class ShadeVl {
 		// M2: the art layer's VL keyframe (bible §3.2: strongest at golden hour) and look preset, softened (shafts under a canopy
 		// stay visible at noon)
 		if (hdr) strength *= look.vlFactor() * (f.underwater ? HDR_WATER : HDR_AIR);
-		strength *= VlConfig.live("mcopt.shade.vl.gain", 1f); // (2026-10-09 look development, read every frame)
+		// 2026-10-09 (Gael: "se ven poquito"; look development in game, notes/godrays-2026-10-09): a little stronger overall
+		strength *= VlConfig.look("mcopt.shade.vl.gain", 1.25f, 1f);
 
 		// light colour (irradiance / pi, pre-exposure): saturated toward the low sun (golden hour), plain moonlight
 		float[] c = f.sky.light;
@@ -379,7 +380,7 @@ public final class ShadeVl {
 		put(b, vw, vh, width, height);                                                   // size
 		put(b, strength, VlConfig.DIST, VlConfig.STEPS, g);                              // shape
 		put(b, haze, mist, mistBase - camY, mistH);                                      // medium
-		put(b, hazeBase - camY, hazeH, VlConfig.live("mcopt.shade.vl.iso", 0.35f), 0.05f);  // haze
+		put(b, hazeBase - camY, hazeH, VlConfig.look("mcopt.shade.vl.iso", 0.47f, 0.35f), 0.05f); // haze (iso: more seen from the side)
 		put(b, lr, lg, lb, canopyMist);                                                  // light
 		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
 		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) : 0f, VlConfig.SS_TAPS, onScreen, 6f);
@@ -396,12 +397,14 @@ public final class ShadeVl {
 		// mcopt.shade.vl.waterM3=false: M2.1's 0.9 and game time.
 		put(b, VlConfig.TEMPORAL ? (VlConfig.WATER_M3 && f.underwater ? 0.8f : 0.9f) : 0f, reset ? 1f : 0f, frame & 1023, VlConfig.WATER_M3 ? f.waterTime : f.gameTimeSeconds); // temporal
 		put(b, (float) dx, (float) dy, (float) dz, canopyUp);                            // camDelta
-		put(b, 0.7f * VlConfig.live("mcopt.shade.vl.openGain", 1f), (hdr ? 2.4f : 1.6f) * VlConfig.live("mcopt.shade.vl.canopyGain", 1f),
+		put(b, 0.7f * VlConfig.look("mcopt.shade.vl.openGain", 1.15f, 1f), (hdr ? 2.4f : 1.6f) * VlConfig.look("mcopt.shade.vl.canopyGain", 1.8f, 1f),
 			VlConfig.CANOPY, VlConfig.DEBUG);                                            // gate: open air, canopy mist, override, debug
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
-		float openCut = hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f, carve = hdr ? VlConfig.live("mcopt.shade.vl.carve", HDR_CARVE) : 0f;
+		// toward the light the open cut stays (the sunset must not wash into gold) and the canopy carve eases; away from it both
+		// drop (the shafts through the trees read from the side): vl.metal mixes them by the angle
+		float openCut = hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f, carve = hdr ? VlConfig.look("mcopt.shade.vl.carve", 0.45f, HDR_CARVE) : 0f;
 		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, openCut); // mistAmb, open glow left out (toward the light)
 		put(b, carve, hdr ? HDR_CARVE_WATER : 0f, histU, histV);                         // carve (toward the light); zw: the history's live part
 		// M3.3 art: x the gain of the sky's dark rays (mcopt.shade.vl.skyRays, dev; 1), y their extra gain over the open sky:
@@ -411,8 +414,8 @@ public final class ShadeVl {
 		float sunsetArt = mcopt.metal.shade.ShadeSky.sunsetArt ? golden : 0f;
 		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, VlConfig.sunsetFar() ? 1f : 0f, VlConfig.sunsetFall()); // art
 		// tune: x the canopy factor's floor, yz the open cut and the carve away from the light
-		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), hdr ? VlConfig.live("mcopt.shade.vl.openCutSide", openCut) : openCut,
-			hdr ? VlConfig.live("mcopt.shade.vl.carveSide", carve) : carve,
+		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), hdr ? VlConfig.look("mcopt.shade.vl.openCutSide", 0.4f, openCut) : openCut,
+			hdr ? VlConfig.look("mcopt.shade.vl.carveSide", 0.28f, carve) : carve,
 			// w: the far march's end at the golden hour (sunset rays from cloud gaps; mcopt.shade.vl.farDist, live)
 			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
 		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)

@@ -67,11 +67,14 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 	float3 p = in.p;
 	float d = length(p);
 	// the game's chunks own everything nearer than DH's clip distance: a hard cut, or a dithered one over 1-1.5x of it
+	// (SHADE_DH_NOCLIP, dev: none, to price the discard: a pipeline that may discard loses the GPU's hidden-surface removal)
+#ifndef SHADE_DH_NOCLIP
 	if (u.dither != 0u) {
 		if (smoothstep(u.clipDistance, u.clipDistance * 1.5, d) <= dhBayer(fragCoord.xy) + 0.001) discard_fragment();
 	} else if (u.clipDistance > 0.0 && d < u.clipDistance) {
 		discard_fragment();
 	}
+#endif
 	// albedo: the block's colour, with the tile's detail around it (the tile stores the texture relative to its mean,
 	// 0.5 = the mean: x2), weighed by the tile's alpha
 	half3 srgb = in.color.rgb;

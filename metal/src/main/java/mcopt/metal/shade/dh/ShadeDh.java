@@ -94,7 +94,8 @@ public final class ShadeDh {
 	public static void register() {
 		if (!LIGHT) return;
 		String defines = (Boolean.getBoolean("mcopt.shade.dh.jitter") ? "#define SHADE_DH_JITTER\n" : "")
-			+ (Boolean.getBoolean("mcopt.shade.dh.skyHigh") ? "#define SHADE_DH_SKY_HIGH\n" : "");
+			+ (Boolean.getBoolean("mcopt.shade.dh.skyHigh") ? "#define SHADE_DH_SKY_HIGH\n" : "")
+			+ (Boolean.getBoolean("mcopt.shade.dh.noclip") ? "#define SHADE_DH_NOCLIP\n" : ""); // (dev, FT2: the cost of the discard)
 		String vertex = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.vs.metal");
 		String fragment = ShadeMsl.prelude() + defines + ShadeMsl.resource("dh_terrain.fs.metal");
 		for (String name : PIPELINES) {

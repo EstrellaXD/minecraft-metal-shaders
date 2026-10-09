@@ -105,6 +105,20 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		// no terrain shadow map out here: direct light where the sky is open (shadeLit2 gates it by sky light), dimmed by
 		// the volumetric clouds' shadow
 		half shadow = sky > 0.3h ? half(shadeCloudShadow(p, sl, sr.cloudShadow)) : half(1.0);
+#ifndef SHADE_DH_TRANSLUCENT
+		// (FT2.8, audit idx 103) the weather layer's cheap uniform part (weather_surface.metal shadeWetSurface / shadeWetAlbedo, which
+		// the LODs don't include): wet ground darkens and up faces take the snow cover's mean, so no dry, bright ring of LODs stands
+		// behind the rain-darkened (or snow-covered) near terrain
+		if (sl.wet.x > 0.0 || sl.wet.z > 0.001) {
+			half open = smoothstep(0.90h, 0.995h, sky);
+			half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h;
+			half snow = n.y > 0.5h && sl.wet.z > 0.001
+				? half(smoothstep(1.0 - float(sl.wet.z) * 1.15, 1.15 - float(sl.wet.z) * 1.15, 0.65) * saturate(float(sl.wet.z) * 40.0)) * open : 0.0h;
+			half om = half(sl.wet.x) * open * face * (1.0h - snow);
+			if (om > 0.0h) albedo = pow(max(albedo, half3(1e-4h)), half3(1.0h + 0.65h * om)) * (1.0h - 0.08h * om);
+			if (snow > 0.0h) albedo = mix(albedo, half3(0.86h, 0.88h, 0.92h), snow);
+		}
+#endif
 		radiance = shadeLit2(albedo, n, sky, block, shadow, false, false, sf, sl);
 		// (FT2.7, audit idx 74) a lightning flash lights the LODs like the terrain (shadeWxFlash): no dark seam at the chunks' edge
 		if (sl.flash.w > 0.0) {

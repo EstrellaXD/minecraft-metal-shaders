@@ -460,7 +460,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// (one transmittance for all three channels, from the haze's luminance: its colour matters in what it scatters, its
 		// extinction over the march is at most ~0.1, so a grey one costs nothing visible and a third of the exp per step)
 		float trans = 1.0, mistAll = 0.0, mistLit = 0.0, forestLit = 0.0, forestAll = 0.0;
-		float3 hazeAll = 0.0, hazeLit = 0.0;
+		float hazeAll = 0.0, hazeLit = 0.0; // (FT2.7, audit idx 1: scalars, times sigR once after the loop)
 		float lumR = dot(sigR, float3(0.2126, 0.7152, 0.0722));
 		float prevB = 0.0;
 		// (FT2.7, audit idx 0; air6.w > 0) a sky pixel with airSkyCut and airBase 0: past the shade grid (and the forest air's
@@ -528,15 +528,14 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			forestAll += dF * seg;
 			trans *= stepT;
 		}
-		hazeAll *= sigR;
-		hazeLit *= sigR;
+		float3 hA = hazeAll * sigR, hL = hazeLit * sigR;
 		// E06's phase functions, multiple-scattering boosts and evening glow (shade_m2.metal shadeHazeInscatter): its sunlit part
 		// times (lit - all) = what the shadows take out of it
 		float phR = 0.0596831 * (1.0 + mu * mu);
 		float phM = 0.8 * shadeHG(mu, SHADE_HAZE_MIE_G) + 0.2 * shadeHG(mu, -0.2);
 		float glow = 1.0 + sl.fogMisc.w;
 		float3 E = f.sunColor.rgb * 3.14159265;
-		float3 shadowed = E * ((hazeLit - hazeAll) * (phR * 2.0) + (mistLit - mistAll) * (phM * glow * alM / (1.0 - 0.5 * alM)));
+		float3 shadowed = E * ((hL - hA) * (phR * 2.0) + (mistLit - mistAll) * (phM * glow * alM / (1.0 - 0.5 * alM)));
 		// on the sky the haze's glow is the sky model's own: the shadows take out a share of it (air2.y; dark rays from the trees'
 		// and hills' shadows across the glow around the sun)
 		if (skyPx) shadowed *= p.air2.y;
@@ -696,7 +695,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	half skyT = d <= 0.0 ? (VL_HDR && !shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_VL) ? half(shadeCloudsScreen(dir, sl, sr.cloudScreen).a) : 1.0h) : 0.0h;
 	// Crepuscular streaks: march toward the light over last frame's sky mask (VL resolution, one byte per texel: a sixteenth
 	// of the bytes of the full-res depth, cache-friendly); sky seen along the way lets light through. Skipped on a reset.
-	if (p.crep.x > 0.0 && p.crep.z > 0.0 && !underwater && p.temporal.y < 0.5) {
+	// (FT2.7, audit idx 3: not on geometry when its streaks' gain look2.x is 0, the HDR default: the taps' result was times 0)
+	if (p.crep.x > 0.0 && p.crep.z > 0.0 && !underwater && p.temporal.y < 0.5 && (d <= 0.0 || !VL_HDR || p.look2.x != 0.0)) {
 		float2 toV = (p.sunPx.xy - fpos) / scale, fv = in.position.xy;
 		int taps = int(p.crep.y);
 		float open = 0.0, wsum = 0.0, w = 1.0;

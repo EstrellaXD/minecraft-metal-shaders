@@ -81,8 +81,10 @@ struct VlParams {
 	float4 tune;      // 272 (2026-10-09) x the canopy factor's floor (the canopy mist also outside a canopy, at least this much of
 	                  //     it: mcopt.shade.vl.canopyMin), y the open-air cut and z the canopy mist's carve away from the light (the
 	                  //     mistAmb.w / carve.x values hold toward it; between by the angle: mcopt.shade.vl.openCutSide / carveSide),
-	                  //     w 0
+	                  //     w the far march's end (blocks; 0 = none): past the main march, rays that go on (sky, far terrain) take
+	                  //     VL_FAR_STEPS more steps through the open air with the clouds' shadow only (sunset rays from cloud gaps)
 };
+#define VL_FAR_STEPS 8
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
 
@@ -303,6 +305,22 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			sumLocal += v * sLocal * seg;
 			sumLocalAll += sLocal * seg;
 			trans *= exp(-(sOpen + sLocal * p.mist.w) * dt);
+		}
+		// (2026-10-09) the far march: at the golden hour (ShadeVl sets tune.w) the rays from gaps between the clouds cross
+		// hundreds of blocks of air toward the low sun; past the main march's range (and the shadow map's) only the clouds'
+		// shadow carves the open air there. Same medium and integral, continuing the transmittance.
+		if (VL_HDR && vlClouds && p.tune.w > D + 1.0 && dist > D + 1.0) {
+			float Df = min(dist, p.tune.w), dtf = (Df - D) / float(VL_FAR_STEPS);
+			for (int i = 0; i < VL_FAR_STEPS; i++) {
+				float t = D + (float(i) + xi) * dtf;
+				float y = dir.y * t;
+				float sOpen = p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w);
+				float v = shadeCloudShadowRay(cloudRay, t, sl, sr.cloudShadow);
+				float seg = trans * (1.0 - exp(-sOpen * dtf)) / max(sOpen, 1e-9);
+				sumOpen += sOpen * seg;
+				sumOpenLit += v * sOpen * seg;
+				trans *= exp(-sOpen * dtf);
+			}
 		}
 		if (nNear > 0 && local > 1e-7) {
 			float Dn = min(D, 2.5 * p.mist.x), dtn = Dn / float(nNear), tl = 1.0;

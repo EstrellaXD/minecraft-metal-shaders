@@ -412,7 +412,9 @@ public final class ShadeVl {
 		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, VlConfig.sunsetFar() ? 1f : 0f, VlConfig.sunsetFall()); // art
 		// tune: x the canopy factor's floor, yz the open cut and the carve away from the light
 		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), hdr ? VlConfig.live("mcopt.shade.vl.openCutSide", openCut) : openCut,
-			hdr ? VlConfig.live("mcopt.shade.vl.carveSide", carve) : carve, 0f);
+			hdr ? VlConfig.live("mcopt.shade.vl.carveSide", carve) : carve,
+			// w: the far march's end at the golden hour (sunset rays from cloud gaps; mcopt.shade.vl.farDist, live)
+			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

@@ -42,7 +42,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 18 x float4 = 288 bytes since 2026-10-09).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 19 x float4 = 304 bytes since 2026-10-09).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -83,6 +83,8 @@ struct VlParams {
 	                  //     mistAmb.w / carve.x values hold toward it; between by the angle: mcopt.shade.vl.openCutSide / carveSide),
 	                  //     w the far march's end (blocks; 0 = none): past the main march, rays that go on (sky, far terrain) take
 	                  //     VL_FAR_STEPS more steps through the open air with the clouds' shadow only (sunset rays from cloud gaps)
+	float4 tune2;     // 288 x the far march's density gain (the evening haze toward the low sun), y its own cut (the share of its
+	                  //     unshadowed glow left out), zw 0
 };
 #define VL_FAR_STEPS 8
 
@@ -309,16 +311,17 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// (2026-10-09) the far march: at the golden hour (ShadeVl sets tune.w) the rays from gaps between the clouds cross
 		// hundreds of blocks of air toward the low sun; past the main march's range (and the shadow map's) only the clouds'
 		// shadow carves the open air there. Same medium and integral, continuing the transmittance.
+		float farOpen = 0.0, farLit = 0.0;
 		if (VL_HDR && vlClouds && p.tune.w > D + 1.0 && dist > D + 1.0) {
 			float Df = min(dist, p.tune.w), dtf = (Df - D) / float(VL_FAR_STEPS);
 			for (int i = 0; i < VL_FAR_STEPS; i++) {
 				float t = D + (float(i) + xi) * dtf;
 				float y = dir.y * t;
-				float sOpen = p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w);
+				float sOpen = (p.medium.x * exp(-max(y - p.haze.x, 0.0) / p.haze.y) + mist * exp(-max(y - p.medium.z, 0.0) / p.medium.w)) * p.tune2.x;
 				float v = shadeCloudShadowRay(cloudRay, t, sl, sr.cloudShadow);
 				float seg = trans * (1.0 - exp(-sOpen * dtf)) / max(sOpen, 1e-9);
-				sumOpen += sOpen * seg;
-				sumOpenLit += v * sOpen * seg;
+				farOpen += sOpen * seg;
+				farLit += v * sOpen * seg;
 				trans *= exp(-sOpen * dtf);
 			}
 		}
@@ -347,7 +350,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// shadowed and lit air read as beams (Gael: "se ven poquito")
 		float sunward = smoothstep(0.35, 0.9, mu);
 		float openCut = mix(p.tune.y, p.mistAmb.w, sunward);
-		float openPart = max(sumOpenLit - openCut * sumOpen, 0.0);
+		float openPart = max(sumOpenLit - openCut * sumOpen, 0.0) + max(farLit - p.tune2.y * farOpen, 0.0);
 		float k = mix(p.tune.z, p.carve.x, sunward);
 		sumLocal = max(sumLocal - k * sumLocalAll, 0.0) / (1.0 - k);
 		scatter = p.light.rgb * (3.14159265 * vlPhase(mu, p) * (openPart * p.gate.x + sumLocal * p.gate.y) * p.shape.x);

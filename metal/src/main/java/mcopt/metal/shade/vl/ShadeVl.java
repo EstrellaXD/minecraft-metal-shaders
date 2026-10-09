@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 288; // VlParams (vl.metal), 18 x float4 since 2026-10-09
+	private static final int PARAM_BYTES = 304; // VlParams (vl.metal), 19 x float4 since 2026-10-09
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -415,6 +415,8 @@ public final class ShadeVl {
 			hdr ? VlConfig.live("mcopt.shade.vl.carveSide", carve) : carve,
 			// w: the far march's end at the golden hour (sunset rays from cloud gaps; mcopt.shade.vl.farDist, live)
 			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
+		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)
+		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), 0f, 0f);
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

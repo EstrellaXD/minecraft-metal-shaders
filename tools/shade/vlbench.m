@@ -219,7 +219,7 @@ int main(int argc, const char **argv) {
 		id<MTLBuffer> frame = [dev newBufferWithBytes:F length:1008 options:MTLResourceStorageModeShared];
 
 		// VlParams: golden-hour forest, canopy 1
-		float Pv[72] = { // VlParams, 18 x float4 since 2026-10-09 (the last, tune, stays 0)
+		float Pv[76] = { // VlParams, 19 x float4 since 2026-10-09 (the last two, tune and tune2, stay 0)
 			(float) vw, (float) vh, (float) W, (float) H, // size
 			1.0f, 160, (float) steps, 0.68f,              // shape
 			0.0012f, 0.005f, -10, 12,                     // medium
@@ -261,7 +261,7 @@ int main(int argc, const char **argv) {
 				[r setFragmentBuffer:frame offset:0 atIndex:16];
 				[r setFragmentTexture:shadow atIndex:16];
 				[r setFragmentSamplerState:cmp atIndex:12];
-				[r setFragmentBytes:P length:288 atIndex:0];
+				[r setFragmentBytes:P length:304 atIndex:0];
 				[r setFragmentBuffer:gpuBuf offset:0 atIndex:18];
 				if (st) [r setFragmentBuffer:st offset:0 atIndex:1];
 				if (t0) [r setFragmentTexture:t0 atIndex:0];
@@ -274,7 +274,7 @@ int main(int argc, const char **argv) {
 			[k setComputePipelineState:canopy];
 			[k setBuffer:frame offset:0 atIndex:16];
 			[k setTexture:shadow atIndex:16];
-			[k setBytes:P length:288 atIndex:0];
+			[k setBytes:P length:304 atIndex:0];
 			[k setBuffer:state offset:0 atIndex:1];
 			[k dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 			[k endEncoding];

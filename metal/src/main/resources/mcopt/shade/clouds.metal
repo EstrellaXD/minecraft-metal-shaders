@@ -988,7 +988,10 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 	// origin + p with origin = camera + the accumulated wind, so a cloud drifts by -wind each frame: last frame it was at
 	// p + wind (the sign matters: the other way round the history smeared 2 x wind per frame, blurring and patterning the
 	// clouds)
-	float3 wp = dir * dNow + float3(c.wind.x, 0.0, c.wind.y);
+	// (from the eye, where the march's rays start: view bobbing moves it up to 0.1 block, a pixel or two at the clouds' distance,
+	// and taken from the camera's origin the history trailed the bob: the clouds swam with the camera while walking, Gael
+	// 2026-10-09)
+	float3 wp = shadeEye(c.invViewProj) + dir * dNow + float3(c.wind.x, 0.0, c.wind.y);
 	float4 pc = c.prevViewProj * float4(wp, 1.0);
 	float2 puv = pc.xy / max(pc.w, 1e-6) * 0.5 + 0.5;
 	bool valid = c.frame.z < 0.5 && pc.w > 1e-4 && all(puv >= 0.0) && all(puv <= 1.0);
@@ -1078,7 +1081,8 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 	float dNow = max(g0.y, 1.0);
 	float3 wnd = float3(c.wind.x, 0.0, c.wind.y);
 	float dRep = qMin != CLOUD_DIST_NONE ? cloudDistDecode(qMin) : dNow;
-	float4 pc = c.prevViewProj * float4(dir * dRep + wnd, 1.0);
+	// (the point from the eye, where the march's rays start: see cloud_resolve)
+	float4 pc = c.prevViewProj * float4(shadeEye(c.invViewProj) + dir * dRep + wnd, 1.0);
 	float2 puv = pc.xy / max(pc.w, 1e-6) * 0.5 + 0.5;
 	bool valid = c.frame.z < 0.5 && pc.w > 1e-4 && all(puv >= 0.0) && all(puv <= 1.0);
 	half4 h = half4(0.0h, 0.0h, 0.0h, 1.0h);

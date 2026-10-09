@@ -470,7 +470,9 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	float2 ndc = fpos / p.size.zw * 2.0 - 1.0;
 	float3 dir = vlDirection(ndc, f);
 	bool sky = d >= 9000.0;
-	float4 pc = sky ? f.prevViewProj * float4(dir, 0.0) : f.prevViewProj * float4(dir * d, 1.0);
+	// (the point from the eye, where the march starts: view bobbing moves it up to 0.1 block, ~0.5 degrees at 10 blocks; from
+	// the camera's origin the history trailed the bob while walking, 2026-10-09)
+	float4 pc = sky ? f.prevViewProj * float4(dir, 0.0) : f.prevViewProj * float4(shadeEye(f.invViewProj) + dir * d, 1.0);
 	if (pc.w <= 1e-4) return half4(half3(cur), half(d));
 	float2 puv = (pc.xy / pc.w) * 0.5 + 0.5;
 	if (any(puv < 0.0) || any(puv > 1.0)) return half4(half3(cur), half(d));

@@ -105,6 +105,17 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 		if (sky > 0.3h) shadow *= half(shadeCloudShadow(p, L, R.cloudShadow));
 #endif
 		radiance = shadeLit2(albedo, hn, sky, block, shadow, thin, false, f, L);
+		// (FT2.7, audit idx 74) a lightning flash lights mobs, players and chests like the terrain (weather_surface.metal shadeWxFlash):
+		// they stood dark on the flashing ground. Not the hand's normal (hand space): a fixed 0.65 there
+		if (L.flash.w > 0.0) {
+			half gk = shadeSkyCurve(sky);
+#ifdef MCOPT_HAND
+			float ndl = 0.65;
+#else
+			float ndl = saturate(dot(n, L.flash.xyz)) * 0.65 + 0.35;
+#endif
+			radiance += float3(albedo) * float3(0.78, 0.86, 1.0) * (L.flash.w * ndl * float(gk * gk));
+		}
 	}
 	int dynKind = kind == SHADE_ENT_PARTICLE ? SHADE_DYN_PARTICLE : kind == SHADE_ENT_HAND ? SHADE_DYN_HAND : SHADE_DYN_ENTITY;
 	radiance += shadeDynamicLights(shadeDynIn(p, n, float3(albedo), frag.xy, sky, block, dynKind), f, L, &R);

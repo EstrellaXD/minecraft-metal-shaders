@@ -31,11 +31,17 @@ static float3 shadeSkyPixel(float3 dir, texture2d<half> skyLut, sampler skyLutSm
 #endif
 	}
 	// M3 weather: a lightning flash lights the clouds (the whole overcast sky glows, most toward the bolt)
-	if (sl.flash.w > 0.0) sky += float3(0.78, 0.86, 1.0) * (sl.flash.w * 0.35 * (0.35 + 0.65 * pow(saturate(dot(dir, sl.flash.xyz) * 0.5 + 0.5), 3.0)));
+	float3 fl = float3(0.0);
+	if (sl.flash.w > 0.0) fl = float3(0.78, 0.86, 1.0) * (sl.flash.w * 0.35 * (0.35 + 0.65 * pow(saturate(dot(dir, sl.flash.xyz) * 0.5 + 0.5), 3.0)));
 #ifdef MCOPT_HDR
 	// M3 volumetric clouds (shade_clouds.metal): in front of the sky, sun, moon and stars, behind everything the world draws
 	float4 clouds = shadeCloudDev(sl, SHADE_CLOUD_DEV_NO_SKY) ? float4(0.0, 0.0, 0.0, 1.0) : shadeCloudsScreen(dir, sl, sr.cloudScreen);
 	sky = sky * clouds.a + clouds.rgb;
+	// (FT2.7, audit idx 74/8) the flash after the clouds: added before them, the storm's cloud deck hid it (the ground flashed, the
+	// sky stayed dark); the deck glows most (here, not in the clouds' pass: their history would smear the ~0.15 s afterglow)
+	sky += fl * (sl.clouds0.w > 0.5 ? 0.4 + 0.6 * (1.0 - clouds.a) : 1.0);
+#else
+	sky += fl;
 #endif
 	float vanillaSky = dir.y <= 0.0 ? 1.0 : saturate(min(16.0 / max(dir.y, 1e-3), 512.0) / max(sf.fogSky.x, 1.0));
 	return shadeFinish2(sky, vanillaSky, sf, sl, ex);

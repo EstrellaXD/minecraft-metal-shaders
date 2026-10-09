@@ -106,6 +106,11 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		// the volumetric clouds' shadow
 		half shadow = sky > 0.3h ? half(shadeCloudShadow(p, sl, sr.cloudShadow)) : half(1.0);
 		radiance = shadeLit2(albedo, n, sky, block, shadow, false, false, sf, sl);
+		// (FT2.7, audit idx 74) a lightning flash lights the LODs like the terrain (shadeWxFlash): no dark seam at the chunks' edge
+		if (sl.flash.w > 0.0) {
+			half gk = shadeSkyCurve(sky);
+			radiance += float3(albedo) * float3(0.78, 0.86, 1.0) * (sl.flash.w * (saturate(dot(float3(n), sl.flash.xyz)) * 0.65 + 0.35) * float(gk * gk));
+		}
 #ifdef SHADE_DH_TRANSLUCENT
 		// FT2.5: the LODs' water (DH's translucent top faces) mirrors the sky like the near water (water.metal): Schlick's
 		// Fresnel for water, the atmosphere and the volumetric clouds (their reflection dome) in the mirrored direction, the

@@ -434,8 +434,13 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 			return float4(uv, fade, hi);
 		}
 		// the ray passed behind something thin: keep marching
-		if (behind && back.w < 0.0 && wh < SHADE_WATER_SKY_W) {
-			float bf = smoothstep(0.0, 0.07, min(uv.y, 1.0 - uv.y)) * (1.0 - 0.5 * smoothstep(0.0, 1.0, abs(sh.x) - 1.0));
+		// (FT2.6.1, audit idx 32/56: only an occluder beyond the reflecting point, with the fades real hits get: past a side, an edge
+		// column much nearer than the ray fades out (no sideways smear of a trunk at the screen edge), and the far end fades)
+		if (behind && back.w < 0.0 && wh < SHADE_WATER_SKY_W && wh > B / max(s0.z + A, 1e-7)) {
+			float off = abs(sh.x) - 1.0;
+			float bf = smoothstep(0.0, 0.07, min(uv.y, 1.0 - uv.y)) * (1.0 - 0.5 * smoothstep(0.0, 1.0, off));
+			bf *= mix(1.0, saturate((wh / max(wr, 1e-3) - 0.5) * 4.0), saturate(off * 20.0));
+			if (!screenEnd) bf *= 1.0 - smoothstep(0.85, 1.0, wr / max(B / max(s0.z + ds.z + A, 1e-7), 1e-3));
 			back = float4(clamp(uv.x, 0.5 / size.x, 1.0 - 0.5 / size.x), uv.y, bf, hi + 10.0);
 		}
 	}
@@ -676,7 +681,7 @@ static float4 shadeSsr(float3 p0, float3 r, float2 pixel, float maxDist, float e
 	// trees, mirrored clouds' edges in steps: "reflejos pixeleados"). Each lane reads the hit along its OWN ray at the shared
 	// hit's distance instead: one projection per pixel, no extra march (where the distance differs within the quad, e.g. at a
 	// mirrored silhouette, the lane lands on what its own ray sees there: a sharper edge)
-	{
+	if (best < 3.5) { // (FT2.6.1: not for a crossing behind something, which is not on the ray)
 		float2 sz = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
 		float zh = depth.read(uint2(clamp(h.xy * sz, float2(0.0), sz - 1.0)));
 		float4 hp = f.invViewProj * float4(h.xy * 2.0 - 1.0, zh, 1.0);

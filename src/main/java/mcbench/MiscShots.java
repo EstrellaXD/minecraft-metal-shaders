@@ -129,15 +129,23 @@ final class MiscShots {
 		if (phases.isEmpty()) return;
 		boolean rain = scene.equals("wxrain");
 		Supplier<Pose> start;
-		switch (scene) {
+		int time = 6000;
+		// (2026-10-09) still=x,y,z,yaw,pitch[,time]: a fixed pose (a player's screenshot spot), the camera held still
+		if (scene.startsWith("still=")) {
+			String[] v = scene.substring(6).split(",");
+			Pose pose = new Pose(Double.parseDouble(v[0]), Double.parseDouble(v[1]), Double.parseDouble(v[2]), Float.parseFloat(v[3]), Float.parseFloat(v[4]));
+			if (v.length > 5) time = Integer.parseInt(v[5].trim());
+			STILL.put(scene, pose);
+			start = () -> pose;
+		} else switch (scene) {
 			case "spin", "route" -> start = () -> BenchDriver.spot.overview;
 			case "wxrain", "wxdry" -> {
 				needWeatherPoses(steps);
 				start = MiscShots::ground;
 			}
-			default -> throw new IllegalArgumentException("mcbench.ab: unknown scene " + scene + " (spin, route, wxrain, wxdry)");
+			default -> throw new IllegalArgumentException("mcbench.ab: unknown scene " + scene + " (spin, route, wxrain, wxdry, still=x,y,z,yaw,pitch[,time])");
 		}
-		steps.add(new BenchDriver.Scene("ab-" + scene, 6000, rain, start));
+		steps.add(new BenchDriver.Scene("ab-" + (scene.startsWith("still=") ? "still" : scene), time, rain, start));
 		steps.add(new BenchDriver.Settle("ab-" + scene, rain, 3, 150));
 		steps.add(new BenchDriver.Hold("ab-" + scene, rain ? 4 : 1));
 		steps.add(new BenchDriver.Warmup(1));
@@ -196,7 +204,12 @@ final class MiscShots {
 		});
 	}
 
+	/** The poses of the still=... A/B scenes. */
+	private static final Map<String, Pose> STILL = new java.util.HashMap<>();
+
 	private static LongFunction<Pose> motion(String scene, double sec, long t0) {
+		Pose still = STILL.get(scene);
+		if (still != null) return t -> still;
 		return switch (scene) {
 			case "spin" -> {
 				Pose o = BenchDriver.spot.overview;

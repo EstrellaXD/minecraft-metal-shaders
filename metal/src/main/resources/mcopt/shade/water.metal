@@ -943,19 +943,21 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	}
 	float cosV = max(dot(-v, n), 0.02);
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
-#if defined(SHADE_WATER_SSR_FIRST) && defined(SHADE_SSR)
-	// (2026-10-08 experiment, -Dmcopt.shade.leanDev=SHADE_WATER_SSR_FIRST: the same march before the refraction and the body,
-	// so fewer of their values are live across it; the reflection below takes its result)
-	float4 ssrFirst = float4(0.0);
-	float ssrFirstW = 0.0;
-	{
-		float3 rr0 = reflect(v, normalize(mix(n, w.nFace, 0.55)));
-		rr0 = normalize(float3(rr0.x, max(rr0.y, 0.01), rr0.z));
-		float fq0 = shadeQuadMax(shadeWaterFresnel(cosV));
-		if (fq0 > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
-			ssrFirst = shadeSsr(w.p + n * 0.02, rr0, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
-			ssrFirstW = ssrFirst.a * smoothstep(0.022, 0.03, fq0);
-		}
+	// reflected images stay readable: SSR and the rendered sky follow a calmer normal than the shading (ripples wobble,
+	// don't shred)
+	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+	rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
+#ifdef SHADE_SSR
+	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
+	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together). Marched
+	// first, before the refraction and the body (2026-10-08, price5: -0.08 ms over the lake, the same image): fewer of their
+	// values are live across the march (the water shader is bound by registers)
+	float4 ssrHit = float4(0.0);
+	float ssrW = 0.0;
+	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
+	if (fq > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
+		ssrHit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
+		ssrW = ssrHit.a * smoothstep(0.022, 0.03, fq);
 	}
 #endif
 
@@ -1012,29 +1014,14 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float open = float(shadeSkyCurve(w.sky));
 	float3 r = reflect(v, n);
 	float3 rs = float3(r.x, abs(r.y), r.z);
-	// reflected images stay readable: SSR and the rendered sky follow a calmer normal than the shading (ripples wobble,
-	// don't shred)
-	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
-	rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
 	// the LUT sky follows a calmer direction too: the rippled one smeared the low sun's aureole over the near water as a
 	// milky veil (the glint below is what carries the sun's sparkle)
 	float3 rl = normalize(mix(rs, rr, 0.6));
 	float3 refl = shadeWaterSkyRefl(rl, rr, w.prevExposure, f, w.look, w.res, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
-	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
-	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together)
-#ifdef SHADE_WATER_SSR_FIRST
-	hitWeight = ssrFirstW;
-	refl = mix(refl, ssrFirst.rgb, hitWeight);
-#else
-	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
-	if (fq > 0.022 && shadeWdev(f) != SHADE_WDEV_NO_SSR) {
-		float4 hit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
-		hitWeight = hit.a * smoothstep(0.022, 0.03, fq);
-		refl = mix(refl, hit.rgb, hitWeight);
-	}
-#endif
+	hitWeight = ssrW;
+	refl = mix(refl, ssrHit.rgb, hitWeight);
 #endif
 	// the sun's (or moon's) glint: rougher with distance (normals average out: long glitter roads) and in rain; it carries
 	// its own Fresnel, hidden where SSR found something in front of the sky

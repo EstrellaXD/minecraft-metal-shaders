@@ -385,7 +385,9 @@ public final class ShadeVl {
 			// and evening); here the forest keeps some all day (Gael's forest at mid-morning), more at the golden hour, in humid
 			// biomes and in rain
 			// (where the shade grid says the air around lies in the shade; open sunlit land gets none of it: vl_shade_grid)
-			canopyMist = VlConfig.live("mcopt.shade.vl.airForest", 0.006f) * (1f + VlConfig.live("mcopt.shade.vl.airGolden", 1f) * golden)
+			// (gs-w13/w14 in Gael's forest: 0.014 = beams through the gaps at mid-morning, the veil below FT2.2's in 7 of 9 shots;
+			// 0.02-0.036 brighter beams but a glow over the sunlit edge of the forest)
+			canopyMist = VlConfig.live("mcopt.shade.vl.airForest", 0.014f) * (1f + VlConfig.live("mcopt.shade.vl.airGolden", 1f) * golden)
 				* (0.7f + 0.6f * hum) * (1f + rain) * eye;
 		}
 		float lr = Math.max(lum + (c[0] - lum) * sat, 0f), lg = Math.max(lum + (c[1] - lum) * sat, 0f), lb = Math.max(lum + (c[2] - lum) * sat, 0f);
@@ -504,7 +506,9 @@ public final class ShadeVl {
 			VlConfig.live("mcopt.shade.vl.airSteps", VlConfig.STEPS + VlConfig.NEAR_STEPS));
 		// air2: the march's end (the render distance's fog end, else the preset's distance), the share of the haze's glow the
 		// shadows take out over the sky (mcopt.shade.vl.airSkyCut), gains (airShadow: the shadowed part, airForestGain)
-		put(b, airEnd, VlConfig.live("mcopt.shade.vl.airSkyCut", 1f), VlConfig.live("mcopt.shade.vl.airShadow", 1f), VlConfig.live("mcopt.shade.vl.airForestGain", 1f));
+		// (airSkyCut 0: the final pass draws no haze over the sky, so the shadows have none to take out there; the sky's dark rays
+		// stay the screen-space ones)
+		put(b, airEnd, VlConfig.live("mcopt.shade.vl.airSkyCut", 0f), VlConfig.live("mcopt.shade.vl.airShadow", 1f), VlConfig.live("mcopt.shade.vl.airForestGain", 1f));
 		// grid (godrays v3): the shade grid's corner (camera-relative; cells snapped to the world: 64 x 32 x 64 cells of
 		// mcopt.shade.vl.airCell blocks, from 3/8 of its height below the camera), and how far around a cell its taps reach
 		// (mcopt.shade.vl.airGridR, live)
@@ -515,11 +519,15 @@ public final class ShadeVl {
 		put(b, 64f, 32f, 64f, Math.max(VlConfig.live("mcopt.shade.vl.airGridR", 4f), 0.5f));
 		// air3: the forest air at full density where at most 30 % of the air around is sunlit, none from 85 % (open land), its
 		// fade-in from the camera (blocks) and its sky-lit share (mcopt.shade.vl.airLitLo / airLitHi / airNear / airSky, live)
-		put(b, VlConfig.live("mcopt.shade.vl.airLitLo", 0.3f), VlConfig.live("mcopt.shade.vl.airLitHi", 0.85f), VlConfig.live("mcopt.shade.vl.airNear", 0f),
-			VlConfig.live("mcopt.shade.vl.airSky", 0.3f));
+		// (gs-w11, Gael's forest: the near field crisp over its first 10 blocks, the sky-lit share 0.05: under the trees most of the
+		// sky is hidden, and that share was a uniform bluish veil)
+		put(b, VlConfig.live("mcopt.shade.vl.airLitLo", 0.3f), VlConfig.live("mcopt.shade.vl.airLitHi", 0.85f), VlConfig.live("mcopt.shade.vl.airNear", 10f),
+			VlConfig.live("mcopt.shade.vl.airSky", 0.05f));
 		// air4: the forest air's share over open sunlit land (mcopt.shade.vl.airBase), its phase (airG: a forward lobe's g, 0 =
 		// Photon's two lobes over four octaves; airIso: the isotropic share with it), live
-		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0f), VlConfig.live("mcopt.shade.vl.airIso", 0.1f), 0f);
+		// (gs-w11: a forward lobe, g 0.85 with 5 % isotropic: the forest air lights up toward the sun, where the shafts are seen along
+		// their length; Photon's broader phase glowed from every side = veil)
+		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0.85f), VlConfig.live("mcopt.shade.vl.airIso", 0.05f), 0f);
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

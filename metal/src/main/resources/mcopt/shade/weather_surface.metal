@@ -355,6 +355,10 @@ static float4 shadeWxHistMarch(float3 p, float3 r, float maxDist, int chunk, int
 	float inv = 1.0 / float(n * chunks);
 	float u0 = max(float(chunk * n) - jitter, 0.0) * inv;
 	float tPrev = u0 * (0.3 + 0.7 * u0) * tEnd;
+	// (FT2.7, audit idx 75/88, as the water's FT2.6/2.6.1 fix) the first crossing behind real geometry beyond the start point (a
+	// trunk, leaves), kept as a fallback (w 11) with the hit's fades: a ray that passed behind them fell back to the bright sky
+	float4 back = float4(0.0, 0.0, 0.0, -1.0);
+	float3 backPoint = float3(0.0);
 	for (int i = 1; i <= n; i++) {
 		float u = (float(chunk * n + i) - jitter) * inv;
 		float t = u * (0.3 + 0.7 * u) * tEnd;
@@ -378,8 +382,15 @@ static float4 shadeWxHistMarch(float3 p, float3 r, float maxDist, int chunk, int
 		float wh = float(histDepth.sample(shadeWxNearest, uv, level(0.0)).r);
 		float wrh = 1.0 / mix(iw0, iw1, hi);
 		float wp = 1.0 / mix(iw0, iw1, tPrev);
-		float thick = 0.35 + 0.025 * wh + abs(wrh - wp);
+		float thick = 0.35 + 0.025 * wh + abs(wrh - wp) * 3.0; // (FT2.7: x3 step extents, as the water since FT2.6, Photon MIT)
 		if (wh > 30000.0 || wrh - wh > thick) { // passed behind a thin thing, or the sky: keep marching
+			if (back.w < 0.0 && wh < 30000.0 && wh > c0.w) {
+				float2 eb = smoothstep(0.0, 0.06, min(uv, 1.0 - uv));
+				float bf = eb.x * eb.y;
+				if (!screenEnd) bf *= 1.0 - smoothstep(0.75, 1.0, hi / tEnd);
+				back = float4(uv, bf, 11.0);
+				backPoint = p + r * (len * hi * iw1 / mix(iw0, iw1, hi));
+			}
 			tPrev = t;
 			continue;
 		}
@@ -390,7 +401,8 @@ static float4 shadeWxHistMarch(float3 p, float3 r, float maxDist, int chunk, int
 		hitPoint = p + r * (len * hi * iw1 / mix(iw0, iw1, hi));
 		return float4(uv, fade, 1.0);
 	}
-	return float4(0.0, 0.0, 0.0, -1.0);
+	if (back.w > 0.0) hitPoint = backPoint;
+	return back;
 }
 
 // Quad reductions by xor shuffles (the lanes of one 2x2 pixel quad of one triangle).
@@ -414,9 +426,10 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 	// (M3.3 SHADE_WX_B_STEPS: 8 steps, 2 per lane; quad-uniform: a per-frame setting)
 	float4 h = SHADE_WX_B_STEPS_ON(f) ? shadeWxHistMarch<2>(pq, rq, maxDist, chunk, 4, jq, L, histDepth, hp)
 	                                  : shadeWxHistMarch<SHADE_PUDDLE_N>(pq, rq, maxDist, chunk, 4, jq, L, histDepth, hp);
-	float key = h.w > 0.0 ? float(chunk) : 4.0;
+	// (FT2.7: a fallback behind something, w 11, counts only where no lane of the quad found a real hit)
+	float key = h.w > 10.0 ? float(chunk) + 4.0 : h.w > 0.0 ? float(chunk) : 8.0;
 	float best = shadeWxQuadMin(key);
-	if (best > 3.5) return float4(0.0);
+	if (best > 7.5) return float4(0.0);
 	bool mine = key == best; // exactly one lane holds the nearest hit
 	float3 a = shadeWxQuadSum(mine ? float3(h.xyz) : float3(0.0));
 	hp = shadeWxQuadSum(mine ? hp : float3(0.0));
@@ -433,9 +446,15 @@ static float4 shadeWxHistSsr(float3 p, float3 r, float2 pixel, float maxDist, fl
 			+ float3(hist.sample(shadeWxLinear, h.xy - float2(0.0, streak), level(0.0)).rgb)) * (0.25 / prevExposure);
 	}
 	// prevScene is taken before the final pass adds the haze: add it for the hit's distance, as the eye sees it on screen
+	// (FT2.7, audit idx 33 for puddles: only from the wet surface to the hit; the final pass hazes the surface itself)
 	if (shadeFeature(L, SHADE_FEATURE_HAZE) && f.fogColor.a < 0.5) {
+#ifdef SHADE_PUDDLE_QUAD
+		float3 o = pq;
+#else
+		float3 o = p;
+#endif
 		float3 T;
-		float3 S = shadeHazeInscatter(hp, f, L, 1.0, T);
+		float3 S = shadeHazeInscatterFrom(hp - o, f.cameraBlock.y + f.cameraFract.y + o.y, f, L, 1.0, T);
 		c = c * T + S;
 	}
 	return float4(c, h.z);

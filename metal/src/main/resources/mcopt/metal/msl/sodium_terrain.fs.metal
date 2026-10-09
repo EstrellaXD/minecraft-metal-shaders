@@ -118,6 +118,24 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #else
     const bool skipTex = false;
 #endif
+#if defined(MCOPT_SHADE) && defined(SHADE_RGSS_GATE)
+    // (mcopt-shade FT2.8, audit idx 82) the blend factor first: the nearest tap only where it still counts (bf < 1), the 4 RGSS taps
+    // only where they do (bf > 0; 0 wherever a texel covers a pixel or more, most of the near view at Retina). The same image (a mix
+    // by 0 is the colour itself; by 1 the RGSS mean, to an ulp); only explicit-gradient / explicit-LOD samples in the branches
+    float4 color = float4(1.0);
+    if (!skipTex) {
+        float minPixelSize = fast::min(pixelSize.x, pixelSize.y);
+        float bf = g.u_UseRGSS != 0u ? smoothstep(minPixelSize, minPixelSize * 2.0, fast::max(texelScreenSize.x, texelScreenSize.y)) : 0.0;
+        if (bf < 1.0) color = sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
+        if (bf > 0.0) {
+            float duLength = length(du), dvLength = length(dv);
+            float mip = fast::max(0.0, log2(sqrt(fast::min(duLength, dvLength) * fast::max(duLength, dvLength)) / minPixelSize));
+            float4 rgss = float4(0.0);
+            for (int i = 0; i < 4; i++) rgss += u_BlockTex.sample(u_BlockTexSmplr, uv + RGSS[i] * pixelSize, level(mip));
+            color = bf >= 1.0 ? rgss * 0.25 : mix(color, rgss * 0.25, float4(bf));
+        }
+    }
+#else
     float4 color = skipTex ? float4(1.0) : sampleNearest(u_BlockTex, u_BlockTexSmplr, uv, pixelSize, du, dv, texelScreenSize);
     if (g.u_UseRGSS != 0u && !skipTex) {
         float minPixelSize = fast::min(pixelSize.x, pixelSize.y);
@@ -128,6 +146,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         for (int i = 0; i < 4; i++) rgss += u_BlockTex.sample(u_BlockTexSmplr, uv + RGSS[i] * pixelSize, level(mip));
         color = mix(color, rgss * 0.25, float4(blendFactor));
     }
+#endif
 #ifdef MCOPT_SHADE
     float4 texel = color;
 #endif

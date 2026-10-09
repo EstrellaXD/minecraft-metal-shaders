@@ -227,6 +227,8 @@ final class MiscShots {
 
 	// ---------------------------------------------------------------------------------------------- variant shots
 
+	private static boolean setupDone;
+
 	private static void variants(java.util.Deque<BenchDriver.Step> steps, String group) {
 		String[] f = group.split("@", 5);
 		if (f.length < 5) throw new IllegalArgumentException("mcbench.variantShots: bad group " + group + " (tag@time@pose@weather@variant;...)");
@@ -260,6 +262,14 @@ final class MiscShots {
 		double hold = Double.parseDouble(System.getProperty("mcbench.variantHold", "2.5"));
 		String scene = "var-" + tag;
 		steps.add(new CloudShots.WeatherScene(scene, time, weather, pose));
+		// -Dmcbench.variantSetup=cmd;;cmd (2026-10-09): server commands run once, at the first group's pose before it settles (e.g.
+		// plant a dense test forest around it with execute positioned ... over motion_blocking_no_leaves run place feature)
+		if (!setupDone) {
+			setupDone = true;
+			String setup = System.getProperty("mcbench.variantSetup", "").trim();
+			int k = 0;
+			if (!setup.isEmpty()) for (String c : setup.split(";;")) if (!c.isBlank()) steps.add(command("var-setup-" + (k++), c.trim()));
+		}
 		steps.add(new BenchDriver.Settle(scene, rain, 3, 120));
 		steps.add(new BenchDriver.Hold(scene, rain ? Math.max(BenchDriver.SHOT_WAIT, 5) : Math.max(BenchDriver.SHOT_WAIT, 3)));
 		steps.add(command("var-freeze-" + tag, "tick freeze"));

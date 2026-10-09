@@ -388,7 +388,10 @@ public final class ShadeVl {
 		put(b, hazeBase - camY, hazeH, VlConfig.look("mcopt.shade.vl.iso", 0.47f, 0.35f), 0.05f); // haze (iso: more seen from the side)
 		put(b, lr, lg, lb, canopyMist);                                                  // light
 		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
-		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) : 0f, VlConfig.SS_TAPS, onScreen, 6f);
+		// (2026-10-09 look development, live: mcopt.shade.vl.crepGain x the strength, crepTaps, crepFall = the exponent of the falloff
+		// around the light: lower reaches further, the radial rays of Gael's reference photo)
+		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.live("mcopt.shade.vl.crepGain", 1f) : 0f,
+			VlConfig.SS_TAPS > 0 ? VlConfig.live("mcopt.shade.vl.crepTaps", VlConfig.SS_TAPS) : 0f, onScreen, VlConfig.live("mcopt.shade.vl.crepFall", 6f));
 		// sunPx; z the still view's clamp allowance, w bits: 1 the 3x3 clamp box, 2 the history at this point's distance,
 		// 4 per-texel crepuscular taps over a bilinear sky mask, 8 per-texel offsets of the canopy mist's own steps, 16 of the
 		// march under water

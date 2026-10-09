@@ -114,9 +114,14 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		// near water's does; DH's water colour (lit) shows through the rest. No terrain in it (no depth for SSR out here).
 		if (in.face == 1u && in.color.a < 0.99h && !shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
 			float3 v = p / max(d, 1e-4);
-			float3 r = float3(v.x, abs(v.y), v.z);
+			// the waves a LOD pixel averages over (slope ~0.25): at grazing views the facets that face the eye reflect at a
+			// steeper angle (less: Fresnel ~0.3, not 1) and higher into the sky (bluer than the horizon). As a flat mirror the far
+			// sea took the whole white horizon haze and read as milk (w1, Gael 2026-10-09: "se ve rara")
+			const float slope2 = 0.25 * 0.25;
+			float cosV = sqrt(v.y * v.y + slope2);
+			float3 r = float3(v.xz * (sqrt(max(1.0 - cosV * cosV, 0.0)) / max(length(v.xz), 1e-4)), cosV).xzy;
 			float open = float(shadeSkyCurve(sky));
-			float m = 1.0 - saturate(-v.y);
+			float m = 1.0 - saturate(cosV);
 			float fr = (0.0204 + 0.9796 * m * m * m * m * m) * (0.35 + 0.65 * open);
 			float3 refl = shadeSkyLookup(r, skyLut, skyLutSmplr, sf);
 			float4 cd = shadeCloudsDome(r, sl, sr.cloudDome);

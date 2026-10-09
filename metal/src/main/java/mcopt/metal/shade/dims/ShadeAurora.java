@@ -86,7 +86,9 @@ public final class ShadeAurora {
 				pipeline = ShadeRender.pipeline(library, "shade_fs_vs", "shade_aurora_pass", ShadeRender.RGBA16F, ShadeRender.BLEND_NONE);
 			}
 			var window = Minecraft.getInstance().getWindow();
-			int w = Math.max(16, Math.round(Math.max(1, window.getWidth()) * SCALE)), h = Math.max(16, Math.round(Math.max(1, window.getHeight()) * SCALE));
+			// (2026-10-09: a share of the chosen output resolution, ShadeOutput, not the window's)
+			int[] outSize = mcopt.metal.shade.ShadeOutput.current(window.getWidth(), window.getHeight());
+			int w = Math.max(16, Math.round(outSize[0] * SCALE)), h = Math.max(16, Math.round(outSize[1] * SCALE));
 			if (texture == 0 || w != width || h != height) {
 				if (texture != 0) retired.add(new long[] {texture, frame + 8});
 				texture = ShadeRender.texture(ShadeRender.RGBA16F, w, h, false, "mcopt shade: aurora");

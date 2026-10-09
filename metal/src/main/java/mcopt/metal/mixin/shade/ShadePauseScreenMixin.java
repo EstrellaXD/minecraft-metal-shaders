@@ -46,9 +46,9 @@ abstract class ShadePauseScreenMixin extends Screen {
 		// mcopt.shade.robustFallback=false: M3.2 (shown anyway)
 		boolean resolution = mcopt.metal.shade.taa.ShadeTaa.ON
 			&& !(mcopt.metal.shade.taa.ShadeTaa.failed() && !"false".equals(System.getProperty("mcopt.shade.robustFallback")));
-		// (2026-10-09) the output resolution's button to its right (ShadeOutput; HDR frame, no Distant Horizons: else it shows
-		// "Nativa (DH)" and does nothing)
-		boolean output = resolution && mcopt.metal.shade.ShadeConfig.HDR;
+		// (2026-10-09) the output resolution's button to its right (ShadeOutput: the whole window at that resolution; with
+		// mcopt.shade.outputMode=taau only the shaded frame, then not with Distant Horizons: "Nativa (DH)", does nothing)
+		boolean output = resolution;
 		if (resolution) {
 			int w = mc.getWindow().getWidth(), h = mc.getWindow().getHeight();
 			this.addRenderableWidget(Button.builder(Component.literal(ShadeResolution.label(w, h)), button -> {
@@ -60,8 +60,7 @@ abstract class ShadePauseScreenMixin extends Screen {
 			this.addRenderableWidget(Button.builder(Component.literal(ShadeOutput.label()), button -> {
 				if (ShadeOutput.available()) ShadeOutput.cycle(mc.gameDirectory.toPath());
 				button.setMessage(Component.literal(ShadeOutput.label()));
-			}).tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(
-				"Resolución de la imagen final (como la del monitor). El menú y el texto siguen nítidos. Más baja = más FPS.")))
+			}).tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(ShadeOutput.tooltip())))
 				.bounds(this.width / 2 + 2, this.height - 28, 204, 20).build());
 		}
 		if (frameGen) {

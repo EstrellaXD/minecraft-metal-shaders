@@ -159,9 +159,11 @@ public final class ShadeClouds {
 			int mode = CloudConfig.modeBits();
 			boolean modeChanged = lastMode < 0 || ((mode ^ lastMode) & CloudConfig.MODE_STABLE) != 0;
 			lastMode = mode;
-			// sizes: a fraction of the output (window framebuffer), independent of TAAU's render scale
+			// sizes: a fraction of the output, independent of TAAU's render scale (2026-10-09: the chosen output resolution, not
+			// the window's, ShadeOutput: at "1080p" on a Retina screen the clouds cost what they do on a 1080p monitor)
 			var window = mc.getWindow();
-			int ow = Math.max(1, window.getWidth()), oh = Math.max(1, window.getHeight());
+			int[] outSize = mcopt.metal.shade.ShadeOutput.current(window.getWidth(), window.getHeight());
+			int ow = outSize[0], oh = outSize[1];
 			float scale = (dev & CloudConfig.DEV_SCALE_ALT) != 0 ? CloudConfig.SCALE_ALT : CloudConfig.SCALE;
 			int hw = Math.max(16, Math.round(ow * scale)), hh = Math.max(16, Math.round(oh * scale));
 			// (M3.3: dev bit DEV_CHECKER_ALT = the other checkerboard, mcopt.shade.clouds.checkerAlt, for in-session pricing; the

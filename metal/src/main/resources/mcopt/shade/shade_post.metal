@@ -107,8 +107,10 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 // output uv maps into it), z sharpen strength (TAAU: scene is the resolved history, sharpened here; 0 off), w bits (an exact
 // small float): 1 = Distant Horizons drew this frame (M3: the Nether fog leaves the pixels where depth is empty); 2 (TAAU,
 // M2.2; 0 = M2.1) depth and the volumetric light read where this frame's jittered raster shows the pixel's scene point;
-// x (M3 XDR, shade_final_xdr): x on, y highlight peak (x SDR white), z knee (exposed scene luminance), w octaves to the peak
-struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; float4 x; };
+// x (M3 XDR, shade_final_xdr): x on, y highlight peak (x SDR white), z knee (exposed scene luminance), w octaves to the peak;
+// a (godrays v3): x > 0 the volumetric light's air mode (vl.metal: the shadows take the haze's sunlit glow out of the air, so its
+// light is negative on surfaces too): the floor of a surface's light it may leave (share; the sky keeps 0.55), yzw 0
+struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; float4 x; float4 a; };
 
 // Contrast-limited sharpen of the resolved TAAU history (original; was the TAAU module's output pass, folded in here: one
 // full-resolution pass less): an unsharp mask from the 4-neighbour cross, weaker where the local contrast is already high,
@@ -324,7 +326,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 			float la = shadeLuma(max(add, 0.0)) / P.q.w;
 			add *= rsqrt(1.0 + la * la);
 		}
-		c = max(lit + add, lit * 0.55);
+		c = max(lit + add, lit * (P.a.x > 0.0 && d > 0.0 ? P.a.x : 0.55));
 	}
 	if (P.p.y > 0.5) {
 		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb + bloom0.sample(shadeLinearClamp, in.uv).rgb * half(P.q.x)) * P.p.x;

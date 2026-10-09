@@ -26,6 +26,8 @@ typedef struct {
 	MTLPixelFormat compositeFormat;
 	int compositeHdr;
 	id<MTLComputePipelineState> canopy;
+	id<MTLComputePipelineState> shadeGridK;  // (godrays v3) the shade grid for the air mode (vl_shade_grid; HDR only, optional)
+	id<MTLTexture> shadeGrid;                // its 3D R8 target (VL_GRID_X x Y x Z, vl.metal), made with the kernel
 	id<MTLTexture> raw, hist[2], sky[2]; // sky: R8 sky masks (march output, read by the next frame's crepuscular taps)
 	id<MTLTexture> lightT;               // fold: light (before exposure) + canopy mist transmittance, for ShadePost's final pass
 	id<MTLTexture> veil[2];              // fold: the local mean of r at a quarter of the VL resolution (R16F; [0] = the result)
@@ -117,6 +119,25 @@ VlState *mc_vl_new(Ctx *ctx, const char *source, int flags, char *err, int errCa
 		[fc setConstantValue:&h type:MTLDataTypeBool atIndex:0];
 		id<MTLFunction> k = [[lib newFunctionWithName:@"vl_canopy" constantValues:fc error:&e] autorelease];
 		s->canopy = k ? [ctx->device newComputePipelineStateWithFunction:k error:&e] : nil;
+		if (hdr) {
+			// (godrays v3, optional: without it the air mode has no forest air)
+			NSError *e3 = nil;
+			id<MTLFunction> g = [[lib newFunctionWithName:@"vl_shade_grid" constantValues:fc error:&e3] autorelease];
+			s->shadeGridK = g ? [ctx->device newComputePipelineStateWithFunction:g error:&e3] : nil;
+			if (s->shadeGridK) {
+				MTLTextureDescriptor *td = [MTLTextureDescriptor new];
+				td.textureType = MTLTextureType3D;
+				td.pixelFormat = MTLPixelFormatR8Unorm;
+				td.width = 64;  // VL_GRID_X
+				td.height = 32; // VL_GRID_Y
+				td.depth = 64;  // VL_GRID_Z
+				td.storageMode = MTLStorageModePrivate;
+				td.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+				s->shadeGrid = [ctx->device newTextureWithDescriptor:td];
+				[td release];
+				s->shadeGrid.label = @"mcopt shade: VL shade grid";
+			}
+		}
 		if (!s->march || !s->temporal || !s->canopy) {
 			if (!s->canopy && s->march && s->temporal) snprintf(err, errCap, "vl_canopy: %s", e ? e.localizedDescription.UTF8String : "missing");
 			[s->march release];
@@ -146,6 +167,8 @@ void mc_vl_free(VlState *s) {
 	[s->radial release];
 	[s->lightR release];
 	[s->canopy release];
+	[s->shadeGridK release];
+	[s->shadeGrid release];
 	[s->raw release];
 	[s->lightT release];
 	[s->veil[0] release];
@@ -306,7 +329,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			s->height = vlHeight;
 			reset = 1;
 		}
-		float local[96]; // VlParams (336 bytes since FT2.3) and room to grow
+		float local[128]; // VlParams (448 bytes since godrays v3) and room to grow
 		if (paramBytes > (int) sizeof(local)) paramBytes = sizeof(local);
 		memcpy(local, params, paramBytes);
 		if (reset && paramBytes >= 38 * 4) local[37] = 1.0f; // VlParams.temporal.y: the temporal pass drops the history
@@ -320,6 +343,18 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			[c setBytes:params length:paramBytes atIndex:0];
 			[c setBuffer:s->state offset:0 atIndex:1];
 			[c dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+			[c endEncoding];
+		}
+		// (godrays v3) VlParams.air.x (float 88): the air mode; its shade grid first (a camera-centred 64 x 32 x 64 block of cells)
+		int air = s->shadeGridK && s->shadeGrid && paramBytes >= 89 * 4 && local[88] > 0.5f;
+		if (air) {
+			id<MTLComputeCommandEncoder> c = [cb computeCommandEncoder];
+			c.label = @"mcopt shade: VL shade grid";
+			[c setComputePipelineState:s->shadeGridK];
+			mc_shade_bind_compute(c);
+			[c setBytes:params length:paramBytes atIndex:0];
+			[c setTexture:s->shadeGrid atIndex:0];
+			[c dispatchThreadgroups:MTLSizeMake(64 / 4, 32 / 4, 64 / 4) threadsPerThreadgroup:MTLSizeMake(4, 4, 4)];
 			[c endEncoding];
 		}
 		int next = 1 - s->cur;
@@ -337,7 +372,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 		}
 		// the march writes this frame's sky mask and reads last frame's (the crepuscular streaks' occluders)
 		pass(cb, s->raw, s->sky[next], MTLLoadActionDontCare, s->march, @"mcopt shade: VL march", params, paramBytes, s->state, depth, s->sky[s->cur],
-			times, base, liveW, liveH, nil);
+			times, base, liveW, liveH, s->shadeGrid);
 		if (fold) {
 			// M2 fold: no full-resolution pass here; ShadePost's final pass upsamples lightT (mc_vl_outputs)
 			// (2026-10-09) VlParams.hp.w (float 79): the shafts' local contrast, from last frame's veil (skipped once when it's stale)

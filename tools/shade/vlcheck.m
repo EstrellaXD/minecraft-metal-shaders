@@ -62,6 +62,12 @@ int main(int argc, const char **argv) {
 			id<MTLComputePipelineState> k = kf ? [dev newComputePipelineStateWithFunction:kf error:&e] : nil;
 			if (!k) { printf("FAIL vl_canopy%s: %s\n", hdr ? " (HDR)" : "", e.localizedDescription.UTF8String); fail = 1; }
 			else printf("OK   vl_canopy%s (compute)\n", hdr ? " (HDR)" : "");
+			if (hdr) { // (godrays v3) the shade grid of the air mode
+				id<MTLFunction> gf = [lib newFunctionWithName:@"vl_shade_grid" constantValues:fc error:&e];
+				id<MTLComputePipelineState> gk = gf ? [dev newComputePipelineStateWithFunction:gf error:&e] : nil;
+				if (!gk) { printf("FAIL vl_shade_grid: %s\n", e.localizedDescription.UTF8String); fail = 1; }
+				else printf("OK   vl_shade_grid (HDR) (compute)\n");
+			}
 		}
 		return fail;
 	}

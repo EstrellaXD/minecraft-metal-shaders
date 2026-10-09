@@ -10,7 +10,13 @@
 // public techniques: single scattering in a participating medium (Hillaire 2015, "Physically based and unified volumetric
 // rendering in Frostbite": energy-conserving per-segment integration), Henyey-Greenstein phase, interleaved gradient noise
 // (Jimenez 2014) with an R1 temporal offset, neighbourhood-clamped temporal reprojection (Karis 2014), and the screen-space
-// radial occlusion march for crepuscular rays (Mitchell, GPU Gems 3 ch. 13). No shader pack code.
+// radial occlusion march for crepuscular rays (Mitchell, GPU Gems 3 ch. 13).
+// Portions adapted from Photon Shaders by Benjamin Stott ("sixthsurge"), MIT License, commit 26c2906e
+// (include/fog/air_fog_vl.glsl; full text: LICENSES/MIT-Photon.txt): the air mode's approach (one march of the whole air, haze and
+// mist by height, from the camera to the scene with the sun's shadow at every step, the per-step energy-conserving integral
+// carrying the transmittance) and the forest air's phase function: a forward and a backward Henyey-Greenstein lobe (0.7 / 0.3,
+// g 0.5 / -0.2) summed over four octaves of a multiple-scattering approximation (each half the light, g x 0.7). Everything else
+// is original (Apache-2.0).
 //
 // Passes, all fragment passes into private RenderTarget|ShaderRead targets (compressible: apple-gpu.md section 0.2):
 //   vl_canopy   (compute, 1 threadgroup of 64) how much of the air around the camera is in shadow -> the "canopy factor"
@@ -42,7 +48,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 22 x float4 = 352 bytes since FT2.3).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 28 x float4 = 448 bytes since godrays v3).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -94,7 +100,25 @@ struct VlParams {
 	float4 radial;    // 320 (FT2.3) the light direction's vanishing point in homogeneous NDC: xy = (viewProj * (L, 0)).xy, z its w
 	                  //     (all scaled alike), w taps on each side of the radial blur (0 = off). See vl_radial.
 	float4 look2;     // 336 (FT2.3) x gain of the screen-space crepuscular streaks in front of geometry (HDR; 0 = none), yzw 0
+	float4 air;       // 352 (godrays v3, HDR) the air mode (x 1 = on, see vl_march): y min steps, z steps per block marched, w max steps
+	float4 air2;      // 368 (godrays v3) x the march's end (blocks: the render distance), y the light the shadows may take out of a
+	                  //     sky pixel (share of the haze's unshadowed sunlit part), z gain of that shadowed part (1 = physical),
+	                  //     w gain of the forest air's sunlit part
+	float4 grid;      // 384 (godrays v3) the shade grid (vl_shade_grid): xyz its corner (camera-relative, blocks; snapped to whole cells
+	                  //     in the world, so it holds still as the camera moves), w its cell size (blocks)
+	float4 grid2;     // 400 xyz its cells (VL_GRID_*), w how far around a cell its taps reach (blocks)
+	float4 air3;      // 416 (godrays v3) the forest air: x the lit share around a point (the grid) at or below which it is at full
+	                  //     density, y the share at or above which it is gone (open sunlit land: no veil), z its fade-in from the
+	                  //     camera (blocks; 0 = none), w its sky-lit share (the canopy hides most of the sky)
+	float4 air4;      // 432 (godrays v3) the forest air: x its share over open sunlit land (0 = only where the shade grid says shade,
+	                  //     1 = everywhere alike), y its phase's forward g (0 = Photon's two lobes over four octaves), z the
+	                  //     isotropic share with that lobe, w 0
 };
+// The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
+#define VL_GRID_X 64
+#define VL_GRID_Y 32
+#define VL_GRID_Z 64
+#define VL_GRID_TAPS 24
 #define VL_FAR_STEPS 8
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -221,6 +245,35 @@ kernel void vl_canopy(uint tid [[thread_index_in_threadgroup]], uint lane [[thre
 	}
 }
 
+// ---- shade grid (godrays v3) ---------------------------------------------------------------------------------------------
+// The forest air (vl_march's air mode) is humid air under the trees: dense where most of the air around a point lies in the
+// shade (under a canopy, between trunks, under an overhang), thin over open sunlit land. Lit air is a uniform glow (Gael's
+// "lente empañado"), so a medium as dense over a sunny clearing as under the trees veils the view; this one lights up only as
+// the shafts that cross the shade. One thread per cell: VL_GRID_TAPS points around its centre (a 3D R-sequence over a box of
+// +-grid2.w blocks across, from half a block to grid2.w above: taps underground would read open land as shade) looked up in
+// the far cascade (whole-block leaves), lit share -> R8. The taps sit at fixed offsets from cells snapped to the world, so the
+// grid holds still as the camera moves (no flicker; it follows the shadow map's own steps).
+kernel void vl_shade_grid(uint3 gid [[thread_position_in_grid]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
+                          depth2d_array<float> map [[texture(16)]], texture3d<half, access::write> grid [[texture(0)]]) {
+	if (gid.x >= VL_GRID_X || gid.y >= VL_GRID_Y || gid.z >= VL_GRID_Z) return;
+	constexpr sampler cmpLin(coord::normalized, filter::linear, address::clamp_to_edge, compare_func::greater_equal);
+	float3 c = p.grid.xyz + (float3(gid) + 0.5) * p.grid.w;
+	float r = p.grid2.w;
+	float lit = 0.0;
+	if (f.flags.z == 0) {
+		lit = float(VL_GRID_TAPS);
+	} else {
+		for (int k = 0; k < VL_GRID_TAPS; k++) {
+			float3 u = fract(0.5 + float(k) * float3(0.8191725134, 0.6710436067, 0.5497004779));
+			float3 q = c + float3((u.x * 2.0 - 1.0) * r, 0.5 + u.y * (r - 0.5), (u.z * 2.0 - 1.0) * r);
+			float4 h = f.shadowViewProj[1] * float4(q, 1.0);
+			if (max(abs(h.x), abs(h.y)) >= 0.995 || h.z >= 1.0) lit += 1.0;
+			else if (h.z > 0.0) lit += map.sample_compare(cmpLin, shadeShadowUV(h.xyz), 1u, h.z);
+		}
+	}
+	grid.write(half4(half(lit / float(VL_GRID_TAPS))), gid);
+}
+
 // Canopy mist: the humid air under trees and overhangs, around the camera, scaled by the canopy factor. Density
 // sigma(t) = s * e^(-t / R) * e^(-max(y - top, 0) / H) along a ray (y = dir.y * t, camera-relative): it fades with the
 // distance from the camera (the mist is where the trees are) and above the canopy. Optical depth over [0, D], closed form
@@ -248,7 +301,8 @@ struct VlMarchOut {
 fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
                         constant VlState &st [[buffer(1)]], depth2d<float> depth [[texture(0)]], texture2d<half> prevSky [[texture(1)]],
                         depth2d_array<float> map [[texture(16)]], sampler cmp [[sampler(12)]],
-                        constant ShadeLook &sl [[buffer(17)]], constant ShadeResources &sr [[buffer(19)]]) {
+                        constant ShadeLook &sl [[buffer(17)]], constant ShadeResources &sr [[buffer(19)]],
+                        texture3d<half> shadeGrid [[texture(2)]]) {
 	float2 scale = p.size.zw / p.size.xy;
 	// the full-res pixel this VL pixel stands for (the same one the upsample assumes)
 	uint2 fpx = uint2(min(floor(in.position.xy * scale), p.size.zw - 1.0));
@@ -300,7 +354,105 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float cloudHeld = 1.0;
 	if (VL_HDR) cloudRay = shadeCloudRay(dir, sl); // (ShadeLook is read only in the HDR variant)
 
-	if (!underwater) {
+	if (VL_HDR && !underwater && p.air.x > 0.5) {
+		// Air mode (godrays v3, 2026-10-09; Photon's approach, see the header). Gael on FT2.2-2.3's shafts: "pixeleados, bugueados,
+		// manchas; deberían ser líneas de luz continuas como las de la vida real". Those came from a mist around the camera (cut a
+		// few blocks above the eye, fading with the distance from it: smoke columns), carved and contrast-boosted into beams
+		// (hard-edged sheets), while the final pass's haze (E06) glowed in the sun everywhere, shadow or not (the veil under the
+		// trees). Here the one air the final pass fogs with (E06's haze and mist, ShadeLook: the same heights and densities) is
+		// marched to the scene with the sun's shadow at every step, plus the forest's humid air: dense where the air around a
+		// point lies mostly in the shade (the shade grid, vl_shade_grid), thin over open sunlit land (lit air there would only be
+		// a veil). No carve, no local contrast: lit air is bright, shadowed air is not, so a shaft is lit air between shadowed air,
+		// from the gap in the canopy down to the ground.
+		// Output: what the shadows take out of the haze's sunlit glow (negative: the final pass adds that glow unshadowed at full
+		// resolution, crisp at every edge) + the forest air's light (sun and a share of the sky). Open land in full sun: nothing
+		// (the final pass's haze as it was).
+		float yc = f.cameraBlock.y + f.cameraFract.y;
+		float3 sigR = sl.fogR.rgb;
+		float hR = sl.fogR.w, y0R = sl.fogMisc.x;
+		float sigM = sl.fogM.x, hM = sl.fogM.y, y0M = sl.fogM.z, alM = sl.fogM.w;
+		float local = p.light.w;
+		bool skyPx = d <= 0.0;
+		constexpr sampler gridLin(filter::linear, address::clamp_to_edge);
+		float3 gridSpan = p.grid.w * float3(VL_GRID_X, VL_GRID_Y, VL_GRID_Z);
+		float litK = 1.0 / max(p.air3.y - p.air3.x, 1e-3);
+		float D = min(dist, p.air2.x);
+		int na = clamp(int(p.air.y + p.air.z * D), 2, int(max(p.air.w, 2.0)));
+		float invN = 1.0 / float(na);
+		float3 trans = float3(1.0), hazeAll = 0.0, hazeLit = 0.0, mistAll = 0.0, mistLit = 0.0, forestLit = 0.0, forestAll = 0.0;
+		float prevB = 0.0;
+		for (int i = 0; i < na; i++) {
+			// quadratic spacing (dense near the camera, where the trees' shadows are), each texel offset on its own (bit 32)
+			float u1 = float(i + 1) * invN, u = (float(i) + xi) * invN;
+			float b1 = D * u1 * u1, t = D * u * u, dt = b1 - prevB;
+			prevB = b1;
+			float y = yc + dir.y * t;
+			float3 dR = sigR * exp(-max(y - y0R, 0.0) / hR);
+			float dM = sigM * exp(-max(y - y0M, 0.0) / hM);
+			// the forest air: the lit share around this point (the grid, trilinear) -> full density at or below air3.x, air4.x of it
+			// at or above air3.y (open sunlit land); past the grid (faded over its last 8 blocks) air4.x; faded in from the camera
+			// (air3.z: the near field stays crisp)
+			float dF = 0.0;
+			if (local > 0.0) {
+				float3 g = (dir * t - p.grid.xyz) / gridSpan;
+				float3 edge = min(g, 1.0 - g) * gridSpan;
+				float inGrid = saturate(min(edge.x, min(edge.y, edge.z)) * 0.125); // (outside: air4.x alone)
+				float shade = p.air4.x;
+				if (inGrid > 0.0) shade = mix(p.air4.x, max(saturate((p.air3.y - float(shadeGrid.sample(gridLin, g).r)) * litK), p.air4.x), inGrid);
+				dF = local * shade * (p.air3.z > 0.0 ? saturate(t / p.air3.z) : 1.0);
+			}
+			float3 ext = dR + dM + dF * p.mist.w;
+			float3 q0 = c0o + c0d * t, q1 = c1o + c1d * t;
+			if (softR > 0.0) {
+				float a = softRot + 2.3999632 * float(i), r = sqrt(fract((float(i) + 0.5) * 0.618034 + softRot));
+				float2 cs = float2(cos(a), sin(a)) * r;
+				q0.xy += o0a * cs.x + o0b * cs.y;
+				q1.xy += o1a * cs.x + o1b * cs.y;
+			}
+			float v = shadows ? vlShadow(map, cmp, q0, q1, farOnly) : 1.0;
+			if (vlClouds && v > 0.0) {
+				if (i - cloudAt >= cloudEvery) {
+					cloudHeld = shadeCloudShadowRay(cloudRay, t, sl, sr.cloudShadow);
+					cloudAt = i;
+				}
+				v *= cloudHeld;
+			}
+			// energy-conserving segment integral (1 - e^-sigma dt) / sigma, times the transmittance so far
+			float3 seg = trans * (1.0 - exp(-ext * dt)) / max(ext, 1e-9);
+			hazeAll += dR * seg;
+			hazeLit += v * dR * seg;
+			mistAll += dM * seg;
+			mistLit += v * dM * seg;
+			forestLit += v * dF * seg;
+			forestAll += dF * seg;
+			trans *= exp(-ext * dt);
+		}
+		// E06's phase functions, multiple-scattering boosts and evening glow (shade_m2.metal shadeHazeInscatter): its sunlit part
+		// times (lit - all) = what the shadows take out of it
+		float phR = 0.0596831 * (1.0 + mu * mu);
+		float phM = 0.8 * shadeHG(mu, SHADE_HAZE_MIE_G) + 0.2 * shadeHG(mu, -0.2);
+		float glow = 1.0 + sl.fogMisc.w;
+		float3 E = f.sunColor.rgb * 3.14159265;
+		float3 shadowed = E * ((hazeLit - hazeAll) * (phR * 2.0) + (mistLit - mistAll) * (phM * glow * alM / (1.0 - 0.5 * alM)));
+		// on the sky the haze's glow is the sky model's own: the shadows take out a share of it (air2.y; dark rays from the trees'
+		// and hills' shadows across the glow around the sun)
+		if (skyPx) shadowed *= p.air2.y;
+		// the forest air: Photon's two-lobe Mie phase over four multiple-scattering octaves (see the header)
+		// (air4.y > 0: one forward lobe of that g plus an isotropic share air4.z instead, x 1.875 = the octaves' total)
+		float phF = 0.0, octave = 1.0, aniso = 1.0;
+		if (p.air4.y > 0.0) {
+			phF = 1.875 * ((1.0 - p.air4.z) * vlHG(mu, p.air4.y) + p.air4.z * 0.0795775);
+		} else {
+			for (int k = 0; k < 4; k++) {
+				phF += octave * (0.7 * vlHG(mu, 0.5 * aniso) + 0.3 * vlHG(mu, -0.2 * aniso));
+				octave *= 0.5;
+				aniso *= 0.7;
+			}
+		}
+		// (its sky-lit part: the final pass haze's sky radiance, ambientSky x 0.9, the share the canopy leaves, air3.w)
+		float3 forest = p.light.rgb * (3.14159265 * phF * glow) * forestLit + f.ambientSky.rgb * (0.9 * p.air3.w) * forestAll;
+		scatter = shadowed * p.air2.z + forest * (p.air2.w * p.shape.x);
+	} else if (!underwater) {
 		float D = min(dist, p.shape.y);
 		float mist = p.medium.y;
 		// canopy mist: the humid air under trees and overhangs, around the camera's height (not the sea's)

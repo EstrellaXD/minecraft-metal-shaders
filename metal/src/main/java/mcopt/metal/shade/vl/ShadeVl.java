@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 352; // VlParams (vl.metal), 22 x float4 since FT2.3
+	private static final int PARAM_BYTES = 448; // VlParams (vl.metal), 28 x float4 since godrays v3
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -83,6 +83,10 @@ public final class ShadeVl {
 	/** ShadePost before-tonemap order (AO 50, clouds 80, VL 100). */
 	public static final int HOOK_ORDER = 100;
 	private static boolean hooked, stateHdr;
+	/** This frame's VlParams.air.x (godrays v3: the final pass then lets the light it adds be negative on surfaces too). */
+	private static boolean airActive;
+	/** Its march's end (blocks), for the final pass's upsample (the air ratio of texels at another depth). */
+	private static float airEndUsed;
 
 	private ShadeVl() {
 	}
@@ -219,8 +223,9 @@ public final class ShadeVl {
 		}
 		if (fold && !FOLD_SKIP) {
 			VlNative.outputs(state, OUTPUTS_OUT);
-			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), VlConfig.DIST, (float) lw / vw,
-				(float) lh / vh);
+			// (air mode: the floor of what the shadows may take out of a surface's light, share of it: mcopt.shade.vl.airFloor, live)
+			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), airActive ? airEndUsed : VlConfig.DIST, (float) lw / vw,
+				(float) lh / vh, airActive ? Math.max(VlConfig.live("mcopt.shade.vl.airFloor", 0.3f), 1e-3f) : 0f);
 		}
 		prevLiveW = lw;
 		prevLiveH = lh;
@@ -362,6 +367,27 @@ public final class ShadeVl {
 		float[] c = f.sky.light;
 		float lum = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
 		float sat = 1f + 0.55f * golden * day;
+
+		// Air mode (godrays v3, vl.metal; Photon's approach): the final pass's haze shadowed + the forest's humid air, both marched
+		// to the scene through the sun's shadow (the fold carries the negative part: not with mcopt.shade.vl.fold=false or under
+		// water). mcopt.shade.vl.air (1; look=ft21: 0), live
+		boolean air = hdr && VlConfig.FOLD && !f.underwater && VlConfig.look("mcopt.shade.vl.air", 1f, 0f) > 0.5f;
+		airActive = air;
+		// its march's end: the render distance's fog end (the haze reaches as far), else the preset's distance
+		float airEnd = air && f.fogRenderEnd > 16f && f.fogRenderEnd < 1e5f ? Math.min(f.fogRenderEnd, 512f) : VlConfig.DIST;
+		airEndUsed = airEnd;
+		if (air) {
+			// the forest air's light follows the light itself, not the art keyframes' VL strength (strongest at the golden hour):
+			// its density has the time of day (below)
+			strength = VlConfig.STRENGTH * (1f - 0.6f * rain) * eye * lightUp * (sunLight ? 1f : VlConfig.MOON)
+				* VlConfig.live("mcopt.shade.vl.airGain", 1f);
+			// its scattering (1/block) at canopy 1: Photon's morning mist is 0.007 (its noon one 0.0001: shafts only in the morning
+			// and evening); here the forest keeps some all day (Gael's forest at mid-morning), more at the golden hour, in humid
+			// biomes and in rain
+			// (where the shade grid says the air around lies in the shade; open sunlit land gets none of it: vl_shade_grid)
+			canopyMist = VlConfig.live("mcopt.shade.vl.airForest", 0.006f) * (1f + VlConfig.live("mcopt.shade.vl.airGolden", 1f) * golden)
+				* (0.7f + 0.6f * hum) * (1f + rain) * eye;
+		}
 		float lr = Math.max(lum + (c[0] - lum) * sat, 0f), lg = Math.max(lum + (c[1] - lum) * sat, 0f), lb = Math.max(lum + (c[2] - lum) * sat, 0f);
 
 		// forward scattering: sharper toward the low sun
@@ -389,7 +415,7 @@ public final class ShadeVl {
 
 		b.clear();
 		put(b, vw, vh, width, height);                                                   // size
-		put(b, strength, VlConfig.DIST, VlConfig.live("mcopt.shade.vl.stepsLive", VlConfig.STEPS), g); // shape
+		put(b, strength, airEnd, VlConfig.live("mcopt.shade.vl.stepsLive", VlConfig.STEPS), g); // shape (air mode: its end)
 		put(b, haze, mist, mistBase - camY, mistH);                                      // medium
 		put(b, hazeBase - camY, hazeH, VlConfig.look("mcopt.shade.vl.iso", 0.12f, 0.35f), 0.05f); // haze (iso: what is seen from the side)
 		put(b, lr, lg, lb, canopyMist);                                                  // light
@@ -421,15 +447,28 @@ public final class ShadeVl {
 		// (FT2.3: the canopy mist from the ground up to 16 blocks above the eye, fading over 16 more, and twice the steps of its
 		// own march, each texel offset on its own: shafts from the canopy down to the ground, not smoke rising from it, and thin
 		// ones no longer skipped)
-		put(b, resetCanopy ? 1f : 0f, VlConfig.look("mcopt.shade.vl.mistTopH", 16f, 8f), canopyDown,
-			VlConfig.look("mcopt.shade.vl.nearStepsLive", 2f * VlConfig.NEAR_STEPS, VlConfig.NEAR_STEPS));
+		// (air mode: the forest air from the ground to 24 blocks above the eye, fading over 16 more, over 64 blocks from the camera:
+		// mcopt.shade.vl.airTop / airTopH / airRange, live; one march, no steps of its own)
+		put(b, resetCanopy ? 1f : 0f, air ? VlConfig.live("mcopt.shade.vl.airTopH", 16f) : VlConfig.look("mcopt.shade.vl.mistTopH", 16f, 8f), canopyDown,
+			air ? 0f : VlConfig.look("mcopt.shade.vl.nearStepsLive", 2f * VlConfig.NEAR_STEPS, VlConfig.NEAR_STEPS));
 		// mist: range, top above the eye (mcopt.shade.vl.mistRange / mistTop, live), extinction on, its scale
-		put(b, VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f), VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);
+		// (air mode: its extinction 1 x its scattering, mcopt.shade.vl.airExt, live: what is behind the lit air dims as much)
+		float airExt = Math.max(VlConfig.live("mcopt.shade.vl.airExt", 1f), 0.05f);
+		put(b, air ? VlConfig.live("mcopt.shade.vl.airRange", 64f) : VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f),
+			air ? VlConfig.live("mcopt.shade.vl.airTop", 24f) : VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.EXTINCTION && !air ? 1f : 0f,
+			air ? airExt : hdr ? HDR_EXT : 0.5f);
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		// the cuts by the angle to the light (vl.metal mixes them; a802352 lowered them away from the light, which veiled side
 		// views: since the local contrast (hp) both are FT2.1's again, live: mcopt.shade.vl.openCut / openCutSide / carve / carveSide)
 		float openCut = hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f, carve = hdr ? VlConfig.look("mcopt.shade.vl.carve", HDR_CARVE, HDR_CARVE) : 0f;
-		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, openCut); // mistAmb, open glow left out (toward the light)
+		if (air) {
+			// the forest air's sky-lit part (the fold adds it analytically: radiance x scattering / extinction x (1 - T)): the final
+			// pass haze's sky term (ambientSky x 0.9), the canopy hiding most of the sky (x 0.3, mcopt.shade.vl.airSky, live)
+			float skyK = 0.9f * VlConfig.live("mcopt.shade.vl.airSky", 0.3f) / airExt * eye;
+			put(b, amb[0] * skyK, amb[1] * skyK, amb[2] * skyK, openCut);
+		} else {
+			put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, openCut); // mistAmb, open glow left out (toward the light)
+		}
 		put(b, carve, hdr ? HDR_CARVE_WATER : 0f, histU, histV);                         // carve (toward the light); zw: the history's live part
 		// M3.3 art: x the gain of the sky's dark rays (mcopt.shade.vl.skyRays, dev; 1), y their extra gain over the open sky:
 		// mcopt.shade.vl.sunsetRays - 1 in the golden hour while the sunset art is on (its brighter, warmer aureole had weakened
@@ -441,7 +480,7 @@ public final class ShadeVl {
 		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), hdr ? VlConfig.live("mcopt.shade.vl.openCutSide", openCut) : openCut,
 			hdr ? VlConfig.live("mcopt.shade.vl.carveSide", carve) : carve,
 			// w: the far march's end at the golden hour (sunset rays from cloud gaps; mcopt.shade.vl.farDist, live)
-			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
+			hdr && sunLight && !air ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
 		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)
 		// (z: the shafts' soft edge radius in blocks, mcopt.shade.vl.soft, live; 0 = sharp)
 		// (FT2.3: soft shaft edges, 0.8 blocks: the lit air under a big gap no longer reads as a hard-edged glass sheet)
@@ -452,14 +491,37 @@ public final class ShadeVl {
 		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)
 		// (veil4 i4: the uniform glow x0.2, a beam at twice its surroundings x1.4, at 3x x1.53; notes/godrays-veil-2026-10-09)
 		put(b, VlConfig.look("mcopt.shade.vl.hpKeep", 0.2f, 1f), VlConfig.look("mcopt.shade.vl.hpGain", 1.8f, 1f),
-			VlConfig.live("mcopt.shade.vl.hpRadius", 2f), hdr && VlConfig.FOLD && underTrees() ? VlConfig.look("mcopt.shade.vl.hp", 1f, 0f) : 0f);
+			VlConfig.live("mcopt.shade.vl.hpRadius", 2f), hdr && VlConfig.FOLD && !air && underTrees() ? VlConfig.look("mcopt.shade.vl.hp", 1f, 0f) : 0f);
 		// radial (FT2.3): the light direction's vanishing point (homogeneous NDC, scaled to unit size) and the radial blur's taps
 		// on each side (mcopt.shade.vl.radialTaps, live; 0 = off; vl.metal vl_radial)
 		float vm = Math.max(Math.max(Math.abs(clip.x), Math.abs(clip.y)), Math.max(Math.abs(clip.w), 1e-6f));
 		put(b, clip.x / vm, clip.y / vm, clip.w / vm, hdr && VlConfig.FOLD && !f.underwater ? VlConfig.live("mcopt.shade.vl.radialTaps", 0f) : 0f);
 		// look2 (FT2.3): x the screen-space streaks in front of geometry (mcopt.shade.vl.crepGeo, live; FT2.1: 1, now 0)
 		put(b, VlConfig.look("mcopt.shade.vl.crepGeo", 0f, 1f), 0f, 0f, 0f);
-		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
+		// air (godrays v3): on, Photon's step count (8 + 0.1 per block marched; at most the preset's main + near steps:
+		// mcopt.shade.vl.airMin / airGrowth / airSteps, live)
+		put(b, air ? 1f : 0f, VlConfig.live("mcopt.shade.vl.airMin", 8f), VlConfig.live("mcopt.shade.vl.airGrowth", 0.1f),
+			VlConfig.live("mcopt.shade.vl.airSteps", VlConfig.STEPS + VlConfig.NEAR_STEPS));
+		// air2: the march's end (the render distance's fog end, else the preset's distance), the share of the haze's glow the
+		// shadows take out over the sky (mcopt.shade.vl.airSkyCut), gains (airShadow: the shadowed part, airForestGain)
+		put(b, airEnd, VlConfig.live("mcopt.shade.vl.airSkyCut", 1f), VlConfig.live("mcopt.shade.vl.airShadow", 1f), VlConfig.live("mcopt.shade.vl.airForestGain", 1f));
+		// grid (godrays v3): the shade grid's corner (camera-relative; cells snapped to the world: 64 x 32 x 64 cells of
+		// mcopt.shade.vl.airCell blocks, from 3/8 of its height below the camera), and how far around a cell its taps reach
+		// (mcopt.shade.vl.airGridR, live)
+		float cell = Math.max(VlConfig.live("mcopt.shade.vl.airCell", 2f), 0.5f);
+		double gx = Math.floor(f.cameraX / cell) * cell - 32 * cell, gy = Math.floor(f.cameraY / cell) * cell - 12 * cell,
+			gz = Math.floor(f.cameraZ / cell) * cell - 32 * cell;
+		put(b, (float) (gx - f.cameraX), (float) (gy - f.cameraY), (float) (gz - f.cameraZ), cell);
+		put(b, 64f, 32f, 64f, Math.max(VlConfig.live("mcopt.shade.vl.airGridR", 4f), 0.5f));
+		// air3: the forest air at full density where at most 30 % of the air around is sunlit, none from 85 % (open land), its
+		// fade-in from the camera (blocks) and its sky-lit share (mcopt.shade.vl.airLitLo / airLitHi / airNear / airSky, live)
+		put(b, VlConfig.live("mcopt.shade.vl.airLitLo", 0.3f), VlConfig.live("mcopt.shade.vl.airLitHi", 0.85f), VlConfig.live("mcopt.shade.vl.airNear", 0f),
+			VlConfig.live("mcopt.shade.vl.airSky", 0.3f));
+		// air4: the forest air's share over open sunlit land (mcopt.shade.vl.airBase), its phase (airG: a forward lobe's g, 0 =
+		// Photon's two lobes over four octaves; airIso: the isotropic share with it), live
+		put(b, VlConfig.live("mcopt.shade.vl.airBase", 0f), VlConfig.live("mcopt.shade.vl.airG", 0f), VlConfig.live("mcopt.shade.vl.airIso", 0.1f), 0f);
+		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
+		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}
 
 	/**

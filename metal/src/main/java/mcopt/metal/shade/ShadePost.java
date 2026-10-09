@@ -126,7 +126,7 @@ public final class ShadePost {
 	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
 	private static long vlLight, vlDist;
-	private static float vlMaxDist, vlScaleU = 1f, vlScaleV = 1f;
+	private static float vlMaxDist, vlScaleU = 1f, vlScaleV = 1f, vlAirFloor;
 
 	private ShadePost() {
 	}
@@ -149,6 +149,15 @@ public final class ShadePost {
 
 	/** The same, when only the part (0, 0, uScale, vScale) of the textures' uv range holds this frame's light. */
 	public static void setVolumetric(long light, long dist, float maxDist, float uScale, float vScale) {
+		setVolumetric(light, dist, maxDist, uScale, vScale, 0f);
+	}
+
+	/**
+	 * The same; airFloor > 0 (godrays v3, the VL module's air mode): the light may be negative on surfaces too (the shadows taking
+	 * the haze's sunlit glow out of it), down to airFloor x the surface's light, and no knee on it.
+	 */
+	public static void setVolumetric(long light, long dist, float maxDist, float uScale, float vScale, float airFloor) {
+		vlAirFloor = airFloor;
 		vlLight = light;
 		vlDist = dist;
 		vlMaxDist = maxDist;
@@ -526,7 +535,7 @@ public final class ShadePost {
 			.putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upMode", 1f, 0f)).putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upTol", 1.6f, 1f))
 			// (knee 0.4: the brightest glow toward a low sun, the lit air in front of backlit leaves, no longer washes them out
 			// to beige; the shafts stay below it: veil4 i4, notes/godrays-veil-2026-10-09)
-			.putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.knee", 0.4f, 0f));
+			.putFloat(vl && vlAirFloor > 0f ? 0f : mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.knee", 0.4f, 0f));
 		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
 		// w: a bit field (as an exact small float): 1 = Distant Horizons drew into this frame (its LODs are where the depth is
@@ -540,6 +549,8 @@ public final class ShadePost {
 		boolean dimsPass = f.dimension != ShadeFrame.DIM_OVERWORLD || f.fogType == ShadeFrame.FOG_LAVA || f.fogType == ShadeFrame.FOG_POWDER_SNOW;
 		if (xdr) mcopt.metal.shade.dims.ShadeXdr.params(params);
 		else params.putFloat(0f).putFloat(1f).putFloat(1f).putFloat(1f);
+		// a (godrays v3): x the VL air mode's floor (0 = off: the light added is negative only over the sky, floored at 0.55)
+		params.putFloat(vl ? vlAirFloor : 0f).putFloat(0f).putFloat(0f).putFloat(0f);
 		params.flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);

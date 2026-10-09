@@ -152,13 +152,17 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			// Faded out over the last 1/8 of the screen. Needs TAAU's depth of that image (ShadeLook.ssr.y).
 			if (sl.ssr.x > 0.5 && sl.ssr.y > 0.5) {
 				float3 rm = float3(v.x, -v.y, v.z);
-				float4 c = sf.viewProj * float4(rm, 0.0), pc = sf.prevViewProj * float4(rm, 0.0);
+				float4 c = sf.viewProj * float4(rm, 0.0), pc = sl.prevViewProjNoJitter * float4(rm, 0.0); // (FT2.8, as audit idx 35: the TAA history is unjittered)
 				if (c.w > 1e-4 && pc.w > 1e-4) {
 					float2 uv = c.xy / c.w * 0.5 + 0.5;
 					float wgt = saturate(min(uv.x, 1.0 - uv.x) * 8.0) * saturate(min(uv.y, 1.0 - uv.y) * 8.0);
 					float2 uvp = saturate(pc.xy / pc.w * 0.5 + 0.5);
 					constexpr sampler lin(filter::linear, address::clamp_to_edge, coord::normalized);
 					if (wgt > 0.0) wgt *= smoothstep(400.0, 600.0, float(sr.prevDepth.sample(lin, uvp).r));
+					// (FT2.8, audit idx 104) not the sun's / moon's disc: the glint below already stands for the sun on this wavy sea, and
+					// the disc mirrored sharp from last frame's image counted it twice (and popped at the screen-edge fade)
+					wgt *= 1.0 - smoothstep(cos(4.0 * sl.sunGeom.y), cos(1.5 * sl.sunGeom.y), dot(rm, sf.sunDirWorld.xyz));
+					wgt *= 1.0 - smoothstep(cos(4.0 * sl.sunGeom.z), cos(1.5 * sl.sunGeom.z), dot(rm, sf.moonDirWorld.xyz));
 					if (wgt > 0.0) refl = mix(refl, float3(sr.prevScene.sample(lin, uvp).rgb) / max(sg.exposure.z, 1e-6), wgt);
 				}
 			}

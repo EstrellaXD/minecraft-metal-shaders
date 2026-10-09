@@ -317,7 +317,8 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	bool endSkyHere = !dhDrew || (shadeDimsBit(L, SHADE_DIMS_DH_SKY) && shadeLuma(c) <= shadeLuma(shadeLdrToHdr(f.fogColor.rgb, L)) * 1.5 + 1e-4);
 	if (dims && d <= 0.0 && shadeDimKind(L) == 3 && f.flags.y == 0 && endSkyHere) {
 		float pixelAngle = 2.0 * atan(1.0 / max(abs(f.proj[1][1]), 1e-3)) / float(scene.get_height());
-		c = shadeEndSky(normalize(shadeViewRay(in.uv * 2.0 - 1.0, f.invViewProj)), f, L, sr.milkyWay, pixelAngle) * ex;
+		// (FT2.8, audit idx 80: the jitter-corrected uv, as depth and the VL here: the End's stars and beams shifted every frame)
+		c = shadeEndSky(normalize(shadeViewRay(uv * 2.0 - 1.0, f.invViewProj)), f, L, sr.milkyWay, pixelAngle) * ex;
 	}
 	if (dims && f.flags.y == 0) {
 		c = shadeDimsFog(c, wp, d > 0.0, f, L, ex, dhDrew, sr.milkyWay);

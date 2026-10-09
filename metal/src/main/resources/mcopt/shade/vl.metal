@@ -124,7 +124,8 @@ struct VlParams {
 	                  //     z their distance from the cell's axis (blocks; 0 = 3/4 of the canopy test's reach), w > 0: sky pixels stop
 	                  //     their air-mode march where it can no longer add anything (audit idx 0)
 	float4 air7;      // 480 (FT2.7) x the canopy test's columns start this high above the cell (blocks; 0 = grid2.w), y > 0: only a
-	                  //     blocker within that many blocks toward the light shades a column's tap (leaves above, not a far tree), zw 0
+	                  //     blocker within that many blocks toward the light shades a column's tap (leaves above, not a far tree), z > 0:
+	                  //     the columns and FT2.6's box both (the lesser open share), w 0
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -339,6 +340,16 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 				open += col;
 			}
 			open /= float(cols);
+			// (air7.z > 0) both tests: open land only where the box above is mostly lit too (FT2.6's crests that cast the shafts
+			// toward the sun stay forest; leaves right above a cell make it forest even where the box above them is lit)
+			if (p.air7.z > 0.0) {
+				float box = 0.0;
+				for (int k = 0; k < VL_GRID_TAPS_UP; k++) {
+					float3 u = fract(0.5 + (float(k) + 0.37) * float3(0.8191725134, 0.6710436067, 0.5497004779));
+					box += vlGridTap(c + float3((u.x * 2.0 - 1.0) * rUp, r + u.y * (up - r), (u.z * 2.0 - 1.0) * rUp), f, map);
+				}
+				open = min(open, box / float(VL_GRID_TAPS_UP));
+			}
 		} else {
 			for (int k = 0; k < VL_GRID_TAPS_UP; k++) {
 				float3 u = fract(0.5 + (float(k) + 0.37) * float3(0.8191725134, 0.6710436067, 0.5497004779));

@@ -561,7 +561,8 @@ public final class ShadeVl {
 			VlConfig.live("mcopt.shade.vl.airSkyCull", 1f));
 		// air7 (FT2.7): x how high above a cell the canopy test's columns start (mcopt.shade.vl.airColLo, blocks, live; 0 = airGridR),
 		// y only a blocker that near toward the light shades a column (mcopt.shade.vl.airColNear, blocks, live; 0 = any)
-		put(b, VlConfig.live("mcopt.shade.vl.airColLo", 0f), VlConfig.live("mcopt.shade.vl.airColNear", 0f), 0f, 0f);
+		// (z: the columns and the box both, the lesser open share: mcopt.shade.vl.airColBox, live)
+		put(b, VlConfig.live("mcopt.shade.vl.airColLo", 0f), VlConfig.live("mcopt.shade.vl.airColNear", 0f), VlConfig.live("mcopt.shade.vl.airColBox", 0f), 0f);
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}

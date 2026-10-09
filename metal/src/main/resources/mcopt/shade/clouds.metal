@@ -1100,7 +1100,12 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 	if (valid && cloudMode(c, CLOUD_MODE_DRIFT)) {
 		float4 pd = c.prevViewProj * float4(dir, 0.0);
 		float2 sep = (puv - (pd.xy / max(pd.w, 1e-6) * 0.5 + 0.5)) * c.size.xy;
-		drift = smoothstep(0.3, 1.5, length(sep));
+		// (FT2.6.1, audit idx 7: only where the distance reprojection cannot follow the light: content near the camera, inside or next
+		// to a cloud, or in the sun's glow cone. Far and overhead clouds move with the wind and the camera exactly as it models them; on
+		// them the clamp to the 1/3-resolution march brought back grainy 3x3-block edges on windy days)
+		float nearW = 1.0 - smoothstep(32.0, 128.0, dRep);
+		float glowW = smoothstep(0.85, 0.97, dot(dir, c.lightDir.xyz));
+		drift = smoothstep(0.5, 1.5, length(sep)) * max(nearW, glowW);
 	}
 	if (valid) {
 		// age and own distance where the pixel came from: (x0,y1) (x1,y1) (x1,y0) (x0,y0)
@@ -1137,7 +1142,8 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 			half4 pad = (hi - lo) * 0.15h;
 			h = jump ? clamp(h, lo - pad, hi + pad) : mix(h, clamp(h, lo - pad, hi + pad), half(drift));
 		}
-		age = min(age, mix(age, 1.0, drift));
+		// (a cap on the age, not a cut that compounds every frame)
+		age = min(age, mix(min(c.frame.w, 15.0), 1.0, drift));
 	}
 	const half clear = 0.995h; // transmittance above this: no cloud
 	bool histCloud = valid && age > 0.5 && ownCloud && h.a < clear;

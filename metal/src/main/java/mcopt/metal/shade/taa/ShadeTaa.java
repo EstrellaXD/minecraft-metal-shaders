@@ -345,7 +345,7 @@ public final class ShadeTaa {
 		p.mul(viewRotation, this.viewProj);
 		this.position = position;
 		if (ShadeMotion.ON) { // M3: moving entities for the resolve's per-object reprojection
-			this.motion.update(position);
+			this.motion.update(position, this.viewProj);
 			this.motion.upload(this.taa);
 		}
 	}

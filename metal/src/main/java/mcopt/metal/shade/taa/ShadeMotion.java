@@ -26,6 +26,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4fc;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -54,8 +55,13 @@ final class ShadeMotion {
 	private final List<double[]> movers = new ArrayList<>();
 	int count;
 
-	/** Collects this frame's movers (render thread, world frame: level and partial tick of this frame). */
-	void update(Vec3 camera) {
+	/**
+	 * Collects this frame's movers (render thread, world frame: level and partial tick of this frame). viewProj: this frame's
+	 * camera-relative view-projection; (FT2.7, audit idx 71) a box outside its four side planes or behind the eye holds no pixel
+	 * on screen, so it is left out: the resolve tests every mover at every pixel with depth (~10 instructions each), and the
+	 * cap then keeps the nearest visible ones.
+	 */
+	void update(Vec3 camera, Matrix4fc viewProj) {
 		this.frame++;
 		this.movers.clear();
 		this.count = 0;
@@ -65,6 +71,7 @@ final class ShadeMotion {
 			this.last.clear();
 			return;
 		}
+		double[][] planes = viewProj == null ? null : planes(viewProj);
 		float pt = mc.gameRenderer.gameRenderState().levelRenderState.worldPartialTicks;
 		Entity cameraEntity = mc.getCameraEntity();
 		boolean firstPerson = mc.options.getCameraType().isFirstPerson();
@@ -85,8 +92,9 @@ final class ShadeMotion {
 				if (m2 > 1e-8 && m2 < JUMP * JUMP) {
 					AABB b = e.getBoundingBox();
 					double ox = x - e.getX() - camera.x, oy = y - e.getY() - camera.y, oz = z - e.getZ() - camera.z;
-					this.movers.add(new double[] {d2, b.minX + ox - PAD, b.minY + oy - PAD * 0.5, b.minZ + oz - PAD, b.maxX + ox + PAD, b.maxY + oy + PAD,
-						b.maxZ + oz + PAD, dx, dy, dz});
+					double[] m = {d2, b.minX + ox - PAD, b.minY + oy - PAD * 0.5, b.minZ + oz - PAD, b.maxX + ox + PAD, b.maxY + oy + PAD,
+						b.maxZ + oz + PAD, dx, dy, dz};
+					if (planes == null || onScreen(planes, m)) this.movers.add(m);
 				}
 			}
 			l[0] = x;
@@ -101,6 +109,29 @@ final class ShadeMotion {
 		}
 		if (this.movers.size() > MAX) this.movers.sort((a, b) -> Double.compare(a[0], b[0]));
 		this.count = Math.min(MAX, this.movers.size());
+	}
+
+	/**
+	 * The screen's side planes x = +-w, y = +-w (5 % wider) and w = 0 (the same in any depth convention), as (a, b, c, d) with
+	 * a x + b y + c z + d >= 0 inside. JOML is column-major: clip.x = m00 x + m10 y + m20 z + m30.
+	 */
+	private static double[][] planes(Matrix4fc v) {
+		final double k = 1.05;
+		return new double[][] {
+			{v.m00() + k * v.m03(), v.m10() + k * v.m13(), v.m20() + k * v.m23(), v.m30() + k * v.m33()},
+			{-v.m00() + k * v.m03(), -v.m10() + k * v.m13(), -v.m20() + k * v.m23(), -v.m30() + k * v.m33()},
+			{v.m01() + k * v.m03(), v.m11() + k * v.m13(), v.m21() + k * v.m23(), v.m31() + k * v.m33()},
+			{-v.m01() + k * v.m03(), -v.m11() + k * v.m13(), -v.m21() + k * v.m23(), -v.m31() + k * v.m33()},
+			{v.m03(), v.m13(), v.m23(), v.m33()}};
+	}
+
+	/** Whether box m (min 1..3, max 4..6, camera-relative) may cover a pixel: not entirely outside one of those planes. */
+	private static boolean onScreen(double[][] planes, double[] m) {
+		for (double[] q : planes) { // the box's corner furthest along the plane's normal
+			double px = q[0] >= 0 ? m[4] : m[1], py = q[1] >= 0 ? m[5] : m[2], pz = q[2] >= 0 ? m[6] : m[3];
+			if (q[0] * px + q[1] * py + q[2] * pz + q[3] < 0) return false;
+		}
+		return true;
 	}
 
 	/** Hands this frame's movers to the native resolve (taa.metal TaaMovers). */

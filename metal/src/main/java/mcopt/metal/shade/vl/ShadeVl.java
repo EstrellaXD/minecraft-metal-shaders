@@ -361,7 +361,9 @@ public final class ShadeVl {
 		float lr = Math.max(lum + (c[0] - lum) * sat, 0f), lg = Math.max(lum + (c[1] - lum) * sat, 0f), lb = Math.max(lum + (c[2] - lum) * sat, 0f);
 
 		// forward scattering: sharper toward the low sun
-		float g = VlConfig.live("mcopt.shade.vl.g", sunLight ? mix(0.5f, 0.72f, golden) : 0.6f);
+		// (FT2.3, Gael 2026-10-09: like the packs his reference photos come from, the shafts mostly toward the light: a sharper lobe
+		// and a small isotropic share below; ft21 = M2's 0.5..0.72 by the golden hour)
+		float g = VlConfig.live("mcopt.shade.vl.g", VlConfig.ft21() ? (sunLight ? mix(0.5f, 0.72f, golden) : 0.6f) : (sunLight ? 0.78f : 0.7f));
 
 		// the light on screen (crepuscular streaks)
 		float[] l = f.sky.lightDir;
@@ -385,19 +387,20 @@ public final class ShadeVl {
 		put(b, vw, vh, width, height);                                                   // size
 		put(b, strength, VlConfig.DIST, VlConfig.live("mcopt.shade.vl.stepsLive", VlConfig.STEPS), g); // shape
 		put(b, haze, mist, mistBase - camY, mistH);                                      // medium
-		put(b, hazeBase - camY, hazeH, VlConfig.look("mcopt.shade.vl.iso", 0.47f, 0.35f), 0.05f); // haze (iso: more seen from the side)
+		put(b, hazeBase - camY, hazeH, VlConfig.look("mcopt.shade.vl.iso", 0.12f, 0.35f), 0.05f); // haze (iso: what is seen from the side)
 		put(b, lr, lg, lb, canopyMist);                                                  // light
 		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
 		// (2026-10-09 look development, live: mcopt.shade.vl.crepGain x the strength, crepTaps, crepFall = the exponent of the falloff
 		// around the light: lower reaches further, the radial rays of Gael's reference photo)
-		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.live("mcopt.shade.vl.crepGain", 1f) : 0f,
-			VlConfig.SS_TAPS > 0 ? VlConfig.live("mcopt.shade.vl.crepTaps", VlConfig.SS_TAPS) : 0f, onScreen, VlConfig.live("mcopt.shade.vl.crepFall", 6f));
+		// (FT2.3: x2.5, twice the taps and a wider falloff: rays fanning out of the gaps around a visible sun, Gael's reference)
+		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.look("mcopt.shade.vl.crepGain", 2.5f, 1f) : 0f,
+			VlConfig.SS_TAPS > 0 ? VlConfig.look("mcopt.shade.vl.crepTaps", 2f * VlConfig.SS_TAPS, VlConfig.SS_TAPS) : 0f, onScreen, VlConfig.look("mcopt.shade.vl.crepFall", 3f, 6f));
 		// sunPx; z the still view's clamp allowance, w bits: 1 the 3x3 clamp box, 2 the history at this point's distance,
 		// 4 per-texel crepuscular taps over a bilinear sky mask, 8 per-texel offsets of the canopy mist's own steps, 16 of the
 		// march under water
 		put(b, sx, sy, VlConfig.TEMPORAL ? VlConfig.STILL : 0f, (VlConfig.BOX3 ? 1 : 0) + (VlConfig.HIST_DEPTH ? 2 : 0)
 			+ (VlConfig.CREP_SMOOTH ? 4 : 0) + (VlConfig.NEAR_DITHER ? 8 : 0) + (VlConfig.WATER_DITHER ? 16 : 0)
-			+ (VlConfig.live("mcopt.shade.vl.marchDither", 0f) > 0.5f ? 32 : 0)); // 32 (2026-10-09): the main march's offset per texel
+			+ (VlConfig.look("mcopt.shade.vl.marchDither", 1f, 0f) > 0.5f ? 32 : 0)); // 32 (FT2.3): the main march's offset per texel
 		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		// M3: the caustic curtains run on the water's clock (real time since M2.1: ShadeFrame.waterTime). On the game time the
@@ -410,9 +413,13 @@ public final class ShadeVl {
 		put(b, 0.7f * VlConfig.look("mcopt.shade.vl.openGain", 1f, 1f), (hdr ? 2.4f : 1.6f) * VlConfig.look("mcopt.shade.vl.canopyGain", 2.5f, 1f),
 			VlConfig.CANOPY, VlConfig.DEBUG);                                            // gate: open air, canopy mist, override, debug
 		// (y: the canopy mist's scale height above its top, mcopt.shade.vl.mistTopH, live; w: its own steps, nearStepsLive)
-		put(b, resetCanopy ? 1f : 0f, VlConfig.live("mcopt.shade.vl.mistTopH", 8f), canopyDown, VlConfig.live("mcopt.shade.vl.nearStepsLive", VlConfig.NEAR_STEPS));
+		// (FT2.3: the canopy mist from the ground up to 16 blocks above the eye, fading over 16 more, and twice the steps of its
+		// own march, each texel offset on its own: shafts from the canopy down to the ground, not smoke rising from it, and thin
+		// ones no longer skipped)
+		put(b, resetCanopy ? 1f : 0f, VlConfig.look("mcopt.shade.vl.mistTopH", 16f, 8f), canopyDown,
+			VlConfig.look("mcopt.shade.vl.nearStepsLive", 2f * VlConfig.NEAR_STEPS, VlConfig.NEAR_STEPS));
 		// mist: range, top above the eye (mcopt.shade.vl.mistRange / mistTop, live), extinction on, its scale
-		put(b, VlConfig.live("mcopt.shade.vl.mistRange", 16f), VlConfig.live("mcopt.shade.vl.mistTop", 4f), VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);
+		put(b, VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f), VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		// the cuts by the angle to the light (vl.metal mixes them; a802352 lowered them away from the light, which veiled side
 		// views: since the local contrast (hp) both are FT2.1's again, live: mcopt.shade.vl.openCut / openCutSide / carve / carveSide)
@@ -432,7 +439,8 @@ public final class ShadeVl {
 			hdr && sunLight ? VlConfig.live("mcopt.shade.vl.farDist", 0f) * smoothstep(0.0f, 0.35f, golden) : 0f);
 		// tune2: x the far march's density gain, y its cut (mcopt.shade.vl.farGain / farCut, live)
 		// (z: the shafts' soft edge radius in blocks, mcopt.shade.vl.soft, live; 0 = sharp)
-		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), VlConfig.live("mcopt.shade.vl.soft", 0f), 0f);
+		// (FT2.3: soft shaft edges, 0.8 blocks: the lit air under a big gap no longer reads as a hard-edged glass sheet)
+		put(b, VlConfig.live("mcopt.shade.vl.farGain", 1f), VlConfig.live("mcopt.shade.vl.farCut", hdr ? HDR_OPEN_CUT : 0.5f), VlConfig.look("mcopt.shade.vl.soft", 0.8f, 0f), 0f);
 		// hp (2026-10-09, Gael: the stronger shafts veiled the view "como un lente empanado"): the shafts' local contrast under trees
 		// (vl.metal vlVeilR; fold only): x the share of the local mean glow kept, y the gain of what stands out of it, z the veil
 		// blur's tap spacing, w on (mcopt.shade.vl.hp / hpKeep / hpGain / hpRadius, live)

@@ -168,6 +168,11 @@ public final class VlConfig {
 	 * 2026-10-09 (Gael: the god rays "se ven poquito", dots where they cross leaves): the look's default, or FT2.1's with
 	 * mcopt.shade.vl.look=ft21 (read every frame, for in-session comparisons); either way the key itself overrides it.
 	 */
+	/** Whether mcopt.shade.vl.look=ft21 (FT2.1's look, read every frame). */
+	public static boolean ft21() {
+		return "ft21".equals(System.getProperty("mcopt.shade.vl.look"));
+	}
+
 	public static float look(String key, float now, float ft21) {
 		return live(key, "ft21".equals(System.getProperty("mcopt.shade.vl.look")) ? ft21 : now);
 	}

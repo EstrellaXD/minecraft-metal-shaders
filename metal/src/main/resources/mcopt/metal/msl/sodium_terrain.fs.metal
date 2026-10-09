@@ -112,7 +112,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     // Water pixels never use the block texture (the module shades them from its own waves): not sampled there.
     int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
     bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
-    bool skipTex = waterFull && shadeWdev(sf) == SHADE_WDEV_NO_TEX;
+    bool skipTex = waterFull; // (2026-10-08: -0.11 ms in the lake spin, price3 "notex"; the same image)
 #else
     const bool skipTex = false;
 #endif

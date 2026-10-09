@@ -355,6 +355,64 @@ static inline bool shadeSsrSegment(float3 p0, float3 r, float maxDist, constant 
 #else
 #define SHADE_SSR_N SHADE_SSR_STEPS
 #endif
+#ifdef SHADE_SSR_RAWZ
+// 2026-10-08 (mcopt.shade.water.rawz, default on): the same march deciding in reversed-Z depth itself. View depth is
+// w = B / (z + A), decreasing in z, so "the ray is still in front of the scene" (w_ray < w_scene) is z_ray > z_scene, sky
+// (z 0) included, and the crossing tests need no division per step (nor the steps' parameters kept in an array). Only the
+// thickness test of the found crossing works in blocks. Same decisions as the old march, fewer registers in the water shader.
+static inline float shadeSsrZ(depth2d<float> depth, float3 s, float2 size) {
+	return depth.read(uint2(clamp((s.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)));
+}
+static inline float shadeSsrT(float u) { return u * (0.35 + 0.65 * u); }
+static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int chunks, float jitter, constant ShadeFrame &f,
+                            depth2d<float> depth, texture2d<float> hz) {
+	float2 size = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
+	float A = f.proj[2][2], B = f.proj[3][2];
+	const int n = SHADE_SSR_N;
+	float inv = 1.0 / float(n * chunks);
+	float base = float(chunk * n) - jitter;
+	float zs[SHADE_SSR_N + 1];
+	for (int i = 1; i <= n; i++) {
+		float3 s = s0 + ds * shadeSsrT((base + float(i)) * inv);
+		zs[i] = hz.read(uint2(clamp((s.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)) >> 1).r;
+	}
+	for (int i = 1; i <= n; i++) {
+		float hi = shadeSsrT((base + float(i)) * inv);
+		if (s0.z + ds.z * hi > zs[i]) continue; // still in front of what the coarse depth holds there
+		float lo = shadeSsrT(max(base + float(i - 1), 0.0) * inv);
+		float tPrev = lo;
+		for (int j = 0; j < 4; j++) {
+			float m = 0.5 * (lo + hi);
+			float3 sm = s0 + ds * m;
+			if (sm.z <= shadeSsrZ(depth, sm, size)) hi = m; else lo = m;
+		}
+		float3 sh = s0 + ds * hi;
+		float2 uv = sh.xy * 0.5 + 0.5;
+		float zh = shadeSsrZ(depth, sh, size);
+		float wh = zh > 0.0 ? B / max(zh + A, 1e-7) : SHADE_WATER_SKY_W;
+		float wr = B / max(sh.z + A, 1e-7);
+		float wp = B / max(s0.z + ds.z * tPrev + A, 1e-7);
+		float thick = 0.3 + 0.02 * wh + abs(wr - wp);
+		if (wh < SHADE_WATER_SKY_W && wr - wh < thick) {
+#ifdef SHADE_SSR_EDGE
+			float off = abs(sh.x) - 1.0;
+			float fade = smoothstep(0.0, 0.07, min(uv.y, 1.0 - uv.y)) * (1.0 - 0.5 * smoothstep(0.0, 1.0, off));
+			fade *= mix(1.0, saturate((wh / max(wr, 1e-3) - 0.5) * 4.0), saturate(off * 20.0));
+			fade *= 1.0 - smoothstep(0.6, 1.0, (wr - wh) / thick); // grazing passes fade, not pop
+			uv.x = clamp(uv.x, 0.5 / size.x, 1.0 - 0.5 / size.x);
+			if (!screenEnd) fade *= 1.0 - smoothstep(0.85, 1.0, wr / max(B / max(s0.z + ds.z + A, 1e-7), 1e-3));
+#else
+			float2 edge = smoothstep(0.0, 0.07, min(uv, 1.0 - uv));
+			float fade = edge.x * edge.y * (1.0 - smoothstep(0.6, 1.0, (wr - wh) / thick)); // grazing passes fade, not pop
+			if (!screenEnd) fade *= 1.0 - smoothstep(0.75, 1.0, hi);
+#endif
+			return float4(uv, fade, hi);
+		}
+		// the ray passed behind something thin: keep marching
+	}
+	return float4(0.0, 0.0, 0.0, -1.0);
+}
+#else
 static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int chunks, float jitter, constant ShadeFrame &f,
                             depth2d<float> depth, texture2d<float> hz) {
 	float2 size = shadeWaterRenderSize(f, float2(depth.get_width(), depth.get_height()));
@@ -375,27 +433,11 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		// NDC depth is affine in 1/w along the screen segment, so the ray's view depth at any step is B / (z + A)
 		if (B / max(s0.z + ds.z * ts[i] + A, 1e-7) < ws[i]) continue; // still in front of what the depth copy holds there
 		float lo = ts[i - 1], hi = ts[i];
-		int wdev = shadeWdev(f);
-		if (wdev == SHADE_WDEV_SSR_PAR) {
-			for (int j = 0; j < 2; j++) {
-				float q = (hi - lo) * 0.25;
-				float3 sa = s0 + ds * (lo + q), sb = s0 + ds * (lo + 2.0 * q), sc = s0 + ds * (lo + 3.0 * q);
-				float wa = shadeWaterSceneW(depth, uint2(clamp((sa.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
-				float wb = shadeWaterSceneW(depth, uint2(clamp((sb.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
-				float wc = shadeWaterSceneW(depth, uint2(clamp((sc.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
-				if (B / max(sa.z + A, 1e-7) >= wa) hi = lo + q;
-				else if (B / max(sb.z + A, 1e-7) >= wb) { lo = lo + q; hi = lo + q; }
-				else if (B / max(sc.z + A, 1e-7) >= wc) { lo = lo + 2.0 * q; hi = lo + q; }
-				else lo = lo + 3.0 * q;
-			}
-		} else {
-		int nb = wdev == SHADE_WDEV_BISECT0 ? 0 : wdev == SHADE_WDEV_BISECT2 ? 2 : 4;
-		for (int j = 0; j < nb; j++) {
+		for (int j = 0; j < 4; j++) {
 			float m = 0.5 * (lo + hi);
 			float3 sm = s0 + ds * m;
 			float wm = shadeWaterSceneW(depth, uint2(clamp((sm.xy * 0.5 + 0.5) * size, float2(0.0), size - 1.0)), f);
 			if (B / max(sm.z + A, 1e-7) >= wm) hi = m; else lo = m;
-		}
 		}
 		float3 sh = s0 + ds * hi;
 		float2 uv = sh.xy * 0.5 + 0.5;
@@ -429,6 +471,8 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 	}
 	return float4(0.0, 0.0, 0.0, -1.0);
 }
+
+#endif
 
 // Quad reductions by xor shuffles (independent of how the hardware numbers the lanes).
 static inline float shadeQuadSum(float v) { v += quad_shuffle_xor(v, 1); return v + quad_shuffle_xor(v, 2); }

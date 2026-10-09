@@ -186,6 +186,8 @@ public final class ShadeWater {
 			if (DETAIL_EXTRAS) b.append("#define SHADE_WATER_DETAIL_EXTRAS 1\n");
 		}
 		if (SSR_EDGE) b.append("#define SHADE_SSR_EDGE 1\n");
+		// 2026-10-08: the SSR march decides in reversed-Z depth (same decisions, no division per step); false = FT1.3's march
+		if (Boolean.parseBoolean(System.getProperty("mcopt.shade.water.rawz", "true"))) b.append("#define SHADE_SSR_RAWZ 1\n");
 		if (EDGE_REFL) b.append("#define SHADE_WATER_EDGE_REFL 1\n");
 		if (SMOOTH && SSR_QUAD && Boolean.parseBoolean(System.getProperty("mcopt.shade.water.ssrLane", "true"))) b.append("#define SHADE_SSR_LANE 1\n");
 		if (SMOOTH) b.append("#define SHADE_WATER_SMOOTH 1\n#define SHADE_WATER_CALM ").append(CALM).append("\n#define SHADE_WATER_RIPPLE ").append(RIPPLE).append('\n');

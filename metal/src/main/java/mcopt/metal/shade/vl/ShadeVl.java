@@ -185,8 +185,11 @@ public final class ShadeVl {
 
 		// targets sized from the allocation (they never reallocate when the render scale moves); the march and temporal passes
 		// cover only the live part, VlConfig.SCALE of the live render (so VL gets cheaper with the dynamic resolution)
-		int vw = Math.max(1, Math.round(texWidth * VlConfig.SCALE)), vh = Math.max(1, Math.round(texHeight * VlConfig.SCALE));
-		int lw = Math.clamp(Math.round(width * VlConfig.SCALE), 1, vw), lh = Math.clamp(Math.round(height * VlConfig.SCALE), 1, vh);
+		// (2026-10-09 look development: mcopt.shade.vl.scaleLive overrides the preset's scale every frame; the native side
+		// reallocates its targets when the size changes)
+		float vlScale = VlConfig.live("mcopt.shade.vl.scaleLive", VlConfig.SCALE);
+		int vw = Math.max(1, Math.round(texWidth * vlScale)), vh = Math.max(1, Math.round(texHeight * vlScale));
+		int lw = Math.clamp(Math.round(width * vlScale), 1, vw), lh = Math.clamp(Math.round(height * vlScale), 1, vh);
 		if (vw != allocW || vh != allocH) {
 			allocW = vw;
 			allocH = vh;
@@ -358,7 +361,7 @@ public final class ShadeVl {
 		float lr = Math.max(lum + (c[0] - lum) * sat, 0f), lg = Math.max(lum + (c[1] - lum) * sat, 0f), lb = Math.max(lum + (c[2] - lum) * sat, 0f);
 
 		// forward scattering: sharper toward the low sun
-		float g = sunLight ? mix(0.5f, 0.72f, golden) : 0.6f;
+		float g = VlConfig.live("mcopt.shade.vl.g", sunLight ? mix(0.5f, 0.72f, golden) : 0.6f);
 
 		// the light on screen (crepuscular streaks)
 		float[] l = f.sky.lightDir;
@@ -380,7 +383,7 @@ public final class ShadeVl {
 
 		b.clear();
 		put(b, vw, vh, width, height);                                                   // size
-		put(b, strength, VlConfig.DIST, VlConfig.STEPS, g);                              // shape
+		put(b, strength, VlConfig.DIST, VlConfig.live("mcopt.shade.vl.stepsLive", VlConfig.STEPS), g); // shape
 		put(b, haze, mist, mistBase - camY, mistH);                                      // medium
 		put(b, hazeBase - camY, hazeH, VlConfig.look("mcopt.shade.vl.iso", 0.47f, 0.35f), 0.05f); // haze (iso: more seen from the side)
 		put(b, lr, lg, lb, canopyMist);                                                  // light
@@ -390,7 +393,8 @@ public final class ShadeVl {
 		// 4 per-texel crepuscular taps over a bilinear sky mask, 8 per-texel offsets of the canopy mist's own steps, 16 of the
 		// march under water
 		put(b, sx, sy, VlConfig.TEMPORAL ? VlConfig.STILL : 0f, (VlConfig.BOX3 ? 1 : 0) + (VlConfig.HIST_DEPTH ? 2 : 0)
-			+ (VlConfig.CREP_SMOOTH ? 4 : 0) + (VlConfig.NEAR_DITHER ? 8 : 0) + (VlConfig.WATER_DITHER ? 16 : 0));
+			+ (VlConfig.CREP_SMOOTH ? 4 : 0) + (VlConfig.NEAR_DITHER ? 8 : 0) + (VlConfig.WATER_DITHER ? 16 : 0)
+			+ (VlConfig.live("mcopt.shade.vl.marchDither", 0f) > 0.5f ? 32 : 0)); // 32 (2026-10-09): the main march's offset per texel
 		put(b, 0.4f, 0.11f, 0.06f, 0.022f);                                              // water: extinction rgb, scattering
 		put(b, surfaceRel, f.underwater ? 1f : 0f, 48f, 1f);                             // water2
 		// M3: the caustic curtains run on the water's clock (real time since M2.1: ShadeFrame.waterTime). On the game time the
@@ -402,8 +406,10 @@ public final class ShadeVl {
 		// (2026-10-09: the canopy mist x2.5, its uniform glow cut back by the local contrast below: veil4 i4)
 		put(b, 0.7f * VlConfig.look("mcopt.shade.vl.openGain", 1f, 1f), (hdr ? 2.4f : 1.6f) * VlConfig.look("mcopt.shade.vl.canopyGain", 2.5f, 1f),
 			VlConfig.CANOPY, VlConfig.DEBUG);                                            // gate: open air, canopy mist, override, debug
-		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
-		put(b, VlConfig.live("mcopt.shade.vl.mistRange", 16f), 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f); // mist: range, top, extinction on, its scale
+		// (y: the canopy mist's scale height above its top, mcopt.shade.vl.mistTopH, live; w: its own steps, nearStepsLive)
+		put(b, resetCanopy ? 1f : 0f, VlConfig.live("mcopt.shade.vl.mistTopH", 8f), canopyDown, VlConfig.live("mcopt.shade.vl.nearStepsLive", VlConfig.NEAR_STEPS));
+		// mist: range, top above the eye (mcopt.shade.vl.mistRange / mistTop, live), extinction on, its scale
+		put(b, VlConfig.live("mcopt.shade.vl.mistRange", 16f), VlConfig.live("mcopt.shade.vl.mistTop", 4f), VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		// the cuts by the angle to the light (vl.metal mixes them; a802352 lowered them away from the light, which veiled side
 		// views: since the local contrast (hp) both are FT2.1's again, live: mcopt.shade.vl.openCut / openCutSide / carve / carveSide)

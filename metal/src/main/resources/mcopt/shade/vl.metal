@@ -253,6 +253,9 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	// pixels. Neighbouring rays then sample nearly the same depths, so their shadow-map fetches stay in cache: full
 	// per-pixel jitter made the march 2-3x slower on a real (blocky, 16 MB) shadow map (tools/shade/vlbench.sh).
 	float xi = fract(p.temporal.z * 0.6180339887 + 0.25 * vlNoise(in.position.xy, 0.0));
+	// (2026-10-09, sunPx.w bit 32, look development) each texel's own offset (IGN + R1) for the main march too: the shared one
+	// moves every ray of a neighbourhood across the leaf shadows together (structure that the temporal clamp can't average)
+	if ((int(p.sunPx.w) & 32) != 0) xi = vlNoise(in.position.xy + 3.0, p.temporal.z);
 	float3 L = f.lightDirWorld.xyz;
 	float mu = dot(dir, L);
 	float canopy = p.gate.z >= 0.0 ? p.gate.z : max(st.canopy.x, p.tune.x);

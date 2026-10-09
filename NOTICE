@@ -52,3 +52,11 @@ as a mix of forward and backward lobes, the octave loop of the multiple-scatteri
 blend by the clouds' apparent distance, and the checkerboard + reprojected-history upscaling. The history's 5-tap
 Catmull-Rom fetch (cloudCatmullRom) is the MJP gist named under TAAU above, MIT License. The rest of the file is original
 (Apache-2.0).
+
+Native shading volumetric light, air mode (metal/src/main/resources/mcopt/shade/vl.metal, vl_march): portions adapted from
+Photon Shaders (https://github.com/sixthsurge/photon), commit 26c2906e, Copyright (c) 2025 Benjamin Stott ("sixthsurge"), MIT
+License (full text: LICENSES/MIT-Photon.txt), include/fog/air_fog_vl.glsl: the approach (one march of the height-layered air
+from the camera to the scene with the sun's shadow at every step and the per-step energy-conserving integral) and the forest
+air's phase function (a forward and a backward Henyey-Greenstein lobe, 0.7 / 0.3 with g 0.5 / -0.2, summed over four octaves
+of a multiple-scattering approximation). The shade grid (vl_shade_grid), the shadowed-difference output and the rest of the
+file are original (Apache-2.0).

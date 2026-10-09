@@ -231,11 +231,14 @@ public final class ShadeTaa {
 
 	/** GameRenderer.render, first device call: the target the world draws into this frame (mainTarget's stand-in). */
 	public RenderTarget beginWorld(RenderTarget mainTarget) {
+		// (2026-10-09) the output size: the window's, or the chosen output resolution below it (ShadeOutput): TAAU resolves into a
+		// history of that size and the final pass tone-maps at it, then one upscale pass fills the window (ShadePost)
+		int[] o = mcopt.metal.shade.ShadeOutput.size(mainTarget.width, mainTarget.height);
 		// (with Distant Horizons the world targets match the live scale exactly: a new resolution choice reallocates them)
-		float dhWant = FIXED_FOR_DH ? wantedDhScale(mainTarget.height) : 0f;
-		if (mainTarget.width != this.outWidth || mainTarget.height != this.outHeight || (FIXED_FOR_DH && dhWant != this.allocScale)) {
+		float dhWant = FIXED_FOR_DH ? wantedDhScale(o[1]) : 0f;
+		if (o[0] != this.outWidth || o[1] != this.outHeight || (FIXED_FOR_DH && dhWant != this.allocScale)) {
 			if (FIXED_FOR_DH) this.scale = dhWant;
-			this.resize(mainTarget);
+			this.resize(o[0], o[1]);
 		}
 		if (!this.jittered) this.updateSize();
 		MetalBridge.setSubRect(this.encoder, this.world.getColorTexture(), this.world.getDepthTexture(),
@@ -245,9 +248,9 @@ public final class ShadeTaa {
 		return this.world;
 	}
 
-	private void resize(RenderTarget mainTarget) {
-		this.outWidth = mainTarget.width;
-		this.outHeight = mainTarget.height;
+	private void resize(int outWidth, int outHeight) {
+		this.outWidth = outWidth;
+		this.outHeight = outHeight;
 		// M3.1: allocated for the native choice of the pause menu (ShadeResolution), so any choice is a sub-rect of them
 		float allocScale = FIXED_FOR_DH ? this.scale : 1f;
 		this.allocScale = allocScale;
@@ -263,9 +266,18 @@ public final class ShadeTaa {
 			this.allocWidth, this.allocHeight));
 	}
 
-	/** The game's main target (output size) this frame stands in for; null before the first beginWorld. */
+	/** The game's main target (the window's size) this frame stands in for; null before the first beginWorld. */
 	public @Nullable RenderTarget outputTarget() {
 		return this.output;
+	}
+
+	/**
+	 * Whether the output resolution is below the window's (ShadeOutput): the history and the final pass are then outWidth() x
+	 * outHeight(), and ShadePost upscales into {@link #outputTarget()}.
+	 */
+	public boolean outputScaled() {
+		RenderTarget o = this.output;
+		return o != null && (this.outWidth != o.width || this.outHeight != o.height);
 	}
 
 	/** The world targets' allocated size (the sub-rect (0, 0, width(), height()) of it is live while swapped). */

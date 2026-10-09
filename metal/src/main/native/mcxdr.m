@@ -47,7 +47,13 @@ static const char *xdrSource =
 	"  if (p.flip != 0) px.y = src.get_height() - 1 - px.y;\n"
 	"  float4 m = src.read(px);\n"
 	"  float3 lin = srgbToLinear(saturate(m.rgb));\n"
-	"  if (p.valid != 0) lin += float3(excess.read(px).rgb) * saturate(1.0 - m.a);\n"
+	// (2026-10-09) the excess by uv: at a lower output resolution (ShadeOutput) it is the output's size, the image the window's
+	// (bilinear at the texel centres when the sizes match: the same values as a read)
+	"  if (p.valid != 0) {\n"
+	"    constexpr sampler ls(filter::linear, address::clamp_to_edge);\n"
+	"    float2 euv = (float2(px) + 0.5) / float2(src.get_width(), src.get_height());\n"
+	"    lin += float3(excess.sample(ls, euv).rgb) * saturate(1.0 - m.a);\n"
+	"  }\n"
 	"  return float4(M709toP3 * lin, 1.0);\n"
 	"}\n"
 	// the present side's copy into an RGBA16Float drawable (the staging slot already holds the composed image)

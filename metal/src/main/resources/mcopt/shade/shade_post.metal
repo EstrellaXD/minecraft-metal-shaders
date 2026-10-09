@@ -524,3 +524,41 @@ fragment half4 shade_milkyway_bake(ShadeFsOut in [[stage_in]]) {
 	// and beams, Nether fog, media), so they need no texture of their own
 	return half4(half3(col * v * 0.035), half(shadeDimsBakeNoise(in.uv)));
 }
+
+// ---- output resolution (2026-10-09, ShadeOutput) -------------------------------------------------------------------------
+// The final pass's image at the chosen output size (display-referred RGBA8, the same encoding as the window's target) -> the
+// window: Catmull-Rom from 5 bilinear reads (the 9-tap trick with the corner taps dropped, after Matt Pettineo's gist, MIT, as
+// taa.metal's history fetch), clamped to the range of the 2x2 texels around (no ringing at hard edges: block outlines, the
+// sun's disc), then a contrast-limited sharpen over the 4 neighbouring texels (like shadeSharpen: less where the contrast is
+// already high, never past the neighbourhood). P.x: sharpen amount; alpha (XDR: 0, the hand and GUI draw over it) passes through.
+fragment float4 shade_upscale(ShadeFsOut in [[stage_in]], texture2d<float> src [[texture(0)]], constant float4 &P [[buffer(0)]]) {
+	float2 size = float2(src.get_width(), src.get_height()), inv = 1.0 / size;
+	float2 sp = in.uv * size;
+	float2 t1 = floor(sp - 0.5) + 0.5;
+	float2 fr = sp - t1;
+	float2 w0 = fr * (-0.5 + fr * (1.0 - 0.5 * fr));
+	float2 w1 = 1.0 + fr * fr * (-2.5 + 1.5 * fr);
+	float2 w2 = fr * (0.5 + fr * (2.0 - 1.5 * fr));
+	float2 w3 = fr * fr * (-0.5 + 0.5 * fr);
+	float2 w12 = w1 + w2;
+	float2 t0 = (t1 - 1.0) * inv, t3 = (t1 + 2.0) * inv, t12 = (t1 + w2 / w12) * inv;
+	float4 a = src.sample(shadeLinearClamp, float2(t12.x, t0.y)), b = src.sample(shadeLinearClamp, float2(t0.x, t12.y));
+	float4 c = src.sample(shadeLinearClamp, t12), d = src.sample(shadeLinearClamp, float2(t3.x, t12.y));
+	float4 e = src.sample(shadeLinearClamp, float2(t12.x, t3.y));
+	float wa = w12.x * w0.y, wb = w0.x * w12.y, wc = w12.x * w12.y, wd = w3.x * w12.y, we = w12.x * w3.y;
+	float3 cr = (a.rgb * wa + b.rgb * wb + c.rgb * wc + d.rgb * wd + e.rgb * we) / (wa + wb + wc + wd + we);
+	// the 2x2 texels around this pixel: the range the result may span
+	float2 base = t1 * inv;
+	float3 q0 = src.sample(shadeLinearClamp, base).rgb, q1 = src.sample(shadeLinearClamp, base + float2(inv.x, 0.0)).rgb;
+	float3 q2 = src.sample(shadeLinearClamp, base + float2(0.0, inv.y)).rgb, q3 = src.sample(shadeLinearClamp, base + inv).rgb;
+	float3 lo = min(min(q0, q1), min(q2, q3)), hi = max(max(q0, q1), max(q2, q3));
+	cr = clamp(cr, lo, hi);
+	// contrast-limited sharpen against the 4-neighbour mean one source texel away
+	float3 n = src.sample(shadeLinearClamp, in.uv + float2(0.0, inv.y)).rgb, s = src.sample(shadeLinearClamp, in.uv - float2(0.0, inv.y)).rgb;
+	float3 ea = src.sample(shadeLinearClamp, in.uv + float2(inv.x, 0.0)).rgb, wv = src.sample(shadeLinearClamp, in.uv - float2(inv.x, 0.0)).rgb;
+	float3 nlo = min(lo, min(min(n, s), min(ea, wv))), nhi = max(hi, max(max(n, s), max(ea, wv)));
+	float range = dot(nhi - nlo, float3(0.2126, 0.7152, 0.0722)) / max(dot(nhi, float3(0.2126, 0.7152, 0.0722)), 0.02);
+	float k = P.x * 2.0 * (1.0 - smoothstep(0.15, 0.9, range));
+	float3 o = clamp(cr + (cr - (n + s + ea + wv) * 0.25) * k, nlo, nhi);
+	return float4(o, c.a);
+}

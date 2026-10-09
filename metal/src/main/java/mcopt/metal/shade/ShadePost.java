@@ -101,6 +101,13 @@ public final class ShadePost {
 	// M3: the final pass with the Nether/End fog, End sky, shimmer and camera media compiled in (the plain ones carry none of it)
 	private static long psoFinalDims, psoFinalXdrDims;
 	private static int xdrWidth, xdrHeight;
+	/**
+	 * (2026-10-09) The output resolution (ShadeOutput, below the window's): the final pass writes this RGBA8 image at the output
+	 * size, then shade_upscale fills the window's target from it.
+	 */
+	private static long psoUpscale, outScaled;
+	private static int outScaledWidth, outScaledHeight;
+	private static final ByteBuffer UPSCALE_PARAMS = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	private static final long[] hdr = new long[2];
 	private static long[] bloomLevels = new long[0], bloomAccum = new long[0];
 	private static int width, height, frame, bloomWidth, bloomHeight;
@@ -195,6 +202,7 @@ public final class ShadePost {
 			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RGBA16F, 0);
 			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RGBA16F, 0);
 			psoFinal = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final", ShadeRender.RGBA8, 0);
+			psoUpscale = ShadeRender.pipeline(library, "shade_fs_vs", "shade_upscale", ShadeRender.RGBA8, 0);
 			boolean dimsVariant = mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.MEDIA;
 			if (dimsVariant) psoFinalDims = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final_dims", ShadeRender.RGBA8, 0);
 			if (mcopt.metal.shade.dims.ShadeXdr.active()) {
@@ -554,9 +562,25 @@ public final class ShadePost {
 		params.flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
+		// (2026-10-09) the output resolution below the window's (ShadeOutput): the final pass writes an output-size image, the
+		// upscale below fills the window's target from it
+		boolean upscale = taa != null && depth != 0 && taa.outputScaled() && psoUpscale != 0;
+		long finalTarget = mainHandle;
+		int targetW = out.getWidth(0), targetH = out.getHeight(0);
+		if (upscale) {
+			targetW = taa.outWidth();
+			targetH = taa.outHeight();
+			if (outScaled == 0 || targetW != outScaledWidth || targetH != outScaledHeight) {
+				retire(outScaled);
+				outScaledWidth = targetW;
+				outScaledHeight = targetH;
+				outScaled = ShadeRender.texture(ShadeRender.RGBA8, targetW, targetH, false, "mcopt shade: output");
+			}
+			finalTarget = outScaled;
+		}
 		long[] finalInputs = {scene, n > 1 ? bloomAccum[1] : scene, depth, n > 1 ? bloomLevels[0] : scene, vl ? vlLight : scene, vl ? vlDist : scene};
 		if (xdr) {
-			int ow = out.getWidth(0), oh = out.getHeight(0);
+			int ow = targetW, oh = targetH;
 			if (xdrExcess == 0 || ow != xdrWidth || oh != xdrHeight) {
 				retire(xdrExcess);
 				xdrWidth = ow;
@@ -564,10 +588,16 @@ public final class ShadePost {
 				xdrExcess = ShadeRender.texture(ShadeRender.RG11B10F, ow, oh, false, "mcopt shade: XDR excess");
 			}
 			if (encoder != null && MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'mcopt shade: final (XDR)'");
-			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, dimsPass && psoFinalXdrDims != 0 ? psoFinalXdrDims : psoFinalXdr, mainHandle, xdrExcess, finalInputs,
+			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, dimsPass && psoFinalXdrDims != 0 ? psoFinalXdrDims : psoFinalXdr, finalTarget, xdrExcess, finalInputs,
 				params, "mcopt shade: final (XDR)");
 		} else {
-			pass(dimsPass && psoFinalDims != 0 ? psoFinalDims : psoFinal, mainHandle, ShadeRender.DONT_CARE, finalInputs, params, "mcopt shade: final");
+			pass(dimsPass && psoFinalDims != 0 ? psoFinalDims : psoFinal, finalTarget, ShadeRender.DONT_CARE, finalInputs, params, "mcopt shade: final");
+		}
+		if (upscale) {
+			// (the XDR excess stays at the output size: the present's compose samples it by uv, mcxdr.m)
+			UPSCALE_PARAMS.clear();
+			UPSCALE_PARAMS.putFloat(Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.outputSharpen", 0.3f), 0f)).putFloat(0f).putFloat(0f).putFloat(0f).flip();
+			pass(psoUpscale, mainHandle, ShadeRender.DONT_CARE, new long[] {outScaled}, UPSCALE_PARAMS, "mcopt shade: upscale");
 		}
 		// after the final pass: the kernel advances ShadeGpu.exposure.x to next frame's value, and everything this frame
 		// (world, TAA history, haze and VL in the final pass, Purkinje) must use this frame's

@@ -85,7 +85,10 @@ public final class ShadeResolution {
 		}
 		int c = CHOICES[index];
 		String choice = c == 0 ? "Auto" : c < 0 ? "Nativa" : c + "p";
-		return String.format(Locale.ROOT, "Shaders: mundo %dx%d (%d %%) · %s · %s", size[0], size[1], Math.round(taa.scale() * 100f), choice, preset);
+		// (2026-10-09) with a lower output resolution (ShadeOutput): "→ salida 1920x1080"
+		var o = taa.outputTarget();
+		String out = o == null ? "" : ShadeOutput.debugPart(taa.outWidth(), taa.outHeight(), o.width, o.height);
+		return String.format(Locale.ROOT, "Shaders: mundo %dx%d (%d %%)%s · %s · %s", size[0], size[1], Math.round(taa.scale() * 100f), out, choice, preset);
 	}
 
 	/** The menu label for the current choice (short: it must fit the pause menu's 204-pixel button). */

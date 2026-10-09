@@ -42,7 +42,8 @@ the integer hash is Chris Wellons' lowbias32 (public domain).
 Native shading TAAU (metal/src/main/resources/mcopt/shade/taa.metal): the 5-tap Catmull-Rom history fetch
 (taaCatmullRom) is adapted from Matt Pettineo (MJP), "Bicubic texture filtering with the Catmull-Rom spline in 9 / 5
 taps" (https://gist.github.com/TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1), MIT License, with the corner taps dropped
-as in Jimenez, "Filmic SMAA" (SIGGRAPH 2016). The rest of the resolve is original, after public techniques (Karis 2014,
+as in Jimenez, "Filmic SMAA" (SIGGRAPH 2016). The output resolution's upscale (shade_post.metal shade_upscale) uses the
+same 5-tap Catmull-Rom (MJP's gist, MIT License). The rest of the resolve is original, after public techniques (Karis 2014,
 Salvi 2016, Yang et al. 2020).
 
 Native shading M3 volumetric clouds (metal/src/main/resources/mcopt/shade/clouds.metal): portions adapted from Photon

@@ -123,7 +123,8 @@ struct VlParams {
 	float4 air6;      // 464 (FT2.7, audit idx 16) the canopy test as columns: x how many (0 = FT2.6's solid box), y taps up each one,
 	                  //     z their distance from the cell's axis (blocks; 0 = 3/4 of the canopy test's reach), w > 0: sky pixels stop
 	                  //     their air-mode march where it can no longer add anything (audit idx 0)
-	float4 air7;      // 480 (FT2.7) x the canopy test's columns start this high above the cell (blocks; 0 = grid2.w), yzw 0
+	float4 air7;      // 480 (FT2.7) x the canopy test's columns start this high above the cell (blocks; 0 = grid2.w), y > 0: only a
+	                  //     blocker within that many blocks toward the light shades a column's tap (leaves above, not a far tree), zw 0
 };
 // The shade grid (godrays v3): a camera-centred block of cells holding the share of sunlit points around each (R8, trilinear)
 #define VL_GRID_X 64
@@ -276,6 +277,18 @@ static inline float vlGridTap(float3 q, constant ShadeFrame &f, depth2d_array<fl
 	return h.z > 0.0 ? map.sample_compare(cmpLin, shadeShadowUV(h.xyz), 1u, h.z) : 0.0;
 }
 
+// (FT2.7) the same, but only a blocker within dmax blocks toward the light counts as shade (the far cascade's depth: zB blocks per
+// unit; a 2x2 gather): leaves over the point, not a tree's shadow from far off at a low sun
+static inline float vlGridTapNear(float3 q, constant ShadeFrame &f, depth2d_array<float> map, float zB, float dmax) {
+	constexpr sampler pt(filter::nearest, address::clamp_to_edge);
+	float4 h = f.shadowViewProj[1] * float4(q, 1.0);
+	if (max(abs(h.x), abs(h.y)) >= 0.995 || h.z >= 1.0) return 1.0;
+	if (h.z <= 0.0) return 0.0;
+	float4 d = map.gather(pt, shadeShadowUV(h.xyz), 1u);
+	float4 near = select(float4(0.0), float4(1.0), d > h.z && (d - h.z) * zB < dmax);
+	return 1.0 - dot(near, float4(0.25));
+}
+
 kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],
                           depth2d_array<float> map [[texture(16)]], texture3d<half, access::write> grid [[texture(0)]]) {
 	uint3 gid = p.air4.w < 0.0 ? tid : uint3(tid.x, tid.y, tid.z * VL_GRID_ROUNDS + uint(p.air4.w));
@@ -312,13 +325,16 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 		if (cols > 0) {
 			int taps = clamp(int(p.air6.y), 2, 6);
 			float rho = p.air6.z > 0.0 ? p.air6.z : 0.75 * rUp, lo = p.air7.x > 0.0 ? p.air7.x : r;
+			float3 m2 = float3(f.shadowViewProj[1][0][2], f.shadowViewProj[1][1][2], f.shadowViewProj[1][2][2]);
+			float zB = 1.0 / max(length(m2), 1e-6), dmax = p.air7.y;
 			for (int i = 0; i < cols; i++) {
 				float a = (float(i) + 0.5) * (6.2831853 / float(cols));
 				float2 o = float2(cos(a), sin(a)) * rho;
 				float col = 1.0;
 				for (int j = 0; j < taps && col > 0.02; j++) {
 					float s = float(j) / float(taps - 1);
-					col = min(col, vlGridTap(c + float3(o.x, lo + s * s * (up - lo), o.y), f, map));
+					float3 q = c + float3(o.x, lo + s * s * (up - lo), o.y);
+					col = min(col, dmax > 0.0 ? vlGridTapNear(q, f, map, zB, dmax) : vlGridTap(q, f, map));
 				}
 				open += col;
 			}

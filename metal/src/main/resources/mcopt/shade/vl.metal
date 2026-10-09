@@ -325,7 +325,9 @@ kernel void vl_shade_grid(uint3 tid [[thread_position_in_grid]], constant ShadeF
 	// across the column had made the air over crests forest = halos and plumes). Gael's taiga: the veil at or below FT2.6's
 	// (p3 0.6 -> 0.05, p4 0.7 -> 0.2); his autumn forest: the shafts back (g2 rays 1.83 -> 1.97, FT2.5 1.94).
 	float up = p.look2.y, rUp = p.air5.w > 0.0 ? p.air5.w : r;
-	if (up > r && f.flags.z != 0) {
+	// (FT2.8, audit idx 4: not where every low tap is already lit, share ~1, the most of open land: the test can only raise share;
+	// not merely >= air3.y, since the grid is sampled trilinearly and a higher share there still moves the values toward a neighbour)
+	if (up > r && f.flags.z != 0 && share < 0.999) {
 		float open = 0.0;
 		int cols = min(int(p.air6.x), 12);
 		if (cols > 0) {

@@ -333,6 +333,10 @@ public final class ShadePost {
 			// colours into radiance), so no bridge encodes the HDR image into main before and decodes it after
 			boolean intoMain = colors.size() == 1 && colors.get(0) != null && colors.get(0).textureView().texture() == mainColor;
 			boolean direct = mcopt.metal.shade.dh.ShadeDh.directFrame();
+			// (the frame's pending clear of main, when no world pass took it before DH's first pass: the HDR target gets it, as
+			// openBridge does; the backend would otherwise apply it to main itself at this pass, leaving last frame's image in the
+			// HDR target where nothing else draws: the End's void showed the island of a scene before, ft2 shotsdh)
+			if (direct && !bridgeOpen) applyPendingClear();
 			if (!(intoMain && direct && !bridgeOpen)) {
 				if (ShadeConfig.DH_BRIDGE && !bridgeOpen && !direct && !mcopt.metal.shade.dims.DimsDebug.noBridge()) openBridge();
 				return null;
@@ -392,6 +396,15 @@ public final class ShadePost {
 		}
 		long main = MetalBridge.textureHandle(mainColor);
 		mcopt.metal.shade.dims.DimsDebug.note("bridge encode (HDR -> main)");
+		applyPendingClear();
+		pass(psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
+	}
+
+	/**
+	 * Main's pending clear, if no world pass took it yet this frame, applied to the HDR target instead (Distant Horizons' first
+	 * pass, bridge or FT2's direct composite).
+	 */
+	private static void applyPendingClear() {
 		float[] clear = MetalBridge.takePendingColorClear(encoder, mainColor);
 		// M3.3 (mcopt.shade.dhClear, live, default true; false = M3.2): when no world pass drew into main before Distant
 		// Horizons' first one (no sky pass: the Nether, the End's dragon fight, under water / lava / powder snow, blindness),
@@ -401,9 +414,8 @@ public final class ShadePost {
 		if (clear != null && mcopt.metal.shade.dims.DimsDebug.dhClear()) {
 			float[] h = ShadeFrameUpdater.LOOK.ldrToHdr(clear[0], clear[1], clear[2]);
 			MetalBridge.renderBegin(enc, new long[] {hdr[frame & 1]}, new float[][] {{h[0], h[1], h[2], clear[3]}}, 0, false, 0f, width, height);
-			mcopt.metal.shade.dims.DimsDebug.note("bridge: main's pending clear applied to the HDR target");
+			mcopt.metal.shade.dims.DimsDebug.note("main's pending clear applied to the HDR target");
 		}
-		pass(psoEncode, main, ShadeRender.DONT_CARE, new long[] {hdr[frame & 1]}, null, "mcopt shade: DH bridge encode");
 	}
 
 	private static void closeBridge() {

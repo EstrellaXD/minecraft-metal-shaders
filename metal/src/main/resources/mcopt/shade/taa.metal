@@ -167,7 +167,12 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	float2 uvPrev = prev.xy / prev.w * 0.5 + 0.5;
 
 	TaaOut o;
-	o.depth = half(clamp(viewDepth, 0.0, 65000.0));
+	// (FT2.7, audit idx 68) where nothing drew (reversed Z 0: the sky, clouds, aurora and every Distant Horizons LOD) the history
+	// keeps "sky" (~65000, as ShadeResources.prevDepth documents), not the far plane's axial depth: on a turn the far plane's
+	// depth at a sky point changes by F tan(phi) theta, which tripped the 3 % test at the screen's sides from ~1.4 degrees per
+	// frame (LOD ridges and the sun lost their history while panning). Sky is matched with sky, surfaces by depth.
+	bool skyNow = zmax <= 0.0;
+	o.depth = skyNow ? half(65000.0) : half(clamp(viewDepth, 0.0, 60000.0));
 	bool valid = p.blend.w < 0.5 && prev.w > 0.0 && all(uvPrev > 0.0) && all(uvPrev < 1.0);
 	half age = 0.0h;
 	half3 history = current;
@@ -176,8 +181,9 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 		uint2 hp = uint2(min(uvPrev * p.output.xy, p.output.xy - 1.0));
 		// Disocclusion: the surface last frame saw there is not the one we reprojected (it was hidden, or it moved).
 		float stored = float(histDepth.read(hp).r);
+		bool skyThen = stored > 60000.0;
 		float tolerance = 0.03 * prev.w + 0.1;
-		disocclusion = half(saturate((abs(stored - prev.w) - tolerance) / tolerance));
+		disocclusion = skyNow || skyThen ? half(skyNow != skyThen) : half(saturate((abs(stored - prev.w) - tolerance) / tolerance));
 		history = taaCompress(taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age) * rescale);
 	}
 	// Rectify: the history may only take colours this frame's neighbourhood could produce (variance box). It is clipped

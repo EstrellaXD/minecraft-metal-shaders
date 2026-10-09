@@ -50,7 +50,7 @@ import org.lwjgl.system.MemoryUtil;
  * render3dHud mixin path (M1 LDR composite) remains for mcopt.shade.hdr=false. See VL.md and M2_INTEGRATION.md.
  */
 public final class ShadeVl {
-	private static final int PARAM_BYTES = 272; // VlParams (vl.metal), 17 x float4 since M3.3
+	private static final int PARAM_BYTES = 288; // VlParams (vl.metal), 18 x float4 since 2026-10-09
 	private static final int ERR = 2048;
 	private static final float SEA = 63f;
 	/** M2: the open-air medium = the base's haze / mist sigma x these (see pack). */
@@ -331,7 +331,8 @@ public final class ShadeVl {
 		// canopy mist (vl.metal: around the camera's height, scaled by the canopy factor): what makes the shafts under
 		// trees and overhangs; densest in the golden hours, humid biomes and rain
 		// (none deep in caves: the canopy factor is 1 there, but the mist would only dim the cave toward black)
-		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST * eyeLight(f);
+		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST * eyeLight(f)
+			* VlConfig.live("mcopt.shade.vl.mistGain", 1f);
 		// its sky-lit colour in the shade (the canopy hides most of the sky): what it dims the scene behind it toward
 		float[] amb = f.sky.ambientSky;
 		boolean hdr = look != null;
@@ -345,6 +346,7 @@ public final class ShadeVl {
 		// M2: the art layer's VL keyframe (bible §3.2: strongest at golden hour) and look preset, softened (shafts under a canopy
 		// stay visible at noon)
 		if (hdr) strength *= look.vlFactor() * (f.underwater ? HDR_WATER : HDR_AIR);
+		strength *= VlConfig.live("mcopt.shade.vl.gain", 1f); // (2026-10-09 look development, read every frame)
 
 		// light colour (irradiance / pi, pre-exposure): saturated toward the low sun (golden hour), plain moonlight
 		float[] c = f.sky.light;
@@ -377,7 +379,7 @@ public final class ShadeVl {
 		put(b, vw, vh, width, height);                                                   // size
 		put(b, strength, VlConfig.DIST, VlConfig.STEPS, g);                              // shape
 		put(b, haze, mist, mistBase - camY, mistH);                                      // medium
-		put(b, hazeBase - camY, hazeH, 0.35f, 0.05f);                                    // haze
+		put(b, hazeBase - camY, hazeH, VlConfig.live("mcopt.shade.vl.iso", 0.35f), 0.05f);  // haze
 		put(b, lr, lg, lb, canopyMist);                                                  // light
 		// crep: in front of geometry, light through the gaps; on the sky (HDR), the shadows of clouds and hills as dark rays
 		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) : 0f, VlConfig.SS_TAPS, onScreen, 6f);
@@ -398,14 +400,16 @@ public final class ShadeVl {
 		put(b, resetCanopy ? 1f : 0f, 8f, canopyDown, VlConfig.NEAR_STEPS);              // extra: w the canopy mist's own steps
 		put(b, 16f, 4f, VlConfig.EXTINCTION ? 1f : 0f, hdr ? HDR_EXT : 0.5f);                            // mist: range, top, extinction on, its scale
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
-		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, hdr ? HDR_OPEN_CUT : 0.5f); // mistAmb, open glow left out
-		put(b, hdr ? HDR_CARVE : 0f, hdr ? HDR_CARVE_WATER : 0f, histU, histV);           // carve; zw: the history's live part (uv scale)
+		put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK,
+			hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f);          // mistAmb, open glow left out
+		put(b, hdr ? VlConfig.live("mcopt.shade.vl.carve", HDR_CARVE) : 0f, hdr ? HDR_CARVE_WATER : 0f, histU, histV); // carve; zw: the history's live part
 		// M3.3 art: x the gain of the sky's dark rays (mcopt.shade.vl.skyRays, dev; 1), y their extra gain over the open sky:
 		// mcopt.shade.vl.sunsetRays - 1 in the golden hour while the sunset art is on (its brighter, warmer aureole had weakened
 		// them); z that extra from the taps past the pixel's own neighbourhood (sunsetFar), w its falloff (sunsetFall); y = 0 is
 		// M3.2
 		float sunsetArt = mcopt.metal.shade.ShadeSky.sunsetArt ? golden : 0f;
 		put(b, VlConfig.skyRays(), (VlConfig.sunsetRays() - 1f) * sunsetArt, VlConfig.sunsetFar() ? 1f : 0f, VlConfig.sunsetFall()); // art
+		put(b, VlConfig.live("mcopt.shade.vl.canopyMin", 0f), 0f, 0f, 0f);              // tune: x the canopy factor's floor
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater;
 	}
 

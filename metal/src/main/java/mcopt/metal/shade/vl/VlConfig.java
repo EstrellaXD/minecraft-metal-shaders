@@ -164,6 +164,17 @@ public final class VlConfig {
 		return v == null ? 1f : clamp(floatProperty("mcopt.shade.vl.skyRays", 1f), 0f, 4f);
 	}
 
+	/** A float system property read every frame (look development in one session: the bench's variant shots set it). */
+	public static float live(String key, float def) {
+		String v = System.getProperty(key);
+		if (v == null) return def;
+		try {
+			return Float.parseFloat(v.trim());
+		} catch (NumberFormatException e) {
+			return def;
+		}
+	}
+
 	static float floatProperty(String key, float def) {
 		String v = System.getProperty(key);
 		if (v == null) return def;

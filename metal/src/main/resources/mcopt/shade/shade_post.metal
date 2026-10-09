@@ -99,7 +99,8 @@ fragment half4 shade_bloom_up(ShadeFsOut in [[stage_in]], texture2d<half> level 
 	return half4(l * half(p.w.x) + u * half(p.w.y / 16.0), 1.0h);
 }
 
-// p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0;
+// p: x 1 / (sum of the bloom weights), y bloom on (0/1), z frame index, w debug view; q: x weight of bloom level 0, y the
+// volumetric light's upsample mode and z its depth tolerance scale (2026-10-09 look development: shadeVlUpsample);
 // v: x volumetric light folded in (0/1, ShadePost.setVolumetric), y its max march distance (blocks), zw the live part of the
 // VL textures (uv scale);
 // r: xy the live render size in depth (TAAU dynamic resolution: the sub-rect of the fixed-size world depth this frame drew;
@@ -131,7 +132,12 @@ static inline half3 shadeSharpen(texture2d<half> img, uint2 px, half3 m, half am
 // the distance each texel marched (blocks, 1e4 = sky). Depth-aware bilinear upsample to the pixel at uv with scene distance
 // dist: bilinear x distance similarity; where no low-resolution texel is at this depth (a thin leaf against the sky), the
 // closest one, its light scaled by how much air this pixel's ray crosses (no halos around foliage).
-static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, float2 uv, float dist, float maxD, float2 uvScale) {
+// (2026-10-09, look development, live: mode = mcopt.shade.vl.upMode, tolScale = mcopt.shade.vl.upTol) mode 0: as below; 1: where no
+// texel is at this depth, the bilinear blend of the four, each scaled by its own air ratio (not the closest one alone: on leaves
+// against bright shafts it switched pixel by pixel, the "dots"); 2: plain bilinear (no depth test: halos, no dots); 3: plain
+// bilinear scaled by the air ratio of the footprint's mean distance
+static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, float2 uv, float dist, float maxD, float2 uvScale,
+                                    float mode = 0.0, float tolScale = 1.0) {
 	// the live part of the VL targets (TAAU dynamic resolution: allocated for the largest scale; uvScale = live / allocated)
 	float2 size = float2(vlT.get_width(), vlT.get_height()) * uvScale;
 	uv = min(uv * uvScale, uvScale - 0.5 / float2(vlT.get_width(), vlT.get_height()));
@@ -139,11 +145,18 @@ static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, fl
 	float2 fl = floor(lp);
 	half2 fr = half2(lp - fl);
 	int2 base = int2(fl), hi = int2(size) - 1;
-	half invTol = half(1.0 / (0.04 * dist + 0.15));
+	half invTol = half(1.0 / ((0.04 * dist + 0.15) * max(tolScale, 0.05)));
 	half hd = half(min(dist, 3e4));
 	// the four distances of the bilinear footprint in one fetch (gather order: (0,1) (1,1) (1,0) (0,0)); when all of them
 	// are at this pixel's depth (most of the screen) one hardware-filtered sample does it
 	half4 dd = vlD.gather(shadeLinearClamp, uv, int2(0), component::w);
+	if (mode > 1.5) {
+		half4 s = vlT.sample(shadeLinearClamp, uv);
+		if (mode < 2.5) return s;
+		half4 bw4 = half4((1.0h - fr.x) * fr.y, fr.x * fr.y, fr.x * (1.0h - fr.y), (1.0h - fr.x) * (1.0h - fr.y)); // gather order
+		half mD = half(maxD), avgD = dot(bw4, min(dd, mD));
+		return half4(s.rgb * clamp((min(hd, mD) + 0.5h) / (avgD + 0.5h), 0.0h, 4.0h), s.a);
+	}
 	if (all(abs(dd - hd) * invTol < 0.5h)) return vlT.sample(shadeLinearClamp, uv);
 	half4 sum = 0.0h, bestC = half4(0.0h, 0.0h, 0.0h, 1.0h);
 	half wsum = 0.0h, best = 6e4h, bestD = 1.0h;
@@ -167,6 +180,20 @@ static inline half4 shadeVlUpsample(texture2d<half> vlT, texture2d<half> vlD, fl
 	}
 	if (wsum > 0.02h) return sum / wsum;
 	half mD = half(maxD);
+	if (mode > 0.5) { // the four by their bilinear weights, each scaled by its own air ratio
+		half4 acc = 0.0h;
+		half bsum = 0.0h;
+		for (int j = 0; j <= 1; j++) {
+			for (int i = 0; i <= 1; i++) {
+				half4 s = vlT.read(uint2(clamp(base + int2(i, j), int2(0), hi)));
+				half sd = j == 0 ? (i == 0 ? dd.w : dd.z) : (i == 0 ? dd.x : dd.y);
+				half bw = (i == 0 ? 1.0h - fr.x : fr.x) * (j == 0 ? 1.0h - fr.y : fr.y) + 1e-3h;
+				acc += half4(s.rgb * saturate((min(hd, mD) + 0.5h) / (min(sd, mD) + 0.5h)), s.a) * bw;
+				bsum += bw;
+			}
+		}
+		return acc / bsum;
+	}
 	return half4(bestC.rgb * saturate((min(hd, mD) + 0.5h) / (min(bestD, mD) + 0.5h)), bestC.a);
 }
 
@@ -285,7 +312,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float tv = 1.0;
 	if (P.v.x > 0.5) {
 		float2 vlScale = P.v.z > 0.0 ? P.v.zw : float2(1.0);
-		half4 v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale);
+		half4 v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale, P.q.y, P.q.z);
 		tv = float(v.a);
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
 		float3 lit = c * tv;

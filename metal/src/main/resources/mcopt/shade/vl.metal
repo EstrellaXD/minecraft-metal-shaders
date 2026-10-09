@@ -42,7 +42,7 @@
 
 constant bool VL_HDR [[function_constant(0)]];
 
-// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 17 x float4 = 272 bytes since M3.3).
+// Per-frame parameters (mcopt.metal.shade.vl.ShadeVl packs exactly this layout; 18 x float4 = 288 bytes since 2026-10-09).
 struct VlParams {
 	float4 size;      //   0 xy VL live size (px: the part of the VL targets this frame covers), zw full-resolution live size (px)
 	float4 shape;     //  16 x strength, y max march distance (blocks), z step count, w forward HG g
@@ -78,6 +78,8 @@ struct VlParams {
 	                  //     sunset art; weighted by the pixel's own cloud transmittance squared, so the clouds keep M3.2's shading),
 	                  //     z 1: that extra from the taps past the pixel's own neighbourhood (mcopt.shade.vl.sunsetFar), w > 0 its
 	                  //     falloff exponent around the sun (mcopt.shade.vl.sunsetFall; 0 = crep.w)
+	float4 tune;      // 272 (2026-10-09) x the canopy factor's floor (the canopy mist also outside a canopy, at least this much of
+	                  //     it: shafts through trees seen from the open, mcopt.shade.vl.canopyMin), yzw 0
 };
 
 struct VlState { float4 canopy; }; // x smoothed canopy factor 0..1, y raw shadowed fraction, zw 0
@@ -244,7 +246,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 	float xi = fract(p.temporal.z * 0.6180339887 + 0.25 * vlNoise(in.position.xy, 0.0));
 	float3 L = f.lightDirWorld.xyz;
 	float mu = dot(dir, L);
-	float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
+	float canopy = p.gate.z >= 0.0 ? p.gate.z : max(st.canopy.x, p.tune.x);
 	float3 scatter = float3(0.0);
 	bool underwater = p.water2.y > 0.5;
 	int n = int(p.shape.z);
@@ -556,7 +558,7 @@ fragment VlFoldOut vl_temporal_fold(VlOut in [[stage_in]], constant ShadeFrame &
 	o.history = vlTemporal(in, f, p, raw, history);
 	float3 light = float3(o.history.rgb);
 	float T = 1.0;
-	float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
+	float canopy = p.gate.z >= 0.0 ? p.gate.z : max(st.canopy.x, p.tune.x);
 	float mistK = p.light.w * canopy * p.mist.w * p.mist.z;
 	if (mistK > 1e-5 && p.water2.y < 0.5) {
 		float2 fpos = floor(in.position.xy * (p.size.zw / p.size.xy)) + 0.5;
@@ -633,7 +635,7 @@ static inline half3 vlCompositeLight(float2 pos, float dist, float2 ndc, float e
 	// the canopy mist dims what is behind it (full resolution, analytic: crisp at every edge) toward its sky-lit colour;
 	// the sun-lit part of it is in the march
 	T = 1.0h;
-	float canopy = p.gate.z >= 0.0 ? p.gate.z : st.canopy.x;
+	float canopy = p.gate.z >= 0.0 ? p.gate.z : max(st.canopy.x, p.tune.x);
 	float mistK = p.light.w * canopy * p.mist.w * p.mist.z;
 	if (mistK > 1e-5 && p.water2.y < 0.5) {
 		T = half(exp2(-1.442695 * mistK * vlMistDepth(vlDirection(ndc, f), min(dist, p.shape.y), p)));

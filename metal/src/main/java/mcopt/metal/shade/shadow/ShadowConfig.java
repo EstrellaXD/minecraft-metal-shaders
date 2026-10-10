@@ -56,7 +56,10 @@ public final class ShadowConfig {
 	public static final boolean SHADOWS = mcopt.metal.shade.Shade.SHADOWS; // one parser for every gate
 	/** Per cascade; preset default (Shade.TIER): 2048 for performance, balanced and quality, 3072 for ultra. */
 	public static final int RES = clamp(Integer.getInteger("mcopt.shade.shadowRes", mcopt.metal.shade.Shade.TIER >= 3 ? 3072 : 2048), 512, 8192);
-	public static final int DEPTH_BITS = Integer.getInteger("mcopt.shade.shadowDepth", 32) == 16 ? 16 : 32;
+	// (FT2.8, audit idx 83) 16 bits by default: -0.1..-0.15 ms in the spin and the flight (d16 A/B x2; the far spread loads and stores
+	// the map, PCSS and the VL read it), the same image at noon, sunset and low sun (d16look-*, d16taiga-*; 0.003 / 0.005 block per
+	// step in the near / far range, the bias is ~10x that). -Dmcopt.shade.shadowDepth=32: FT2.7's Depth32Float
+	public static final int DEPTH_BITS = Integer.getInteger("mcopt.shade.shadowDepth", 16) == 32 ? 32 : 16;
 	public static final float DIST = clamp(floatProp("mcopt.shade.shadowDist", 128f), 16f, 1024f);
 	public static final float NEAR = clamp(floatProp("mcopt.shade.shadowNear", DIST / 4f), 4f, DIST);
 	public static final int FAR_EVERY = clamp(Integer.getInteger("mcopt.shade.shadowFarEvery", 4), 1, 64);

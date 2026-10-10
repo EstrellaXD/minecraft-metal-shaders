@@ -115,7 +115,7 @@ struct ShadeResources {
 	texture2d<half> reserved15;
 };
 
-// (FT2.9, mcopt.shade.caveAir) the share of the sky's light that reaches the air around the camera: the sky light at the eye,
+// (FT2.9, mcopt.shade.caveAir) the share of the sky's light that reaches the air around the camera: from the sky light at the eye
 // smoothed over ~1.5 s (ShadeLook.clock2.y; Photon's eye_skylight). Inside a cave the air is not lit by the sky: the haze's sky
 // glow (and the aerial blend toward the sky behind) lit the cave walls a few blocks away in a blue fog under the cave-adapted
 // exposure, starting at hard steps 2 and ~5 blocks from the eye (Gael, 2026-10-10: "una esfera rodeando el cuerpo... como si el

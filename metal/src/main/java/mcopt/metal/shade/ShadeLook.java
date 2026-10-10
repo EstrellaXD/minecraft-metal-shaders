@@ -281,9 +281,11 @@ public final class ShadeLook {
 		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP, TAU_DOWN);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
 		// (FT2.8, audit idx 78) x the aurora's, End sky's and Nether fog's clock; (FT2.9) mcopt.shade.caveAir (true; read every frame,
-		// false = FT2.8.1): y the sky light the air around the camera gets (the eye's, smoothed), z 1 = no hard steps in the haze
+		// false = FT2.8.1): y the sky light the air around the camera gets (from the eye's, smoothed: all of it from 10 of 15 up, none
+		// at 2 and below; each leaf layer above takes 1, and under a canopy the forest air already has its own share: the morning
+		// forest's god-ray pose lost 3 % of its light with the eye's value straight), z 1 = no hard steps in the haze
 		boolean caveAir = !"false".equalsIgnoreCase(System.getProperty("mcopt.shade.caveAir", "true").trim());
-		put4(b, CLOCK2, f.skyTime, caveAir ? this.eyeSky : 1f, caveAir ? 1f : 0f, 0f);
+		put4(b, CLOCK2, f.skyTime, caveAir ? smooth(2f / 15f, 10f / 15f, this.eyeSky) : 1f, caveAir ? 1f : 0f, 0f);
 		b.putInt(TIER, ShadeConfig.TIER).putInt(TIER + 4, this.features).putInt(TIER + 8, ShadeConfig.LOOK).putInt(TIER + 12, f.debug);
 		putRows(b, GRADE_IN, this.gradeIn);
 		putRows(b, GRADE_OUT, this.gradeOut);

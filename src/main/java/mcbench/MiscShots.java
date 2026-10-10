@@ -34,7 +34,10 @@ import net.minecraft.server.MinecraftServer;
  * {@code rose_sky} (the sunset_water pose 25 degrees up), {@code rose_water} (the sunset_water pose), {@code sunset_west}
  * (the overview point toward the setting sun, 8 degrees up), {@code wxground} (WeatherShots' ground pose) or
  * {@code x,y,z,yaw,pitch}. Weather: clear, rain or thunder. {@code -Dmcbench.variantPair=<seconds>}: a second shot
- * {@code <shot>_b} that long after each (frame-to-frame noise at a still pose).</li>
+ * {@code <shot>_b} that long after each (frame-to-frame noise at a still pose). A variant property {@code mcbench.hand=<main>,<off>}
+ * (item ids, e.g. {@code air+torch}: the comma separates properties; 2026-10-10) puts the player in creative with those items and the HUD shown, so the
+ * first-person hand renders and its held light shows; {@code -} (or the variant's restore) brings spectator, empty hands and the
+ * hidden HUD back.</li>
  * </ul>
  */
 final class MiscShots {
@@ -303,6 +306,7 @@ final class MiscShots {
 						set(e.getKey(), e.getValue());
 					}
 					BenchDriver.log("variant " + shot + " (" + v.describe() + ")");
+					hand(mc);
 				}
 
 				@Override
@@ -310,10 +314,10 @@ final class MiscShots {
 					return true;
 				}
 			});
-			steps.add(new BenchDriver.Hold(shot, hold));
+			steps.add(handHold(shot, hold));
 			steps.add(new BenchDriver.Shot(shot));
 			if (PAIR > 0) { // a second shot a moment later: what changed between them at a frozen pose is temporal noise (flicker)
-				steps.add(new BenchDriver.Hold(shot + "_b", PAIR));
+				steps.add(handHold(shot + "_b", PAIR));
 				steps.add(new BenchDriver.Shot(shot + "_b"));
 			}
 			steps.add(new BenchDriver.Step("var-restore-" + shot, 0) {
@@ -323,6 +327,7 @@ final class MiscShots {
 						if (e.getValue() == null) System.clearProperty(e.getKey());
 						else System.setProperty(e.getKey(), e.getValue());
 					}
+					hand(mc);
 				}
 
 				@Override
@@ -341,6 +346,44 @@ final class MiscShots {
 				return true;
 			}
 		});
+	}
+
+	/** The items mcbench.hand put in the player's hands ("main+off"), null while spectating with empty hands. */
+	private static String handOn;
+
+	/** Applies the mcbench.hand variant property (see the class comment) when it changed. */
+	private static void hand(Minecraft mc) {
+		String h = System.getProperty("mcbench.hand");
+		if (h != null && (h.isBlank() || h.equals("-"))) h = null;
+		if (java.util.Objects.equals(h, handOn)) return;
+		MinecraftServer s = BenchDriver.server(mc);
+		if (h != null) {
+			String[] it = h.split("\\+", 2);
+			String main = it[0].trim(), off = it.length > 1 ? it[1].trim() : "air";
+			BenchDriver.cmd(s, "gamemode creative @a");
+			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:" + main);
+			BenchDriver.cmd(s, "item replace entity @a weapon.offhand with minecraft:" + off);
+			LightShots.showHud(mc);
+		} else {
+			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:air");
+			BenchDriver.cmd(s, "item replace entity @a weapon.offhand with minecraft:air");
+			BenchDriver.cmd(s, "gamemode spectator @a");
+			BenchDriver.hideHud(mc);
+		}
+		handOn = h;
+	}
+
+	/** BenchDriver.Hold that keeps the HUD shown (the first-person hand renders) while mcbench.hand holds items. */
+	private static BenchDriver.Step handHold(String shot, double sec) {
+		BenchDriver.Hold plain = new BenchDriver.Hold(shot, sec);
+		return new BenchDriver.Step("hold-" + shot, 0) {
+			@Override
+			boolean poll(Minecraft mc, long now) {
+				if (handOn == null) return plain.poll(mc, now);
+				LightShots.showHud(mc);
+				return BenchDriver.secs(now - BenchDriver.curStart) >= sec;
+			}
+		};
 	}
 
 	private static BenchDriver.Step command(String name, String c) {

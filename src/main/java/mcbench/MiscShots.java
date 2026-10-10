@@ -37,7 +37,8 @@ import net.minecraft.server.MinecraftServer;
  * {@code <shot>_b} that long after each (frame-to-frame noise at a still pose). A variant property {@code mcbench.hand=<main>,<off>}
  * (item ids, e.g. {@code air+torch}: the comma separates properties; 2026-10-10) puts the player in creative with those items and the HUD shown, so the
  * first-person hand renders and its held light shows; {@code -} (or the variant's restore) brings spectator, empty hands and the
- * hidden HUD back.</li>
+ * hidden HUD back. {@code -Dmcbench.variantSetup} / {@code -Dmcbench.variantTeardown} ({@code cmd;;cmd}, '+' for a space):
+ * server commands run before the first group settles / after the last group.</li>
  * </ul>
  */
 final class MiscShots {
@@ -84,6 +85,11 @@ final class MiscShots {
 		if (!VARIANTS.isEmpty()) {
 			BenchDriver.results.put("variantShots", VAR_JSON);
 			for (String group : VARIANTS.split("/")) if (!group.isBlank()) variants(steps, group.trim());
+			// -Dmcbench.variantTeardown=cmd;;cmd (2026-10-10; '+' = space): server commands run once after the last group, at its pose
+			// (e.g. set what variantSetup built back to air, so the shared bench world stays as it was)
+			String teardown = System.getProperty("mcbench.variantTeardown", "").trim();
+			int k = 0;
+			if (!teardown.isEmpty()) for (String c : teardown.split(";;")) if (!c.isBlank()) steps.add(command("var-teardown-" + (k++), c.trim().replace('+', ' ')));
 		}
 	}
 

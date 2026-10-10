@@ -137,6 +137,8 @@ public final class ShadePost {
 	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
 	private static long vlLight, vlDist;
+	/** (FT2.8) this frame's bloom level the exposure histogram reads, dispatched after the final pass (0: none). */
+	private static long histogramSource;
 	private static float vlMaxDist, vlScaleU = 1f, vlScaleV = 1f, vlAirFloor;
 
 	private ShadePost() {
@@ -544,10 +546,9 @@ public final class ShadePost {
 			for (int i = 1; i < n; i++) {
 				pass(psoDown, bloomLevels[i], ShadeRender.DONT_CARE, new long[] {bloomLevels[i - 1]}, null, "mcopt shade: bloom down");
 			}
-			if (ShadeConfig.AUTO_EXPOSURE && n > 2) {
-				long l2 = bloomLevels[2];
-				ShadeRender.dispatch(enc, psoHistogram, ShadeRender.width(l2), ShadeRender.height(l2), 16, 16, new long[] {l2}, null, "mcopt shade: histogram");
-			}
+			// (FT2.8, audit idx 45) the exposure histogram of bloom level 2 is dispatched after the final pass, next to the exposure
+			// kernel: here, mid-chain, its ShadeGpu writes made the bloom up passes and the final pass (which bind ShadeGpu) wait for it
+			if (ShadeConfig.AUTO_EXPOSURE && n > 2) histogramSource = bloomLevels[2];
 			float spectrum = ShadeConfig.LOOK == 1 ? 0.9f : ShadeConfig.LOOK == 2 ? 0.3f : 0.6f;
 			float sum = 0f;
 			// U_i = w_i L_i + tent(U_i+1) down to U_1; level 0 (half size) is added in the final pass (w0 L0 + bilinear U1):
@@ -637,6 +638,11 @@ public final class ShadePost {
 		}
 		// after the final pass: the kernel advances ShadeGpu.exposure.x to next frame's value, and everything this frame
 		// (world, TAA history, haze and VL in the final pass, Purkinje) must use this frame's
+		if (histogramSource != 0) {
+			long l2 = histogramSource;
+			histogramSource = 0;
+			ShadeRender.dispatch(enc, psoHistogram, ShadeRender.width(l2), ShadeRender.height(l2), 16, 16, new long[] {l2}, null, "mcopt shade: histogram");
+		}
 		ShadeRender.dispatch(enc, psoExposure, 1, 1, 1, 1, null, null, "mcopt shade: exposure");
 		vlLight = vlDist = 0;
 	}

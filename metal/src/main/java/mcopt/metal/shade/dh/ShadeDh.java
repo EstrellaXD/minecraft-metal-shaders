@@ -62,7 +62,7 @@ public final class ShadeDh {
 		FADE = new Entry(CFG + "$Quality", "vanillaFadeMode"), FOG = new Entry(CFG + "$Fog", "enableDhFog"),
 		SHADING = new Entry(CFG + "$Quality", "lodShading"), OVERDRAW = new Entry(CFG + "$Culling", "overdrawPrevention");
 	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING, OVERDRAW};
-	private static Method setApi;
+	private static Method setApi, getTrue;
 	private static Class<?> fadeEnum, shadingEnum;
 	private static boolean failed, resolved, logged;
 	/**
@@ -121,10 +121,11 @@ public final class ShadeDh {
 		try {
 			apply(SSAO, shading ? off("mcopt.shade.dh.ssao") : null);
 			apply(AA, shading ? off("mcopt.shade.dh.aa") : null);
-			// (audit idx 100, NOT fixed: forcing NONE while DH composites directly broke the far LODs in mcopt DEV-DH, whose DH config
-			// has SINGLE_PASS (grey columns, LODs missing: bench-results/*ft28-dh, *ft28-dh2). To do: replace only DOUBLE_PASS (DH's
-			// default, said to wipe the near world in direct mode) by SINGLE_PASS, reading the player's own value; test with DOUBLE_PASS)
-			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "dh") : null);
+			// (FT2.8, audit idx 100) DH's DOUBLE_PASS vanilla fade (DH's default) wipes the near world while DH composites straight into the
+			// HDR target (fade28-DOUBLE_PASS: only the LODs' dark silhouette left): with "dh" (the default) a player's DOUBLE_PASS becomes
+			// SINGLE_PASS while the shade frame runs; NONE and SINGLE_PASS stay theirs (both fine from startup, fade28-NONE; switching
+			// SINGLE_PASS to NONE live broke the far LODs: *ft28-dh, so nothing else is switched)
+			apply(FADE, shading ? fadeWanted() : null);
 			apply(FOG, shading && LIGHT ? off("mcopt.shade.dh.fog") : null);
 			apply(SHADING, shading && LIGHT && off("mcopt.shade.dh.shading") != null ? named(shadingEnum, "-", "DISABLED") : null);
 			// FT2 (2026-10-08 night): how far around the camera DH skips LODs that the vanilla terrain covers (0..1 of the vanilla
@@ -146,6 +147,14 @@ public final class ShadeDh {
 
 	private static void apply(Entry e, Object want) throws ReflectiveOperationException {
 		if (want != e.applied) setApi.invoke(e.entry, e.applied = want, USER);
+	}
+
+	/** The vanilla fade override: mcopt.shade.dh.fade if it names a mode, else SINGLE_PASS in place of the player's DOUBLE_PASS. */
+	private static Object fadeWanted() throws ReflectiveOperationException {
+		Object named = named(fadeEnum, "mcopt.shade.dh.fade", "dh");
+		if (named != null || !DIRECT) return named;
+		Object own = getTrue.invoke(FADE.entry);
+		return own != null && "DOUBLE_PASS".equals(String.valueOf(own)) ? named(fadeEnum, "-", "SINGLE_PASS") : null;
 	}
 
 	/** Boolean.FALSE (override off) unless the flag says "dh". */
@@ -184,6 +193,7 @@ public final class ShadeDh {
 				if (e.entry == null) return false; // DH's config not built yet: next frame
 			}
 			setApi = SSAO.entry.getClass().getMethod("setApiValue", Object.class, String.class);
+			getTrue = SSAO.entry.getClass().getMethod("getTrueValue"); // the player's own value, under any API override
 			fadeEnum = Class.forName("com.seibel.distanthorizons.api.enums.config.EDhApiMcRenderingFadeMode", true, cl);
 			shadingEnum = Class.forName("com.seibel.distanthorizons.api.enums.config.EDhApiLodShading", true, cl);
 			resolved = true;

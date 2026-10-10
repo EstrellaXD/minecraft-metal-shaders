@@ -240,13 +240,20 @@ public final class ShadeFrameUpdater {
 		// wave speed to whole turns per 4096 s: the wrap is seamless). The game time is
 		// tick-based and the integrated server resets it every second (ClientboundSetTimePacket), so waves driven by it
 		// jump back or forward whenever the server lags (chunk generation): the "choppy" water of M2.
+		// (FT2.8, audit idx 78) the sky (aurora, End sky, Nether fog drift) on the same real time wrapped every 65536 s (~18 h of play): its
+		// speeds aren't whole noise tiles per 4096 s, so at the water's wrap the aurora's curtains and the End's beams jumped
+		// (a float of up to 65536 still steps by 1/128 s, far below what those slow drifts can show)
 		if (WATER_TIME >= 0f) {
 			f.waterTime = WATER_TIME; // (dev: frozen waves, for image diffs across jars)
+			f.skyTime = WATER_TIME;
 		} else if (mcopt.metal.shade.water.ShadeWater.CLOCK) {
 			waterClock = (waterClock + Math.min(dt, 0.25)) % 4096.0;
+			skyClock = (skyClock + Math.min(dt, 0.25)) % 65536.0;
 			f.waterTime = (float) waterClock;
+			f.skyTime = (float) skyClock;
 		} else {
 			f.waterTime = f.gameTimeSeconds;
+			f.skyTime = f.gameTimeSeconds;
 		}
 		lastDimension = f.dimension;
 		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
@@ -296,7 +303,7 @@ public final class ShadeFrameUpdater {
 	}
 
 	/** The water's real-time clock (seconds, wrapped every 4096 s: water.metal SHADE_WATER_CLOCK_WRAP, seamless). */
-	private static double waterClock;
+	private static double waterClock, skyClock;
 	/** -Dmcopt.shade.waterTime=SECONDS (dev, 2026-10-08): the waves stand still at that clock (image diffs of two jars). */
 	private static final float WATER_TIME = Float.parseFloat(System.getProperty("mcopt.shade.waterTime", "-1"));
 

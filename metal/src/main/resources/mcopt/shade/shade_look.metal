@@ -56,7 +56,9 @@ struct ShadeLook {
 	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w M3 evening rose hue weight (sky LUT)
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
 	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), z 1 = ShadeResources.weatherNoise is baked (M3 weather), w 1 = ShadeResources.shadowTint holds casters this frame (M3 weather, written after the shadow pass; M3.3: 2 = only their rectangle, top-left at texel 0)
-	float4 taa;        // 704  reserved for TAAU
+	float4 clock2;     // 704  (FT2.8, audit idx 78) x the sky's slow clock (s): real time like the water's, wrapped every 65536 s (the
+	                   //      water's 4096-s wrap made the aurora and the End sky jump once every 68 min: their speeds aren't whole
+	                   //      noise tiles per 4096 s), yzw reserved
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)
 	float4 dimTint;    // 752  reserved

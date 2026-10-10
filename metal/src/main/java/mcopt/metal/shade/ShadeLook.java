@@ -38,7 +38,7 @@ public final class ShadeLook {
 	public static final int VIEW_PROJ = 0, PREV_VIEW_PROJ = 64, CELESTIAL = 128, CLOUD_SHADOW_VP = 192, SUN_GEOM = 256, SUN_ART = 272, AMBIENT_ART = 288,
 		BOUNCE = 304, GRADE0 = 320, GRADE1 = 336, GRADE2 = 352, GRADE3 = 368, TONEMAP = 384, OUTPUT = 400, BLOOM = 416, FOG_R = 432, FOG_M = 448,
 		FOG_MISC = 464, VL = 480, WET = 496, WIND = 512, CLOUDS0 = 528, CLOUDS1 = 544, WATER_SHADOW = 560, WATER = 576, WATER_ABS = 592, TINT_RECT = 608,
-		EYE = 624, SKY_GOLD_H = 640, SKY_GOLD_Z = 656, NIGHT = 672, SSR = 688, TAA = 704, RENDER_SCALE = 720, EXPOSURE_CFG = 736, DIM_TINT = 752, FLASH = 768,
+		EYE = 624, SKY_GOLD_H = 640, SKY_GOLD_Z = 656, NIGHT = 672, SSR = 688, CLOCK2 = 704, RENDER_SCALE = 720, EXPOSURE_CFG = 736, DIM_TINT = 752, FLASH = 768,
 		DT = 784, TIER = 800, GRADE_IN = 816, GRADE_OUT = 864, GRADE_IN_INV = 912, GRADE_OUT_INV = 960, EXPOSURE_REF = 1008;
 
 	/** ShadeLook.tier.y bits (SHADE_FEATURE_* in shade_look.metal). */
@@ -280,6 +280,7 @@ public final class ShadeLook {
 		float nightUp = EV_UP - (EV_UP - EV_UP_NIGHT) * (1f - smooth(-10f, -2f, this.elevation));
 		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP, TAU_DOWN);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
+		put4(b, CLOCK2, f.skyTime, 0f, 0f, 0f); // (FT2.8, audit idx 78) the aurora's, End sky's and Nether fog's clock
 		b.putInt(TIER, ShadeConfig.TIER).putInt(TIER + 4, this.features).putInt(TIER + 8, ShadeConfig.LOOK).putInt(TIER + 12, f.debug);
 		putRows(b, GRADE_IN, this.gradeIn);
 		putRows(b, GRADE_OUT, this.gradeOut);

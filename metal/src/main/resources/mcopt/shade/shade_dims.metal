@@ -152,7 +152,7 @@ static float3 shadeEndSky(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	float e = asin(y);
 	float3 sky = mix(f.horizon[2].rgb, f.horizon[3].rgb, pow(saturate(1.0 - abs(y)), 3.0));
 	sky *= y < 0.0 ? mix(1.0, 0.3, saturate(-y * 1.6)) : 1.0; // the void below is darker
-	float t = f.sunPath.w; // the real-time clock (smooth)
+	float t = L.clock2.x; // the sky's slow real-time clock (smooth; FT2.8: no jump at the water clock's 4096-s wrap)
 	float lon = atan2(dir.z, dir.x) * 0.15915494 + 0.5; // 0..1
 	float lat = e * 0.31830989 + 0.5;
 	float2 q = float2(lon + t * 0.0004, lat);
@@ -213,7 +213,7 @@ static float3 shadeAurora(float3 dir, constant ShadeFrame &f, constant ShadeLook
 	const float h0 = 1.0, h1 = 1.9;
 	float dy = max(dir.y, 0.05);
 	float k0 = h0 / dy * 0.55, k1 = h1 / dy * 0.55;
-	float t = f.sunPath.w;
+	float t = L.clock2.x; // (FT2.8, audit idx 78) the sky's slow clock: the curtains no longer reshuffle every 68 min
 	float jitter = shadeNoise(pixel, f.flags2.x);
 	float2 drift = float2(t * 0.0021, t * 0.0009);
 	// the domain warp and the vertical rays vary slowly through the shell: once per pixel, at its middle
@@ -266,7 +266,7 @@ static float3 shadeDimsFog(float3 c, float3 wp, bool geo, constant ShadeFrame &f
 	float tau = sigma * d;
 	if (nether) tau += sigma * 1.0 * shadeLayerDepth(yc, v.y, d, L.dimTint.y + 6.0, 16.0);
 	float3 mid = float3(f.cameraBlock.xyz) + f.cameraFract.xyz + wp * 0.5;
-	float n = shadeDimsNoise(mw, mid.xz * (1.0 / 40.0) + float2(mid.y * (1.0 / 70.0), 0.0) + f.sunPath.w * float2(0.004, 0.0017));
+	float n = shadeDimsNoise(mw, mid.xz * (1.0 / 40.0) + float2(mid.y * (1.0 / 70.0), 0.0) + L.clock2.x * float2(0.004, 0.0017)); // (FT2.8: the sky's slow clock, no jump)
 	tau *= 0.6 + 0.8 * n;
 	float T = exp(-tau);
 	float3 Sc = S;

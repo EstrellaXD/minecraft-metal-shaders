@@ -78,6 +78,8 @@ public final class ShadeFrame {
 	public float dayTime, gameTimeSeconds, exposure = 0f, partialTick;
 	/** The water's animation clock in seconds (sunPath.w): real time with mcopt.shade.waterClock (smooth), else gameTimeSeconds. */
 	public float waterTime;
+	/** (FT2.8) The sky's slow clock in seconds (ShadeLook.clock2.x): the water's, wrapped every 65536 s instead of 4096. */
+	public float skyTime;
 	public float jitterX, jitterY, prevJitterX, prevJitterY;
 	/** TAA render scale for texture gradients (cameraBlock.w; mip bias = log2 of it), 1 at native resolution. */
 	public float mipScale = 1f;

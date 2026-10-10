@@ -504,8 +504,10 @@ static inline float3 cloudSampleLight(float tauL, float dUp, float d, float st, 
 
 // The cumulus layer along dir (camera-relative world, unit). steps/lsteps: primary and light samples; q: best density
 // quality; jitter in [0, 1).
+// foot: the radians one march sample covers (the noise mip by distance): the screen march's windDir.w, the dome's own texel
+// (FT2.8, audit idx 15: the dome took the screen's, 2-3.5 mips too sharp for its 128 x 64 texels: reflected clouds sparkled)
 static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float jitter, constant CloudParams &c, texture2d<half> weather,
-                              texture3d<half> noise) {
+                              texture3d<half> noise, float foot) {
 	CloudResult o;
 	o.S = 0.0;
 	o.T = 1.0;
@@ -594,8 +596,8 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		}
 		// mip of the noise for this sample's footprint (pixel angle x distance)
 		// (M3.1: dithered per sample for the nearest-level sampler; CLOUD_DEV_OLD_MIP: M3's, whose level was ignored)
-		float lod = cloudDev(c, CLOUD_DEV_OLD_MIP) ? max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0)
-			: max(log2(max(t * c.windDir.w, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
+		float lod = cloudDev(c, CLOUD_DEV_OLD_MIP) ? max(log2(max(t * foot, 1e-3) / CLOUD_NOISE_TEXEL), 0.0)
+			: max(log2(max(t * foot, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
 		// skylight from above through what is left above this point (one cheap sample), bounce from below
 		float above = c.layer.y - y;
 		// (CLOUD_MODE_BATCH) a sample that will need a light march fetches for it together with its own density (wasted
@@ -856,7 +858,7 @@ static inline float cloudHorizonFade(float3 dir, constant CloudParams &c) {
 
 // Cumulus + cirrus toward dir with aerial perspective: (S, T) and the apparent distance (-1: no cloud).
 static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitter, constant ShadeFrame &f, constant CloudParams &c,
-                            texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS) {
+                            texture2d<half> weather, texture3d<half> noise, texture2d<half> lut, sampler lutS, float foot) {
 	// (M3.3 CLOUD_MODE_BATCH: the cirrus' first fetch and the sky LUT are fetched before the cumulus march and wait alongside
 	// it; the march is latency-bound, a fetch more costs less than one more wait after it)
 	CloudResult ci, cu;
@@ -864,11 +866,16 @@ static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitt
 	float3 skyPre = 0.0;
 	if (batch) {
 		CloudCirrusPre pre = cloudCirrusBegin(dir, c, weather);
-		skyPre = shadeSkyLookup(dir, lut, lutS, f);
-		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+		// (FT2.8, audit idx 30) the sky only for a ray that can meet a cloud (M3.1's "no lookup for the empty rays", kept in the
+		// batch): a cumulus stretch (cloudSegment, ALU only), the cirrus plane, or the dev path that always takes it
+		CloudRay rs = cloudRay(dir, c);
+		float s0, s1;
+		if (c.art.w > 0.5 || pre.t > 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH) || cloudSegment(rs, c.layer.x, c.layer.y, c.misc.z, c.march.z, s0, s1))
+			skyPre = shadeSkyLookup(dir, lut, lutS, f);
+		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise, foot);
 		ci = cloudCirrusEnd(pre, dir, c, weather);
 	} else {
-		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise);
+		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise, foot);
 		ci = cloudCirrus(dir, c, weather);
 	}
 	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)
@@ -925,7 +932,7 @@ fragment CloudMarchOut cloud_march(CloudVsOut in [[stage_in]], constant ShadeFra
 	// golden-ratio sequence
 	float seed = cloudMode(c, CLOUD_MODE_STABLE) ? shadeHash01(shadeHash3(int3(int2(hp), 0), 0x2c1b3c6du)) : shadeNoise(hp, 0);
 	float jitter = fract(seed + visit * 0.6180339887);
-	CloudResult r = cloudSky(dir, int(c.march.x), int(c.march.y), 2, jitter, f, c, weather, noise, lut, lutS);
+	CloudResult r = cloudSky(dir, int(c.march.x), int(c.march.y), 2, jitter, f, c, weather, noise, lut, lutS, c.windDir.w);
 	CloudMarchOut o;
 	o.color = half4(half3(min(r.S, 60000.0)), half(r.T));
 	float dist = r.dist;
@@ -1245,7 +1252,10 @@ fragment half4 cloud_dome(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[b
 	// every 4th frame, and at performance/balanced it runs every 8th: steps of 0.236, a slow ramp over ~4 updates that the
 	// 0.4 blend averaged into a sweeping bias, slowly crawling bands on reflected clouds)
 	float jitter = fract(shadeNoise(in.position.xy, 0) + c.dome.x * 0.6180339887);
-	CloudResult r = cloudSky(dir, int(c.dome.w), 2, 1, jitter, f, c, weather, noise, lut, lutS);
+	// one texel's angle: the geometric mean of its azimuth (2 pi / width) and elevation (pi/2 / height) spans
+	float2 dsz = float2(prev.get_width(), prev.get_height());
+	float foot = sqrt((6.2831853 / dsz.x) * (1.5707963 / dsz.y));
+	CloudResult r = cloudSky(dir, int(c.dome.w), 2, 1, jitter, f, c, weather, noise, lut, lutS, foot);
 	half4 now = half4(half3(min(r.S, 60000.0)), half(r.T));
 	if (c.frame.z > 0.5) return now;
 	return mix(prev.read(uint2(in.position.xy)), now, half(c.dome.z));

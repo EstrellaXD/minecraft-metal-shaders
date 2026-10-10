@@ -144,7 +144,7 @@ int main(int argc, const char **argv) {
 		}
 		const float *p0 = params.bytes;
 		int hw = (int) p0[32], hh = (int) p0[33], mw = (int) p0[34], mh = (int) p0[35];
-		int dw = (int) p0[88], dh = (int) p0[89];
+		int dw = 128, dh = 64; // CloudConfig.DOME_W / DOME_H (FT2.8: CloudParams.dome.x is the dome's update count, not its width)
 		id<MTLRenderPipelineState> march = pso(cl, @"cloud_vs", @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float);
 		// the resolve and its data target: M3.3 mode bit 1 (CloudParams.shadowDir.w) = cloud_resolve_st with R16Uint (age +
 		// distance), else cloud_resolve with R8 (age); CLOUDS_RESOLVE / CLOUDS_DATAFMT (rg16f, r16u, r16f, r16un, r8) override (experiments)

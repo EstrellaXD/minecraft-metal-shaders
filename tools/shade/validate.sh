@@ -26,6 +26,12 @@ for f in variants/*.metal; do
 	./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f"; fail=1; }
 done
 ./pipecheck sodium variants/shade_translucentnowater.vs.metal variants/shade_translucentnowater.fs.metal || fail=1
+# Distant Horizons' LOD terrain: our vertex and fragment stages agree (FT2.8: the packed flat word)
+for v in dh_terrain dh_terrain_jitter; do
+	for fs in dh_terrain dh_terrain_water; do
+		PIPECHECK_HDR= ./pipecheck auto "variants/$v.vs.metal" "variants/$fs.fs.metal" || fail=1
+	done
+done
 ./pipecheck sodium variants/hdr_translucentnowater.vs.metal variants/hdr_translucentnowater.fs.metal || fail=1
 for k in solid cutout translucent; do
 	for p in up shade hdr; do

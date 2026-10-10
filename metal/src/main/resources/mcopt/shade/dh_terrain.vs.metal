@@ -3,7 +3,8 @@
 // FT1: vertex stage for Distant Horizons' LOD terrain (pipelines distanthorizons:opaque_terrain / transparent_terrain),
 // written for mcopt's shade model; it replaces DH's own stage (ShadeDh registers it). Only DH's data interface is shared
 // (vertex attributes and uniform blocks, read from mcopt's translation of its pipeline): the decoding below is ours. DH's
-// lightmap lookup is gone: the light levels go to the fragment stage raw and the shade model lights the LOD.
+// lightmap lookup is gone: the light levels go to the fragment stage raw (FT2.8: packed with the face and tile in one flat
+// word) and the shade model lights the LOD.
 //
 // Vertex format (DH 3.3.x): position in blocks relative to the buffer's model offset (uint3), meta (low byte: the two
 // light nibbles; second byte: micro-offset sign bits, which move LOD faces a hair outward on x / z so neighbouring LOD
@@ -40,10 +41,11 @@ struct DhOut {
 	float3 p [[user(locn0)]];          // camera-relative world position (blocks)
 	float3 cell [[user(locn1)]];       // position in the buffer's block grid: the texture tile's coordinates
 	half4 color [[user(locn2)]];       // block colour (sRGB)
-	half2 light [[user(locn3), flat]]; // x block light, y sky light, 0..1
-	half3 lightmap [[user(locn6), flat]]; // the game's lightmap at those levels: the look where the shade model does not light
-	uint face [[user(locn4), flat]];
-	uint tile [[user(locn5), flat]];
+	// (FT2.8, audit idx 111) one flat word instead of 7 flat components (light, lightmap, face, tile: ~70 % of the LOD
+	// fragment time went to the vertex stage, its outputs per vertex on a very dense mesh): bits 0-7 the light nibbles (DH's
+	// meta low byte), 8-10 the face, 11-31 the texture tile (0 = none). dh_terrain.fs unpacks it, and reads the game's
+	// lightmap itself where the shade model doesn't light
+	uint pk [[user(locn3), flat]];
 };
 
 vertex DhOut main0(DhIn in [[stage_in]], constant DhShared &u [[buffer(MCOPT_SLOT_vertSharedUniformBlock)]],
@@ -77,17 +79,6 @@ vertex DhOut main0(DhIn in [[stage_in]], constant DhShared &u [[buffer(MCOPT_SLO
 	o.p = p;
 	o.cell = cell;
 	o.color = u.whiteWorld != 0u ? half4(1.0h) : half4(in.color);
-	uint l = in.meta & 0xFFu;
-#ifdef SHADE_DH_SKY_HIGH
-	o.light = half2(half(l & 15u), half(l >> 4)) / 15.0h;
-#else
-	o.light = half2(half(l >> 4), half(l & 15u)) / 15.0h;
-#endif
-	// (u = block light, v = sky light, texel centres; Nether / End without the dims module, the setup fallback). FT2: only
-	// where dh_terrain.fs uses it (a texture read per vertex otherwise: the LODs' vertex stage was 1.4 ms, profdh1)
-	bool vanillaLit = sf.flags.x > SHADE_DIM_END || (sf.flags.x != SHADE_DIM_OVERWORLD && !shadeDimsLit(sf));
-	o.lightmap = vanillaLit ? half3(lightMap.sample(lightMapSmplr, (float2(o.light) * 15.0 + 0.5) / 16.0, level(0.0)).rgb) : half3(1.0h);
-	o.face = in.face;
-	o.tile = in.tile;
+	o.pk = (in.tile << 11) | ((in.face & 7u) << 8) | (in.meta & 0xFFu);
 	return o;
 }

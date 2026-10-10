@@ -65,6 +65,8 @@ int main(int argc, const char **argv) {
 					case MTLDataTypeFloat3: f = MTLVertexFormatFloat3; size = 12; break;
 					case MTLDataTypeFloat2: f = MTLVertexFormatFloat2; size = 8; break;
 					case MTLDataTypeInt2: f = MTLVertexFormatShort2; size = 4; break;
+					case MTLDataTypeUInt3: f = MTLVertexFormatUInt3; size = 12; break; // (Distant Horizons' LOD vertices)
+					case MTLDataTypeUInt: f = MTLVertexFormatUInt; size = 4; break;
 					default: f = MTLVertexFormatFloat; size = 4; break;
 				}
 				vd.attributes[a.attributeIndex].bufferIndex = 27; vd.attributes[a.attributeIndex].offset = off; vd.attributes[a.attributeIndex].format = f;

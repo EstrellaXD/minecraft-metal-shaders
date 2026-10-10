@@ -129,6 +129,10 @@ public final class ShadePost {
 	/** M2.2: under TAAU the final pass reads depth and the volumetric light where this frame's jittered raster shows the pixel's
 	 * scene point (mcopt.shade.vl.unjitter, default true; false = at the output uv, M2/M2.1: they moved by the jitter). */
 	private static final boolean VL_UNJITTER = Boolean.parseBoolean(System.getProperty("mcopt.shade.vl.unjitter", "true"));
+	/** (FT2.8, audit idx 110) DH's composite draws on the world's depth, so the next world pass continues its encoder. */
+	private static final boolean DH_MERGE_MAIN = !"false".equals(System.getProperty("mcopt.shade.dh.mergeMain"));
+	/** (FT2.8, audit idx 112) DH's far fade and intermediate copy don't load the colour they overwrite whole. */
+	private static final boolean DH_NO_LOAD = !"false".equals(System.getProperty("mcopt.shade.dh.noLoad"));
 	/** Bloom's first level: xy the part of its source's uv range that holds the image (the TAAU sub-rect). */
 	private static final ByteBuffer downParams = ByteBuffer.allocateDirect(16).order(ByteOrder.LITTLE_ENDIAN);
 	/** This frame's volumetric light for the final pass (setVolumetric): light + T, its distances, max distance. */
@@ -344,6 +348,7 @@ public final class ShadePost {
 		// colour) sees the display-referred image in main and composites there, as without shading
 		String label = d.label().get();
 		var colors = d.colorAttachments();
+		boolean dhComposite = false;
 		if (label != null && label.startsWith("distantHorizons:")) {
 			// FT2 (ShadeDh.direct): DH's own passes draw into its own targets as they are; only its last copy into main (its
 			// composite) is redirected into the HDR target like a world pass (the format adapter turns its display-referred
@@ -356,6 +361,17 @@ public final class ShadePost {
 			if (direct && !bridgeOpen) applyPendingClear();
 			if (!(intoMain && direct && !bridgeOpen)) {
 				if (ShadeConfig.DH_BRIDGE && !bridgeOpen && !direct && !mcopt.metal.shade.dims.DimsDebug.noBridge()) openBridge();
+				// (FT2.8, audit idx 112) DH's far fade and its copy into its own target draw one full-screen triangle that writes
+				// every pixel (no blend; dh_far_fade.fs / dh_copy.fs without MCOPT_HDR): their colour isn't loaded first
+				if (direct && DH_NO_LOAD && !intoMain && colors.size() == 1 && colors.get(0) != null && colors.get(0).clearValue().isEmpty()
+					&& colors.get(0).textureView().baseMipLevel() == 0
+					&& ("distantHorizons:DhFarFadeRenderer".equals(label) || "distantHorizons:CopyRenderer".equals(label))) {
+					var t = colors.get(0).textureView().texture();
+					// (a pending clear of it is moot too; left pending, the backend would flush it as a pass of its own)
+					MetalBridge.takePendingColorClear(encoder, t);
+					return new MetalHooks.Redirect(new long[] {MetalBridge.textureHandle(t)}, new float[][] {MetalBridge.DONT_CARE}, t.getWidth(0),
+						t.getHeight(0), 0, MetalHooks.Redirect.NO_CLEAR, null, null);
+				}
 				return null;
 			}
 			bridgeUsed = true; // (the final pass's "DH drew this frame" bit)
@@ -364,6 +380,7 @@ public final class ShadePost {
 				System.out.println("[mcopt] shade: Distant Horizons passes seen: its composite goes straight into the HDR frame (FT2; mcopt.shade.dh.direct=false: through the bridge)");
 			}
 			mcopt.metal.shade.dims.DimsDebug.note("DH composite straight into the HDR target");
+			dhComposite = true;
 		}
 		if (colors.size() != 1 || colors.get(0) == null) return null;
 		var attachment = colors.get(0);
@@ -384,7 +401,14 @@ public final class ShadePost {
 			clears = new float[][] {{h[0], h[1], h[2], clear[3]}};
 		}
 		// M3.1: this frame's lean tag (ShadeLean) selects the Sodium terrain's variant without the module code it can't use
-		return MetalHooks.Redirect.formats(new long[] {hdr[frame & 1]}, clears, width, height, new int[] {ShadeConfig.HDR_FORMAT | ShadeLean.tag() << ShadeMsl.LEAN_SHIFT});
+		int[] formats = {ShadeConfig.HDR_FORMAT | ShadeLean.tag() << ShadeMsl.LEAN_SHIFT};
+		// (FT2.8, audit idx 110) DH's composite (no depth test, no depth write: its own depth is a dummy) on the world's depth,
+		// loaded: the game's 'Main' pass right after it then continues the same encoder instead of storing the HDR target and
+		// loading it again (and the dummy depth's load + store). mcopt.shade.dh.mergeMain=false: on its own depth, as FT2.7
+		if (dhComposite && worldDepth != null && DH_MERGE_MAIN)
+			return new MetalHooks.Redirect(new long[] {hdr[frame & 1]}, clears, width, height, MetalBridge.textureHandle(worldDepth),
+				MetalHooks.Redirect.NO_CLEAR, null, formats);
+		return MetalHooks.Redirect.formats(new long[] {hdr[frame & 1]}, clears, width, height, formats);
 	}
 
 	/**

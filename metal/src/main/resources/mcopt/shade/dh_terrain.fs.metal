@@ -25,10 +25,7 @@ struct DhIn {
 	float3 p [[user(locn0)]];
 	float3 cell [[user(locn1)]];
 	half4 color [[user(locn2)]];
-	half2 light [[user(locn3), flat]];
-	half3 lightmap [[user(locn6), flat]];
-	uint face [[user(locn4), flat]];
-	uint tile [[user(locn5), flat]];
+	uint pk [[user(locn3), flat]]; // (FT2.8) light nibbles, face, tile: dh_terrain.vs
 };
 
 // face 0..5: down, up, north (-z), south (+z), west (-x), east (+x)
@@ -70,12 +67,19 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
                       texture2d<float> atlas [[texture(MCOPT_SLOT_uBlockAtlas)]], sampler atlasSmplr [[sampler(MCOPT_SLOT_uBlockAtlas)]],
                       constant ShadeFrame &sf [[buffer(16)]], constant ShadeLook &sl [[buffer(17)]], constant ShadeGpu &sg [[buffer(18)]],
                       constant ShadeResources &sr [[buffer(19)]], texture2d<half> skyLut [[texture(17)]], sampler skyLutSmplr [[sampler(13)]],
+                      texture2d<float> lightMap [[texture(MCOPT_SLOT_uLightMap)]], sampler lightMapSmplr [[sampler(MCOPT_SLOT_uLightMap)]],
                       float4 fragCoord [[position]]) {
+	uint face = (in.pk >> 8) & 7u, tile = in.pk >> 11, l = in.pk & 0xFFu;
+#ifdef SHADE_DH_SKY_HIGH
+	half2 light = half2(half(l & 15u), half(l >> 4)) / 15.0h;
+#else
+	half2 light = half2(half(l >> 4), half(l & 15u)) / 15.0h; // x block light, y sky light, 0..1
+#endif
 	float3 p = in.p;
 	float d = length(p);
 	// the tile's mip gradients, before any discard (the whole 2x2 quad takes part), as at native resolution under TAAU
 	// (cameraBlock.w: the render scale, mip bias log2(scale), like Sodium's terrain)
-	float2 fc = dhFaceCoord(in.cell, in.face);
+	float2 fc = dhFaceCoord(in.cell, face);
 	float mipScale = (sf.cameraBlock.w > 0.0 ? sf.cameraBlock.w : 1.0) * 16.0;
 	float2 tdx = dfdx(fc) * mipScale, tdy = dfdy(fc) * mipScale;
 	// the game's chunks own everything nearer than DH's clip distance: a hard cut, or a dithered one over 1-1.5x of it
@@ -90,21 +94,22 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 	// albedo: the block's colour, with the tile's detail around it (the tile stores the texture relative to its mean,
 	// 0.5 = the mean: x2), weighed by the tile's alpha
 	half3 srgb = in.color.rgb;
-	if (in.tile != 0u) {
-		float2 cellOrigin = float2(float(in.tile & 255u), float(in.tile >> 8)) * 16.0;
+	if (tile != 0u) {
+		float2 cellOrigin = float2(float(tile & 255u), float(tile >> 8)) * 16.0;
 		float2 asz = float2(atlas.get_width(), atlas.get_height());
-		float4 t = atlas.sample(atlasSmplr, (cellOrigin + dhTileUv(in.cell, in.face) * 16.0) / asz, gradient2d(tdx / asz, tdy / asz));
+		float4 t = atlas.sample(atlasSmplr, (cellOrigin + dhTileUv(in.cell, face) * 16.0) / asz, gradient2d(tdx / asz, tdy / asz));
 		srgb = mix(srgb, saturate(srgb * half3(t.rgb) * 2.0h), half(t.a));
 	}
 	// not lit by the shade model (Nether / End without the dims module's light, the setup fallback's vanilla frames): the
 	// game's lightmap, as DH draws it, and the game's fog colour over the environmental range
 	if (sf.flags.x > SHADE_DIM_END || (sf.flags.x != SHADE_DIM_OVERWORLD && !shadeDimsLit(sf))) {
-		float3 v = float3(srgb * in.lightmap);
+		// the game's lightmap at those levels (u = block light, v = sky light, texel centres), as DH draws it
+		float3 v = float3(srgb) * lightMap.sample(lightMapSmplr, (float2(light) * 15.0 + 0.5) / 16.0, level(0.0)).rgb;
 		float fa = saturate((d - sf.fogRange.x) / max(sf.fogRange.y - sf.fogRange.x, 1.0)) * sf.fogColor.a;
 		return float4(mix(v, sf.fogColor.rgb, fa), in.color.a);
 	}
-	half3 n = dhNormal(in.face);
-	half block = in.light.x, sky = in.light.y;
+	half3 n = dhNormal(face);
+	half block = light.x, sky = light.y;
 	half3 albedo = shadeToLinear(srgb);
 	bool overworld = sf.flags.x == SHADE_DIM_OVERWORLD;
 	float ex = max(sg.exposure.x, 1e-6);
@@ -144,7 +149,7 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		// sun's glint with the near water's far roughness (its glitter road goes on past the chunks). A flat surface out
 		// here: waves average out over a LOD pixel. The reflection draws opaque in proportion to its Fresnel weight, as the
 		// near water's does; DH's water colour (lit) shows through the rest. No terrain in it (no depth for SSR out here).
-		if (in.face == 1u && in.color.a < 0.99h && !shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
+		if (face == 1u && in.color.a < 0.99h && !shadeDev(sf, SHADE_DEV_FLAT_LIGHT)) {
 			float3 v = p / max(d, 1e-4);
 			// the waves a LOD pixel averages over (slope ~0.2): at grazing views the facets that face the eye reflect at a
 			// steeper angle (less: Fresnel ~0.34, not 1) and higher into the sky (bluer than the horizon). As a flat mirror the far

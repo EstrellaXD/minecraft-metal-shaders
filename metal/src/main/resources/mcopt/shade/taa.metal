@@ -41,6 +41,7 @@ struct TaaParams {
 	float4 blend;     // 192  x minimum blend weight of the current frame, y clip box size (sigmas), z history age cap, w 1 = no history
 	float4 misc;      // 208  x history rescale (exposure now / then; M2 reads ShadeGpu.exposure at buffer(1) instead), y unused (HDR input: function constant TAA_HDR), z reactive strength, w debug view (taau_debug_fs)
 	float4 sharpen;   // 224  x strength (0 off), y current-frame weight floor in motion (full at 0.5 px/frame), zw unused
+	float4x4 reproj;  // 240  (FT2.8, audit idx 64) prevVP x invCur: this frame's unjittered clip -> last frame's, times h.w
 };
 
 // M3 per-object motion (bible E18 step 4, original, cheap): the entities that moved since last frame (ShadeMotion, at most
@@ -89,7 +90,18 @@ static inline float3 taaExpand(float3 c) {
 // Positions in float (they span the whole output), weights and colours in half (this pass is bound by ALU and latency, not
 // bandwidth: tools/shade/taatest perf). centreA: the alpha of the centre tap, i.e. the bilinear history age, so the age
 // needs no fetch of its own.
-static inline half3 taaCatmullRom(texture2d<half> tex, sampler s, float2 uv, float2 size, float2 invSize, thread half &centreA) {
+// (FT2.8, audit idx 69) Each tap rescaled and range-compressed before the weights (with TAA_HDR; Karis 2014), so the result is
+// in the resolve's compressed space: on linear HDR the spline's negative outer lobes rang 1-2 px outside the sun disc and water
+// glints (more than ~15x their surroundings) whenever the camera moved, below 0 per channel (dark or hue-shifted rings, fed
+// back at 0.8-0.9). -Dmcopt.shade.taaCompressTaps=false (TAA_LINEAR_HISTORY, at startup): FT2.7's linear filter, then compress.
+// (+0.035 ms at Retina 0.8, taatest perf TAAHDR=1; a live switch between the two cost +0.1 ms: two inlined filters)
+static inline half3 taaTap(half3 c, float rescale, bool comp) {
+	if (!comp) return c;
+	float3 x = float3(c) * rescale;
+	return half3(x / (1.0 + dot(x, float3(0.2126, 0.7152, 0.0722))));
+}
+static inline half3 taaCatmullRom(texture2d<half> tex, sampler s, float2 uv, float2 size, float2 invSize, thread half &centreA,
+                                  float rescale = 1.0, bool comp = false) {
 	float2 pos = uv * size;
 	float2 t1 = floor(pos - 0.5) + 0.5;     // centre of the texel at grid index 1
 	half2 f = half2(pos - t1);
@@ -101,11 +113,11 @@ static inline half3 taaCatmullRom(texture2d<half> tex, sampler s, float2 uv, flo
 	float2 t0 = (t1 - 1.0) * invSize, t3 = (t1 + 2.0) * invSize, t12 = (t1 + float2(w2 / w12)) * invSize;
 	half4 cc = tex.sample(s, t12);
 	centreA = cc.a;
-	half3 c = tex.sample(s, float2(t12.x, t0.y)).rgb * (w12.x * w0.y)
-		+ tex.sample(s, float2(t0.x, t12.y)).rgb * (w0.x * w12.y)
-		+ cc.rgb * (w12.x * w12.y)
-		+ tex.sample(s, float2(t3.x, t12.y)).rgb * (w3.x * w12.y)
-		+ tex.sample(s, float2(t12.x, t3.y)).rgb * (w12.x * w3.y);
+	half3 c = taaTap(tex.sample(s, float2(t12.x, t0.y)).rgb, rescale, comp) * (w12.x * w0.y)
+		+ taaTap(tex.sample(s, float2(t0.x, t12.y)).rgb, rescale, comp) * (w0.x * w12.y)
+		+ taaTap(cc.rgb, rescale, comp) * (w12.x * w12.y)
+		+ taaTap(tex.sample(s, float2(t3.x, t12.y)).rgb, rescale, comp) * (w3.x * w12.y)
+		+ taaTap(tex.sample(s, float2(t12.x, t3.y)).rgb, rescale, comp) * (w12.x * w3.y);
 	half wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
 	return max(c / wsum, 0.0h); // the spline's negative lobes can ring below 0 at hard edges
 }
@@ -159,11 +171,17 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	// Camera motion from depth: this pixel's (nearest) surface in last frame's clip space; on a moving entity (M3 movers)
 	// its surface point moved by that entity's render-position change since last frame.
 	float2 ndc = q * p.output.zw * 2.0 - 1.0;
-	float4 h = p.invCur * float4(ndc, zmax, 1.0);
-	float3 world = h.xyz / h.w;
-	float3 moved = movers.count.x > 0u && zmax > 0.0 ? taaMoverDelta(world, movers) : float3(0.0);
-	float4 prev = p.prevVP * float4(world - moved, 1.0);
-	float viewDepth = dot(p.curRowW, float4(world, 1.0));
+	// (FT2.8, audit idx 64) the view depth is 1 / h.w (curRowW is row 3 of the viewProj invCur inverts), and with no movers this
+	// frame (uniform) last frame's clip is (prevVP invCur) v / h.w: one matrix (multiplied on the CPU in double), no world point
+	float4 v4 = float4(ndc, zmax, 1.0);
+	float iw = 1.0 / dot(float4(p.invCur[0].w, p.invCur[1].w, p.invCur[2].w, p.invCur[3].w), v4);
+	float4 prev = (p.reproj * v4) * iw;
+	float viewDepth = iw;
+	float3 moved = float3(0.0);
+	if (movers.count.x > 0u && zmax > 0.0) { // prevVP (world - moved, 1) = the above - prevVP (moved, 0)
+		moved = taaMoverDelta((p.invCur * v4).xyz * iw, movers);
+		prev -= p.prevVP * float4(moved, 0.0);
+	}
 	float2 uvPrev = prev.xy / prev.w * 0.5 + 0.5;
 
 	TaaOut o;
@@ -184,7 +202,11 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 		bool skyThen = stored > 60000.0;
 		float tolerance = 0.03 * prev.w + 0.1;
 		disocclusion = skyNow || skyThen ? half(skyNow != skyThen) : half(saturate((abs(stored - prev.w) - tolerance) / tolerance));
+#ifndef TAA_LINEAR_HISTORY
+		history = taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age, float(rescale), taaHdr);
+#else
 		history = taaCompress(taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age) * rescale);
+#endif
 	}
 	// Rectify: the history may only take colours this frame's neighbourhood could produce (variance box). It is clipped
 	// toward the mean along the line between them, which (unlike a per-channel clamp) keeps the history's hue; outside = how

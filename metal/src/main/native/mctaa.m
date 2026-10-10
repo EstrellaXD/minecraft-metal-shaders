@@ -163,7 +163,7 @@ int mc_taa_resize(Taa *t, Ctx *ctx, int width, int height) {
 
 // Resolves this frame: color/depth = the jittered world render (textures of any size; params say which sub-rect is live),
 // reactive = an R8 mask in input pixels or NULL, dst = where the sharpened result goes (NULL: only the history is written).
-// params: struct TaaParams of taa.metal (240 bytes). Ends whatever encoder is open; encodes into the frame's command buffer.
+// params: struct TaaParams of taa.metal (304 bytes since FT2.8). Ends whatever encoder is open; encodes into the frame's command buffer.
 void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth, id<MTLTexture> reactive, id<MTLTexture> dst,
 	const void *params, int paramsLength) {
 	if (!t->hist[0]) return;

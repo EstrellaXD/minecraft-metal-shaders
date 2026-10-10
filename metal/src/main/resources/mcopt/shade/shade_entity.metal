@@ -99,7 +99,15 @@ static float4 shadeEntityShade(float4 vanilla, float4 albedoSrgb, float4 overlay
 		shadow = f.flags.x == SHADE_DIM_END ? shadeShadow(shadowMap, cmp, f, p, hn, thin) : half(1.0);
 		radiance = shadeLitDims(albedo, hn, block, shadow, thin, false, p, f, L);
 	} else {
-		shadow = sky <= 0.3h ? half(1.0) : shadeShadow(shadowMap, cmp, f, p, hn, thin);
+#ifndef MCOPT_HAND
+		// (FT2.8, audit idx 99) the receiver 0.1 block toward the light: the entity casters are last frame's positions, so a mob,
+		// player, horse or boat moving away from the light was shadowed by its own one-frame-old copy (its sun-facing side dark
+		// or banded at sunset; the depth tolerance was ~0.07 block, a sprint is ~0.09 block per frame at 60 fps)
+		float3 ps = p + f.lightDirWorld.xyz * 0.1;
+#else
+		float3 ps = p;
+#endif
+		shadow = sky <= 0.3h ? half(1.0) : shadeShadow(shadowMap, cmp, f, ps, hn, thin);
 #ifndef MCOPT_HAND
 		// M3 clouds: the volumetric clouds' shadow on mobs like on the terrain (1 when the clouds are off; not the hand: hand-space p)
 		if (sky > 0.3h) shadow *= half(shadeCloudShadow(p, L, R.cloudShadow));

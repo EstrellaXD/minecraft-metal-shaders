@@ -29,6 +29,7 @@ void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth
 typedef struct {
 	simd_float4x4 invCur, prevVP;
 	simd_float4 curRowW, input, output, jitter, blend, misc, sharpen;
+	simd_float4x4 reproj; // prevVP x invCur (FT2.8)
 } Params;
 
 static NSString *sceneSource = @
@@ -206,6 +207,7 @@ static void run(Ctx *ctx, Enc *enc, Taa *taa, const char *name, Motion m, float 
 		p.invCur = simd_inverse(vp);
 		p.prevVP = f == 0 ? vp : simd_mul(prevVP, translation(cam.x - prevCam.x, cam.y - prevCam.y, cam.z - prevCam.z));
 		p.curRowW = simd_make_float4(vp.columns[0].w, vp.columns[1].w, vp.columns[2].w, vp.columns[3].w);
+		p.reproj = simd_mul(p.prevVP, p.invCur);
 		p.input = simd_make_float4(aw, ah, 0, 0);
 		p.output = simd_make_float4(W, H, 1.0f / W, 1.0f / H);
 		p.jitter = simd_make_float4(jx, jy, (float) aw / W, (float) ah / H);
@@ -275,7 +277,7 @@ int main(int argc, const char **argv) {
 		dev = ctx->device;
 		Enc *enc = mc_enc_new(ctx);
 		NSString *src = [NSString stringWithContentsOfFile:[NSString stringWithUTF8String:argv[1]] encoding:NSUTF8StringEncoding error:nil];
-		Taa *taa = mc_taa_new(ctx, src.UTF8String, getenv("TAALOSSY") ? 2 : 0, err, sizeof err);
+		Taa *taa = mc_taa_new(ctx, src.UTF8String, (getenv("TAALOSSY") ? 2 : 0) | (getenv("TAAHDR") ? 1 : 0), err, sizeof err); // TAAHDR: the M2 (TAA_HDR) variant
 		if (!taa) { printf("FAIL compile taa.metal: %s\n", err); return 1; }
 		NSError *e = nil;
 		id<MTLLibrary> lib = [dev newLibraryWithSource:sceneSource options:nil error:&e];
@@ -352,6 +354,7 @@ int main(int argc, const char **argv) {
 				Params p = {simd_inverse(vp), vp, simd_make_float4(vp.columns[0].w, vp.columns[1].w, vp.columns[2].w, vp.columns[3].w),
 					simd_make_float4(aw, ah, 0, 0), simd_make_float4(W, H, 1.0f / W, 1.0f / H), simd_make_float4(jx, jy, (float) aw / W, (float) ah / H),
 					simd_make_float4(0.08f, 1.25f, 32, f == 0), simd_make_float4(1, 0, 0, 0), simd_make_float4(getenv("NOSHARP") ? 0.0f : 0.3f, 0, 0, 0)};
+				p.reproj = simd_mul(p.prevVP, p.invCur);
 				mc_taa_resolve(enc, taa, f % 2 ? color2 : color, f % 2 ? depth2 : depth, nil, getenv("NOOUT") ? nil : out, &p, sizeof p);
 				[cbs addObject:mc_enc_commit(enc)];
 				if (cbs.count > 3) [cbs[cbs.count - 4] waitUntilCompleted];

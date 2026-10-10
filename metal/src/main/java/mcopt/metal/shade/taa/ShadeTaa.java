@@ -56,7 +56,7 @@ public final class ShadeTaa {
 	private static final double TELEPORT = 8;
 	/** Frames further apart than this (a menu, a loading screen) start a fresh history. */
 	private static final long GAP_NANOS = 500_000_000L;
-	private static final int PARAMS = 240;
+	private static final int PARAMS = 304;
 
 	private static @Nullable ShadeTaa instance;
 	private static boolean failed;
@@ -94,6 +94,9 @@ public final class ShadeTaa {
 	private float jitterX, jitterY;
 	private boolean jittered, swapped, reset = true;
 	private final Matrix4f viewProj = new Matrix4f(), invViewProj = new Matrix4f(), prevViewProj = new Matrix4f(), reprojection = new Matrix4f();
+	/** (FT2.8, audit idx 64) reprojection x invViewProj, multiplied in double: TaaParams.reproj. */
+	private final org.joml.Matrix4d combinedD = new org.joml.Matrix4d(), invD = new org.joml.Matrix4d();
+	private final Matrix4f combined = new Matrix4f();
 	private @Nullable Vec3 position, prevPosition;
 	private @Nullable Object level;
 	private long lastResolve;
@@ -142,7 +145,9 @@ public final class ShadeTaa {
 			failed = true;
 			return null;
 		}
-		ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.resource("taa.metal"));
+		// (FT2.8, audit idx 69) -Dmcopt.shade.taaCompressTaps=false: the history's Catmull-Rom on linear HDR, as FT2.7
+		ByteBuffer source = MemoryUtil.memUTF8((Boolean.parseBoolean(System.getProperty("mcopt.shade.taaCompressTaps", "true")) ? "" : "#define TAA_LINEAR_HISTORY\n")
+			+ ShadeMsl.resource("taa.metal"));
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
 			mcopt.metal.shade.ShadeRobust.maybeFail("taa"); // M3.3: dev-only injected failure; inert unset
@@ -407,6 +412,8 @@ public final class ShadeTaa {
 			put4(p + 192, TaaConfig.alphaMin(), TaaConfig.clipGamma(still), 32, cut ? 1 : 0);
 			put4(p + 208, this.historyRescale, 0f, reactive != 0 ? 0.85f : 0f, TaaConfig.DEBUG); // no mask: the shader skips its read
 			put4(p + 224, sharpen, TaaConfig.motionAlpha(), 0, 0);
+			this.combinedD.set(this.reprojection).mul(this.invD.set(this.invViewProj));
+			this.combined.set(this.combinedD).getToAddress(p + 240);
 			TaaNative.resolve(this.enc, this.taa, color, depth, reactive, dst, p, PARAMS);
 		}
 		this.prevViewProj.set(this.viewProj);

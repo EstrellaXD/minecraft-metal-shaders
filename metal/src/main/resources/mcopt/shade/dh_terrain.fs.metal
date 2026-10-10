@@ -52,6 +52,13 @@ static inline float2 dhTileUv(float3 cell, uint face) {
 	return uv;
 }
 
+// (FT2.8, audit idx 107) dhTileUv's axes without the wrap: the tile sample's mip gradients (implicit ones jump by a whole
+// tile across every block edge, so the 2x2 quads there took mip ~4, the tile's flat mean: a 1-px grid along the block edges
+// of the nearer LODs that crawled with the TAAU jitter)
+static inline float2 dhFaceCoord(float3 cell, uint face) {
+	return face <= 1u ? cell.xz : face <= 3u ? cell.xy : cell.zy;
+}
+
 // 4x4 ordered threshold (0..15 / 16), for the dithered hand-over to the game's own chunks
 static inline float dhBayer(float2 px) {
 	uint2 i = uint2(px) & 3u;
@@ -66,6 +73,11 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
                       float4 fragCoord [[position]]) {
 	float3 p = in.p;
 	float d = length(p);
+	// the tile's mip gradients, before any discard (the whole 2x2 quad takes part), as at native resolution under TAAU
+	// (cameraBlock.w: the render scale, mip bias log2(scale), like Sodium's terrain)
+	float2 fc = dhFaceCoord(in.cell, in.face);
+	float mipScale = (sf.cameraBlock.w > 0.0 ? sf.cameraBlock.w : 1.0) * 16.0;
+	float2 tdx = dfdx(fc) * mipScale, tdy = dfdy(fc) * mipScale;
 	// the game's chunks own everything nearer than DH's clip distance: a hard cut, or a dithered one over 1-1.5x of it
 	// (SHADE_DH_NOCLIP, dev: none, to price the discard: a pipeline that may discard loses the GPU's hidden-surface removal)
 #ifndef SHADE_DH_NOCLIP
@@ -80,7 +92,8 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 	half3 srgb = in.color.rgb;
 	if (in.tile != 0u) {
 		float2 cellOrigin = float2(float(in.tile & 255u), float(in.tile >> 8)) * 16.0;
-		float4 t = atlas.sample(atlasSmplr, (cellOrigin + dhTileUv(in.cell, in.face) * 16.0) / float2(atlas.get_width(), atlas.get_height()));
+		float2 asz = float2(atlas.get_width(), atlas.get_height());
+		float4 t = atlas.sample(atlasSmplr, (cellOrigin + dhTileUv(in.cell, in.face) * 16.0) / asz, gradient2d(tdx / asz, tdy / asz));
 		srgb = mix(srgb, saturate(srgb * half3(t.rgb) * 2.0h), half(t.a));
 	}
 	// not lit by the shade model (Nether / End without the dims module's light, the setup fallback's vanilla frames): the

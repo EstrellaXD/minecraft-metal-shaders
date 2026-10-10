@@ -156,7 +156,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #endif
 #ifdef MCOPT_SHADE
     float3 p = in.v_Pos;
-    float fogValue = max(shadeVanillaFog(p, g.u_EnvironmentFog, g.u_RenderFog), 1.0 - float(in.v_Light.z));
+    // (FT2.8, audit idx 60) vanilla's fog amount where it is used (the Nether/End's unlit path, then after the shading): not live
+    // through the water's SSR march
+#define SHADE_FOG_VALUE (max(shadeVanillaFog(p, g.u_EnvironmentFog, g.u_RenderFog), 1.0 - float(in.v_Light.z)))
     // The face normal from the position's screen derivatives: a 2x2 pixel quad always shades one triangle, so this is that
     // triangle's plane (flat, exact). Its sign is arbitrary: turned toward the camera, which also lights both sides of
     // two-sided cutouts. Axis-aligned faces (nearly all of them) are snapped to their axis.
@@ -190,6 +192,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
             }
         }
 #endif
+        float fogValue = SHADE_FOG_VALUE;
         out.fragColor = float4(shadeVanillaOut(mix(color.xyz, g.u_FogColor.xyz, float3(fogValue * g.u_FogColor.w)), sl), color.w);
         return out;
     }
@@ -397,6 +400,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         }
 #endif
     }
+    float fogValue = SHADE_FOG_VALUE;
+#undef SHADE_FOG_VALUE
     if (!dims && !(waterFull && SHADE_WDEV_IS(sf, SHADE_WDEV_NO_FOG))) { // Nether/End: the final pass fogs
 #ifdef MCOPT_HDR
         radiance = shadeFogAir2(radiance, p, fogValue, 1.0 - float(in.v_Light.z), skyLut, skyLutSmplr, sf, sl, &sr);

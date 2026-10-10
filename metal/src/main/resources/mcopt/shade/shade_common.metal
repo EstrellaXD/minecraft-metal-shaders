@@ -136,7 +136,9 @@ static inline bool shadeDev(constant ShadeFrame &f, int bit) { return (int(f.sun
 // (2026-10-08 price1/price2 within noise: the clouds' dome, the rendered-sky reflection, caustics, M3.4's soft shadow; -0.05 to
 // -0.1: anisotropic waves, refraction shift, the per-lane hit reprojection, haze on SSR hits. A test inside shadeWaterHazed
 // crashed the Metal compiler service building the HDR translucent pipeline.)
-static inline int shadeWdev(constant ShadeFrame &f) { return (int(f.sunPath.z) >> 21) & 7; }
+// (FT2.8, audit idx 95/108) bit 23 is also ShadeDims' FLAG_DIMS_LIT in the Nether/End: the variants are read in the overworld
+// only, and shadeDimsLit outside it only (shade_dims.metal), so neither can take the other's bit.
+static inline int shadeWdev(constant ShadeFrame &f) { return f.flags.x == 0 ? (int(f.sunPath.z) >> 21) & 7 : 0; }
 // Only with -Dmcopt.shade.wdev=true (SHADE_WDEV_ON: present they cost ~0.09 ms in the lake spin, price5c), and only in the
 // variant for the camera above water (the full variant keeps FT1.3's code: the water shader is register-bound, price6).
 #if defined(SHADE_LEAN_ABOVE) && defined(SHADE_WDEV_ON)

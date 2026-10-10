@@ -50,6 +50,8 @@ public final class CloudParams {
 	/** Checkerboard N (1-4): one history pixel of each N x N block is marched per frame. */
 	public int checker = 3;
 	public boolean reset = true, domeValid;
+	/** Dome updates so far (the dome march's jitter steps by the golden ratio per update). */
+	public int domeUpdates;
 	/** The cloud shadow map is rendered this frame (else consumers keep reading the one rendered on an earlier frame). */
 	public boolean shadowUpdate = true;
 	public float base = 200f, top = 350f;
@@ -157,7 +159,7 @@ public final class CloudParams {
 		float relX = (float) (this.shadowOriginX - f.cameraX), relZ = (float) (this.shadowOriginZ - f.cameraZ);
 		put4(b, 320, extent, yRef, relX, relZ);
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
-		put4(b, 352, CloudConfig.DOME_W, CloudConfig.DOME_H, 0.4f, CloudConfig.DOME_STEPS);
+		put4(b, 352, this.domeUpdates & 0xffff, 0f, 0.4f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
 		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard (M3.3: at
 		// most 3, so a 4x4 checkerboard reads the noise from the same mip levels as 3x3: the same far billows)

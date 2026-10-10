@@ -73,7 +73,10 @@ fragment half4 shade_bloom_down0(ShadeFsOut in [[stage_in]], texture2d<half> src
 	// atomic per SIMD group that sees one; ShadeXdr reads ShadeGpu.xdrHot a frame or two later and keeps the XDR path on.
 	if (p.z > 0.0) {
 		float m = float(max(max(shadeLumaH(a), shadeLumaH(b)), max(shadeLumaH(c), shadeLumaH(d))));
-		if (simd_any(m > p.z) && simd_is_first()) atomic_fetch_or_explicit((device atomic_uint *) &gw.xdrHot, 1u, memory_order_relaxed);
+		// (audit idx 44: read before writing, so once one group set the flag the others don't queue a same-word RMW in L2)
+		if (simd_any(m > p.z) && simd_is_first()
+		    && atomic_load_explicit((device atomic_uint *) &gw.xdrHot, memory_order_relaxed) == 0u)
+			atomic_fetch_or_explicit((device atomic_uint *) &gw.xdrHot, 1u, memory_order_relaxed);
 	}
 	return half4((a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd), 1.0h);
 }
@@ -341,7 +344,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		} else {
 			v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale, P.q.y, P.q.z, (edgeFix & 2) != 0);
 		}
-		tv = float(v.a);
+		tv = P.v.x > 1.5 ? 1.0 : float(v.a); // (v.x 2: vlT is the history, a = distance; no medium dims the scene: FT2.8 idx 2)
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
 		float3 lit = c * tv;
 		float3 add = clamp(float3(v.rgb) * ex, -30000.0, 30000.0);

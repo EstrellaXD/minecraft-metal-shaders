@@ -34,6 +34,7 @@ typedef struct {
 	int veilRan;                         // the veil passes ran last frame (else veil[0] is stale: the fold skips the contrast once)
 	id<MTLTexture> lightR;               // fold (FT2.3): lightT blurred along the light's lines (what the final pass reads when it ran)
 	int radialRan;                       // the radial pass ran this frame (mc_vl_outputs hands lightR out)
+	int histOnly;                        // (FT2.8) the fold wrote no light + T this frame (T = 1): mc_vl_outputs hands the history out
 	int width, height, cur, lossy;
 	id<MTLBuffer> state;  // VlState: the canopy factor (GPU-written, read by the march)
 	// GPU timer (flag 8, -Dmcopt.shade.vl.gpuTimer): per-pass fragment start/end timestamps, a ring of 4 frames x 3 passes
@@ -341,28 +342,27 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 		if (reset && paramBytes >= 38 * 4) local[37] = 1.0f; // VlParams.temporal.y: the temporal pass drops the history
 		params = local;
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
-		if (flags & 1) {
-			id<MTLComputeCommandEncoder> c = [cb computeCommandEncoder];
-			c.label = @"mcopt shade: VL canopy";
-			[c setComputePipelineState:s->canopy];
-			mc_shade_bind_compute(c);
-			[c setBytes:params length:paramBytes atIndex:0];
-			[c setBuffer:s->state offset:0 atIndex:1];
-			[c dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
-			[c endEncoding];
-		}
 		// (godrays v3) VlParams.air.x (float 88): the air mode; its shade grid first (a camera-centred 64 x 32 x 64 block of cells)
 		int air = s->shadeGridK && s->shadeGrid && paramBytes >= 89 * 4 && local[88] > 0.5f;
-		if (air) {
-			id<MTLComputeCommandEncoder> c = [cb computeCommandEncoder];
-			c.label = @"mcopt shade: VL shade grid";
-			[c setComputePipelineState:s->shadeGridK];
+		// (FT2.8, audit idx 6) the canopy factor (1 threadgroup, writes the state buffer) and the shade grid (writes the grid
+		// texture) are independent: one concurrent encoder, so the tiny canopy group overlaps the grid's instead of a pass of its own
+		if ((flags & 1) || air) {
+			id<MTLComputeCommandEncoder> c = [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent];
+			c.label = air ? @"mcopt shade: VL canopy + shade grid" : @"mcopt shade: VL canopy";
 			mc_shade_bind_compute(c);
 			[c setBytes:params length:paramBytes atIndex:0];
-			[c setTexture:s->shadeGrid atIndex:0];
-			// a quarter of the z slices per frame (VlParams.air4.w, float 111: which; < 0 = all of them, after a reset)
-			int all = paramBytes >= 112 * 4 && local[111] < 0.0f;
-			[c dispatchThreadgroups:MTLSizeMake(64 / 4, 32 / 4, all ? 64 / 4 : 64 / 16) threadsPerThreadgroup:MTLSizeMake(4, 4, 4)];
+			if (flags & 1) {
+				[c setComputePipelineState:s->canopy];
+				[c setBuffer:s->state offset:0 atIndex:1];
+				[c dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+			}
+			if (air) {
+				[c setComputePipelineState:s->shadeGridK];
+				[c setTexture:s->shadeGrid atIndex:0];
+				// a quarter of the z slices per frame (VlParams.air4.w, float 111: which; < 0 = all of them, after a reset)
+				int all = paramBytes >= 112 * 4 && local[111] < 0.0f;
+				[c dispatchThreadgroups:MTLSizeMake(64 / 4, 32 / 4, all ? 64 / 4 : 64 / 16) threadsPerThreadgroup:MTLSizeMake(4, 4, 4)];
+			}
 			[c endEncoding];
 		}
 		int next = 1 - s->cur;
@@ -386,8 +386,19 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			// (2026-10-09) VlParams.hp.w (float 79): the shafts' local contrast, from last frame's veil (skipped once when it's stale)
 			int hp = s->veilBlurV && paramBytes >= 80 * 4 && local[79] > 0.5f;
 			if (hp && !s->veilRan) local[79] = 0.0f;
-			pass(cb, s->hist[next], s->lightT, MTLLoadActionDontCare, s->temporalFold, @"mcopt shade: VL temporal", params, paramBytes, s->state,
-				s->raw, s->hist[s->cur], times, base + 2, liveW, liveH, s->veil[0]);
+			int radialOn = s->radial && s->lightR && paramBytes >= 84 * 4 && local[83] > 0.5f;
+			// (FT2.8, audit idx 2) the air mode (VlParams.air.x, float 88) without the canopy mist's extinction (mist.z, float 54),
+			// the local contrast or the radial blur: the fold's light + T would be an exact copy of the history (T = 1). The plain
+			// temporal pass then (one target less to write), and the final pass reads the history for both (mc_vl_outputs: the
+			// same texture twice tells ShadePost T = 1)
+			s->histOnly = !hp && !radialOn && paramBytes >= 89 * 4 && local[88] > 0.5f && local[54] == 0.0f;
+			if (s->histOnly) {
+				pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw,
+					s->hist[s->cur], times, base + 2, liveW, liveH, nil);
+			} else {
+				pass(cb, s->hist[next], s->lightT, MTLLoadActionDontCare, s->temporalFold, @"mcopt shade: VL temporal", params, paramBytes, s->state,
+					s->raw, s->hist[s->cur], times, base + 2, liveW, liveH, s->veil[0]);
+			}
 			if (hp) {
 				// this frame's veil for the next one: the 4x4 means of the new history, then the blur (quarter resolution)
 				int qw = ((liveW > 0 ? liveW : vlWidth) + 3) / 4, qh = ((liveH > 0 ? liveH : vlHeight) + 3) / 4;
@@ -400,12 +411,13 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 			}
 			s->veilRan = hp;
 			// (FT2.3) VlParams.radial.w (float 83): the blur along the light's lines, lightT -> lightR (the final pass reads lightR)
-			s->radialRan = s->radial && s->lightR && paramBytes >= 84 * 4 && local[83] > 0.5f;
+			s->radialRan = radialOn;
 			if (s->radialRan) {
 				pass(cb, s->lightR, nil, MTLLoadActionDontCare, s->radial, @"mcopt shade: VL radial", params, paramBytes, nil, s->lightT, s->hist[next],
 					nil, 0, liveW, liveH, nil);
 			}
 		} else {
+			s->histOnly = 0;
 			pass(cb, s->hist[next], nil, MTLLoadActionDontCare, s->temporal, @"mcopt shade: VL temporal", params, paramBytes, nil, s->raw,
 				s->hist[s->cur], times, base + 2, liveW, liveH, nil);
 			pass(cb, color, nil, MTLLoadActionLoad, s->composite, @"mcopt shade: VL composite", params, paramBytes, s->state, s->hist[next], depth,
@@ -418,7 +430,7 @@ int mc_vl_render(Enc *enc, VlState *s, id<MTLTexture> color, id<MTLTexture> dept
 
 // After an mc_vl_render with flag 16 (fold): out[0] = the light + T texture, out[1] = the history it matches (a = distance).
 void mc_vl_outputs(VlState *s, uint64_t *out) {
-	out[0] = (uint64_t) (s->radialRan ? s->lightR : s->lightT);
+	out[0] = (uint64_t) (s->histOnly ? s->hist[s->cur] : s->radialRan ? s->lightR : s->lightT);
 	out[1] = (uint64_t) s->hist[s->cur];
 }
 

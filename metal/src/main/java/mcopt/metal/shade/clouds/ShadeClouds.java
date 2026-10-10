@@ -210,6 +210,7 @@ public final class ShadeClouds {
 			p.reset = snap || resized || modeChanged;
 			if (p.reset) domeFrames = 0;
 			p.domeValid = CloudConfig.DOME && domeFrames > 0;
+			p.domeUpdates = domeFrames;
 			p.opacity = 1f;
 			p.dev = dev;
 			p.mode = mode;

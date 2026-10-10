@@ -55,7 +55,8 @@ struct CloudParams {
 	float4 cirrus;         // 304 x altitude (absolute y), y extinction, zw the camera's xz in the cirrus map's space (wrapped)
 	float4 shadow;         // 320 x extent (blocks), y reference height (absolute y), zw the map's centre relative to the camera (xz)
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
-	float4 dome;           // 352 xy dome size (px), z blend of the new march, w primary steps of the dome march
+	float4 dome;           // 352 x dome updates so far (wrapped; FT2.8 audit idx 28, was the width: the size is the history's), y 0,
+	                       //     z blend of the new march, w primary steps of the dome march
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
 	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-4),
 	                       //     w radians a march sample covers (history pixel angle x N; the noise mip by distance)
@@ -1238,10 +1239,12 @@ static inline float3 cloudDomeDirection(float2 uv) {
 fragment half4 cloud_dome(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant CloudParams &c [[buffer(0)]],
                           texture2d<half> weather [[texture(0)]], texture3d<half> noise [[texture(1)]], texture2d<half> prev [[texture(2)]],
                           texture2d<half> lut [[texture(17)]], sampler lutS [[sampler(13)]]) {
-	float2 uv = in.position.xy / c.dome.xy;
+	float2 uv = in.position.xy / float2(prev.get_width(), prev.get_height());
 	float3 dir = cloudDomeDirection(uv);
-	// updated every 4th frame: golden-ratio steps per update (per frame, 4 x 0.618 = 0.47 per update, close to periodic)
-	float jitter = fract(shadeNoise(in.position.xy, 0) + floor(c.misc.x * 0.25) * 0.6180339887);
+	// a golden-ratio step per update (FT2.8, audit idx 28: by the dome's own update count; floor(frame / 4) assumed an update
+	// every 4th frame, and at performance/balanced it runs every 8th: steps of 0.236, a slow ramp over ~4 updates that the
+	// 0.4 blend averaged into a sweeping bias, slowly crawling bands on reflected clouds)
+	float jitter = fract(shadeNoise(in.position.xy, 0) + c.dome.x * 0.6180339887);
 	CloudResult r = cloudSky(dir, int(c.dome.w), 2, 1, jitter, f, c, weather, noise, lut, lutS);
 	half4 now = half4(half3(min(r.S, 60000.0)), half(r.T));
 	if (c.frame.z > 0.5) return now;

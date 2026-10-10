@@ -271,7 +271,6 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	bool air = f.fogColor.a < 0.5;
 	float ap = (1.0 - exp(-d * f.fogSky.z)) * f.fogSky.w * (1.0 - f.fogColor.a);
 	float3 skyBehind = float3(0.0);
-	bool needSky = ap > 0.002 || L.fogMisc.z > 0.0;
 	// the border fog's amount (applied last, below): computed first, the clouds' lookup needs it
 	float edge = 0.0;
 	if (air) {
@@ -284,6 +283,10 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 			edge = vanillaFog;
 		}
 	}
+	// the sky behind (with the clouds) only where a blend below can use it (audit idx 86: not for every fragment while the
+	// border fog is on; terrain within ~5.6 blocks has ap < 0.002 and no border fog). Vanilla's fog (fogMisc.z = 0, DH) keeps
+	// its own clear-sky lookup below, as before.
+	bool needSky = ap > 0.002 || (air && L.fogMisc.z > 0.0 && edge > 0.002);
 	if (needSky) {
 		float3 vs = float3(v.x, max(v.y, 0.0), v.z);
 		skyBehind = shadeSkyLookup(vs, lut, s, f);

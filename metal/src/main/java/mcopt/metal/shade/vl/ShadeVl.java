@@ -457,25 +457,25 @@ public final class ShadeVl {
 		// (FT2.3: the canopy mist from the ground up to 16 blocks above the eye, fading over 16 more, and twice the steps of its
 		// own march, each texel offset on its own: shafts from the canopy down to the ground, not smoke rising from it, and thin
 		// ones no longer skipped)
-		// (air mode: the forest air from the ground to 24 blocks above the eye, fading over 16 more, over 64 blocks from the camera:
-		// mcopt.shade.vl.airTop / airTopH / airRange, live; one march, no steps of its own)
-		put(b, resetCanopy ? 1f : 0f, air ? VlConfig.live("mcopt.shade.vl.airTopH", 16f) : VlConfig.look("mcopt.shade.vl.mistTopH", 16f, 8f), canopyDown,
+		// (air mode: no steps of its own, one march. FT2.8, audit idx 20/23: its documented airTop / airTopH / airRange knobs were
+		// never read by the air march; they are gone. The forest air is bounded by the shade grid's box, about 62-64 blocks in
+		// x/z and -24..+40 blocks in y around the camera, with an 8-block fade at its faces: vl.metal inGrid)
+		put(b, resetCanopy ? 1f : 0f, VlConfig.look("mcopt.shade.vl.mistTopH", 16f, 8f), canopyDown,
 			air ? 0f : VlConfig.look("mcopt.shade.vl.nearStepsLive", 2f * VlConfig.NEAR_STEPS, VlConfig.NEAR_STEPS));
 		// mist: range, top above the eye (mcopt.shade.vl.mistRange / mistTop, live), extinction on, its scale
-		// (air mode: its extinction 1 x its scattering, mcopt.shade.vl.airExt, live: what is behind the lit air dims as much)
+		// (air mode: its extinction 1 x its scattering, mcopt.shade.vl.airExt, live. It only dims the march's own light along the
+		// ray: the forest air is additive, nothing behind it dims, as in BSL / Complementary: the extinction flag z is 0 there)
 		float airExt = Math.max(VlConfig.live("mcopt.shade.vl.airExt", 1f), 0.05f);
-		put(b, air ? VlConfig.live("mcopt.shade.vl.airRange", 64f) : VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f),
-			air ? VlConfig.live("mcopt.shade.vl.airTop", 24f) : VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.EXTINCTION && !air ? 1f : 0f,
+		put(b, VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f), VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.EXTINCTION && !air ? 1f : 0f,
 			air ? airExt : hdr ? HDR_EXT : 0.5f);
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		// the cuts by the angle to the light (vl.metal mixes them; a802352 lowered them away from the light, which veiled side
 		// views: since the local contrast (hp) both are FT2.1's again, live: mcopt.shade.vl.openCut / openCutSide / carve / carveSide)
 		float openCut = hdr ? VlConfig.live("mcopt.shade.vl.openCut", HDR_OPEN_CUT) : 0.5f, carve = hdr ? VlConfig.look("mcopt.shade.vl.carve", HDR_CARVE, HDR_CARVE) : 0f;
 		if (air) {
-			// the forest air's sky-lit part (the fold adds it analytically: radiance x scattering / extinction x (1 - T)): the final
-			// pass haze's sky term (ambientSky x 0.9), the canopy hiding most of the sky (x 0.3, mcopt.shade.vl.airSky, live)
-			float skyK = 0.9f * VlConfig.live("mcopt.shade.vl.airSky", 0.3f) / airExt * eye;
-			put(b, amb[0] * skyK, amb[1] * skyK, amb[2] * skyK, openCut);
+			// (FT2.8, audit idx 23: no analytic sky-lit part here, the fold never adds it in air mode (extinction flag 0); the
+			// forest air's sky light is the march's air3.w, mcopt.shade.vl.airSky, below. openCut is read by the non-air march only)
+			put(b, 0f, 0f, 0f, openCut);
 		} else {
 			put(b, amb[0] * ambK + lr * sunK, amb[1] * ambK + lg * sunK, amb[2] * ambK + lb * sunK, openCut); // mistAmb, open glow left out (toward the light)
 		}

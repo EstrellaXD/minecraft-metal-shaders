@@ -152,6 +152,8 @@ public final class ShadeTaa {
 			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe()
 				+ (TaaConfig.DRS && DynamicResolution.hold() ? String.format(java.util.Locale.ROOT, "; hold controller (M3.3), floor %.2f on performance/balanced", DynamicResolution.HOLD_FLOOR) : "")
 				+ (FIXED_FOR_DH ? "; Distant Horizons loaded: fixed scale " + TaaConfig.SCALE + " (no dynamic resolution)" : ""));
+			// (FT2.8, audit idx 73) the debug views need a destination target, which the HDR resolve (M2) doesn't take: say so
+			if (hdrInput && TaaConfig.DEBUG != 0) System.out.println("[mcopt] shade: mcopt.shade.taaDebug=" + TaaConfig.DEBUG + " ignored: its views exist only without HDR (mcopt.shade.hdr=false)");
 		} catch (Throwable e) {
 			failed = true;
 			System.out.println("[mcopt] shade: TAA setup failed, rendering without it: " + e);

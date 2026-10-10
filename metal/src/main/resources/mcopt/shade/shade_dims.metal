@@ -34,7 +34,7 @@
 #define SHADE_DP_LAVA 1
 #define SHADE_DP_ACCENT 2
 
-static inline bool shadeDimsLit(constant ShadeFrame &f) { return (int(f.sunPath.z) & SHADE_FLAG_DIMS_LIT) != 0; }
+static inline bool shadeDimsLit(constant ShadeFrame &f) { return f.flags.x != SHADE_DIM_OVERWORLD && (int(f.sunPath.z) & SHADE_FLAG_DIMS_LIT) != 0; }
 // M3.3: ShadeLook.dimTint.w = kind + 4 x bits (an exact small float)
 #define SHADE_DIMS_MOTES 1        // Nether: dark suspended particles lifted to a luminance floor (mcopt.shade.dims.motes)
 #define SHADE_DIMS_AURORA_TEX 2   // overworld: the sky pass samples the reduced-resolution aurora (ShadeResources.aurora; mcopt.shade.aurora.half)

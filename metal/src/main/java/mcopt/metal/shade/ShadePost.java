@@ -551,7 +551,8 @@ public final class ShadePost {
 			// (knee 0.4: the brightest glow toward a low sun, the lit air in front of backlit leaves, no longer washes them out
 			// to beige; the shafts stay below it: veil4 i4, notes/godrays-veil-2026-10-09)
 			.putFloat(vl && vlAirFloor > 0f ? 0f : mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.knee", 0.4f, 0f));
-		params.putFloat(vl ? 1f : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
+		// (v.x 2, FT2.8 audit idx 2: the light is the VL history itself, a = its distance: the medium's transmittance is 1)
+		params.putFloat(vl ? (vlLight == vlDist ? 2f : 1f) : 0f).putFloat(vlMaxDist).putFloat(vlScaleU).putFloat(vlScaleV);
 		// r: xy the live render size of depth (the final pass maps its output uv into that sub-rect), z sharpen (TAAU)
 		// w: a bit field (as an exact small float): 1 = Distant Horizons drew into this frame (its LODs are where the depth is
 		// empty: the Nether's fog leaves them); 2 (TAAU) = depth and the volumetric light read at the jittered raster's

@@ -129,11 +129,13 @@ static inline float3 shadeLottes(float3 x, float4 t) {
 // Inverse of shadeLottes per channel: with u = x^a, y = u / (b u^d + beta), i.e. g(u) = u - y (b u^d + beta) = 0. g is
 // convex and increasing past its root, so Newton from an upper bound converges monotonically; the bound comes from the
 // tangent of u^d at 1 (u^d <= 1 + d (u - 1)) and needs y b d < 1, which the clamp (output.w, at most 0.95 / (b d)) keeps.
+// (FT2.8, audit idx 114) 3 steps: converged to float precision for every contrast 0.8-1.8 over [0, output.w] (worst relative
+// difference to 8 steps 1.3e-6, the same as 4 steps; 2 steps 1.2e-3, which would flip RG11B10 roundings): notes/ft28-2026-10-09
 static inline float3 shadeLottesInverse(float3 y, float4 t) {
 	float a = t.x, d = t.y, b = t.z, beta = t.w;
 	y = clamp(y, 0.0, 0.95 / (b * d));
 	float3 u = (y * b * (1.0 - d) + y * beta) / (1.0 - y * b * d);
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 3; i++) {
 		float3 ud = pow(max(u, 1e-9), float3(d));
 		float3 g = u - y * (b * ud + beta);
 		float3 dg = 1.0 - y * b * d * ud / max(u, 1e-9);

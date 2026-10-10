@@ -422,6 +422,8 @@ public final class DynLights {
 		s.b = tint[2] * intensity;
 		s.fire = fire;
 		s.spec = 1f;
+		s.core = 0.75f;
+		s.omni = false;
 	}
 
 	private static void set(Src s, double x, double y, double z, DynLightTable.Def d, float scale) {
@@ -434,6 +436,8 @@ public final class DynLights {
 		s.b = d.b();
 		s.fire = d.fire();
 		s.spec = 1f;
+		s.core = 0.75f;
+		s.omni = false;
 	}
 
 	private static final int KIND_MAIN = 0, KIND_OFF = 1, KIND_BODY = 2, KIND_FIRE = 3;
@@ -546,11 +550,34 @@ public final class DynLights {
 		set(s, x, y, z, d, 1f);
 	}
 
+	/** (FT2.9) The flat core of the player's own light (blocks): the walls of a 1-wide tunnel get as much as the floor. */
+	private static final float PLAYER_CORE = 1.5f;
+
 	/**
-	 * The local player's hands: in first person at the visible item (in front of the eye, low, to the side of its arm), in
-	 * third person like any other player's.
+	 * The local player's hands. (FT2.9, -Dmcopt.shade.dynLights.playerLight, read every frame; false = FT2.8.1) One light at the
+	 * eye, as bright as the brighter hand, omnidirectional and with a wider core: what the player carries lights every block
+	 * around alike, as in Photon, Complementary and BSL (their held light is centred on the player), not the walls on the
+	 * hand's side in a bright disc (Gael). Otherwise in first person at the visible item (in front of the eye, low, to the side
+	 * of its arm), in third person like any other player's.
 	 */
 	private static void hands(LocalPlayer player, float partial, CameraRenderState fp) {
+		if (!"false".equalsIgnoreCase(System.getProperty("mcopt.shade.dynLights.playerLight", "true").trim())) {
+			DynLightTable.Def dm = DynLightTable.of(player.getMainHandItem()), doff = DynLightTable.of(player.getOffhandItem());
+			DynLightTable.Def d = doff.level() > dm.level() ? doff : dm;
+			if (d.level() > 0) {
+				Src s = source(key(player, KIND_MAIN));
+				if (fp != null) {
+					set(s, fp.pos.x, fp.pos.y, fp.pos.z, d, 1f);
+				} else {
+					Vec3 e = player.getEyePosition(partial);
+					set(s, e.x, e.y, e.z, d, 1f);
+				}
+				s.core = PLAYER_CORE;
+				s.omni = true;
+			}
+			markHands(player);
+			return;
+		}
 		if (fp == null) {
 			heldBy(player, partial);
 			markHands(player);

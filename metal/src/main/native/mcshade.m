@@ -188,6 +188,18 @@ void mc_shade_bind(Enc *enc) {
 	mc_shade_bind_render(enc->render);
 }
 
+// (FT2.8, audit idx 46) the ShadeResources textures made resident for the encoder in one call (16 useResource calls per pass
+// before: hundreds of Metal calls per frame on the render thread)
+static void useResources(id<MTLRenderCommandEncoder> r, MTLRenderStages stages) {
+	id<MTLResource> list[SHADE_RESOURCES];
+	NSUInteger n = 0;
+	for (int i = 0; i < SHADE_RESOURCES; i++) {
+		id<MTLTexture> t = resourceTextures[i] ? resourceTextures[i] : dummyTexture;
+		if (t) list[n++] = t;
+	}
+	if (n) [r useResources:list count:n usage:MTLResourceUsageRead stages:stages];
+}
+
 // The same for a render encoder of our own (post passes such as mcvl.m's): 1 if the globals were bound, 0 if not set yet.
 int mc_shade_bind_render(id<MTLRenderCommandEncoder> r) {
 	if (!r || !frameBuffer) return 0;
@@ -218,10 +230,7 @@ int mc_shade_bind_render(id<MTLRenderCommandEncoder> r) {
 	if (resourceBuffer) {
 		[r setVertexBuffer:resourceBuffer offset:0 atIndex:19];
 		[r setFragmentBuffer:resourceBuffer offset:0 atIndex:19];
-		for (int i = 0; i < SHADE_RESOURCES; i++) {
-			id<MTLTexture> t = resourceTextures[i] ? resourceTextures[i] : dummyTexture;
-			if (t) [r useResource:t usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
-		}
+		useResources(r, MTLRenderStageVertex | MTLRenderStageFragment);
 	}
 	return 1;
 }
@@ -372,10 +381,7 @@ static void bindGlobalsRender(id<MTLRenderCommandEncoder> r) {
 	if (gpuBuffer) [r setFragmentBuffer:gpuBuffer offset:0 atIndex:18];
 	if (resourceBuffer) {
 		[r setFragmentBuffer:resourceBuffer offset:0 atIndex:19];
-		for (int i = 0; i < SHADE_RESOURCES; i++) {
-			id<MTLTexture> t = resourceTextures[i] ? resourceTextures[i] : dummyTexture;
-			if (t) [r useResource:t usage:MTLResourceUsageRead stages:MTLRenderStageFragment];
-		}
+		useResources(r, MTLRenderStageFragment);
 	}
 	if (state && state->lut) {
 		[r setFragmentTexture:state->lut atIndex:17];

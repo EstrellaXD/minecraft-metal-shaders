@@ -518,15 +518,26 @@ public final class ShadowPass {
 				long draws = stack.ncalloc(8, Math.max(1, lists.size()) * DRAW_BYTES, 1);
 				long tintDraws = stack.ncalloc(8, Math.max(1, lists.size()) * DRAW_BYTES, 1);
 				int n = 0, nTint = 0;
+				// (FT2.8, audit idx 84) the near cascade's cutout lists top-down when the light is high: Sodium meshes a section from
+				// its lowest y up and the lists walk the sections bottom-up, so every lower leaf layer was alpha-tested, written and then
+				// overwritten by the one above (depth Greater); drawn from the top, the lower layers fail the depth test before shading.
+				// The map is the per-texel maximum either way (mcopt.shade.shadowTopDown, read every frame; false = bottom-up)
+				boolean topDown = c == 0 && this.light[1] > 0.5 && !"false".equals(System.getProperty("mcopt.shade.shadowTopDown"));
 				for (ShadowCasters.DrawList l : lists) {
 					if (l.count == 0 || l.arena.isClosed()) continue;
-					MemoryUtil.memIntBuffer(chunkAt + (long) first * ShadowCasters.chunkBytes(), l.count * 2).put(l.chunks, 0, l.count * 2);
+					boolean rev = topDown && l.kind == ShadowCasters.KIND_CUTOUT;
+					if (rev) {
+						java.nio.IntBuffer ib = MemoryUtil.memIntBuffer(chunkAt + (long) first * ShadowCasters.chunkBytes(), l.count * 2);
+						for (int k = l.count - 1; k >= 0; k--) ib.put(l.chunks[k * 2]).put(l.chunks[k * 2 + 1]);
+					} else {
+						MemoryUtil.memIntBuffer(chunkAt + (long) first * ShadowCasters.chunkBytes(), l.count * 2).put(l.chunks, 0, l.count * 2);
+					}
 					boolean translucent = l.kind == ShadowCasters.KIND_TRANSLUCENT; // M3 coloured shadows: the tint pass, not the depth pass
 					long d = (translucent ? tintDraws : draws) + (long) (translucent ? nTint : n) * DRAW_BYTES;
 					MemoryUtil.memPutLong(d, MetalBridge.useBuffer(encoder, l.arena));
 					MemoryUtil.memPutInt(d + 8, first);
 					MemoryUtil.memPutInt(d + 12, l.count);
-					MemoryUtil.memPutInt(d + 16, l.kind);
+					MemoryUtil.memPutInt(d + 16, l.kind | (rev ? 256 : 0));
 					first += l.count;
 					if (translucent) nTint++; else n++;
 				}

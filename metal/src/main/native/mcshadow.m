@@ -10,7 +10,7 @@
 
 #define CHUNK_QUADS 32     // ShadowCasters.CHUNK_QUADS (32: a third of the vertex launches were padding with 64)
 #define QUAD_INDICES (CHUNK_QUADS * 6)  // {0, 1, 2, 2, 3, 0} per quad
-#define DRAW_BYTES 24     // per draw from Java: arena MTLBuffer (8), first chunk (4), chunk count (4), kind (4: 0 solid, 1 cutout), pad (4)
+#define DRAW_BYTES 24     // per draw from Java: arena MTLBuffer (8), first chunk (4), chunk count (4), kind (4: 0 solid, 1 cutout; + 256: top-down), pad (4)
 
 // M3 entity casters (mc_shadow_entity_*): the frame's entity draws, recorded in the main pass, copied at the end of the
 // world (the game's vertex buffers are pooled per frame) and drawn into the next frame's near cascade.
@@ -43,7 +43,7 @@ typedef struct {
 	id<MTLSamplerState> atlasSampler;  // cutout test: nearest, level 0
 	id<MTLTexture> map;                // Depth16Unorm or Depth32Float 2D array, one slice per cascade
 	MTLPixelFormat format;
-	id<MTLBuffer> quadIndices;
+	id<MTLBuffer> quadIndices, quadIndicesRev; // quadIndicesRev (FT2.8): the chunk's quads last to first
 	int resolution, layers;
 	// M3 coloured shadows (mc_shadow_tint_*): the near cascade's translucent casters into a tint map
 	id<MTLRenderPipelineState> tint;
@@ -146,6 +146,11 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 			for (int c = 0; c < 6; c++) indices[i++] = (uint16_t) (q * 4 + corners[c]);
 		}
 		s->quadIndices = [ctx->device newBufferWithBytes:indices length:sizeof indices options:MTLResourceStorageModeShared];
+		// (FT2.8, audit idx 84) the same quads last to first (each quad's corners, so its winding, kept): a chunk drawn top-down
+		for (int q = 0, i = 0; q < CHUNK_QUADS; q++) {
+			for (int c = 0; c < 6; c++) indices[i++] = (uint16_t) ((CHUNK_QUADS - 1 - q) * 4 + corners[c]);
+		}
+		s->quadIndicesRev = [ctx->device newBufferWithBytes:indices length:sizeof indices options:MTLResourceStorageModeShared];
 		if (!s->map || !s->quadIndices || !s->compare || !s->depthWrite) {
 			strlcpy(err, "shadow resources failed", errCap);
 			mc_shadow_free(s);
@@ -181,6 +186,7 @@ void mc_shadow_free(Shadow *s) {
 	[s->atlasSampler release];
 	[s->map release];
 	[s->quadIndices release];
+	[s->quadIndicesRev release];
 	[s->tint release];
 	[s->tintMap release];
 	[s->back release];
@@ -266,6 +272,9 @@ int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int
 			memcpy(&first, d + 8, 4);
 			memcpy(&count, d + 12, 4);
 			memcpy(&k, d + 16, 4);
+			// kind bit 8 (FT2.8): the list's chunks are listed last to first and its quads go through the reversed indices
+			id<MTLBuffer> ib = (k & 256u) && s->quadIndicesRev ? s->quadIndicesRev : s->quadIndices;
+			k &= 255u;
 			if (count == 0 || (k == 1 && !atlas)) continue;
 			if ((int) k != kind) {
 				[r setRenderPipelineState:k == 1 ? s->cutout : s->solid];
@@ -275,7 +284,7 @@ int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int
 				[r setVertexBuffer:vb offset:0 atIndex:0];
 				arena = vb;
 			}
-			[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:QUAD_INDICES indexType:MTLIndexTypeUInt16 indexBuffer:s->quadIndices
+			[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:QUAD_INDICES indexType:MTLIndexTypeUInt16 indexBuffer:ib
 				indexBufferOffset:0 instanceCount:count baseVertex:0 baseInstance:first];
 		}
 		// M3: last frame's entities into the near cascade (shifted onto this frame's camera)

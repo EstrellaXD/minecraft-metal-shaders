@@ -181,6 +181,11 @@ final class ShadowCasters {
 	}
 
 	private final boolean[] sectionIn = new boolean[2];
+	/** (FT2.8, audit idx 87) sectionCasts' result per section of the region being listed (castStamp == castNow: valid), so the
+	 * solid / cutout / translucent passes of a section don't repeat its two cascade box tests. */
+	private final int[] castStamp = new int[RenderRegion.REGION_SIZE];
+	private final byte[] castBits = new byte[RenderRegion.REGION_SIZE];
+	private int castNow;
 	/** M3.3 far spread: the section indices of this frame's part in the region being walked (light mode). */
 	private final int[] partIndex = new int[RenderRegion.REGION_SIZE];
 	/** This build also lists the near cascade's translucent casters (KIND_TRANSLUCENT). */
@@ -321,6 +326,7 @@ final class ShadowCasters {
 			}
 		}
 		int regionIndex = -1;
+		this.castNow++;
 		for (int kind = 0; kind < (this.tint ? 3 : 2); kind++) {
 			TerrainRenderPass pass = kind == KIND_SOLID ? DefaultTerrainRenderPasses.SOLID : kind == KIND_CUTOUT ? DefaultTerrainRenderPasses.CUTOUT
 				: DefaultTerrainRenderPasses.TRANSLUCENT;
@@ -376,6 +382,12 @@ final class ShadowCasters {
 
 	/** Sets sectionIn[c] for the section's 16^3 box; true if it casts into any cascade being drawn. */
 	private boolean sectionCasts(RenderRegion region, int section, ShadowCascade[] cascades, boolean[] draw) {
+		if (this.castStamp[section] == this.castNow) {
+			int b = this.castBits[section];
+			this.sectionIn[0] = (b & 1) != 0;
+			this.sectionIn[1] = (b & 2) != 0;
+			return b != 0;
+		}
 		// Sodium's LocalSectionIndex: x bits 5-7, y bits 0-1, z bits 2-4
 		double x = (region.getChunkX() + (section >> 5 & 7)) * 16.0, y = (region.getChunkY() + (section & 3)) * 16.0, z = (region.getChunkZ() + (section >> 2 & 7)) * 16.0;
 		boolean any = false;
@@ -384,6 +396,8 @@ final class ShadowCasters {
 				&& cascades[c].casts(x, y, z, x + 16, y + 16, z + 16);
 			any |= this.sectionIn[c];
 		}
+		this.castStamp[section] = this.castNow;
+		this.castBits[section] = (byte) ((this.sectionIn[0] ? 1 : 0) | (this.sectionIn[1] ? 2 : 0));
 		return any;
 	}
 

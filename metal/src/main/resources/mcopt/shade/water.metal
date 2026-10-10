@@ -402,7 +402,7 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_BEHIND)) { thickK = 1.0; behind = true; }
 	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_BOTH)) { thickK = 3.0; behind = true; }
 #ifdef SHADE_SSR_LEAN2
-	// (FT2.8, audit idx 58, mcopt.shade.water.ssrLean) only the fallback's crossing is kept through the loop, not a float4 (the loop is
+	// (FT2.8, audit idx 58, mcopt.shade.water.ssrLean, default on) only the fallback's crossing is kept through the loop, not a float4 (the loop is
 	// the register-bound part of the water shader); its uv and fades are rebuilt after it from the same expressions
 	float hiBack = -1.0;
 #else

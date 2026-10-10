@@ -9,6 +9,8 @@
 // mcopt native shading: the water and reflections module (shader bible E14, E15 basics, E26 surface). Original code; the
 // techniques are public (Schlick 1994, Walter et al. 2007 GGX, Beer-Lambert, McGuire & Mara 2014 screen-space ray
 // marching, Tessendorf 2001 deep-water dispersion, caustics as the inverse Jacobian of the refracted light field).
+// Portions adapted from Photon Shaders by Benjamin Stott ("sixthsurge"), MIT License, commit 26c2906e (FT2.10: the underground
+// look in shadeWaterAbove, from program/gbuffers_all_translucent.fsh; full text: LICENSES/MIT-Photon.txt; see NOTICE).
 //
 // Assembled by ShadeMsl after shade_common.metal (mcopt.metal.shade.water.ShadeWater.prelude puts the SHADE_* defines in
 // front) for the translucent terrain fragment; written as a self-contained include so other water renderers (far terrain,
@@ -844,6 +846,7 @@ struct ShadeWaterIn {
 	half3 tint;      // vertex colour: biome water colour x vanilla AO
 	half sky;        // sky light 0..1
 	half shadow;     // sun/moon visibility at the surface (shadow map)
+	half2 under;     // (FT2.10) Photon's underground water (shadeWaterAbove): x the block texture's highlight there, y the look's share (0 outdoors)
 	float3 lit;      // light on an upward white surface (shadeLit(1, up, ...)): sun, sky and block light, radiance
 	float4 dxz;      // screen derivatives of the position's xz (dfdx(p).xz, dfdy(p).xz): the baked waves' mip/anisotropy
 	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
@@ -1114,6 +1117,17 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// the block texture's light pixels but moving smoothly
 	body *= 1.0 + 0.13 * clamp(pattern, -1.5, 2.5) + 0.35 * smoothstep(0.9, 2.0, pattern);
 #endif
+	// (FT2.10) where little sky reaches the water (caves, cellars: w.under.y, 0 at sky light 0.5 and up), adapted from Photon Shaders by
+	// Benjamin Stott ("sixthsurge"), MIT License, commit 26c2906e (program/gbuffers_all_translucent.fsh get_water_material, its default
+	// WATER_TEXTURE_HIGHLIGHT_UNDERGROUND and WATER_EDGE_HIGHLIGHT; LICENSES/MIT-Photon.txt): with no sky to mirror and no sun glint the
+	// surface had nothing to show its ripples, and a strip of water in a cave read as flat glass (Gael 2026-10-10). The vanilla water
+	// texture's brightest texels (w.under.x, moving with its animation) as a faint diffuse layer in the water's own hue, and a rim
+	// where the water is under half a block deep (along the walls and the shallows), lit by what lights the surface (torches)
+	if (top && w.under.y > 0.0h) {
+		float shallow = max(1.0 - 2.0 * dy, 0.0);
+		float rim = shallow * shallow * shallow * (1.0 + 8.0 * float(w.under.x));
+		body += w.lit * saturate(0.5 * exp(-2.0 * sigmaA) * float(w.under.x) + 0.1 * rim * float(w.under.y));
+	}
 
 	// --- reflection: the sky (only as open as the sky light says), SSR over it, the sun's glint
 	float open = float(shadeSkyCurve(w.sky));

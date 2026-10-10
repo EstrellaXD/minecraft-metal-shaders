@@ -211,7 +211,8 @@ public final class CloudParams {
 		boolean shadowUse = (this.dev & CloudConfig.DEV_NO_SHADOW_USE) == 0;
 		put4(b, ShadeLook.CLOUDS0, this.base - this.cameraY, this.top - this.cameraY, shadowUse ? this.shadowStrength : 0f, 1f);
 		// w (M3.4): 1 = the screen consumers read the history with a cubic B-spline (CloudConfig.smooth)
-		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + CloudConfig.CIRRUS_ABOVE - this.cameraY, this.dev, CloudConfig.smooth() ? 1f : 0f);
+		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + CloudConfig.CIRRUS_ABOVE - this.cameraY,
+			this.dev | (CloudConfig.lateFog() ? 0 : CloudConfig.DEV_EARLY_FOG), CloudConfig.smooth() ? 1f : 0f);
 	}
 
 	private static final int[] ORDER1 = {0}, ORDER2 = {0, 3, 1, 2}, ORDER3 = {0, 7, 5, 2, 6, 4, 8, 3, 1};

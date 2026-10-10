@@ -114,7 +114,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
     // variant keeps FT1.3's code (the water shader is register-bound and small changes move it by up to 1.5 ms, price6)
     int waterSprite = int(shadeQuadMax(float(shadeWaterSprite(uv, wp))));
     bool waterFull = waterSprite > 0 && wp.state.x > 0.5 && !shadeDev(sf, SHADE_DEV_NO_WATER);
-    bool skipTex = waterFull;
+    // (FT2.10) except where little sky reaches it: Photon's underground look reads the texture's highlights (shadeWaterAbove)
+    bool skipTex = waterFull && (in.v_Light.y >= 0.5h || sl.waterShadow.w <= 0.0);
 #else
     const bool skipTex = false;
 #endif
@@ -266,6 +267,17 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         wi.tint = tint;
         wi.sky = in.v_Light.y;
         wi.shadow = shadow;
+        // (FT2.10, mcopt.shade.water.underground: ShadeLook.waterShadow.w) adapted from Photon Shaders (MIT, commit 26c2906e; see
+        // NOTICE and water.metal shadeWaterAbove): its underground water on top faces where the sky
+        // light is under 0.5 (its 1 - cube(linear_step(0, 0.5, sky light))): x the texture's highlight 0.5 sq(linear_step(0.63, 1, r))
+        // + 0.03 r (the grey vanilla texture: red = its brightness), y the look's share
+        wi.under = half2(0.0h);
+        if (n.y > 0.5h && in.v_Light.y < 0.5h && sl.waterShadow.w > 0.0) {
+            float s = saturate(float(in.v_Light.y) * 2.0);
+            float k = (1.0 - s * s * s) * sl.waterShadow.w;
+            float r = texel.r, h = saturate((r - 0.63) * (1.0 / 0.37));
+            wi.under = half2(half((0.5 * h * h + 0.03 * r) * k), half(k));
+        }
         wi.dxz = float4(dpx.xz, dpy.xz);
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL

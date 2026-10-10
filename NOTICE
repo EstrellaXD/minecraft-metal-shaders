@@ -61,3 +61,11 @@ from the camera to the scene with the sun's shadow at every step and the per-ste
 air's phase function (a forward and a backward Henyey-Greenstein lobe, 0.7 / 0.3 with g 0.5 / -0.2, summed over four octaves
 of a multiple-scattering approximation). The shade grid (vl_shade_grid), the shadowed-difference output and the rest of the
 file are original (Apache-2.0).
+
+Native shading water, underground look (metal/src/main/resources/mcopt/shade/water.metal shadeWaterAbove, and the highlight's
+inputs in metal/src/main/resources/mcopt/metal/msl/sodium_terrain.fs.metal): adapted from Photon Shaders
+(https://github.com/sixthsurge/photon), commit 26c2906e, Copyright (c) 2025 Benjamin Stott ("sixthsurge"), MIT License (full
+text: LICENSES/MIT-Photon.txt), program/gbuffers_all_translucent.fsh get_water_material: the vanilla water texture's highlight
+(0.5 x the square of its brightness above 0.63, plus 0.03 x its brightness) faded in below sky light 0.5, as a diffuse layer of
+0.5 exp(-2 x absorption) x the highlight, and the edge highlight (the cube of 1 - 2 x the water's depth, x (1 + 8 x the
+highlight), 0.1 of it as albedo).

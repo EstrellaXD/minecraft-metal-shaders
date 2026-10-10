@@ -552,7 +552,9 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		float phR = 0.0596831 * (1.0 + mu * mu);
 		float phM = 0.8 * shadeHG(mu, SHADE_HAZE_MIE_G) + 0.2 * shadeHG(mu, -0.2);
 		float glow = 1.0 + sl.fogMisc.w;
-		float3 E = f.sunColor.rgb * 3.14159265;
+		// (FT2.10) the sunlight the final pass's haze has around the camera (shadeAirSun: none in a cave), so only what it added is
+		// taken out (else the shadows darkened a cave's walls down to the floor of what they may take, mcopt.shade.vl.airFloor)
+		float3 E = f.sunColor.rgb * (3.14159265 * shadeAirSun(sl));
 		float3 shadowed = E * ((hL - hA) * (phR * 2.0) + (mistLit - mistAll) * (phM * glow * alM / (1.0 - 0.5 * alM)));
 		// on the sky the haze's glow is the sky model's own: the shadows take out a share of it (air2.y; dark rays from the trees'
 		// and hills' shadows across the glow around the sun)

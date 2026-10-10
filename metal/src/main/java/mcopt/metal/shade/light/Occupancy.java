@@ -25,10 +25,10 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
 /**
- * Which blocks around the camera stop light (BlockState.canOcclude: full opaque cubes, slabs, stairs...; not glass, leaves,
- * water), one bit per block in CPU memory (DynLights copies it into a ring slot of GPU buffers on the frames that compute
- * visibility after it changed; dynlight_vis.metal has the layout): a
- * toroidal window of 8 x 8 x 8 chunk sections (128^3 blocks) that follows the camera section by section. Sections are read
+ * Which blocks around the camera stop light (FT2.10: BlockState.isSolidRender, full opaque cubes; not glass, leaves, water, nor the
+ * partial blocks canOcclude also counts: snow layers, carpets, slabs, stairs, paths, farmland...), one bit per block in CPU
+ * memory (DynLights copies it into a ring slot of GPU buffers on the frames that compute visibility after it changed;
+ * dynlight_vis.metal has the layout): a toroidal window of 8 x 8 x 8 chunk sections (128^3 blocks) that follows the camera section by section. Sections are read
  * from the client's chunks on the render thread within a CPU budget per frame, nearest first; sections the window newly
  * covers read as air until filled; block updates set their bit at once (ClientLevel.sendBlockUpdated, the mixin), section
  * updates (chunk data, light) queue a refill, and one slot per frame is refreshed round-robin anyway (self-healing).
@@ -38,7 +38,23 @@ final class Occupancy {
 	static final int SPAN = 8, SLOTS = SPAN * SPAN * SPAN, WORDS = 128;
 	static final int BYTES = SLOTS * WORDS * 4;
 	private static final long NONE = Long.MIN_VALUE;
-	private static final Predicate<BlockState> OCCLUDES = BlockState::canOcclude, CLEAR = s -> !s.canOcclude();
+	private static final Predicate<BlockState> OCCLUDES = Occupancy::occludes, CLEAR = s -> !occludes(s);
+	/**
+	 * (FT2.10, mcopt.shade.dynLights.fullOccluders, true; read every frame, a change refills the window) only full opaque cubes stop
+	 * a carried light. canOcclude (FT2.9) also counts partial blocks as whole ones: on snow-covered ground every snow layer (1/8 of a
+	 * block high) was a solid voxel, so the light at the eye, grazing the ground, was cut 3-4 blocks out, and the irradiance half a
+	 * block above the snow's top (mostly the snow layer's own voxel) went dark beyond them (Gael 2026-10-10, a lantern on snow at
+	 * night). The same for carpet, slab, path and farmland floors.
+	 */
+	private static volatile boolean fullOnly = fullOnlyFlag();
+
+	private static boolean fullOnlyFlag() {
+		return !"false".equalsIgnoreCase(System.getProperty("mcopt.shade.dynLights.fullOccluders", "true").trim());
+	}
+
+	private static boolean occludes(BlockState s) {
+		return fullOnly ? s.isSolidRender() : s.canOcclude();
+	}
 
 	private final IntBuffer bits;
 	private final long[] held = new long[SLOTS];
@@ -77,6 +93,12 @@ final class Occupancy {
 	/** Re-centres the window on the camera and fills sections within the budget. */
 	void update(ClientLevel lvl, double camX, double camY, double camZ, long budgetNanos) {
 		long t0 = System.nanoTime();
+		boolean full = fullOnlyFlag();
+		if (full != fullOnly) { // the rule changed (a bench variant): every section is read again
+			fullOnly = full;
+			java.util.Arrays.fill(this.dirty, true);
+			java.util.Arrays.fill(this.retry, 0);
+		}
 		if (lvl != this.level) {
 			this.level = lvl;
 			java.util.Arrays.fill(this.held, NONE);
@@ -175,7 +197,7 @@ final class Occupancy {
 								for (int z = 0; z < 16; z++) {
 									int word = 0;
 									for (int x = 0; x < 16; x++) {
-										if (states.get(x, y, z).canOcclude()) word |= 1 << ((i + x) & 31);
+										if (occludes(states.get(x, y, z))) word |= 1 << ((i + x) & 31);
 									}
 									w[i >> 5] |= word;
 									i += 16;
@@ -208,7 +230,7 @@ final class Occupancy {
 		if (this.held[s] != key(sx, sy, sz)) return;
 		int idx = (y & 15) << 8 | (z & 15) << 4 | (x & 15);
 		int at = s * WORDS + (idx >> 5);
-		int old = this.bits.get(at), now = state.canOcclude() ? old | 1 << (idx & 31) : old & ~(1 << (idx & 31));
+		int old = this.bits.get(at), now = occludes(state) ? old | 1 << (idx & 31) : old & ~(1 << (idx & 31));
 		if (now != old) {
 			this.bits.put(at, now);
 			this.slotGen[s] = ++this.generation;

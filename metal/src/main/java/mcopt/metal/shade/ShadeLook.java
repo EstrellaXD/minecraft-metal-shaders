@@ -247,7 +247,9 @@ public final class ShadeLook {
 		// M3.4 x; FT2 y: Distant Horizons composites straight into the HDR target this frame (dh_far_fade.fs, ShadeDh.directFrame)
 		put4(b, WATER_SHADOW, mcopt.metal.shade.water.ShadeWater.shadowSoft(), mcopt.metal.shade.dh.ShadeDh.LOADED
 			? mcopt.metal.shade.dh.ShadeDh.directFlag(ShadeConfig.HDR && ShadePost.active() && !ShadeBindings.fallback()) : 0f,
-			mcopt.metal.shade.water.ShadeWater.shadowContact(), 0f);
+			mcopt.metal.shade.water.ShadeWater.shadowContact(),
+			// w (FT2.10): Photon's underground water look, its strength (mcopt.shade.water.underground, live; 0 = FT2.9)
+			Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.underground", 1f), 0f));
 		put4(b, SUN_GEOM, (float) Math.toRadians(ShadeSky.SUN_TILT), SUN_RADIUS, MOON_RADIUS, (float) Math.toRadians(this.elevation));
 		float[] l = f.sky.light;
 		put4(b, SUN_ART, l[0], l[1], l[2], 1f);
@@ -271,7 +273,9 @@ public final class ShadeLook {
 		double glowBell = Math.exp(-Math.pow((this.elevation + 1.0) / 2.5, 2.0));
 		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, (float) (0.6 * (1f - f.rain) * glowBell));
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
-		put4(b, EYE, 0f, -1.62f, 0f, this.eyeSky);
+		// (FT2.10) x: the cave air's own glow (mcopt.shade.caveFog, live: the share of the minimum cave light the air in a cave
+		// scatters, neutral grey; 0 = the haze in a cave only dims, toward black). The shaders don't read the feet position.
+		put4(b, EYE, Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.caveFog", 0.5f), 0f), -1.62f, 0f, this.eyeSky);
 		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], ShadeSky.sunsetArt ? 1f : 0f); // w: M3 sunset art
 		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], this.skyRose);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
@@ -284,8 +288,14 @@ public final class ShadeLook {
 		// false = FT2.8.1): y the sky light the air around the camera gets (from the eye's, smoothed: all of it from 10 of 15 up, none
 		// at 2 and below; each leaf layer above takes 1, and under a canopy the forest air already has its own share: the morning
 		// forest's god-ray pose lost 3 % of its light with the eye's value straight), z 1 = no hard steps in the haze
+		// w (FT2.10, mcopt.shade.caveAir.sun, true; read every frame, false = FT2.9): the sunlight the air around the camera gets, the
+		// same share: in a cave the haze still glowed in the sun's colour (red-orange at sunset, yellow toward the low sun: Gael
+		// 2026-10-10), because the shadows may take at most 70 % of a surface's light out of it (mcopt.shade.vl.airFloor) and the
+		// shadow map doesn't reach every cave. Photon fades its air fog out below sea level, Complementary and BSL by the eye's sky light
 		boolean caveAir = !"false".equalsIgnoreCase(System.getProperty("mcopt.shade.caveAir", "true").trim());
-		put4(b, CLOCK2, f.skyTime, caveAir ? smooth(2f / 15f, 10f / 15f, this.eyeSky) : 1f, caveAir ? 1f : 0f, 0f);
+		boolean caveSun = caveAir && !"false".equalsIgnoreCase(System.getProperty("mcopt.shade.caveAir.sun", "true").trim());
+		float airSky = caveAir ? smooth(2f / 15f, 10f / 15f, this.eyeSky) : 1f;
+		put4(b, CLOCK2, f.skyTime, airSky, caveAir ? 1f : 0f, caveSun ? airSky : 1f);
 		b.putInt(TIER, ShadeConfig.TIER).putInt(TIER + 4, this.features).putInt(TIER + 8, ShadeConfig.LOOK).putInt(TIER + 12, f.debug);
 		putRows(b, GRADE_IN, this.gradeIn);
 		putRows(b, GRADE_OUT, this.gradeOut);

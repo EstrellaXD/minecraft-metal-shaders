@@ -47,11 +47,13 @@ struct ShadeLook {
 	float4 clouds0;    // 528  M3 clouds: x cumulus base y, y top y (relative to the camera), z cloud shadow strength (0 off), w 1 = volumetric clouds on (vanilla's off)
 	float4 clouds1;    // 544  M3 clouds: x 1 = the reflection dome holds clouds, y cirrus altitude (relative), zw reserved
 	float4 waterShadow; // 560  M3.4 x the water surface's soft shadow radius (blocks, mcopt.shade.waterShadowSoft; 0 = M3.3's), y FT2 1 = Distant Horizons composites straight into the HDR target (ShadeDh.directFrame), z (FT2.8) the soft shadow's contact
-	                    //       growth (blocks of radius per block of caster height; 0 = M3.4's fixed disc), w reserved
+	                    //       growth (blocks of radius per block of caster height; 0 = M3.4's fixed disc), w (FT2.10) Photon's underground
+	                    //       water look: its strength (mcopt.shade.water.underground; 0 = FT2.9's water)
 	float4 water;      // 576  (M3.3 wet ground, mcopt.shade.wetAll; was reserved for the water module, unused by it) x 1 = wet-all look, y soaked film roughness, z vegetation's extra roughness, w film reflections' gate (weather_surface.metal)
 	float4 waterAbs;   // 592  (M3.3 wet ground, look development) x extra darkening exponent of the film, y vegetation's film share, z texel height proxy strength, w rim band width
 	float4 tintRect;   // 608  (M3 weather) the coloured-shadow casters in the near cascade's light clip space: xy min, zw max (none: min > max); written after the shadow pass (ShadeBindings.setShadowTint)
-	float4 eye;        // 624  xyz camera-relative feet position, w smoothed sky light at the eye 0..1
+	float4 eye;        // 624  x (FT2.10) the cave air's glow: share of the minimum cave light (ShadeFrame.ambientBlock.w) it scatters, neutral
+	                   //      grey (mcopt.shade.caveFog; 0 = toward black), y camera-relative feet y (unused), z 0, w smoothed sky light at the eye 0..1
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0
 	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w M3 evening rose hue weight (sky LUT)
 	float4 night;      // 672  x star brightness, y Milky Way, z aurora (unused), w moon phase angle (rad, 0 = full)
@@ -59,7 +61,8 @@ struct ShadeLook {
 	float4 clock2;     // 704  (FT2.8, audit idx 78) x the sky's slow clock (s): real time like the water's, wrapped every 65536 s (the
 	                   //      water's 4096-s wrap made the aurora and the End sky jump once every 68 min: their speeds aren't whole
 	                   //      noise tiles per 4096 s), y (FT2.9) the sky light the air around the camera gets (shadeAirSky), z (FT2.9) 1 =
-	                   //      mcopt.shade.caveAir (y follows the eye, no hard steps in the haze near the camera), w reserved
+	                   //      mcopt.shade.caveAir (y follows the eye, no hard steps in the haze near the camera), w (FT2.10) the sunlight the air
+	                   //      around the camera gets (shadeAirSun; 1 with mcopt.shade.caveAir.sun=false)
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)
 	float4 dimTint;    // 752  reserved
@@ -122,6 +125,11 @@ struct ShadeResources {
 // mundo se dividiera por capas"). 1 with the option off (FT2.8.1).
 static inline float shadeAirSky(constant ShadeLook &L) { return L.clock2.z > 0.5 ? L.clock2.y : 1.0; }
 static inline bool shadeAirSmooth(constant ShadeLook &L) { return L.clock2.z > 0.5; }
+// (FT2.10, mcopt.shade.caveAir.sun) the same for the sun's light: none in a cave, where the haze and the mist (densest below their
+// bases, i.e. in every cave) still glowed in the low sun's colour and its forward lobe (Gael 2026-10-10: red fog in a cave at sunset,
+// a yellow "bloom" looking west underground). Photon fades its air fog out below sea level, Complementary (x (1 - cave factor)) and BSL
+// (its exterior factor) by the eye's sky light: no sunlit air underground. 1 with the option off (FT2.9).
+static inline float shadeAirSun(constant ShadeLook &L) { return L.clock2.w; }
 
 // ---- display transform ("Shade Filmic") ---------------------------------------------------------------------------------
 // Structure: desaturate (white balance + saturation + inset, one matrix) -> per-channel Lottes 2016 curve anchored at

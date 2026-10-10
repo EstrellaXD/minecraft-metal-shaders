@@ -83,8 +83,10 @@ public final class ShadeMsl {
 	 */
 	static final String HAZE_DEFINES = (Boolean.parseBoolean(System.getProperty("mcopt.shade.hazeEdge", "true")) ? "#define SHADE_HAZE_EDGE 1\n" : "")
 		+ "#define SHADE_HAZE_MIE_G " + Math.clamp(Float.parseFloat(System.getProperty("mcopt.shade.hazeMieG", "0.5")), 0f, 0.95f) + "\n"
-		// (FT2.8, audit idx 96) the PCSS disc rotated per frame under TAA (mcopt.shade.pcssNoise; false = FT2.7's fixed pattern)
-		+ (mcopt.metal.shade.taa.TaaConfig.ENABLED && Boolean.parseBoolean(System.getProperty("mcopt.shade.pcssNoise", "true")) ? "#define SHADE_PCSS_TAA 1\n" : "")
+		// (FT2.8, audit idx 96) the PCSS disc rotated per frame under TAA (-Dmcopt.shade.pcssNoise=true). Off by default: at still poses
+		// it made leaves and canopy silhouettes shimmer frame to frame (pcss28-*: p4 pixels off by > 8 levels 0.08 % -> 1.23 %); FT2.7's
+		// fixed pattern keeps them still
+		+ (mcopt.metal.shade.taa.TaaConfig.ENABLED && Boolean.getBoolean("mcopt.shade.pcssNoise") ? "#define SHADE_PCSS_TAA 1\n" : "")
 		// (FT2.8, audit idx 82) the terrain's RGSS taps only where they count (mcopt.shade.rgssGate; false = Sodium's 5 taps everywhere)
 		+ (Boolean.parseBoolean(System.getProperty("mcopt.shade.rgssGate", "true")) ? "#define SHADE_RGSS_GATE 1\n" : "");
 

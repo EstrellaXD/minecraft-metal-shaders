@@ -401,12 +401,39 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_THICK)) { thickK = 3.0; behind = false; }
 	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_BEHIND)) { thickK = 1.0; behind = true; }
 	if (SHADE_WDEV_IS(f, SHADE_WDEV_SSR_BOTH)) { thickK = 3.0; behind = true; }
+#ifdef SHADE_SSR_LEAN2
+	// (FT2.8, audit idx 58, mcopt.shade.water.ssrLean) only the fallback's crossing is kept through the loop, not a float4 (the loop is
+	// the register-bound part of the water shader); its uv and fades are rebuilt after it from the same expressions
+	float hiBack = -1.0;
+#else
 	float4 back = float4(0.0, 0.0, 0.0, -1.0);
+#endif
 	for (int i = 1; i <= n; i++) {
 		float hi = shadeSsrT((base + float(i)) * inv);
 		if (s0.z + ds.z * hi > zs[i]) continue; // still in front of what the coarse depth holds there
 		float lo = shadeSsrT(max(base + float(i - 1), 0.0) * inv);
 		float tPrev = lo;
+#ifdef SHADE_SSR_LEAN2
+		// (FT2.8, audit idx 57) the 4 bisection steps as 2 rounds of 3 reads issued together (the second step's midpoint is one of
+		// two known ones): the same midpoints and decisions, half the dependent reads; the depth at the final hi is reused
+		float zHi = -1.0;
+		for (int j = 0; j < 2; j++) {
+			float m1 = 0.5 * (lo + hi), ma = 0.5 * (lo + m1), mb = 0.5 * (m1 + hi);
+			float3 s1 = s0 + ds * m1, sa = s0 + ds * ma, sb = s0 + ds * mb;
+			float z1 = shadeSsrZ(depth, s1, size), za = shadeSsrZ(depth, sa, size), zb = shadeSsrZ(depth, sb, size);
+			if (s1.z <= z1) {
+				hi = m1;
+				zHi = z1;
+				if (sa.z <= za) { hi = ma; zHi = za; } else lo = ma;
+			} else {
+				lo = m1;
+				if (sb.z <= zb) { hi = mb; zHi = zb; } else lo = mb;
+			}
+		}
+		float3 sh = s0 + ds * hi;
+		float2 uv = sh.xy * 0.5 + 0.5;
+		float zh = zHi >= 0.0 ? zHi : shadeSsrZ(depth, sh, size);
+#else
 		for (int j = 0; j < 4; j++) {
 			float m = 0.5 * (lo + hi);
 			float3 sm = s0 + ds * m;
@@ -415,6 +442,7 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		float3 sh = s0 + ds * hi;
 		float2 uv = sh.xy * 0.5 + 0.5;
 		float zh = shadeSsrZ(depth, sh, size);
+#endif
 		float wh = zh > 0.0 ? B / max(zh + A, 1e-7) : SHADE_WATER_SKY_W;
 		float wr = B / max(sh.z + A, 1e-7);
 		float wp = B / max(s0.z + ds.z * tPrev + A, 1e-7);
@@ -437,6 +465,21 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		// the ray passed behind something thin: keep marching
 		// (FT2.6.1, audit idx 32/56: only an occluder beyond the reflecting point, with the fades real hits get: past a side, an edge
 		// column much nearer than the ray fades out (no sideways smear of a trunk at the screen edge), and the far end fades)
+#ifdef SHADE_SSR_LEAN2
+		if (behind && hiBack < 0.0 && wh < SHADE_WATER_SKY_W && wh > B / max(s0.z + A, 1e-7)) hiBack = hi;
+	}
+	if (hiBack < 0.0) return float4(0.0, 0.0, 0.0, -1.0);
+	float3 sh = s0 + ds * hiBack;
+	float2 uv = sh.xy * 0.5 + 0.5;
+	float zh = shadeSsrZ(depth, sh, size);
+	float wh = zh > 0.0 ? B / max(zh + A, 1e-7) : SHADE_WATER_SKY_W;
+	float wr = B / max(sh.z + A, 1e-7);
+	float off = abs(sh.x) - 1.0;
+	float bf = smoothstep(0.0, 0.07, min(uv.y, 1.0 - uv.y)) * (1.0 - 0.5 * smoothstep(0.0, 1.0, off));
+	bf *= mix(1.0, saturate((wh / max(wr, 1e-3) - 0.5) * 4.0), saturate(off * 20.0));
+	if (!screenEnd) bf *= 1.0 - smoothstep(0.85, 1.0, wr / max(B / max(s0.z + ds.z + A, 1e-7), 1e-3));
+	return float4(clamp(uv.x, 0.5 / size.x, 1.0 - 0.5 / size.x), uv.y, bf, hiBack + 10.0);
+#else
 		if (behind && back.w < 0.0 && wh < SHADE_WATER_SKY_W && wh > B / max(s0.z + A, 1e-7)) {
 			float off = abs(sh.x) - 1.0;
 			float bf = smoothstep(0.0, 0.07, min(uv.y, 1.0 - uv.y)) * (1.0 - 0.5 * smoothstep(0.0, 1.0, off));
@@ -446,6 +489,7 @@ static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int
 		}
 	}
 	return back;
+#endif
 }
 #else
 static float4 shadeSsrMarch(float3 s0, float3 ds, bool screenEnd, int chunk, int chunks, float jitter, constant ShadeFrame &f,

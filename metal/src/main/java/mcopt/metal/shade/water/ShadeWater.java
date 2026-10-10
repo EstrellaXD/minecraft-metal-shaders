@@ -198,6 +198,8 @@ public final class ShadeWater {
 		b.append("#define SHADE_SSR_THICK_K ").append(SSR_THICK).append("\n#define SHADE_SSR_BEHIND ").append(SSR_BEHIND ? 1 : 0).append('\n');
 		// 2026-10-08: the SSR march decides in reversed-Z depth (same decisions, no division per step); false = FT1.3's march
 		if (Boolean.parseBoolean(System.getProperty("mcopt.shade.water.rawz", "true"))) b.append("#define SHADE_SSR_RAWZ 1\n");
+		// (FT2.8, audit idx 57/58) the RAWZ march's bisection in 2 rounds of 3 reads and its fallback kept as one float: same image
+		if (Boolean.getBoolean("mcopt.shade.water.ssrLean")) b.append("#define SHADE_SSR_LEAN2 1\n");
 		// 2026-10-08: the live pricing switches (bits 21-23 of mcopt.shade.dev) only with -Dmcopt.shade.wdev=true (they cost ~0.09 ms
 		// in the lake spin, price5c)
 		if (Boolean.getBoolean("mcopt.shade.wdev")) b.append("#define SHADE_WDEV_ON 1\n");

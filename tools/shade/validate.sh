@@ -18,7 +18,8 @@ clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/pipecheck.m" 
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/vlcheck.m" -o "$OUT/vlcheck"
 CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$(find ~/.gradle/caches -name 'jspecify-*.jar' | grep -v sources | head -1)"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/ShadeMslDump.java"
-"${JAVA_BIN}java" -Dmcopt.shade=true -Dmcopt.shade.glossy=true -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"  # opt-in features on: the widest variant
+# VALIDATE_PROPS="-Dx=y ...": more switches for the dump (e.g. a startup-only shader variant under test)
+"${JAVA_BIN}java" -Dmcopt.shade=true -Dmcopt.shade.glossy=true $VALIDATE_PROPS -cp "$OUT/classes:$CP" ShadeMslDump "$OUT/variants"  # opt-in features on: the widest variant
 cp "$HERE"/gen_*.fs.metal "$OUT/"
 cd "$OUT"
 fail=0

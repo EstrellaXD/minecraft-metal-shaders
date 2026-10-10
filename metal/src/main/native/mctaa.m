@@ -17,7 +17,7 @@
 #import "mcmetal.h"
 
 typedef struct {
-	id<MTLRenderPipelineState> resolve;
+	id<MTLRenderPipelineState> resolve, resolveNoMovers; // (FT2.8, audit idx 63) resolveNoMovers: TAA_MOVERS_ON false, for frames with no mover
 	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *output;  // taa_output_fs per destination pixel format
 	id<MTLFunction> vs, outputFs, debugFs;  // debugFs: taau_debug_fs (flags bit 2), else nil
 	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *debug;  // taau_debug_fs per destination pixel format
@@ -61,6 +61,10 @@ Taa *mc_taa_new(Ctx *ctx, const char *source, int flags, char *err, int errCap) 
 		MTLFunctionConstantValues *fc = [[MTLFunctionConstantValues new] autorelease];
 		bool h = hdr != 0;
 		[fc setConstantValue:&h type:MTLDataTypeBool atIndex:0];
+		MTLFunctionConstantValues *fcNo = [[MTLFunctionConstantValues new] autorelease];
+		bool no = false;
+		[fcNo setConstantValue:&h type:MTLDataTypeBool atIndex:0];
+		[fcNo setConstantValue:&no type:MTLDataTypeBool atIndex:1];
 		pd.fragmentFunction = [[lib newFunctionWithName:@"taau_fs" constantValues:fc error:&e] autorelease];
 		if (!pd.fragmentFunction) {
 			snprintf(err, errCap, "%s", e.localizedDescription.UTF8String);
@@ -76,8 +80,11 @@ Taa *mc_taa_new(Ctx *ctx, const char *source, int flags, char *err, int errCap) 
 			[lib release];
 			return NULL;
 		}
+		pd.fragmentFunction = [[lib newFunctionWithName:@"taau_fs" constantValues:fcNo error:&e] autorelease];
+		id<MTLRenderPipelineState> resolveNo = pd.fragmentFunction ? [ctx->device newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
 		Taa *t = calloc(1, sizeof(Taa));
 		t->resolve = resolve;
+		t->resolveNoMovers = resolveNo; // nil: the movers variant every frame
 		t->lossy = (flags & 2) && [ctx->device supportsFamily:MTLGPUFamilyApple8];
 		t->hdr = hdr != 0;
 		t->output = [NSMutableDictionary new];
@@ -186,7 +193,9 @@ void mc_taa_resolve(Enc *enc, Taa *t, id<MTLTexture> color, id<MTLTexture> depth
 		}
 		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shade: TAAU";
-		[r setRenderPipelineState:dbg ? dbg : t->resolve];
+		uint32_t moverCount;
+		memcpy(&moverCount, t->movers, sizeof moverCount);
+		[r setRenderPipelineState:dbg ? dbg : moverCount == 0 && t->resolveNoMovers ? t->resolveNoMovers : t->resolve];
 		[r setFragmentBytes:params length:paramsLength atIndex:0];
 		[r setFragmentTexture:color atIndex:0];
 		[r setFragmentTexture:depth atIndex:1];
@@ -240,6 +249,7 @@ id<MTLTexture> mc_taa_history_depth(Taa *t) { return t->depth[t->cur]; }
 void mc_taa_free(Taa *t) {
 	if (!t) return;
 	[t->resolve release];
+	[t->resolveNoMovers release];
 	[t->output release];
 	[t->vs release];
 	[t->outputFs release];

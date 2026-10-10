@@ -79,6 +79,10 @@ vertex TaaVOut taa_vs(uint id [[vertex_id]]) {
 // flicker; reversible. Off (M1's tonemapped RGBA8 input), colours are already bounded and blend as they are.
 constant bool TAA_HDR [[function_constant(0)]];
 constant bool taaHdr = is_function_constant_defined(TAA_HDR) && TAA_HDR;
+// (FT2.8, audit idx 63) function constant 1 false: the resolve without the M3 movers code (mctaa.m binds it on frames with no
+// mover: -0.025 ms at Retina 0.8, taatest perf TAAHDR=1); unset: with it
+constant bool TAA_MOVERS_ON [[function_constant(1)]];
+constant bool taaMoversOn = !is_function_constant_defined(TAA_MOVERS_ON) || TAA_MOVERS_ON;
 static inline half3 taaCompress(half3 c) {
 	return taaHdr ? c / (1.0h + dot(c, half3(0.2126h, 0.7152h, 0.0722h))) : c;
 }
@@ -178,7 +182,7 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	float4 prev = (p.reproj * v4) * iw;
 	float viewDepth = iw;
 	float3 moved = float3(0.0);
-	if (movers.count.x > 0u && zmax > 0.0) { // prevVP (world - moved, 1) = the above - prevVP (moved, 0)
+	if (taaMoversOn && movers.count.x > 0u && zmax > 0.0) { // prevVP (world - moved, 1) = the above - prevVP (moved, 0)
 		moved = taaMoverDelta((p.invCur * v4).xyz * iw, movers);
 		prev -= p.prevVP * float4(moved, 0.0);
 	}

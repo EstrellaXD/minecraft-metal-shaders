@@ -580,18 +580,34 @@ static half shadeShadow(depth2d_array<float> map, sampler cmp, constant ShadeFra
 // in place of shadeShadow's 4-tap tent (same fetches: 8 taps cost +0.42 ms on a half-water view). The map is orthographic,
 // so a tap at p + (dx, 0, dz) projects to c0 + dx vp[0] + dz vp[2]: its depth is the plane's there (no acne on a flat
 // receiver seen by a low sun).
+// (FT2.8, audit idx 97; contact > 0, ShadeLook.waterShadow.z, mcopt.shade.waterShadowContact, live) the penumbra grows with the
+// caster's distance toward the light: contact blocks of radius per block (r at r / contact blocks). The disc is shrunk to the
+// caster at its centre (one gather), and a tap counts a caster only if it is far enough above the plane to throw a penumbra that
+// wide (its compare depth raised by d / contact blocks). Without this a bank more than a block above the water put the disc's
+// inland taps under it (inside the bank: shadowed whatever the sun) and drew a soft dark band along every such shore, on the
+// side facing the sun too; long shadows of far islands keep their full softness.
 static inline float shadeShadowCascadeDisc(depth2d_array<float> map, sampler cmp, uint layer, float4x4 vp, float3 p, float3 offset, float r,
-                                           float turn, thread float &m) {
+                                           float turn, thread float &m, float contact = 0.0, float3 L = float3(0.0)) {
 	float4 c0 = vp * float4(p + offset, 1.0);
 	m = max(abs(c0.x), abs(c0.y));
 	if (c0.z <= 0.0 || c0.z >= 1.0) m = 2.0;
 	if (m >= 1.0) return 1.0;
 	float3 ax = vp[0].xyz, az = vp[2].xyz;
+	float zPerBlock = 0.0;
+	if (contact > 0.0) {
+		// orthographic: the map's depth grows by this per block toward the light (reversed Z: nearer the light = larger)
+		zPerBlock = max(dot(float3(vp[0].z, vp[1].z, vp[2].z), L), 1e-7);
+		constexpr sampler pt(coord::normalized, filter::nearest, address::clamp_to_edge);
+		float4 zc = map.gather(pt, shadeShadowUV(c0.xyz), layer);
+		float db = (max(max(zc.x, zc.y), max(zc.z, zc.w)) - c0.z) / zPerBlock; // the centre's nearest caster above, blocks
+		if (db > 0.02) r = clamp(db * contact, 0.1, r);
+	}
 	float s = 0.0;
 	for (int i = 0; i < 4; i++) {
 		float a = (float(i) + turn) * 2.39996323, d = r * sqrt((float(i) + 0.5) * 0.25);
 		float3 c = c0.xyz + ax * (cos(a) * d) + az * (sin(a) * d);
-		s += map.sample_compare(cmp, shadeShadowUV(c), layer, c.z);
+		float ref = contact > 0.0 ? c.z + zPerBlock * (d / contact) : c.z;
+		s += map.sample_compare(cmp, shadeShadowUV(c), layer, ref);
 	}
 	return s * 0.25;
 }
@@ -599,7 +615,8 @@ static inline float shadeShadowCascadeDisc(depth2d_array<float> map, sampler cmp
 // M3.4 (water): shadeShadow for an up-facing water surface with a soft edge of radius r blocks. Distant blocky casters (an
 // island under a low sun) cut the sun's glint on the water along their block outline; real waves and the sun's own size
 // blur that edge over a block or two (water only: sodium_terrain.fs.metal waterFull; r <= 0 = shadeShadow, M3.3).
-static half shadeShadowSoft(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, float3 p, half3 n, float r, float2 pixel) {
+static half shadeShadowSoft(depth2d_array<float> map, sampler cmp, constant ShadeFrame &f, float3 p, half3 n, float r, float2 pixel,
+                            float contact = 0.0) {
 	if (f.flags.z == 0 || shadeDev(f, SHADE_DEV_NO_SHADOW)) return half(1.0);
 	float3 L = f.lightDirWorld.xyz;
 	float nl = dot(float3(n), L);
@@ -610,7 +627,7 @@ static half shadeShadowSoft(depth2d_array<float> map, sampler cmp, constant Shad
 	// the far cascade only: its texels are ~4x the near one's, so a disc of a block or two spans a few texels (cache-friendly;
 	// the near cascade's detail is what the softening removes anyway). Points it doesn't cover keep shadeShadow.
 	float m1;
-	float far = shadeShadowCascadeDisc(map, cmp, 1u, f.shadowViewProj[1], p, dir * f.cascadeSplits.w, r, turn, m1);
+	float far = shadeShadowCascadeDisc(map, cmp, 1u, f.shadowViewProj[1], p, dir * f.cascadeSplits.w, r, turn, m1, contact, L);
 	if (m1 >= 1.0) return shadeShadow(map, cmp, f, p, n, false);
 	return half(mix(far, 1.0, smoothstep(0.85, 1.0, m1)));
 }

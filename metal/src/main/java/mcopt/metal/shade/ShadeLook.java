@@ -246,7 +246,8 @@ public final class ShadeLook {
 		new Matrix4f().get(CLOUD_SHADOW_VP, b);
 		// M3.4 x; FT2 y: Distant Horizons composites straight into the HDR target this frame (dh_far_fade.fs, ShadeDh.directFrame)
 		put4(b, WATER_SHADOW, mcopt.metal.shade.water.ShadeWater.shadowSoft(), mcopt.metal.shade.dh.ShadeDh.LOADED
-			? mcopt.metal.shade.dh.ShadeDh.directFlag(ShadeConfig.HDR && ShadePost.active() && !ShadeBindings.fallback()) : 0f, 0f, 0f);
+			? mcopt.metal.shade.dh.ShadeDh.directFlag(ShadeConfig.HDR && ShadePost.active() && !ShadeBindings.fallback()) : 0f,
+			mcopt.metal.shade.water.ShadeWater.shadowContact(), 0f);
 		put4(b, SUN_GEOM, (float) Math.toRadians(ShadeSky.SUN_TILT), SUN_RADIUS, MOON_RADIUS, (float) Math.toRadians(this.elevation));
 		float[] l = f.sky.light;
 		put4(b, SUN_ART, l[0], l[1], l[2], 1f);

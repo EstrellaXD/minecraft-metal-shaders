@@ -156,6 +156,15 @@ public final class ShadeWater {
 		}
 	}
 
+	/**
+	 * FT2.8 (audit idx 97): the soft shadow's penumbra growth with the caster's height above the water, blocks of radius per block
+	 * (shade_common.metal shadeShadowCascadeDisc: 0.125 = the full 2 blocks from casters 16 blocks up; banks a block or two above the
+	 * water no longer darken a band along the shore). mcopt.shade.waterShadowContact, read every frame; 0 = M3.4's fixed disc.
+	 */
+	public static float shadowContact() {
+		return Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.waterShadowContact", 0f), 0f);
+	}
+
 	/** M3.4: the default soft shadow radius on water (blocks). */
 	static final float SHADOW_SOFT_DEFAULT = 2f;
 	/** M2.1: the water animates on a real-time clock instead of the (server-corrected, tick-based) game time. */

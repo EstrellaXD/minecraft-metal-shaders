@@ -145,8 +145,10 @@ public final class ShadeTaa {
 			failed = true;
 			return null;
 		}
-		// (FT2.8, audit idx 69) -Dmcopt.shade.taaCompressTaps=false: the history's Catmull-Rom on linear HDR, as FT2.7
-		ByteBuffer source = MemoryUtil.memUTF8((Boolean.parseBoolean(System.getProperty("mcopt.shade.taaCompressTaps", "true")) ? "" : "#define TAA_LINEAR_HISTORY\n")
+		// (FT2.8, audit idx 69) -Dmcopt.shade.taaCompressTaps=true: the history's Catmull-Rom on compressed taps (no ringing past very
+		// bright edges); off by default: no ring showed around the sun or the glints while turning (bench motion shots, the bloom and
+		// aureole cover it) and it costs +0.08 ms at Retina. Off = FT2.7's filter on linear HDR
+		ByteBuffer source = MemoryUtil.memUTF8((Boolean.getBoolean("mcopt.shade.taaCompressTaps") ? "" : "#define TAA_LINEAR_HISTORY\n")
 			+ ShadeMsl.resource("taa.metal"));
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);

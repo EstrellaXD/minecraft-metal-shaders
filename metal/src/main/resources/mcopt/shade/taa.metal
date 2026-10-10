@@ -97,7 +97,8 @@ static inline float3 taaExpand(float3 c) {
 // (FT2.8, audit idx 69) Each tap rescaled and range-compressed before the weights (with TAA_HDR; Karis 2014), so the result is
 // in the resolve's compressed space: on linear HDR the spline's negative outer lobes rang 1-2 px outside the sun disc and water
 // glints (more than ~15x their surroundings) whenever the camera moved, below 0 per channel (dark or hue-shifted rings, fed
-// back at 0.8-0.9). -Dmcopt.shade.taaCompressTaps=false (TAA_LINEAR_HISTORY, at startup): FT2.7's linear filter, then compress.
+// back at 0.8-0.9). Only with -Dmcopt.shade.taaCompressTaps=true (else TAA_LINEAR_HISTORY, the default: FT2.7's linear filter, then compress;
+// the motion shots showed no ring to remove).
 // (+0.035 ms at Retina 0.8, taatest perf TAAHDR=1; a live switch between the two cost +0.1 ms: two inlined filters)
 static inline half3 taaTap(half3 c, float rescale, bool comp) {
 	if (!comp) return c;

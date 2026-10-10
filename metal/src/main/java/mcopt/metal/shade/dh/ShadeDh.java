@@ -63,6 +63,7 @@ public final class ShadeDh {
 		SHADING = new Entry(CFG + "$Quality", "lodShading"), OVERDRAW = new Entry(CFG + "$Culling", "overdrawPrevention");
 	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING, OVERDRAW};
 	private static Method setApi, getTrue;
+	private static boolean warnedFade;
 	private static Class<?> fadeEnum, shadingEnum;
 	private static boolean failed, resolved, logged;
 	/**
@@ -121,11 +122,16 @@ public final class ShadeDh {
 		try {
 			apply(SSAO, shading ? off("mcopt.shade.dh.ssao") : null);
 			apply(AA, shading ? off("mcopt.shade.dh.aa") : null);
-			// (FT2.8, audit idx 100) DH's DOUBLE_PASS vanilla fade (DH's default) wipes the near world while DH composites straight into the
-			// HDR target (fade28-DOUBLE_PASS: only the LODs' dark silhouette left): with "dh" (the default) a player's DOUBLE_PASS becomes
-			// SINGLE_PASS while the shade frame runs; NONE and SINGLE_PASS stay theirs (both fine from startup, fade28-NONE; switching
-			// SINGLE_PASS to NONE live broke the far LODs: *ft28-dh, so nothing else is switched)
-			apply(FADE, shading ? fadeWanted() : null);
+			// (FT2.8, audit idx 100, NOT fixed) DH's DOUBLE_PASS vanilla fade (DH's default) wipes the near world while DH composites
+			// straight into the HDR target (fade28-DOUBLE_PASS: only the LODs' dark silhouette left). An override to SINGLE_PASS from the
+			// first frame changed nothing (fade28-DOUBLE-fixed: the same image), and switching SINGLE_PASS to NONE live broke the far LODs
+			// (*ft28-dh): DH settles it at startup. NONE and SINGLE_PASS from startup are fine (fade28-NONE): only a warning here
+			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "dh") : null);
+			if (shading && DIRECT && !warnedFade && "DOUBLE_PASS".equals(String.valueOf(getTrue.invoke(FADE.entry)))) {
+				warnedFade = true;
+				System.out.println("[mcopt] shade dh: WARNING: Distant Horizons' vanilla fade is DOUBLE_PASS, which hides the near world with mcopt-shade's"
+					+ " direct composite. Set it to SINGLE_PASS or NONE (DH settings > Graphics > Quality > Vanilla fade) and restart the game.");
+			}
 			apply(FOG, shading && LIGHT ? off("mcopt.shade.dh.fog") : null);
 			apply(SHADING, shading && LIGHT && off("mcopt.shade.dh.shading") != null ? named(shadingEnum, "-", "DISABLED") : null);
 			// FT2 (2026-10-08 night): how far around the camera DH skips LODs that the vanilla terrain covers (0..1 of the vanilla
@@ -147,14 +153,6 @@ public final class ShadeDh {
 
 	private static void apply(Entry e, Object want) throws ReflectiveOperationException {
 		if (want != e.applied) setApi.invoke(e.entry, e.applied = want, USER);
-	}
-
-	/** The vanilla fade override: mcopt.shade.dh.fade if it names a mode, else SINGLE_PASS in place of the player's DOUBLE_PASS. */
-	private static Object fadeWanted() throws ReflectiveOperationException {
-		Object named = named(fadeEnum, "mcopt.shade.dh.fade", "dh");
-		if (named != null || !DIRECT) return named;
-		Object own = getTrue.invoke(FADE.entry);
-		return own != null && "DOUBLE_PASS".equals(String.valueOf(own)) ? named(fadeEnum, "-", "SINGLE_PASS") : null;
 	}
 
 	/** Boolean.FALSE (override off) unless the flag says "dh". */

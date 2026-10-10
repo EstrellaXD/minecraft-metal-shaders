@@ -265,6 +265,10 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	float3 c = float3(c0);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;
+	// (FT2.9, mcopt.shade.caveAir) the haze from the camera on, not from 2 blocks: the VL's air mode takes the shadowed sun glow out
+	// of the whole ray, so within 2 blocks it darkened the pixel and past them the glow came in at once: in a cave (high exposure)
+	// a sphere 2 blocks around the player (Gael 2026-10-10). Its sky glow follows the eye's sky light (shadeAirSky)
+	float hazeNear = shadeAirSmooth(L) ? 0.0 : 4.0;
 	float3 wp = d > 0.0 ? shadeWorldFromDepth(uv, d, f) : float3(0.0);
 	// (FT2.7, audit idx 47) where the haze below blends the 2x2 depth texels (an edge), their distances and weights: the air mode's
 	// VL is then read at the same keys, so what its shadows take out matches the haze glow that was added
@@ -288,7 +292,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 				if (dq[k] > 0.0) {
 					uint2 tk = uint2(k & 1 ? t1.x : t0.x, k & 2 ? t1.y : t0.y);
 					float3 pk = shadeWorldFromDepth((float2(tk) + 0.5) / dsize, dq[k], f);
-					if (dot(pk, pk) > 4.0) Sk = shadeHazeInscatter(pk, f, L, 1.0, Tk);
+					if (dot(pk, pk) > hazeNear) Sk = shadeHazeInscatter(pk, f, L, 1.0, Tk);
 					dkq[k] = length(pk);
 				}
 				Ts += Tk * wq[k];
@@ -298,14 +302,14 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 			c = c * Ts + Ss * ex;
 			hazeEdge = true;
 			wqq = wq;
-		} else if (d > 0.0 && dot(wp, wp) > 4.0) {
+		} else if (d > 0.0 && dot(wp, wp) > hazeNear) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
 			c = c * T + S * ex;
 		}
 	}
 #else
 	if (d > 0.0 && hazeOn) {
-		if (dot(wp, wp) > 4.0) {
+		if (dot(wp, wp) > hazeNear) {
 			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
 			c = c * T + S * ex;
 		}

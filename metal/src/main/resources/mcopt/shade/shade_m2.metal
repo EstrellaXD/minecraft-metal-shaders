@@ -245,7 +245,7 @@ static float3 shadeHazeInscatterFrom(float3 p, float yc, constant ShadeFrame &f,
 	// (FT1.3: 0.5 by default, mcopt.shade.hazeMieG: toward a low sun 0.76 washed far terrain out to cream white, Gael)
 	float phM = 0.8 * shadeHG(nu, SHADE_HAZE_MIE_G) + 0.2 * shadeHG(nu, -0.2);
 	float3 E = f.sunColor.rgb * 3.14159265 * sunVis;    // irradiance from the light (sunColor is light / pi)
-	float3 sky = f.ambientSky.rgb * 0.9;                 // mean sky radiance (ambientSky ~ irradiance / pi)
+	float3 sky = f.ambientSky.rgb * (0.9 * shadeAirSky(L)); // mean sky radiance (ambientSky ~ irradiance / pi); FT2.9: none in caves
 	float glow = 1.0 + L.fogMisc.w; // (ShadeLook: strength x exp(-((sun elevation in degrees + 1) / 2.5)^2), once per frame)
 	float aM = L.fogM.w;
 	float3 sR = (E * phR + sky) * (1.0 / (1.0 - 0.5));
@@ -270,6 +270,12 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	float3 v = p / max(d, 1e-4);
 	bool air = f.fogColor.a < 0.5;
 	float ap = (1.0 - exp(-d * f.fogSky.z)) * f.fogSky.w * (1.0 - f.fogColor.a);
+	// (FT2.9, mcopt.shade.caveAir) the sky behind only as far as the air is lit by the sky (none from inside a cave), and faded in
+	// over ap 0.002-0.004 (~5-10 blocks) instead of starting at once: in a cave, under its high exposure, the step at ~5 blocks
+	// showed as a sphere around the player (bright sky behind the walls past it, Gael 2026-10-10)
+	bool smoothAir = shadeAirSmooth(L);
+	if (smoothAir) ap *= shadeAirSky(L);
+	float apMix = smoothAir ? ap * 0.6 * smoothstep(0.002, 0.004, ap) : (ap > 0.002 ? ap * 0.6 : 0.0);
 	float3 skyBehind = float3(0.0);
 	// the border fog's amount (applied last, below): computed first, the clouds' lookup needs it
 	float edge = 0.0;
@@ -286,7 +292,7 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	// the sky behind (with the clouds) only where a blend below can use it (audit idx 86: not for every fragment while the
 	// border fog is on; terrain within ~5.6 blocks has ap < 0.002 and no border fog). Vanilla's fog (fogMisc.z = 0, DH) keeps
 	// its own clear-sky lookup below, as before.
-	bool needSky = ap > 0.002 || (air && L.fogMisc.z > 0.0 && edge > 0.002);
+	bool needSky = apMix > 0.0 || (air && L.fogMisc.z > 0.0 && edge > 0.002);
 	if (needSky) {
 		float3 vs = float3(v.x, max(v.y, 0.0), v.z);
 		skyBehind = shadeSkyLookup(vs, lut, s, f);
@@ -310,10 +316,10 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 			}
 		}
 	}
-	if (ap > 0.002) radiance = mix(radiance, skyBehind, ap * 0.6);
+	if (apMix > 0.0) radiance = mix(radiance, skyBehind, apMix);
 #ifndef MCOPT_HDR
 	// (in the HDR target the final pass applies the haze once per pixel, from depth: no cost per overdrawn fragment)
-	if (air && d > 2.0) {
+	if (air && (smoothAir || d > 2.0)) {
 		float3 T;
 		float3 S = shadeHazeInscatter(p, f, L, 1.0, T);
 		radiance = radiance * T + S;

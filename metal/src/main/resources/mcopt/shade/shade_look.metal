@@ -58,7 +58,8 @@ struct ShadeLook {
 	float4 ssr;        // 688  x 1 = ShadeResources.prevScene holds a finished frame (0: just allocated, undefined), y 1 = ShadeResources.prevDepth is its depth (TAAU), z 1 = ShadeResources.weatherNoise is baked (M3 weather), w 1 = ShadeResources.shadowTint holds casters this frame (M3 weather, written after the shadow pass; M3.3: 2 = only their rectangle, top-left at texel 0)
 	float4 clock2;     // 704  (FT2.8, audit idx 78) x the sky's slow clock (s): real time like the water's, wrapped every 65536 s (the
 	                   //      water's 4096-s wrap made the aurora and the End sky jump once every 68 min: their speeds aren't whole
-	                   //      noise tiles per 4096 s), yzw reserved
+	                   //      noise tiles per 4096 s), y (FT2.9) the sky light the air around the camera gets (shadeAirSky), z (FT2.9) 1 =
+	                   //      mcopt.shade.caveAir (y follows the eye, no hard steps in the haze near the camera), w reserved
 	float4 renderScale;// 720  TAAU dynamic resolution: x render scale (live / output), y texture mip bias (log2), zw live render size (px)
 	float4 exposureCfg;// 736  x EV below the reference, y EV above it (bounds), z adapt-up tau (s), w adapt-down tau (s)
 	float4 dimTint;    // 752  reserved
@@ -113,6 +114,14 @@ struct ShadeResources {
 	texture2d<half> cloudScreen; // 14 M3 clouds: RGBA16F the same for this frame's view (no TAA jitter), reconstructed history
 	texture2d<half> reserved15;
 };
+
+// (FT2.9, mcopt.shade.caveAir) the share of the sky's light that reaches the air around the camera: the sky light at the eye,
+// smoothed over ~1.5 s (ShadeLook.clock2.y; Photon's eye_skylight). Inside a cave the air is not lit by the sky: the haze's sky
+// glow (and the aerial blend toward the sky behind) lit the cave walls a few blocks away in a blue fog under the cave-adapted
+// exposure, starting at hard steps 2 and ~5 blocks from the eye (Gael, 2026-10-10: "una esfera rodeando el cuerpo... como si el
+// mundo se dividiera por capas"). 1 with the option off (FT2.8.1).
+static inline float shadeAirSky(constant ShadeLook &L) { return L.clock2.z > 0.5 ? L.clock2.y : 1.0; }
+static inline bool shadeAirSmooth(constant ShadeLook &L) { return L.clock2.z > 0.5; }
 
 // ---- display transform ("Shade Filmic") ---------------------------------------------------------------------------------
 // Structure: desaturate (white balance + saturation + inset, one matrix) -> per-channel Lottes 2016 curve anchored at

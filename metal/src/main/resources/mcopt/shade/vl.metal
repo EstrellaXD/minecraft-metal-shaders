@@ -569,8 +569,9 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 				aniso *= 0.7;
 			}
 		}
-		// (its sky-lit part: the final pass haze's sky radiance, ambientSky x 0.9, the share the canopy leaves, air3.w)
-		float3 forest = p.light.rgb * (3.14159265 * phF * glow) * forestLit + f.ambientSky.rgb * (0.9 * p.air3.w) * forestAll;
+		// (its sky-lit part: the final pass haze's sky radiance, ambientSky x 0.9, the share the canopy leaves, air3.w; FT2.9: as far as
+		// the sky lights the air around the camera, shadeAirSky: a cave is all shade, so the forest air filled it with sky-blue fog)
+		float3 forest = p.light.rgb * (3.14159265 * phF * glow) * forestLit + f.ambientSky.rgb * (0.9 * p.air3.w * shadeAirSky(sl)) * forestAll;
 		scatter = shadowed * p.air2.z + forest * (p.air2.w * p.shape.x);
 	} else if (!underwater) {
 		float D = min(dist, p.shape.y);

@@ -280,7 +280,10 @@ public final class ShadeLook {
 		float nightUp = EV_UP - (EV_UP - EV_UP_NIGHT) * (1f - smooth(-10f, -2f, this.elevation));
 		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP, TAU_DOWN);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
-		put4(b, CLOCK2, f.skyTime, 0f, 0f, 0f); // (FT2.8, audit idx 78) the aurora's, End sky's and Nether fog's clock
+		// (FT2.8, audit idx 78) x the aurora's, End sky's and Nether fog's clock; (FT2.9) mcopt.shade.caveAir (true; read every frame,
+		// false = FT2.8.1): y the sky light the air around the camera gets (the eye's, smoothed), z 1 = no hard steps in the haze
+		boolean caveAir = !"false".equalsIgnoreCase(System.getProperty("mcopt.shade.caveAir", "true").trim());
+		put4(b, CLOCK2, f.skyTime, caveAir ? this.eyeSky : 1f, caveAir ? 1f : 0f, 0f);
 		b.putInt(TIER, ShadeConfig.TIER).putInt(TIER + 4, this.features).putInt(TIER + 8, ShadeConfig.LOOK).putInt(TIER + 12, f.debug);
 		putRows(b, GRADE_IN, this.gradeIn);
 		putRows(b, GRADE_OUT, this.gradeOut);

@@ -78,8 +78,8 @@ public final class DynLights {
 	static final double CUT = 2.0;
 	/** The irradiance volume (dynlight.metal SHADE_DL_IRR_*): blocks around the camera, one voxel each. */
 	static final int IRR_X = 96, IRR_Y = 64, IRR_Z = 96;
-	/** ShadeDynLights (dynlight.metal): header 64 + lights 64 x 48 + cells 3072 x 8. */
-	static final int LIGHTS_OFFSET = 64, CELLS_OFFSET = LIGHTS_OFFSET + MAX * 48, BYTES = CELLS_OFFSET + GRID_X * GRID_Y * GRID_Z * 8;
+	/** ShadeDynLights (dynlight.metal): header 64 + lights 64 x 64 (FT2.9: + shape) + cells 3072 x 8. */
+	static final int LIGHT_BYTES = 64, LIGHTS_OFFSET = 64, CELLS_OFFSET = LIGHTS_OFFSET + MAX * LIGHT_BYTES, BYTES = CELLS_OFFSET + GRID_X * GRID_Y * GRID_Z * 8;
 	/**
 	 * Ring slots of the light buffer and of the occupancy copies: more than the frames that can be in flight
 	 * (-Dmcopt.metal.inFlight, 2 by default) plus the one being written; mcdynlight.m holds at most 8.
@@ -120,6 +120,9 @@ public final class DynLights {
 		final long key;
 		double x, y, z;
 		float reach, r, g, b, spec;
+		/** (FT2.9) core radius (blocks) and omnidirectional (the player's own light): dynlight.metal ShadeDynLight.shape. */
+		float core = 0.75f;
+		boolean omni;
 		boolean fire, seen, hand, selected;
 		float cur, target, seed, score;
 		int slab = -1, volGen;
@@ -301,7 +304,8 @@ public final class DynLights {
 			Src s = ACTIVE.get(i);
 			float flick = s.fire && DynLightConfig.FLICKER ? flicker(s.seed) : 1f;
 			float k = s.cur * flick;
-			int at = LIGHTS_OFFSET + i * 48;
+			int at = LIGHTS_OFFSET + i * LIGHT_BYTES;
+			b.putFloat(at + 48, s.core).putFloat(at + 52, s.omni ? 1f : 0f).putFloat(at + 56, 0f).putFloat(at + 60, 0f);
 			float rx = (float) (s.x - camX), ry = (float) (s.y - camY), rz = (float) (s.z - camZ);
 			b.putFloat(at, rx).putFloat(at + 4, ry).putFloat(at + 8, rz).putFloat(at + 12, s.reach);
 			b.putFloat(at + 16, s.r * k).putFloat(at + 20, s.g * k).putFloat(at + 24, s.b * k).putFloat(at + 28, s.spec);
@@ -594,7 +598,7 @@ public final class DynLights {
 			double dx = s.x - x, dy = s.y - y, dz = s.z - z;
 			double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
 			if (d >= s.reach - CUT) continue;
-			float lv = (float) (s.reach - Math.max(d, 0.75)) * Math.min(s.cur, 1f) * DynLightConfig.STRENGTH;
+			float lv = (float) (s.reach - Math.max(d, s.core)) * Math.min(s.cur, 1f) * DynLightConfig.STRENGTH;
 			if (lv <= best) continue;
 			if (!s.hand && occupancy != null && occupancy.blocked(s.x, s.y, s.z, x, y, z)) continue;
 			best = lv;

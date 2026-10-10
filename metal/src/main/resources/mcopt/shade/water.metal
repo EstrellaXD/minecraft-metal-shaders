@@ -98,12 +98,13 @@ static inline float shadeWaterCoarseW(texture2d<float> hz, uint2 px, constant Sh
 	return z > 0.0 ? shadeLinearW(z, f) : SHADE_WATER_SKY_W;
 }
 
-// The coarse-depth pass (full-screen triangle into the half-size R32F target, mc_water_capture): depth copy at texture(0).
+// The coarse-depth pass (full-screen triangle into the half-size R32F target, mc_water_capture): the world depth at texture(0).
+// (FT2.8, audit idx 61) the 2x2 block in one gather at its shared corner (clamp to edge = the reads' min(p + 1, size - 1))
 fragment float shade_water_hz_fs(float4 pos [[position]], depth2d<float> d [[texture(0)]]) {
-	uint2 p = uint2(pos.xy) * 2u;
-	uint2 m = uint2(d.get_width() - 1, d.get_height() - 1);
-	float a = d.read(min(p, m)), b = d.read(min(p + uint2(1, 0), m)), c = d.read(min(p + uint2(0, 1), m)), e = d.read(min(p + 1u, m));
-	return max(max(a, b), max(c, e));
+	constexpr sampler g(coord::normalized, filter::nearest, address::clamp_to_edge);
+	float2 p = float2(uint2(pos.xy) * 2u);
+	float4 z = d.gather(g, (p + 1.0) / float2(d.get_width(), d.get_height()));
+	return max(max(z.x, z.y), max(z.z, z.w));
 }
 
 // A display-referred colour (M1's tone-mapped sRGB) back to linear radiance before exposure: undo the sRGB curve, then

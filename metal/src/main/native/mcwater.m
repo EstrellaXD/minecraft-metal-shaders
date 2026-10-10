@@ -127,23 +127,13 @@ int mc_water_capture(Enc *enc, WaterState *s) {
 		s->depth = copyTarget(enc->ctx, s->depth, depth, @"mcopt shade water: depth copy");
 		if (!s->color || !s->depth) return 0;
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);  // ends the render encoder: every live attachment is stored
-		id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
-		b.label = @"mcopt shade water: scene copy";
 		// only the pass's viewport: under TAAU dynamic resolution the world draws into a sub-rect of fixed-size targets
 		// (the shaders map NDC to that sub-rect, SHADE_WATER_SUBRECT), so the rest is stale and never read
 		NSUInteger cw = enc->width > 0 ? MIN((NSUInteger) enc->width, MIN(color.width, depth.width)) : MIN(color.width, depth.width);
 		NSUInteger ch = enc->height > 0 ? MIN((NSUInteger) enc->height, MIN(color.height, depth.height)) : MIN(color.height, depth.height);
 		bool whole = cw == color.width && ch == color.height && cw == depth.width && ch == depth.height;
-		if (whole) {
-			[b copyFromTexture:color toTexture:s->color];
-			[b copyFromTexture:depth toTexture:s->depth];
-		} else {
-			[b copyFromTexture:color sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(cw, ch, 1)
-				toTexture:s->color destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-			[b copyFromTexture:depth sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(cw, ch, 1)
-				toTexture:s->depth destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-		}
-		[b endEncoding];
+		// (FT2.8, audit idx 61) the coarse depth first, from the attachment itself (the same texels as the copy): it then depends
+		// only on the ended world encoder and can run alongside the ~0.37 ms copy below instead of waiting for all of it
 		if (s->hzPso) {
 			NSUInteger hw = (depth.width + 1) / 2, hh = (depth.height + 1) / 2;
 			if (!s->hz || s->hz.width != hw || s->hz.height != hh) {
@@ -162,10 +152,22 @@ int mc_water_capture(Enc *enc, WaterState *s) {
 			r.label = @"mcopt shade water: coarse depth";
 			if (!whole) [r setViewport:(MTLViewport) {0, 0, (double) ((cw + 1) / 2), (double) ((ch + 1) / 2), 0, 1}];
 			[r setRenderPipelineState:s->hzPso];
-			[r setFragmentTexture:s->depth atIndex:0];
+			[r setFragmentTexture:depth atIndex:0];
 			[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 			[r endEncoding];
 		}
+		id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+		b.label = @"mcopt shade water: scene copy";
+		if (whole) {
+			[b copyFromTexture:color toTexture:s->color];
+			[b copyFromTexture:depth toTexture:s->depth];
+		} else {
+			[b copyFromTexture:color sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+				toTexture:s->color destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+			[b copyFromTexture:depth sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(cw, ch, 1)
+				toTexture:s->depth destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+		}
+		[b endEncoding];
 		mc_reopen_why = "after water copy";
 		mc_render_reopen(enc);
 	}

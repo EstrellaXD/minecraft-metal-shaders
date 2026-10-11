@@ -562,7 +562,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// (FT2.12) and the aerial blend's glow around the sun (shade_m2.metal shadeAerialSunGlow; the terrain mixed it in unshadowed)
 		// by the share of the ray in shade: its density (fogSky.z, ~1/1250 per block) is even along the ray. A sun set behind a
 		// mountain no longer glows through it (Gael 2026-10-11)
-		if (!skyPx && apAll > 0.0) shadowed -= shadeAerialSunGlow(dir * dist, skyLut, lutS, f, sl) * ((apAll - apLit) / apAll);
+		// (only where some of the ray is in shade: the lookups cost ~0.03 ms over the whole view)
+		if (!skyPx && apLit < apAll * 0.999) shadowed -= shadeAerialSunGlow(dir * dist, skyLut, lutS, f, sl) * ((apAll - apLit) / apAll);
 		// on the sky the haze's glow is the sky model's own: the shadows take out a share of it (air2.y; dark rays from the trees'
 		// and hills' shadows across the glow around the sun)
 		if (skyPx) shadowed *= p.air2.y;

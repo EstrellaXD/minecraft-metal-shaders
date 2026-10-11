@@ -372,9 +372,13 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		// pixel above, all of it if the air is all in shadow, and never anything of the surface itself. FT2.11 (a.z 0): at most
 		// 70 % of the pixel (airFloor 0.3), so where that glow outshone the surface, toward a sun set behind a mountain, 30 % of it
 		// stayed: an orange halo through the mountain (Gael 2026-10-11, a snowy canyon at sunset)
-		// (the aerial blend's glow around the sun too, which the air mode's shadows now take out as well: shadeAerialSunGlow)
+		// (the aerial blend's glow around the sun too, which the air mode's shadows now take out as well: shadeAerialSunGlow; looked up
+		// only where the light taken out exceeds the haze's glow, the bound's only use: else lit + add is above the bound anyway)
 		float3 lo = lit * (P.a.x > 0.0 && d > 0.0 ? P.a.x : 0.55);
-		if (P.a.z > 0.0 && P.a.x > 0.0 && d > 0.0) lo = max(lit - (sunGlow + shadeAerialSunGlow(wp, skyLut, lutS, f, L) * ex) * tv, 0.0);
+		if (P.a.z > 0.0 && P.a.x > 0.0 && d > 0.0) {
+			lo = max(lit - sunGlow * tv, 0.0);
+			if (any(add < -sunGlow * tv)) lo = max(lo - shadeAerialSunGlow(wp, skyLut, lutS, f, L) * (ex * tv), 0.0);
+		}
 		c = max(lit + add, lo);
 	}
 	if (P.p.y > 0.5) {

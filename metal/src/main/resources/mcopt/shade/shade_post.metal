@@ -225,7 +225,8 @@ static inline float3 shadeWorldFromDepth(float2 uv, float d, constant ShadeFrame
 template <bool DIMS>
 static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth, texture2d<half> bloom0,
                               texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P, constant ShadeFrame &f,
-                              constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr, thread float &lum) {
+                              constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr, thread float &lum,
+                              texture2d<half> skyLut, sampler lutS) {
 	uint2 px = uint2(in.position.xy);
 	float ex = max(g.exposure.x, 1e-6);
 	// height haze and mist (E06) from depth, once per pixel (the shaded pipelines skip it in the HDR target): surfaces in the
@@ -371,8 +372,9 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		// pixel above, all of it if the air is all in shadow, and never anything of the surface itself. FT2.11 (a.z 0): at most
 		// 70 % of the pixel (airFloor 0.3), so where that glow outshone the surface, toward a sun set behind a mountain, 30 % of it
 		// stayed: an orange halo through the mountain (Gael 2026-10-11, a snowy canyon at sunset)
+		// (the aerial blend's glow around the sun too, which the air mode's shadows now take out as well: shadeAerialSunGlow)
 		float3 lo = lit * (P.a.x > 0.0 && d > 0.0 ? P.a.x : 0.55);
-		if (P.a.z > 0.0 && P.a.x > 0.0 && d > 0.0) lo = max(lit - sunGlow * tv, 0.0);
+		if (P.a.z > 0.0 && P.a.x > 0.0 && d > 0.0) lo = max(lit - (sunGlow + shadeAerialSunGlow(wp, skyLut, lutS, f, L) * ex) * tv, 0.0);
 		c = max(lit + add, lo);
 	}
 	if (P.p.y > 0.5) {
@@ -415,19 +417,20 @@ static inline float3 shadeFinalEncode(float3 y, float4 position, constant ShadeF
 #define SHADE_FINAL_ARGS ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], texture2d<half> bloom [[texture(1)]], \
 	depth2d<float> depth [[texture(2)]], texture2d<half> bloom0 [[texture(3)]], texture2d<half> vlT [[texture(4)]], \
 	texture2d<half> vlD [[texture(5)]], constant ShadeFinalParams &P [[buffer(0)]], constant ShadeFrame &f [[buffer(16)]], \
-	constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]], constant ShadeResources &sr [[buffer(19)]]
+	constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]], constant ShadeResources &sr [[buffer(19)]], \
+	texture2d<half> skyLut [[texture(17)]], sampler lutS [[sampler(13)]]
 
 template <bool DIMS>
 static inline float4 shadeFinalSdr(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth, texture2d<half> bloom0,
                                    texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P, constant ShadeFrame &f,
-                                   constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr) {
+                                   constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr, texture2d<half> skyLut, sampler lutS) {
 	float lum;
-	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum);
+	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum, skyLut, lutS);
 	return float4(shadeFinalEncode(shadeDisplay(c, L), in.position, P, L, lum), 1.0);
 }
 
-fragment float4 shade_final(SHADE_FINAL_ARGS) { return shadeFinalSdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
-fragment float4 shade_final_dims(SHADE_FINAL_ARGS) { return shadeFinalSdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
+fragment float4 shade_final(SHADE_FINAL_ARGS) { return shadeFinalSdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
+fragment float4 shade_final_dims(SHADE_FINAL_ARGS) { return shadeFinalSdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
 
 // M3 XDR (E23; mcxdr.m composes at present): main gets the same SDR image with alpha 0 (what later draws -- hand, GUI --
 // cover gets alpha > 0), the second target the highlights' brightness above it, in linear Rec.709 (>= 0): the SDR curve
@@ -438,9 +441,10 @@ struct ShadeFinalXdrOut { float4 sdr [[color(0)]]; half4 excess [[color(1)]]; };
 template <bool DIMS>
 static inline ShadeFinalXdrOut shadeFinalXdr(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth,
                                              texture2d<half> bloom0, texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P,
-                                             constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr) {
+                                             constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr,
+                                             texture2d<half> skyLut, sampler lutS) {
 	float lum;
-	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum);
+	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum, skyLut, lutS);
 	float3 y = shadeDisplay(c, L);
 	// (FT2.8, audit idx 39) only above the knee with a peak over SDR white: elsewhere h, boost and the excess are 0
 	float lc = shadeLuma(c), h = 0.0, boost = 0.0;
@@ -457,8 +461,8 @@ static inline ShadeFinalXdrOut shadeFinalXdr(ShadeFsOut in, texture2d<half> scen
 	return o;
 }
 
-fragment ShadeFinalXdrOut shade_final_xdr(SHADE_FINAL_ARGS) { return shadeFinalXdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
-fragment ShadeFinalXdrOut shade_final_xdr_dims(SHADE_FINAL_ARGS) { return shadeFinalXdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr); }
+fragment ShadeFinalXdrOut shade_final_xdr(SHADE_FINAL_ARGS) { return shadeFinalXdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
+fragment ShadeFinalXdrOut shade_final_xdr_dims(SHADE_FINAL_ARGS) { return shadeFinalXdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
 
 // ---- bridge for mods that draw display-referred colours over the HDR world (Distant Horizons) ---------------------------
 fragment float4 shade_bridge_encode(ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], constant ShadeLook &L [[buffer(17)]]) {

@@ -292,12 +292,6 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	float apMix = smoothAir ? ap * 0.6 * smoothstep(0.002, 0.004, ap) : (ap > 0.002 ? ap * 0.6 : 0.0);
 	if (shadeCloudDev(L, SHADE_CLOUD_DEV_NO_AP)) apMix = 0.0;
 	float3 skyBehind = float3(0.0);
-	// (FT2.12) what the aerial blend below mixes in: the sky behind without its glow around the sun. That glow is sunlight scattered
-	// by the air, which the haze (E06) adds in the final pass where the VL air mode takes its shadowed part back out; here it reached
-	// every surface within the render distance unshadowed: toward a sun set behind a mountain the mountain's face glowed orange
-	// through it (Gael 2026-10-11, a snowy canyon at sunset; SHADE_CLOUD_DEV_AP_SUN = FT2.11). The border fog keeps the real sky
-	// behind (the land melts into the sky as it is at the render distance)
-	float3 apSky = float3(0.0);
 	// the border fog's amount (applied last, below): computed first, the clouds' lookup needs it
 	float edge = 0.0;
 	if (air) {
@@ -317,9 +311,6 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 	if (needSky) {
 		float3 vs = float3(v.x, max(v.y, 0.0), v.z);
 		skyBehind = shadeSkyLookup(vs, lut, s, f);
-		apSky = skyBehind;
-		// (one more lookup only where it differs: within 90 degrees of the sun's azimuth)
-		if (apMix > 0.0 && !shadeCloudDev(L, SHADE_CLOUD_DEV_AP_SUN) && dot(v.xz, shadeSkyAxis(f)) > 0.0) apSky = shadeSkyLookup(vs, lut, s, f, 0.7071068);
 		if (R != nullptr && L.clouds0.w > 0.5) {
 			// the clouds the sky pass drew in this pixel's own direction v, not in the clamped one: below the horizon vs is the
 			// horizon at the same azimuth, so every pixel of land and sea under a horizon cloud (or gap) took that cloud's value
@@ -348,11 +339,10 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 			if (wc > 0.0) {
 				float4 cl = shadeCloudsScreen(v, L, R->cloudScreen);
 				skyBehind = skyBehind * mix(1.0, cl.a, wc) + cl.rgb * wc;
-				apSky = apSky * mix(1.0, cl.a, wc) + cl.rgb * wc;
 			}
 		}
 	}
-	if (apMix > 0.0) radiance = mix(radiance, apSky, apMix);
+	if (apMix > 0.0) radiance = mix(radiance, skyBehind, apMix);
 #ifndef MCOPT_HDR
 	// (in the HDR target the final pass applies the haze once per pixel, from depth: no cost per overdrawn fragment)
 	if (air && (smoothAir || d > 2.0)) {
@@ -363,6 +353,27 @@ static float3 shadeFogAir2(float3 radiance, float3 p, float vanillaFog, float ch
 #endif
 	if (air && edge > 0.002) radiance = mix(radiance, needSky ? skyBehind : shadeSkyLookup(float3(v.x, max(v.y, 0.0), v.z), lut, s, f), edge);
 	return radiance;
+}
+
+// (FT2.12) The glow around the sun in shadeFogAir2's aerial blend (the land at camera-relative p mixed toward the sky behind it):
+// its part above that sky 90 degrees from the sun's azimuth, as it reaches the pixel (pre-exposure radiance; 0 away from the sun).
+// That glow is sunlight scattered by the air, like the haze's: the VL air mode takes out its share in the shadows along the ray
+// (vl.metal) and the final pass lets it take at most this (shade_post.metal). Before, it reached the land unshadowed: toward a sun
+// set behind a mountain the mountain's face glowed orange through it (Gael 2026-10-11, a snowy canyon at sunset). In open sunlit
+// air it stays. SHADE_CLOUD_DEV_AP_SUN (mcopt.shade.aerialSun=true): none, FT2.11.
+static inline float3 shadeAerialSunGlow(float3 p, texture2d<half> lut, sampler s, constant ShadeFrame &f, constant ShadeLook &L) {
+	if (shadeCloudDev(L, SHADE_CLOUD_DEV_AP_SUN) || shadeCloudDev(L, SHADE_CLOUD_DEV_NO_AP) || !shadeFeature(L, SHADE_FEATURE_HAZE)) return float3(0.0);
+	float d = length(p);
+	float3 v = p / max(d, 1e-4);
+	if (dot(v.xz, shadeSkyAxis(f)) <= 0.0) return float3(0.0);
+	// (shadeFogAir2's blend weight, the same terms)
+	float ap = (1.0 - exp(-d * f.fogSky.z)) * f.fogSky.w * (1.0 - f.fogColor.a);
+	bool smoothAir = shadeAirSmooth(L);
+	if (smoothAir) ap *= shadeAirSky(L);
+	float apMix = smoothAir ? ap * 0.6 * smoothstep(0.002, 0.004, ap) : (ap > 0.002 ? ap * 0.6 : 0.0);
+	if (apMix <= 0.0) return float3(0.0);
+	float3 vs = float3(v.x, max(v.y, 0.0), v.z);
+	return apMix * max(shadeSkyLookup(vs, lut, s, f) - shadeSkyLookup(vs, lut, s, f, 0.7071068), 0.0);
 }
 
 // ---- sky (E03, E04) -------------------------------------------------------------------------------------------------------

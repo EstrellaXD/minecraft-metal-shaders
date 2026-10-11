@@ -397,7 +397,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
                         constant VlState &st [[buffer(1)]], depth2d<float> depth [[texture(0)]], texture2d<half> prevSky [[texture(1)]],
                         depth2d_array<float> map [[texture(16)]], sampler cmp [[sampler(12)]],
                         constant ShadeLook &sl [[buffer(17)]], constant ShadeResources &sr [[buffer(19)]],
-                        texture3d<half> shadeGrid [[texture(2)]]) {
+                        texture3d<half> shadeGrid [[texture(2)]], texture2d<half> skyLut [[texture(17)]], sampler lutS [[sampler(13)]]) {
 	float2 scale = p.size.zw / p.size.xy;
 	// the full-res pixel this VL pixel stands for (the same one the upsample assumes)
 	uint2 fpx = uint2(min(floor(in.position.xy * scale), p.size.zw - 1.0));
@@ -479,6 +479,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// extinction over the march is at most ~0.1, so a grey one costs nothing visible and a third of the exp per step)
 		float trans = 1.0, mistAll = 0.0, mistLit = 0.0, forestLit = 0.0, forestAll = 0.0;
 		float hazeAll = 0.0, hazeLit = 0.0; // (FT2.7, audit idx 1: scalars, times sigR once after the loop)
+		float apAll = 0.0, apLit = 0.0; // (FT2.12) the ray's length and its sunlit part (the aerial blend's glow, uniform along it)
 		float lumR = dot(sigR, float3(0.2126, 0.7152, 0.0722));
 		float prevB = 0.0;
 		// (FT2.7, audit idx 0; air6.w > 0) a sky pixel with airSkyCut and airBase 0: past the shade grid (and the forest air's
@@ -542,6 +543,8 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 			hazeLit += v * segR;
 			mistAll += dM * seg;
 			mistLit += v * dM * seg;
+			apAll += dt;
+			apLit += v * dt;
 			forestLit += v * dF * seg;
 			forestAll += dF * seg;
 			trans *= stepT;
@@ -556,6 +559,10 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 		// taken out (else the shadows darkened a cave's walls down to the floor of what they may take, mcopt.shade.vl.airFloor)
 		float3 E = f.sunColor.rgb * (3.14159265 * shadeAirSun(sl));
 		float3 shadowed = E * ((hL - hA) * (phR * 2.0) + (mistLit - mistAll) * (phM * glow * alM / (1.0 - 0.5 * alM)));
+		// (FT2.12) and the aerial blend's glow around the sun (shade_m2.metal shadeAerialSunGlow; the terrain mixed it in unshadowed)
+		// by the share of the ray in shade: its density (fogSky.z, ~1/1250 per block) is even along the ray. A sun set behind a
+		// mountain no longer glows through it (Gael 2026-10-11)
+		if (!skyPx && apAll > 0.0) shadowed -= shadeAerialSunGlow(dir * dist, skyLut, lutS, f, sl) * ((apAll - apLit) / apAll);
 		// on the sky the haze's glow is the sky model's own: the shadows take out a share of it (air2.y; dark rays from the trees'
 		// and hills' shadows across the glow around the sun)
 		if (skyPx) shadowed *= p.air2.y;

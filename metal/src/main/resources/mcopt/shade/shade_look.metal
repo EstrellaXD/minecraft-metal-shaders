@@ -53,7 +53,8 @@ struct ShadeLook {
 	float4 waterAbs;   // 592  (M3.3 wet ground, look development) x extra darkening exponent of the film, y vegetation's film share, z texel height proxy strength, w rim band width
 	float4 tintRect;   // 608  (M3 weather) the coloured-shadow casters in the near cascade's light clip space: xy min, zw max (none: min > max); written after the shadow pass (ShadeBindings.setShadowTint)
 	float4 eye;        // 624  x (FT2.10) the cave air's glow: share of the minimum cave light (ShadeFrame.ambientBlock.w) it scatters, neutral
-	                   //      grey (mcopt.shade.caveFog; 0 = toward black), y camera-relative feet y (unused), z (FT2.10) how far the reflections of
+	                   //      grey (mcopt.shade.caveFog; 0 = toward black), y (FT2.10) the share of its surroundings in the reflections of water the
+	                   //      sky doesn't light (mcopt.shade.water.caveSky), z (FT2.10) how far the reflections of
 	                   //      water the sky doesn't light follow its ripples (mcopt.shade.water.caveRipples), w smoothed sky light at the eye 0..1
 	float4 skyGoldH;   // 640  rgb golden-hour gain of the sky toward the horizon (sky LUT pass: sky, reflections, fog behind), w 0
 	float4 skyGoldZ;   // 656  rgb the same toward the zenith (rose at sunset), w M3 evening rose hue weight (sky LUT)

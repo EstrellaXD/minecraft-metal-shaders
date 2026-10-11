@@ -55,7 +55,8 @@ struct CloudParams {
 	float4 cirrus;         // 304 x altitude (absolute y), y extinction, zw the camera's xz in the cirrus map's space (wrapped)
 	float4 shadow;         // 320 x extent (blocks), y reference height (absolute y), zw the map's centre relative to the camera (xz)
 	float4 look;           // 336 x powder, y silver lining, z forward g, w overall opacity (fades the clouds in/out)
-	float4 dome;           // 352 x dome updates so far (wrapped; FT2.8 audit idx 28, was the width: the size is the history's), y 0,
+	float4 dome;           // 352 x dome updates so far (wrapped; FT2.8 audit idx 28, was the width: the size is the history's), y (FT2.10)
+	                       //     the bases' spread (share of the thickness a base rises by with the weather map's fine fBm, cloudBaseH),
 	                       //     z blend of the new march, w primary steps of the dome march
 	float4 misc;           // 368 x frame counter, y first light step (blocks; 0 = 4), z ground height (absolute y: rays stop there), w detail strength
 	float4 windDir;        // 384 xy unit axis of the cirrus streaks (fixed in the world; cirrus.zw is in its frame), z checkerboard N (1-4),
@@ -88,6 +89,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
 #define CLOUD_MODE_EDGE 16  // the stable resolve's history clamp only where the reprojection depends on the distance (FT1.2)
 #define CLOUD_MODE_ZOOM 64  // (FT2.8, audit idx 12) a zoom in (spyglass, FOV) lowers the history's age by how magnified it is
 #define CLOUD_MODE_DRIFT 32 // the stable resolve trusts less a history that drifts against a pure turn (near clouds: FT2.6)
+#define CLOUD_MODE_RAYLOD 128 // (FT2.10) the billow noise's mip also from the march step along the ray (cloudMarch)
 static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
@@ -305,6 +307,15 @@ static inline bool cloudBlockCell(float2 xz, constant CloudParams &c, texture2d<
 	return float(w.g) > 1.0 - cov;
 }
 
+// (FT2.10, CloudParams.dome.y) the height in the layer measured from this point's own cloud base: the bases rise by up to dome.y
+// of the thickness with the weather map's fine fBm (features ~170 blocks), so they stand at different heights, ragged within a
+// cloud. With every base on the layer's floor, the far clouds near the horizon lined up into thin flat-bottomed slivers stacked
+// like plates, dark lines across the sunset sky (Gael 2026-10-10)
+static inline float cloudBaseH(float h, half4 w, constant CloudParams &c) {
+	float off = c.dome.y * float(w.a);
+	return off > 0.0 ? (h - off) / (1.0 - off) : h;
+}
+
 // lod: mip level of the 3D noise (log2 of the sample's footprint in billow texels): far samples read blurred noise
 // instead of aliasing it into grain.
 static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
@@ -314,6 +325,8 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 	if (h <= 0.0 || h >= 1.0) return 0.0;
 	float2 xz = c.origin.xy + p.xz;
 	half4 w = weather.sample(cloudRep, (xz - c.shear.xy * h) * (1.0 / CLOUD_WEATHER_TILE), level(0.0));
+	h = cloudBaseH(h, w, c);
+	if (h <= 0.0) return 0.0;
 	// coverage varies by region (the weather map's r), the cells (g) say where the cumulus stand
 	float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
 	float cell = float(w.g);
@@ -360,6 +373,8 @@ static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, tex
 // keep the two in step) evaluates them.
 static inline float cloudDensityMath(half4 w, half4 n, half4 m, float h, int q, constant CloudParams &c, float detail) {
 	if (h <= 0.0 || h >= 1.0) return 0.0;
+	h = cloudBaseH(h, w, c);
+	if (h <= 0.0) return 0.0;
 	float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
 	float cell = float(w.g);
 	float core = saturate((cell - (1.0 - cov)) / max(cov, 0.08));
@@ -596,8 +611,12 @@ static CloudResult cloudMarch(float3 dir, int steps, int lsteps, int q, float ji
 		}
 		// mip of the noise for this sample's footprint (pixel angle x distance)
 		// (M3.1: dithered per sample for the nearest-level sampler; CLOUD_DEV_OLD_MIP: M3's, whose level was ignored)
+		// (FT2.10, CLOUD_MODE_RAYLOD) the footprint is also half the step along the ray: the noise tiles every 120 blocks, and a
+		// grazing ray toward the horizon crosses it dozens of times at nearly one height, so with only the pixel's width its fine
+		// structure added up row by row into horizontal combs on the far clouds instead of averaging out (Gael's sunset crops)
+		float fp = cloudMode(c, CLOUD_MODE_RAYLOD) ? max(t * foot, 0.5 * dtl) : t * foot;
 		float lod = cloudDev(c, CLOUD_DEV_OLD_MIP) ? max(log2(max(t * foot, 1e-3) / CLOUD_NOISE_TEXEL), 0.0)
-			: max(log2(max(t * foot, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
+			: max(log2(max(fp, 1e-3) / CLOUD_NOISE_TEXEL), 0.0) + fract(jitter * 3.17 + float(i) * 0.7548777) - 0.5;
 		// skylight from above through what is left above this point (one cheap sample), bounce from below
 		float above = c.layer.y - y;
 		// (CLOUD_MODE_BATCH) a sample that will need a light march fetches for it together with its own density (wasted

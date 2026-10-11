@@ -173,6 +173,13 @@ public final class CloudConfig {
 	 * magnified history at full age, so the clouds stayed blurry and blocky for 1-2 s; the resolve lowers its age by the magnification.
 	 */
 	public static final int MODE_ZOOM = 64;
+	/**
+	 * FT2.10 {@link #MODE_RAYLOD} (mcopt.shade.clouds.rayLod, default true): the billow noise's mip also from the march step's length
+	 * along the ray (half a step), not only from the pixel's width. The noise tiles every 120 blocks; a grazing ray toward the horizon
+	 * crosses it dozens of times at nearly one height, so its fine structure didn't average out along the ray but added up into
+	 * horizontal combs and streaks on the far clouds' edges, row by row (Gael 2026-10-10, sunset).
+	 */
+	public static final int MODE_RAYLOD = 128;
 
 	/**
 	 * This frame's mode bits (the flags are read every frame: the bench can switch them inside one session; dev bits 32768 /
@@ -188,7 +195,8 @@ public final class CloudConfig {
 			| (flag("mcopt.shade.clouds.pair", true) && (dev & DEV_OLD_PAIR) == 0 ? MODE_PAIR : 0)
 			| (flag("mcopt.shade.clouds.edgeGate", true) ? MODE_EDGE : 0)
 			| (flag("mcopt.shade.clouds.driftClamp", true) ? MODE_DRIFT : 0)
-			| (flag("mcopt.shade.clouds.zoomAge", true) ? MODE_ZOOM : 0);
+			| (flag("mcopt.shade.clouds.zoomAge", true) ? MODE_ZOOM : 0)
+			| (flag("mcopt.shade.clouds.rayLod", true) ? MODE_RAYLOD : 0);
 	}
 	/**
 	 * M3.4 (Gael: cloud edges look pixelated and flicker at sunset): the sky, fog and VL read the clouds' history (0.45 of the

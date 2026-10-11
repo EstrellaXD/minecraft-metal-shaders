@@ -844,7 +844,8 @@ struct ShadeWaterIn {
 	half3 tint;      // vertex colour: biome water colour x vanilla AO
 	half sky;        // sky light 0..1
 	half shadow;     // sun/moon visibility at the surface (shadow map)
-	half2 cave;      // (FT2.10) water the sky doesn't light (shadeWaterAbove): x the torch light's caustics weight, y the ripples' share in its reflections
+	half4 cave;      // (FT2.10) water the sky doesn't light (shadeWaterAbove): x the torch light's caustics weight, y the ripples' share in its
+	                 // reflections, z its surroundings' share in them (the sky's shape in the place's light), w 0
 	float3 lit;      // light on an upward white surface (shadeLit(1, up, ...)): sun, sky and block light, radiance
 	float4 dxz;      // screen derivatives of the position's xz (dfdx(p).xz, dfdy(p).xz): the baked waves' mip/anisotropy
 	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
@@ -1137,6 +1138,16 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// milky veil (the glint below is what carries the sun's sparkle)
 	float3 rl = normalize(mix(rs, rr, 0.6));
 	float3 refl = shadeWaterSkyRefl(rl, rr, w.p, w.prevExposure, f, w.look, w.res, lut, lutS, depth, prev) * open;
+	// (FT2.10, w.cave.z) where no sky lights the water, what it mirrors beyond SSR (off screen, behind the camera) was black: the
+	// waves had nothing to show by, and a strip of water in a cave read as flat dark glass next to a lake's rippled sky (Gael
+	// 2026-10-10: "debería de verse así con la textura realista siempre, aunque solo sea una fila"). Its surroundings instead: the
+	// clear sky's shape (bright toward the horizon, dimmer above, as walls lit around and a darker ceiling) in the light and colour
+	// of the place (the surface's own light, torches), as lit walls of albedo ~0.5. The same ripples then show as on a lake
+	if (w.cave.z > 0.0h) {
+		float sk = shadeLuma(shadeSkyLookup(float3(rl.x, max(rl.y, 0.0), rl.z), lut, lutS, f));
+		float3 env = w.lit * (0.5 * sk / max(shadeLuma(f.ambientSky.rgb), 1e-6));
+		refl = mix(refl, env, float(w.cave.z));
+	}
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
 #ifdef SHADE_LEAN_ABOVE

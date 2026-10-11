@@ -275,11 +275,15 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
             float b = float(in.v_Light.x), s = saturate(float(in.v_Light.y) * 2.0), c = 1.0 - s * s;
             wi.cave = half4(half(smoothstep(0.3, 0.8, b) * sl.waterShadow.w), half(c * sl.eye.z), half(saturate(c * sl.eye.y)), half(sl.bloom.w));
         }
-        wi.dxz = float4(dpx.xz, dpy.xz);
+        wi.dxz = shadeWaterDxz(dpx, dpy, wi.flowDir, float(wi.cave.w)); // (FT2.11) drawn out along a current like its waves
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
         if (!SHADE_WDEV_IS(sf, SHADE_WDEV_NO_DETAIL) && (n.y > 0.5h || (n.y < -0.5h && SHADE_CAMERA_UNDERWATER(sf))) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
+#endif
+#ifdef SHADE_WAVE_BAKE
+        // (FT2.11) falling water's sides: their ripples and white water (shadeWaterFallIn; the same test as shadeWaterAbove's)
+        if (shadeWaterIsFall(wi, wp)) wi.detail = shadeWaterFallIn(wi, sf, waterWaves);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
 #ifdef SHADE_DYNLIGHT

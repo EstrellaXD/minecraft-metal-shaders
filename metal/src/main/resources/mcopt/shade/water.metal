@@ -1012,13 +1012,15 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 // SHADE_WATER_FALL_SCALE times finer, drawn out downward by 1 / SHADE_WATER_FALL_STRETCH and sliding down at SHADE_WATER_FALL_SCROLL
 // (streaks running down the fall, as the vanilla flow texture runs down in Complementary and BSL, here as waves: Gael wants the realistic
 // water everywhere). Strength k (ShadeWaterIn.cave.w, faded with distance and toward grazing views, where Photon fades its waves on
-// such faces too: the ripples would only alias there). foam: white water, aerated streaks running down the fall faster than the
-// ripples (two octaves of value noise drawn out downward), 0..SHADE_WATER_FALL_FOAM, faded out where they'd shrink below a pixel.
+// such faces too: the ripples would only alias there). foam: white water, thin aerated streaks running down the fall faster than
+// the ripples (three octaves of value noise, cells 1/7 block wide and ~3 tall), 0..SHADE_WATER_FALL_FOAM over a faint whitening of
+// the whole sheet; where the streaks would shrink below a pixel they average into that sheet's mean (no flicker, no switch to glass).
 #define SHADE_WATER_FALL_SCALE 3.0
 #define SHADE_WATER_FALL_STRETCH 0.3
 #define SHADE_WATER_FALL_SLOPE 0.9         // the slopes' scale at k = 1 (x the finer field's own: ~8x a calm lake's ripples; t1 at 0.45 hardly showed)
 #define SHADE_WATER_FALL_SCROLL (192.0 / SHADE_WATER_CLOCK_WRAP) // tiles per second down (a whole number of tiles per clock wrap: no jump)
-#define SHADE_WATER_FALL_FOAM 0.4
+#define SHADE_WATER_FALL_FOAM 0.32
+#define SHADE_WATER_FALL_SHEET 0.07 // the whole falling sheet a little white (aerated)
 #define SHADE_WATER_FOAM_SCROLL (8960.0 / SHADE_WATER_CLOCK_WRAP) // noise cells per second down (2.19; whole cells per wrap: no jump)
 static float3 shadeWaterFallNormal(ShadeWaterIn w, constant ShadeFrame &f, texture2d<half> waves, float3 v, thread float &foam) {
 	float3 nf = w.nFace;
@@ -1033,9 +1035,10 @@ static float3 shadeWaterFallNormal(ShadeWaterIn w, constant ShadeFrame &f, textu
 	float mv = float(w.cave.w), fade = exp(-length(w.p) * (1.0 / 120.0));
 	float k = mv * SHADE_WATER_FALL_SLOPE * fade * smoothstep(0.0, 0.3, abs(dot(nf, v)));
 	float2 s = float2(b.xy) * (float2(SHADE_WATER_FALL_SCALE, SHADE_WATER_FALL_SCALE * SHADE_WATER_FALL_STRETCH) * k);
-	float2 q = float2(dot(xa, tu.xz) * 3.0, ya * 0.6 + shadeWaterTime(f) * SHADE_WATER_FOAM_SCROLL);
-	float nz = 0.6 * shadeWaterValueNoise(q) + 0.4 * shadeWaterValueNoise(q * float2(2.0, 2.0) + float2(17.3, 5.1));
-	foam = smoothstep(0.52, 0.85, nz) * (SHADE_WATER_FALL_FOAM * min(mv, 1.5) * fade) * (1.0 - smoothstep(0.04, 0.12, w.footprint));
+	float2 q = float2(dot(xa, tu.xz) * 7.0, ya * 0.35 + shadeWaterTime(f) * SHADE_WATER_FOAM_SCROLL);
+	float nz = 0.5 * shadeWaterValueNoise(q) + 0.3 * shadeWaterValueNoise(q * 2.0 + float2(17.3, 5.1)) + 0.2 * shadeWaterValueNoise(q * 4.0 + float2(3.7, 41.9));
+	float near = 1.0 - smoothstep(0.03, 0.08, w.footprint); // cells of 1/7 block: below ~2 pixels across they'd alias
+	foam = (SHADE_WATER_FALL_SHEET + SHADE_WATER_FALL_FOAM * mix(0.3, smoothstep(0.45, 0.8, nz), near)) * (min(mv, 1.5) * fade);
 	return normalize(nf - s.x * tu - s.y * float3(0.0, 1.0, 0.0));
 }
 #endif
@@ -1084,7 +1087,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 pe = w.p - shadeEye(f.invViewProj); // from the eye: view bobbing moves it (shade_common.metal)
 	float dist = length(pe);
 	float3 v = pe / max(dist, 1e-4);
-	bool top = w.nFace.y > 0.5;
+	bool top = w.nFace.y > 0.5, fall = false;
 	float height = 0.0, pattern = 0.0, fallFoam = 0.0;
 	float3 n = w.nFace;
 	if (top) {
@@ -1106,6 +1109,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #ifdef SHADE_WAVE_BAKE
 	else if (w.cave.w > 0.0h && abs(w.nFace.y) < 0.5 && wp.state.w > 0.5) { // (FT2.11) falling water's sides
 		n = shadeWaterFallNormal(w, f, waves, v, fallFoam);
+		fall = true;
 	}
 #endif
 	float cosV = max(dot(-v, n), 0.02);
@@ -1141,7 +1145,9 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// only the waves' tilt shifts the bottom (a flat surface doesn't), more for deeper water, in view space
 	float3 tilt = (f.view * float4(n - w.nFace, 0.0)).xyz;
 #ifdef SHADE_WATER_DETAIL
-	float2 shift = tilt.xy * (0.16 * min(max(dw0, 0.0), 4.0)); // M2.1: a small shift (M2's bent underwater blocks like jelly)
+	// M2.1: a small shift (M2's bent underwater blocks like jelly). (FT2.11) Falling water bends what is behind it a lot more (it is
+	// a rough moving sheet, and the wall right behind a waterfall would show straight through the thin water as through glass)
+	float2 shift = tilt.xy * (fall ? 0.5 * clamp(dw0, 1.0, 4.0) : 0.16 * min(max(dw0, 0.0), 4.0));
 #else
 	float2 shift = tilt.xy * (0.4 * min(max(dw0, 0.0), 6.0));
 #endif

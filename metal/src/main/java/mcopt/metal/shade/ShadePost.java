@@ -594,8 +594,11 @@ public final class ShadePost {
 		// (a.y, FT2.7 audit idx 47: the air mode's VL read at the haze edge's own keys (1) and its fallbacks' shadowed part uncapped
 		// (2); mcopt.shade.vl.edgeFix, live; 0 by default: in Gael's autumn forest at sunrise (ft28-rim) no rim showed to fix and the
 		// edges moved both ways, a flicker risk in motion; kept for a pose where the rim shows)
+		// (a.z, FT2.12: mcopt.shade.vl.airClamp, live, 1; 0 = FT2.11) on surfaces the shadows take out at most the sunlit haze glow the
+		// final pass added to the pixel (all of it in full shadow) instead of at most 70 % of the pixel (airFloor): toward a sun behind
+		// a mountain 30 % of that glow stayed, an orange halo through the mountain (Gael 2026-10-11)
 		params.putFloat(vl ? vlAirFloor : 0f).putFloat(vl && vlAirFloor > 0f ? mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.edgeFix", 0f) : 0f)
-			.putFloat(0f).putFloat(0f);
+			.putFloat(vl && vlAirFloor > 0f && mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.airClamp", 1f) > 0f ? 1f : 0f).putFloat(0f);
 		params.flip();
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);

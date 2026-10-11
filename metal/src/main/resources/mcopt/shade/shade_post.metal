@@ -274,6 +274,8 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	// VL is then read at the same keys, so what its shadows take out matches the haze glow that was added
 	bool hazeEdge = false;
 	float4 dkq = float4(1e4), wqq = float4(0.0);
+	// (FT2.12) the sunlit part of the haze glow added here (exposed): at most this much is what the VL air mode's shadows take out
+	float3 sunGlow = float3(0.0);
 #ifdef SHADE_HAZE_EDGE
 	if (hazeOn) {
 		// FT1.3: the depth is this frame's jittered raster at the render scale and the colour the resolved (TAAU) image, so the
@@ -286,32 +288,38 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		float dlo = min(min(dq.x, dq.y), min(dq.z, dq.w)), dhi = max(max(dq.x, dq.y), max(dq.z, dq.w));
 		if (dhi > 0.0 && (dlo <= 0.0 || dhi > dlo * 1.25)) {
 			float4 wq = float4((1.0 - fw.x) * (1.0 - fw.y), fw.x * (1.0 - fw.y), (1.0 - fw.x) * fw.y, fw.x * fw.y);
-			float3 Ts = 0.0, Ss = 0.0;
+			float3 Ts = 0.0, Ss = 0.0, Us = 0.0;
 			for (int k = 0; k < 4; k++) {
-				float3 Tk = float3(1.0), Sk = float3(0.0);
+				float3 Tk = float3(1.0), Sk = float3(0.0), Uk = float3(0.0);
 				if (dq[k] > 0.0) {
 					uint2 tk = uint2(k & 1 ? t1.x : t0.x, k & 2 ? t1.y : t0.y);
 					float3 pk = shadeWorldFromDepth((float2(tk) + 0.5) / dsize, dq[k], f);
-					if (dot(pk, pk) > hazeNear) Sk = shadeHazeInscatter(pk, f, L, 1.0, Tk);
+					if (dot(pk, pk) > hazeNear) Sk = shadeHazeInscatter(pk, f, L, 1.0, Tk, Uk);
 					dkq[k] = length(pk);
 				}
 				Ts += Tk * wq[k];
 				Ss += Sk * wq[k];
+				Us += Uk * wq[k];
 			}
 			T = Ts;
 			c = c * Ts + Ss * ex;
+			sunGlow = Us * ex;
 			hazeEdge = true;
 			wqq = wq;
 		} else if (d > 0.0 && dot(wp, wp) > hazeNear) {
-			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
+			float3 U;
+			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T, U);
 			c = c * T + S * ex;
+			sunGlow = U * ex;
 		}
 	}
 #else
 	if (d > 0.0 && hazeOn) {
 		if (dot(wp, wp) > hazeNear) {
-			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T);
+			float3 U;
+			float3 S = shadeHazeInscatter(wp, f, L, 1.0, T, U);
 			c = c * T + S * ex;
+			sunGlow = U * ex;
 		}
 	}
 #endif
@@ -359,7 +367,13 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 			float la = shadeLuma(max(add, 0.0)) / P.q.w;
 			add *= rsqrt(1.0 + la * la);
 		}
-		c = max(lit + add, lit * (P.a.x > 0.0 && d > 0.0 ? P.a.x : 0.55));
+		// (FT2.12, a.z > 0: mcopt.shade.vl.airClamp) on a surface the shadows take out at most the sunlit haze glow added to this
+		// pixel above, all of it if the air is all in shadow, and never anything of the surface itself. FT2.11 (a.z 0): at most
+		// 70 % of the pixel (airFloor 0.3), so where that glow outshone the surface, toward a sun set behind a mountain, 30 % of it
+		// stayed: an orange halo through the mountain (Gael 2026-10-11, a snowy canyon at sunset)
+		float3 lo = lit * (P.a.x > 0.0 && d > 0.0 ? P.a.x : 0.55);
+		if (P.a.z > 0.0 && P.a.x > 0.0 && d > 0.0) lo = max(lit - sunGlow * tv, 0.0);
+		c = max(lit + add, lo);
 	}
 	if (P.p.y > 0.5) {
 		float3 b = float3(bloom.sample(shadeLinearClamp, in.uv).rgb + bloom0.sample(shadeLinearClamp, in.uv).rgb * half(P.q.x)) * P.p.x;

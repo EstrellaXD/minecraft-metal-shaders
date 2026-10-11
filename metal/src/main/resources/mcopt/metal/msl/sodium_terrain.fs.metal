@@ -281,7 +281,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
         if (!SHADE_WDEV_IS(sf, SHADE_WDEV_NO_DETAIL) && (n.y > 0.5h || (n.y < -0.5h && SHADE_CAMERA_UNDERWATER(sf))) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
-#ifdef SHADE_WAVE_BAKE
+#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_DEV_NOFALL)
         // (FT2.11) falling water's sides: their ripples and white water (shadeWaterFallIn; the same test as shadeWaterAbove's)
         if (shadeWaterIsFall(wi, wp)) wi.detail = shadeWaterFallIn(wi, sf, waterWaves);
 #endif

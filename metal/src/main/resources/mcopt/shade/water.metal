@@ -848,8 +848,12 @@ static inline float2 shadeWaterAlong(float2 x, float2 fd, float a) { return x - 
 // ShadeWaterIn.dxz for screen derivatives dpx, dpy of the position: drawn out along the current fd like the waves' coordinates, by the
 // moving water's look mv (the caller does it once; the wave samples use it as is)
 static inline float4 shadeWaterDxz(float3 dpx, float3 dpy, float2 fd, float mv) {
+#ifdef SHADE_DEV_NOALONG
+	return float4(dpx.xz, dpy.xz);
+#else
 	float a = SHADE_WATER_ALONG * min(mv, 1.0);
 	return float4(shadeWaterAlong(dpx.xz, fd, a), shadeWaterAlong(dpy.xz, fd, a));
+#endif
 }
 
 // ---- the surface ------------------------------------------------------------------------------------------------------------
@@ -906,9 +910,11 @@ static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, 
 	float2 cell = (floor(xa * 16.0) + 0.5) * (1.0 / 16.0) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED);
 	// (FT2.11) drawn out along the current, as shadeWaterNormal (its J then turns the returned slope into the world's; w.dxz comes
 	// drawn out already, shadeWaterDxz)
+#ifndef SHADE_DEV_NOALONG
 	float al = SHADE_WATER_ALONG * min(float(w.cave.w), 1.0);
 	x = shadeWaterAlong(x, w.flowDir, al);
 	cell = shadeWaterAlong(cell, w.flowDir, al);
+#endif
 #ifdef SHADE_WATER_SMOOTH
 	// FT1.3 (style photon): no 1/16-block cells and no crest pattern: each cell tilted the reflection on its own, and mirrored
 	// clouds and shores broke into small rectangles (Gael: "reflejos pixeleados")
@@ -957,8 +963,12 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 	float t = shadeWaterTime(f);
 	float2 x = shadeWaterXZ(w.p.xz, f) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED); // flowing water carries its waves downstream
 	// (FT2.11) a current draws them out along its flow (streaks; the slopes come back through the same J below) and roughens them
+#ifdef SHADE_DEV_NOALONG
+	const float mv = 0.0;
+#else
 	float mv = float(w.cave.w), al = SHADE_WATER_ALONG * min(mv, 1.0);
 	x = shadeWaterAlong(x, w.flowDir, al); // (w.dxz comes drawn out already: shadeWaterDxz)
+#endif
 #ifdef SHADE_WATER_SMOOTH
 	const float fade = 1.0 / 170.0; // FT1.3: the ripples' texture carries farther (Gael's references: textured to the horizon)
 #else
@@ -990,7 +1000,9 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 		}
 #endif
 #endif
+#ifndef SHADE_DEV_NOALONG
 		gb = shadeWaterAlong(gb, w.flowDir, al); // (FT2.11) slopes of the drawn-out field, in the world's xz
+#endif
 		return normalize(float3(-gb.x, 1.0, -gb.y));
 	}
 #endif
@@ -1008,7 +1020,9 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 		height *= k;
 	}
 #endif
+#ifndef SHADE_DEV_NOALONG
 	g = shadeWaterAlong(g, w.flowDir, al); // (FT2.11) slopes of the drawn-out field, in the world's xz
+#endif
 	return normalize(float3(-g.x, 1.0, -g.y));
 }
 
@@ -1120,7 +1134,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		float graze = 1.0 - saturate(-v.y);
 		n = normalize(mix(n, float3(0.0, 1.0, 0.0), 0.8 * graze * graze * graze * graze));
 	}
-#ifdef SHADE_WAVE_BAKE
+#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_DEV_NOFALL)
 	else if (shadeWaterIsFall(w, wp)) { // (FT2.11) falling water's sides (shadeWaterFallIn, by the caller): ripples; the white water rides
 		n = normalize(w.nFace + w.detail.xyz); // in pattern (live through the SSR march anyway) to the end
 		pattern = w.detail.w;
@@ -1161,7 +1175,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #ifdef SHADE_WATER_DETAIL
 	// M2.1: a small shift (M2's bent underwater blocks like jelly). (FT2.11) Falling water bends what is behind it a lot more (it is
 	// a rough moving sheet, and the wall right behind a waterfall would show straight through the thin water as through glass)
-#ifdef SHADE_WAVE_BAKE
+#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_DEV_NOFALL)
 	float2 shift = tilt.xy * (shadeWaterIsFall(w, wp) ? 0.5 * clamp(dw0, 1.0, 4.0) : 0.16 * min(max(dw0, 0.0), 4.0));
 #else
 	float2 shift = tilt.xy * (0.16 * min(max(dw0, 0.0), 4.0));
@@ -1268,7 +1282,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 glint = f.sunColor.rgb * min(spec, 60.0) * soft * open * (1.0 - hitWeight);
 
 	float3 color = mix(body, refl, fres) + glint * wp.tune.z;
-#ifdef SHADE_WAVE_BAKE
+#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_DEV_NOFALL)
 	// (FT2.11) falling water's white water (shadeWaterFallIn, in pattern), lit like the shore's foam
 	if (shadeWaterIsFall(w, wp)) color = mix(color, w.lit * 0.55, pattern);
 #endif

@@ -115,13 +115,16 @@ static inline float3 shadeDlOne(constant ShadeDynLights &D, constant ShadeDynLig
 	// point, and bounces off what's around), faces turned away get nothing (the player's own light: none, every face alike)
 	float w = L.shape.y > 0.5 ? 1.0 : thin ? 0.55 + 0.45 * abs(nl) : saturate((nl + 0.3) * (1.0 / 1.3));
 	if (w <= 0.0) return float3(0.0);
-	float2 vr = shadeDlReach(D, L, p + n * 0.5, vis);
-	float de = d + vr.y; // (FT2.11) around what stands in the way: as from farther
 	// as block light level reach - d; within the core the hot spot is capped (no singular spot under the hand)
-	float b = saturate((reach - max(de, L.shape.x)) * (1.0 / 15.0));
-	float e = shadeDlCurve(b) * w * saturate(cut - de) * vr.x; // faded out over the last block before the cut
+	float b = saturate((reach - max(d, L.shape.x)) * (1.0 / 15.0));
+	float e = shadeDlCurve(b) * w * saturate(cut - d); // faded out over the last block before the cut
 	if (e <= 1e-4) return float3(0.0);
-	return L.color.rgb * e;
+	float2 vr = shadeDlReach(D, L, p + n * 0.5, vis);
+	if (vr.y > 0.0) { // (FT2.11) around what stands in the way: as from farther (it only ever dims: the test above holds)
+		float de = d + vr.y;
+		e = shadeDlCurve(saturate((reach - max(de, L.shape.x)) * (1.0 / 15.0))) * w * saturate(cut - de);
+	}
+	return L.color.rgb * (e * vr.x);
 }
 
 // Diffuse dynamic light at camera-relative p with unit face normal n: the factor that multiplies albedo x ambientBlock

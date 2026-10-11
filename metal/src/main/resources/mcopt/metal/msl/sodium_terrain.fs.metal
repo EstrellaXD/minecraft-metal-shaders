@@ -281,8 +281,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water
         if (!SHADE_WDEV_IS(sf, SHADE_WDEV_NO_DETAIL) && (n.y > 0.5h || (n.y < -0.5h && SHADE_CAMERA_UNDERWATER(sf))) && wp.state.w > 0.5) wi.detail = shadeWaterDetailIn(wi, sf, waterDetail);
 #endif
-#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_DEV_NOFALL)
-        // (FT2.11) falling water's sides: the ripples tilt the face normal the surface is shaded with (shadeWaterFallNormal)
+#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_LEAN_NOFALLS)
+        // (FT2.11) falling water's sides (only in the variant drawn while moving water is near: WaterFlowScan): the ripples tilt the face normal the surface is shaded with (shadeWaterFallNormal)
         if (shadeWaterIsFall(float(n.y), sl.bloom.w, wp)) wi.nFace = shadeWaterFallNormal(wi, sf, waterWaves);
 #endif
         wi.lit = shadeLit2(half3(1.0h), up, in.v_Light.y, in.v_Light.x, shadow, false, false, sf, sl);
@@ -318,7 +318,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         texture2d<half> prevScene = sceneCopy;
 #endif
         radiance = shadeWaterSurface(wi, sf, wp, skyLut, skyLutSmplr, sceneCopy, depthCopy, prevScene, waterWaves, waterCoarse);
-#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_DEV_NOFALL)
+#if defined(SHADE_WAVE_BAKE) && !defined(SHADE_LEAN_NOFALLS)
         // (FT2.11) and its white water over the result, lit like the shore's foam (wi.lit is live to the water's end anyway)
         if (shadeWaterIsFall(float(n.y), sl.bloom.w, wp)) radiance = mix(radiance, wi.lit * 0.55, shadeWaterFallFoam(p, float3(n), waterFootprint, sl.bloom.w, sf));
 #endif

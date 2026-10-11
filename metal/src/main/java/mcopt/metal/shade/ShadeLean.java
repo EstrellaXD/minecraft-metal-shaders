@@ -65,6 +65,10 @@ public final class ShadeLean {
 			t |= ShadeMsl.LEAN_ABOVE;
 			if (!DEV_DEFINES.isEmpty() && Boolean.getBoolean("mcopt.shade.leanDev.on")) t |= ShadeMsl.LEAN_DEV;
 		}
+		// (FT2.11) the overworld's water without the moving water's look while there is no moving water near (WaterFlowScan), or the look
+		// is off (mcopt.shade.water.falls=0)
+		if (dimension == ShadeFrame.DIM_OVERWORLD && (!mcopt.metal.shade.water.WaterFlowScan.near()
+			|| mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.falls", 1f) <= 0f)) t |= ShadeMsl.LEAN_NOFALLS;
 		if (dimension == ShadeFrame.DIM_NETHER && mcopt.metal.shade.dims.ShadeDims.netherLean()) t |= ShadeMsl.LEAN_NETHER; // M3.3 (dims)
 		if (!mcopt.metal.shade.weather.ShadeWeather.ON || mcopt.metal.shade.weather.ShadeWeather.dry()) t |= ShadeMsl.LEAN_DRY;
 		if (!mcopt.metal.shade.light.DynLights.ON || mcopt.metal.shade.light.DynLights.activeCount() == 0) t |= ShadeMsl.LEAN_NODL;

@@ -836,6 +836,9 @@ static inline float2 shadeWaterDetailXZ(float2 x) {
 // (FT2.11, mcopt.shade.water.falls = ShadeWaterIn.cave.w, Gael 2026-10-11: water "cayendo o en cascada se ve muy lisa por afuera y muy
 // cuadrada") Moving water, after Photon (MIT snapshot 26c2906e: flowing water's waves run along the current and are ~2-5x stronger
 // than still water's) and Complementary / BSL (their waves are laid on every face of the water, the sides too; technique only):
+// All of it only in the translucent terrain's variant drawn while moving water is within ~96 blocks (WaterFlowScan; SHADE_LEAN_NOFALLS
+// = none near: FT2.10's code exactly, the water shader being bound by registers), faded out from SHADE_WATER_FALL_RANGE x 2/3 to
+// SHADE_WATER_FALL_RANGE blocks (inside the scanned box: the switch of variant never shows).
 //  - a current (flowing water's top faces, which already carry their waves downstream) roughens them by 1 + SHADE_WATER_FLOW_ROUGH k
 //    (the calm of a lake isn't a stream's). (Drawing them out along the flow into streaks was tried and dropped: +0.11 ms on every
 //    water pixel, the water shader being bound by registers; Photon doesn't either: its current only aims and speeds its waves.)
@@ -843,6 +846,11 @@ static inline float2 shadeWaterDetailXZ(float2 x) {
 //    shadeWaterFallFoam: by the terrain fragment around shadeWaterSurface).
 // k: ShadeWaterIn.cave.w (1 = this look, 0 = FT2.10's).
 #define SHADE_WATER_FLOW_ROUGH 1.4
+#define SHADE_WATER_FALL_RANGE 96.0
+// The look's strength at camera-relative p: k, faded out toward SHADE_WATER_FALL_RANGE.
+static inline float shadeWaterMoving(float k, float3 p) {
+	return k * (1.0 - smoothstep(SHADE_WATER_FALL_RANGE * (2.0 / 3.0), SHADE_WATER_FALL_RANGE, length(p)));
+}
 
 // ---- the surface ------------------------------------------------------------------------------------------------------------
 struct ShadeWaterIn {
@@ -943,8 +951,11 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 	pattern = 0.0;
 	float t = shadeWaterTime(f);
 	float2 x = shadeWaterXZ(w.p.xz, f) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED); // flowing water carries its waves downstream
-	// (FT2.11) a current roughens them (mcopt.shade.water.falls)
-	float mv = float(w.cave.w);
+#ifdef SHADE_LEAN_NOFALLS
+	const float mv = 0.0;
+#else
+	float mv = shadeWaterMoving(float(w.cave.w), w.p); // (FT2.11) a current roughens them (mcopt.shade.water.falls)
+#endif
 #ifdef SHADE_WATER_SMOOTH
 	const float fade = 1.0 / 170.0; // FT1.3: the ripples' texture carries farther (Gael's references: textured to the horizon)
 #else
@@ -1006,7 +1017,8 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 // the whole sheet; where the streaks would shrink below a pixel they average into that sheet's mean (no flicker, no switch to glass).
 // Both are done by the terrain fragment AROUND shadeWaterSurface, which stays FT2.10's: the ripples tilt the face normal it is given
 // (ShadeWaterIn.nFace, used as the surface's normal on side faces), the white water is laid over its result. The water shader is bound by
-// registers: inside it this code cost every water pixel 0.1-0.3 ms in the lake spin even where it never ran (FT2.11 prices, LEAN_DEV).
+// registers: this code cost every water pixel 0.1-0.3 ms in the lake spin even where it never ran, inside the function or around it
+// (FT2.11 prices, LEAN_DEV): hence the variant (SHADE_LEAN_NOFALLS) when no moving water is near.
 #define SHADE_WATER_FALL_SCALE 3.0
 #define SHADE_WATER_FALL_STRETCH 0.3
 #define SHADE_WATER_FALL_SLOPE 0.9         // the slopes' scale at k = 1 (x the finer field's own: ~8x a calm lake's ripples; t1 at 0.45 hardly showed)
@@ -1032,7 +1044,7 @@ static float3 shadeWaterFallNormal(ShadeWaterIn w, constant ShadeFrame &f, textu
 	// the field's texels per pixel across the fall (the finer axis): its mip
 	float lod = max(log2(max(w.footprint * (SHADE_WATER_FALL_SCALE * float(SHADE_WAVE_BAKE_SIZE) / SHADE_WAVE_TILE), 1e-4)), 0.0);
 	half4 b = waves.sample(shadeWaveSampler, c, level(lod));
-	float k = float(w.cave.w) * SHADE_WATER_FALL_SLOPE * exp(-length(w.p) * (1.0 / 120.0)) * smoothstep(0.0, 0.3, abs(dot(nf, v)));
+	float k = shadeWaterMoving(float(w.cave.w), w.p) * SHADE_WATER_FALL_SLOPE * exp(-length(w.p) * (1.0 / 120.0)) * smoothstep(0.0, 0.3, abs(dot(nf, v)));
 	float2 s = float2(b.xy) * (float2(SHADE_WATER_FALL_SCALE, SHADE_WATER_FALL_SCALE * SHADE_WATER_FALL_STRETCH) * k);
 	return normalize(nf - s.x * tu - s.y * float3(0.0, 1.0, 0.0));
 }
@@ -1045,7 +1057,7 @@ static float shadeWaterFallFoam(float3 p, float3 nf, float footprint, float mv, 
 	float2 q = float2(dot(xa, tu.xz) * 7.0, ya * 0.35 + shadeWaterTime(f) * SHADE_WATER_FOAM_SCROLL);
 	float nz = 0.5 * shadeWaterValueNoise(q) + 0.3 * shadeWaterValueNoise(q * 2.0 + float2(17.3, 5.1)) + 0.2 * shadeWaterValueNoise(q * 4.0 + float2(3.7, 41.9));
 	float near = 1.0 - smoothstep(0.03, 0.08, footprint); // cells of 1/7 block: below ~2 pixels across they'd alias
-	return (SHADE_WATER_FALL_SHEET + SHADE_WATER_FALL_FOAM * mix(0.3, smoothstep(0.45, 0.8, nz), near)) * (min(mv, 1.5) * exp(-length(p) * (1.0 / 120.0)));
+	return (SHADE_WATER_FALL_SHEET + SHADE_WATER_FALL_FOAM * mix(0.3, smoothstep(0.45, 0.8, nz), near)) * (min(shadeWaterMoving(mv, p), 1.5) * exp(-length(p) * (1.0 / 120.0)));
 }
 #endif
 

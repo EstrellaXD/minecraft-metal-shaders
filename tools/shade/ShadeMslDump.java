@@ -30,6 +30,9 @@ public class ShadeMslDump {
 			// M3.1 / M3.3 lean terrain variants (ShadeLean): the overworld's and the Nether's (compiled only)
 			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leanow.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_OW\n#define SHADE_LEAN_DRY\n#define SHADE_LEAN_NODL\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
 			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leannether.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_NETHER\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			// FT2.11: the overworld's water seen from above with dynamic lights, with and without the moving water's look (LEAN_NOFALLS)
+			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leanabove.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_OW\n#define SHADE_LEAN_ABOVE\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
+			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leannofalls.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_OW\n#define SHADE_LEAN_DRY\n#define SHADE_LEAN_NODL\n#define SHADE_LEAN_ABOVE\n#define SHADE_LEAN_NOFALLS\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
 			Files.writeString(out.resolve("hdr_" + e.getKey() + "_leannetherdry.fs.metal"), "#define MCOPT_HDR\n#define SHADE_LEAN_NETHER\n#define SHADE_LEAN_DRY\n#define SHADE_LEAN_NODL\n" + slotsT + ShadeMsl.terrain(e.getValue() + fs));
 			if (e.getKey().equals("translucent")) {
 				// the translucent fragment without the water module (mcopt.shade.water=false: M1's water)

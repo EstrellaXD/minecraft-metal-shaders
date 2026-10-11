@@ -36,6 +36,7 @@ public final class WaterFrame {
 
 	public static void update(long ctx, ClientLevel level, double camX, double camY, double camZ, boolean underwater, float wetness) {
 		boolean sprites = sprites();
+		WaterFlowScan.update(level, camX, camY, camZ); // (FT2.11) moving water near: the translucent terrain's variant with its look
 		float surface = underwater && level != null ? surfaceAbove(level, camX, camY, camZ) : 0f;
 		ShadeWater.frame(ctx, sprites ? STILL : NONE, sprites ? FLOW : NONE, surface, wetness);
 	}

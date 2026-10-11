@@ -140,8 +140,10 @@ public final class ShadeMsl {
 		LEAN_NETHER = 16, // M3.3 (dims): the Nether's terrain variant (SHADE_LEAN_NETHER), mcopt.shade.dims.netherLean
 		// 2026-10-08 (translucent terrain only): ABOVE = the camera is not under water (SHADE_LEAN_ABOVE: the surface seen from
 		// below is compiled out); DEV = ShadeLean.DEV_DEFINES (-Dmcopt.shade.leanDev, in-session A/B of compile-time variants)
-		LEAN_ABOVE = 32, LEAN_DEV = 64, LEAN_WATER = LEAN_ABOVE | LEAN_DEV,
-		LEAN_TERRAIN = LEAN_OW | LEAN_DRY | LEAN_NODL | LEAN_NETHER, LEAN_MASK = 127 << LEAN_SHIFT;
+		// (FT2.11, translucent terrain, overworld) NOFALLS = no moving water near the camera (WaterFlowScan): the moving water's look is
+		// compiled out (SHADE_LEAN_NOFALLS: the water shader is bound by registers and that code cost ~0.2 ms where it never ran)
+		LEAN_ABOVE = 32, LEAN_DEV = 64, LEAN_NOFALLS = 128, LEAN_WATER = LEAN_ABOVE | LEAN_DEV | LEAN_NOFALLS,
+		LEAN_TERRAIN = LEAN_OW | LEAN_DRY | LEAN_NODL | LEAN_NETHER, LEAN_MASK = 255 << LEAN_SHIFT;
 
 	static final String TRANSLUCENT_TERRAIN = "sodium:pipeline/translucent_terrain";
 
@@ -154,6 +156,7 @@ public final class ShadeMsl {
 		return ((t & LEAN_OW) != 0 ? "#define SHADE_LEAN_OW\n" : "") + ((t & LEAN_DRY) != 0 ? "#define SHADE_LEAN_DRY\n" : "")
 			+ ((t & LEAN_NODL) != 0 ? "#define SHADE_LEAN_NODL\n" : "") + ((t & LEAN_NOAURORA) != 0 ? "#define SHADE_LEAN_NOAURORA\n" : "")
 			+ ((t & LEAN_NETHER) != 0 ? "#define SHADE_LEAN_NETHER\n" : "") + ((t & LEAN_ABOVE) != 0 ? "#define SHADE_LEAN_ABOVE\n" : "")
+			+ ((t & LEAN_NOFALLS) != 0 ? "#define SHADE_LEAN_NOFALLS\n" : "")
 			+ ((t & LEAN_DEV) != 0 ? ShadeLean.DEV_DEFINES : "");
 	}
 	/** M3.1 experiment (-Dmcopt.shade.leanTest=ow,dry,nodl): those lean defines in every terrain fragment, always. */
@@ -339,15 +342,23 @@ public final class ShadeMsl {
 		if (ShadeLean.SKY && SKY.equals(name)) return new int[][] {{ShadeConfig.HDR_FORMAT}, {ShadeConfig.HDR_FORMAT | LEAN_NOAURORA << LEAN_SHIFT}};
 		if (ShadeLean.ON && leanTerrain(name)) {
 			// M3.3 (dims): + the Nether's four (LEAN_NETHER with or without DRY / NODL; never with OW); 2026-10-08: the
-			// translucent terrain also the overworld's four with LEAN_ABOVE (and, with -Dmcopt.shade.leanDev, those with LEAN_DEV)
+			// translucent terrain also the overworld's four with LEAN_ABOVE (and, with -Dmcopt.shade.leanDev, those with LEAN_DEV);
+			// (FT2.11) and each overworld one of those also with LEAN_NOFALLS (no moving water near: the common case)
 			boolean water = TRANSLUCENT_TERRAIN.equals(name);
 			int extra = water ? (ShadeLean.DEV_DEFINES.isEmpty() ? 4 : 8) : 0;
-			int[][] sets = new int[12 + extra][];
+			int[][] sets = new int[12 + extra + (water ? 4 + extra : 0)][];
 			for (int t = 0; t < 8; t++) sets[t] = new int[] {ShadeConfig.HDR_FORMAT | t << LEAN_SHIFT};
 			for (int t = 0; t < 4; t++) sets[8 + t] = new int[] {ShadeConfig.HDR_FORMAT | (LEAN_NETHER | t << 1) << LEAN_SHIFT};
 			for (int t = 0; t < extra; t++) {
 				int bits = LEAN_OW | (t & 3) << 1 | LEAN_ABOVE | (t >= 4 ? LEAN_DEV : 0);
 				sets[12 + t] = new int[] {ShadeConfig.HDR_FORMAT | bits << LEAN_SHIFT};
+			}
+			if (water) {
+				for (int t = 0; t < 4; t++) sets[12 + extra + t] = new int[] {ShadeConfig.HDR_FORMAT | (LEAN_OW | t << 1 | LEAN_NOFALLS) << LEAN_SHIFT};
+				for (int t = 0; t < extra; t++) {
+					int bits = LEAN_OW | (t & 3) << 1 | LEAN_ABOVE | (t >= 4 ? LEAN_DEV : 0) | LEAN_NOFALLS;
+					sets[16 + extra + t] = new int[] {ShadeConfig.HDR_FORMAT | bits << LEAN_SHIFT};
+				}
 			}
 			return sets;
 		}

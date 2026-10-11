@@ -9,8 +9,6 @@
 // mcopt native shading: the water and reflections module (shader bible E14, E15 basics, E26 surface). Original code; the
 // techniques are public (Schlick 1994, Walter et al. 2007 GGX, Beer-Lambert, McGuire & Mara 2014 screen-space ray
 // marching, Tessendorf 2001 deep-water dispersion, caustics as the inverse Jacobian of the refracted light field).
-// Portions adapted from Photon Shaders by Benjamin Stott ("sixthsurge"), MIT License, commit 26c2906e (FT2.10: the underground
-// look in shadeWaterAbove, from program/gbuffers_all_translucent.fsh; full text: LICENSES/MIT-Photon.txt; see NOTICE).
 //
 // Assembled by ShadeMsl after shade_common.metal (mcopt.metal.shade.water.ShadeWater.prelude puts the SHADE_* defines in
 // front) for the translucent terrain fragment; written as a self-contained include so other water renderers (far terrain,
@@ -846,7 +844,7 @@ struct ShadeWaterIn {
 	half3 tint;      // vertex colour: biome water colour x vanilla AO
 	half sky;        // sky light 0..1
 	half shadow;     // sun/moon visibility at the surface (shadow map)
-	half2 under;     // (FT2.10) Photon's underground water (shadeWaterAbove): x the block texture's highlight there, y the look's share (0 outdoors)
+	half2 cave;      // (FT2.10) water the sky doesn't light (shadeWaterAbove): x the torch light's caustics weight, y the ripples' share in its reflections
 	float3 lit;      // light on an upward white surface (shadeLit(1, up, ...)): sun, sky and block light, radiance
 	float4 dxz;      // screen derivatives of the position's xz (dfdx(p).xz, dfdy(p).xz): the baked waves' mip/anisotropy
 	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
@@ -999,8 +997,7 @@ constant float4 SHADE_CAUSTIC_WAVES[SHADE_CAUSTIC_COUNT] = {
 	float4(-0.985,  0.174, 0.89, 0.006),
 };
 
-static float shadeWaterCaustics(float3 pf, float dy, constant ShadeFrame &f, constant ShadeWaterParams &wp) {
-	float3 l = f.lightDirWorld.xyz;
+static float shadeWaterCaustics(float3 pf, float dy, constant ShadeFrame &f, constant ShadeWaterParams &wp, float3 l) {
 	float2 x = shadeWaterXZ(pf.xz + l.xz / max(l.y, 0.25) * dy, f);
 	float t = shadeWaterTime(f);
 	float3 hs = 0.0; // Hessian: xx, zz, xz
@@ -1051,8 +1048,9 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
 #ifdef SHADE_LEAN_ABOVE
 	// reflected images stay readable: SSR and the rendered sky follow a calmer normal than the shading (ripples wobble,
-	// don't shred)
-	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+	// don't shred). (FT2.10, w.cave.y) Where no sky lights the water the reflected walls and torches are all its surface shows:
+	// they follow the ripples like the sky's reflection on a lake shows its waves
+	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55 - 0.4 * float(w.cave.y))));
 	rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
 #endif
 #if defined(SHADE_SSR) && defined(SHADE_LEAN_ABOVE)
@@ -1097,11 +1095,18 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
 	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure);
 #ifdef SHADE_CAUSTICS
-	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0 && f.lightDirWorld.w > 0.5) {
-		float light = smoothstep(0.1, 0.8, float(w.shadow)) * saturate(f.lightDirWorld.y * 4.0) * smoothstep(0.55, 0.9, float(w.sky));
+	if (top && wp.tune.w > 0.0 && dy > 0.05 && dy < 18.0) {
+		float sunL = f.lightDirWorld.w > 0.5 ? smoothstep(0.1, 0.8, float(w.shadow)) * saturate(f.lightDirWorld.y * 4.0) * smoothstep(0.55, 0.9, float(w.sky)) : 0.0;
+		// (FT2.10, w.cave.x) torchlight is bent by the ripples too: where it lights the bottom (block light; caves, a strip of water in
+		// a base, a pool at night) its caustics play there like the sun's in a lake, the waves' texture under water the sky can't
+		// show it by (Gael 2026-10-10: a strip of water in his base looked like flat glass next to the lakes)
+		float torchL = float(w.cave.x) * (1.0 - sunL);
+		float light = sunL + torchL;
 		float fade = light * exp(-dy * 0.2) * saturate(dy * 3.0) * (1.0 - smoothstep(0.04, 0.12, w.footprint)); // fine lines alias far away
 		if (fade > 0.02) { // deep, shaded or far bottoms: not worth the waves
-			float c = shadeWaterCaustics(w.p + v * lView, dy, f, wp);
+			// (the torch's light comes from above and around: its focus straight down)
+			float3 cl = sunL >= torchL ? f.lightDirWorld.xyz : float3(0.0, 1.0, 0.0);
+			float c = shadeWaterCaustics(w.p + v * lView, dy, f, wp, cl);
 			bottom *= mix(1.0, c * 0.8, 0.75 * fade); // ~energy neutral: the focus averages a bit over 1
 		}
 	}
@@ -1117,17 +1122,6 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// the block texture's light pixels but moving smoothly
 	body *= 1.0 + 0.13 * clamp(pattern, -1.5, 2.5) + 0.35 * smoothstep(0.9, 2.0, pattern);
 #endif
-	// (FT2.10) where little sky reaches the water (caves, cellars: w.under.y, 0 at sky light 0.5 and up), adapted from Photon Shaders by
-	// Benjamin Stott ("sixthsurge"), MIT License, commit 26c2906e (program/gbuffers_all_translucent.fsh get_water_material, its default
-	// WATER_TEXTURE_HIGHLIGHT_UNDERGROUND and WATER_EDGE_HIGHLIGHT; LICENSES/MIT-Photon.txt): with no sky to mirror and no sun glint the
-	// surface had nothing to show its ripples, and a strip of water in a cave read as flat glass (Gael 2026-10-10). The vanilla water
-	// texture's brightest texels (w.under.x, moving with its animation) as a faint diffuse layer in the water's own hue, and a rim
-	// where the water is under half a block deep (along the walls and the shallows), lit by what lights the surface (torches)
-	if (top && w.under.y > 0.0h) {
-		float shallow = max(1.0 - 2.0 * dy, 0.0);
-		float rim = shallow * shallow * shallow * (1.0 + 8.0 * float(w.under.x));
-		body += w.lit * saturate(0.5 * exp(-2.0 * sigmaA) * float(w.under.x) + 0.1 * rim * float(w.under.y));
-	}
 
 	// --- reflection: the sky (only as open as the sky light says), SSR over it, the sun's glint
 	float open = float(shadeSkyCurve(w.sky));
@@ -1135,8 +1129,8 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float3 rs = float3(r.x, abs(r.y), r.z);
 #ifndef SHADE_LEAN_ABOVE
 	// reflected images stay readable: SSR and the rendered sky follow a calmer normal than the shading (ripples wobble,
-	// don't shred)
-	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55)));
+	// don't shred); FT2.10: more of the ripples where no sky lights the water (w.cave.y, as above)
+	float3 rr = reflect(v, normalize(mix(n, w.nFace, 0.55 - 0.4 * float(w.cave.y))));
 	rr = normalize(float3(rr.x, max(rr.y, 0.01), rr.z));
 #endif
 	// the LUT sky follows a calmer direction too: the rippled one smeared the low sun's aureole over the near water as a

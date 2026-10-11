@@ -248,8 +248,8 @@ public final class ShadeLook {
 		put4(b, WATER_SHADOW, mcopt.metal.shade.water.ShadeWater.shadowSoft(), mcopt.metal.shade.dh.ShadeDh.LOADED
 			? mcopt.metal.shade.dh.ShadeDh.directFlag(ShadeConfig.HDR && ShadePost.active() && !ShadeBindings.fallback()) : 0f,
 			mcopt.metal.shade.water.ShadeWater.shadowContact(),
-			// w (FT2.10): Photon's underground water look, its strength (mcopt.shade.water.underground, live; 0 = FT2.9)
-			Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.underground", 1f), 0f));
+			// w (FT2.10): the torch light's caustics on the bottom of water (mcopt.shade.water.torchCaustics, live; 0 = FT2.9)
+			Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.torchCaustics", 1f), 0f));
 		put4(b, SUN_GEOM, (float) Math.toRadians(ShadeSky.SUN_TILT), SUN_RADIUS, MOON_RADIUS, (float) Math.toRadians(this.elevation));
 		float[] l = f.sky.light;
 		put4(b, SUN_ART, l[0], l[1], l[2], 1f);
@@ -274,8 +274,10 @@ public final class ShadeLook {
 		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, (float) (0.6 * (1f - f.rain) * glowBell));
 		put4(b, VL, this.vlStrength, 160f, 0.7f, 12f);
 		// (FT2.10) x: the cave air's own glow (mcopt.shade.caveFog, live: the share of the minimum cave light the air in a cave
-		// scatters, neutral grey; 0 = the haze in a cave only dims, toward black). The shaders don't read the feet position.
-		put4(b, EYE, Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.caveFog", 0.5f), 0f), -1.62f, 0f, this.eyeSky);
+		// scatters, neutral grey; 0 = the haze in a cave only dims, toward black); z: how far the reflections of water the sky
+		// doesn't light follow its ripples (mcopt.shade.water.caveRipples, live, 0..1; 0 = FT2.9). The shaders don't read the feet position.
+		put4(b, EYE, Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.caveFog", 0.5f), 0f), -1.62f,
+			Math.min(Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.caveRipples", 1f), 0f), 1f), this.eyeSky);
 		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], ShadeSky.sunsetArt ? 1f : 0f); // w: M3 sunset art
 		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], this.skyRose);
 		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);

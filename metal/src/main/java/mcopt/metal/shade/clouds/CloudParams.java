@@ -160,9 +160,10 @@ public final class CloudParams {
 		float relX = (float) (this.shadowOriginX - f.cameraX), relZ = (float) (this.shadowOriginZ - f.cameraZ);
 		put4(b, 320, extent, yRef, relX, relZ);
 		put4(b, 336, 0.8f, 0.12f, 0.8f, this.opacity);
-		// y (FT2.10): the cloud bases' spread (mcopt.shade.clouds.baseSpread, live: share of the layer's thickness by which a base
-		// rises with the weather map's fine fBm; 0 = every base on the layer's floor, FT2.9)
-		put4(b, 352, this.domeUpdates & 0xffff, Math.min(Math.max(CloudConfig.floatProperty("mcopt.shade.clouds.baseSpread", 0f), 0f), 0.6f),
+		// y (FT2.10): the far clouds' bases spread (mcopt.shade.clouds.baseSpread, live: share of the layer's thickness by which a
+		// base rises with the weather map's fine fBm, from ~400 blocks out, full from ~1500; 0 = every base on the layer's floor,
+		// FT2.9; 0.25: no more stacked plates toward the sunset horizon, ft210-t13/t14)
+		put4(b, 352, this.domeUpdates & 0xffff, Math.min(Math.max(CloudConfig.floatProperty("mcopt.shade.clouds.baseSpread", 0.25f), 0f), 0.6f),
 			0.4f, CloudConfig.DOME_STEPS);
 		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
 		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard (M3.3: at

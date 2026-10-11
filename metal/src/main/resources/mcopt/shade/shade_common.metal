@@ -434,12 +434,14 @@ static inline float3 shadeLutDirection(float2 uv, constant ShadeFrame &f) {
 
 // The atmosphere's radiance toward dir (linear, pre-exposure) from the LUT; directions below the horizon read the horizon
 // row, darkened with depth (the ground's haze). The sky and the terrain's fog both come from here, so they meet exactly.
-static inline float3 shadeSkyLookup(float3 dir, texture2d<half> lut, sampler s, constant ShadeFrame &f) {
+// (FT2.12) uMin > 0: the azimuth no nearer the sun than u = uMin (0.7071 = 90 degrees from it), i.e. the sky without its glow
+// around the sun (the forward Mie lobe, the sunset's bright horizon there); farther from the sun the same value
+static inline float3 shadeSkyLookup(float3 dir, texture2d<half> lut, sampler s, constant ShadeFrame &f, float uMin = 0.0) {
 	float2 axis = shadeSkyAxis(f);
 	float2 hz = dir.xz;
 	float hl2 = dot(hz, hz);
 	float c = hl2 > 1e-8 ? dot(hz, axis) * rsqrt(hl2) : 1.0;
-	float u = sqrt(saturate(0.5 - 0.5 * c));
+	float u = max(sqrt(saturate(0.5 - 0.5 * c)), uMin);
 	float v = sqrt(saturate(dir.y));
 	float2 uv = (float2(u, v) * float2(SHADE_LUT_W - 1, SHADE_LUT_H - 1) + 0.5) / float2(SHADE_LUT_W, SHADE_LUT_H);
 	float3 sky = float3(lut.sample(s, uv, level(0.0)).rgb);

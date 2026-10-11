@@ -119,7 +119,18 @@ public final class CloudConfig {
 		DEV_CHECKER_ALT = 524288, DEV_OLD_SHADOW = 1048576,
 		// (FT2.10) shadeFogAir2's clouds behind distant terrain from the border fog's start (FT2.9), not only in its last 30 %: set in
 		// ShadeLook.clouds1.z while mcopt.shade.clouds.lateFog is false (CloudParams.packLook)
-		DEV_EARLY_FOG = 2097152;
+		DEV_EARLY_FOG = 2097152,
+		// (FT2.12) diagnosis: shadeFogAir2 without its aerial blend toward the sky behind
+		DEV_NO_AP = 4194304,
+		// (FT2.12) FT2.11's aerial blend toward the sky behind with its glow around the sun: set while mcopt.shade.aerialSun is true
+		DEV_AP_SUN = 8388608;
+	/**
+	 * (FT2.12) mcopt.shade.aerialSun (false; read every frame): true = FT2.11, the land within the render distance blends toward the
+	 * sky behind it with that sky's glow around the sun, unshadowed (a sun set behind a mountain glowed orange through it).
+	 */
+	public static boolean aerialSun() {
+		return "true".equalsIgnoreCase(System.getProperty("mcopt.shade.aerialSun", "false").trim());
+	}
 	/** (FT2.10) mcopt.shade.clouds.lateFog (true; read every frame): the clouds show through the border fog only once the terrain is mostly gone. */
 	public static boolean lateFog() {
 		return flag("mcopt.shade.clouds.lateFog", true);

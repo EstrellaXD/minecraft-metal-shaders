@@ -28,6 +28,8 @@ constexpr sampler shadeCloudSampler(filter::linear, address::clamp_to_edge);
 #define SHADE_CLOUD_DEV_OLD_FOG 256   // M3: the fog looks the clouds up for every terrain pixel
 #define SHADE_CLOUD_DEV_OLD_VL 512    // M3: VL fetches the cloud shadow on every lit step
 #define SHADE_CLOUD_DEV_EARLY_FOG 2097152 // FT2.9: the clouds behind distant terrain from the border fog's start (mcopt.shade.clouds.lateFog=false)
+#define SHADE_CLOUD_DEV_NO_AP 4194304       // (FT2.12, diagnosis) shadeFogAir2 without the aerial blend toward the sky behind
+#define SHADE_CLOUD_DEV_AP_SUN 8388608      // FT2.11: shadeFogAir2's aerial blend toward the sky behind with its glow around the sun (mcopt.shade.aerialSun=true)
 static inline bool shadeCloudDev(constant ShadeLook &L, int bit) { return (int(L.clouds1.z) & bit) != 0; }
 
 // Light reaching camera-relative p through the cumulus (1 = open sky .. ~0.1 under a thick cloud), for the sun/moon term.

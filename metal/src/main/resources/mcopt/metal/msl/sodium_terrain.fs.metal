@@ -275,7 +275,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
             float b = float(in.v_Light.x), s = saturate(float(in.v_Light.y) * 2.0), c = 1.0 - s * s;
             wi.cave = half4(half(smoothstep(0.3, 0.8, b) * sl.waterShadow.w), half(c * sl.eye.z), half(saturate(c * sl.eye.y)), half(sl.bloom.w));
         }
-        wi.dxz = shadeWaterDxz(dpx, dpy, wi.flowDir, float(wi.cave.w)); // (FT2.11) drawn out along a current like its waves
+        wi.dxz = float4(dpx.xz, dpy.xz);
         wi.detail = float4(0.0);
 #ifdef SHADE_WATER_DETAIL
         // M2.1 fine ripples (baked waves): top faces, and the surface seen from below with the camera under water

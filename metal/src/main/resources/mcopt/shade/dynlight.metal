@@ -31,6 +31,12 @@
 // eye and is omnidirectional (shape.y: no N.L) with a wider flat core (shape.x): like carrying a torch that lights every block
 // around evenly, as Photon, Complementary and BSL do (their held light is centred on the player, without a normal term or
 // shadows), instead of a point at the hand that lit the walls on its side in a bright disc and left the others dark (Gael).
+// (FT2.11, Gael 2026-10-11: "respeta demasiado si la luz alcanza a llegar a un bloque", hard shadows and a sudden step from shadow to
+// light) mcopt.shade.dynLights.playerShadows=false (default): the player's own light has no visibility volume (it sits at the eye,
+// so whatever the camera sees it reaches anyway; the voxel lookups in front of the surfaces only cut block-sized shadows into
+// corners and alcoves). mcopt.shade.dynLights.soft=true (default): the other lights' volumes hold how far light has to go around
+// what stands in its way (dynlight_vis.metal shade_dl_flood), not a yes/no per ray: it bends around corners and fades behind them
+// like a placed torch's (shape.z = 1, shadeDlReach).
 #ifndef MCOPT_SHADE_DYNLIGHT_MODULE // not MCOPT_SHADE_DYNLIGHT: that is the m3 seam file's (shade_dynlight.metal) guard
 #define MCOPT_SHADE_DYNLIGHT_MODULE
 #include <metal_stdlib>
@@ -53,7 +59,8 @@ struct ShadeDynLight {
 	float4 color;  // rgb tint x intensity (fade, flicker) relative to ShadeFrame.ambientBlock, w specular strength (0..1)
 	float4 vol;    // xyz camera-relative world position of its visibility volume's min corner (block aligned), w slab (< 0: none)
 	float4 shape;  // (FT2.9) x core radius (blocks: the light is as bright as there everywhere nearer; 0.75 = FT2.8.1), y 1 = omnidirectional
-	               // (no N.L: the player's own light), zw 0
+	               // (no N.L: the player's own light), z (FT2.11) 1 = the visibility slab holds the detour (shade_dl_flood), 0 = rays
+	               // (0 or 1 per voxel, shade_dl_vis), w 0
 };
 
 // Byte layout = mcopt.metal.shade.light.DynLights (Java packer). 28736 bytes.
@@ -80,14 +87,17 @@ static inline uint2 shadeDlMask(constant ShadeDynLights &D, float3 p) {
 	return D.cells[(c.y * SHADE_DL_GRID_Z + c.z) * SHADE_DL_GRID_X + c.x];
 }
 
-// How much of light L reaches camera-relative point q (the air just in front of the surface): its visibility volume,
-// trilinear over the voxel centres (soft block-sized edges). 1 for lights without a volume.
-static inline float shadeDlVisibility(constant ShadeDynLights &D, constant ShadeDynLight &L, float3 q, texture3d<half> vis) {
-	if (L.vol.w < 0.0) return 1.0;
+// How light L reaches camera-relative point q (the air just in front of the surface), from its visibility volume trilinear over
+// the voxel centres: x a factor (FT2.10's rays: 0 or 1 per voxel, so soft block-sized edges), y (FT2.11, shape.z = 1) the detour in
+// blocks: the light gets there as from that much farther (shade_dl_flood; 255/16 = not at all). (1, 0) for lights without a volume.
+#define SHADE_DL_DETOUR (255.0 / 16.0) // the flood's R8 value 1 in blocks
+static inline float2 shadeDlReach(constant ShadeDynLights &D, constant ShadeDynLight &L, float3 q, texture3d<half> vis) {
+	if (L.vol.w < 0.0) return float2(1.0, 0.0);
 	constexpr sampler s(filter::linear, address::clamp_to_edge, coord::normalized);
 	float3 v = clamp(q - L.vol.xyz, 0.5, float(SHADE_DL_VOL) - 0.5); // voxel units, kept inside the slab (no bleed into the next)
 	float3 uvw = float3(v.xy * (1.0 / SHADE_DL_VOL), (L.vol.w * SHADE_DL_VOL + v.z) / (D.params.x * SHADE_DL_VOL));
-	return float(vis.sample(s, uvw, level(0.0)).r);
+	float r = float(vis.sample(s, uvw, level(0.0)).r);
+	return L.shape.z > 0.5 ? float2(1.0, r * SHADE_DL_DETOUR) : float2(r, 0.0);
 }
 
 // One light's contribution at p (normal n, unit; thin: two-sided plants), in block-light units: times albedo x
@@ -105,11 +115,13 @@ static inline float3 shadeDlOne(constant ShadeDynLights &D, constant ShadeDynLig
 	// point, and bounces off what's around), faces turned away get nothing (the player's own light: none, every face alike)
 	float w = L.shape.y > 0.5 ? 1.0 : thin ? 0.55 + 0.45 * abs(nl) : saturate((nl + 0.3) * (1.0 / 1.3));
 	if (w <= 0.0) return float3(0.0);
+	float2 vr = shadeDlReach(D, L, p + n * 0.5, vis);
+	float de = d + vr.y; // (FT2.11) around what stands in the way: as from farther
 	// as block light level reach - d; within the core the hot spot is capped (no singular spot under the hand)
-	float b = saturate((reach - max(d, L.shape.x)) * (1.0 / 15.0));
-	float e = shadeDlCurve(b) * w * saturate(cut - d); // faded out over the last block before the cut
+	float b = saturate((reach - max(de, L.shape.x)) * (1.0 / 15.0));
+	float e = shadeDlCurve(b) * w * saturate(cut - de) * vr.x; // faded out over the last block before the cut
 	if (e <= 1e-4) return float3(0.0);
-	return L.color.rgb * (e * shadeDlVisibility(D, L, p + n * 0.5, vis));
+	return L.color.rgb * e;
 }
 
 // Diffuse dynamic light at camera-relative p with unit face normal n: the factor that multiplies albedo x ambientBlock
@@ -182,14 +194,16 @@ kernel void shade_dl_irr(uint3 t0 [[thread_position_in_grid]], constant ShadeDyn
 			float3 v = L.pos.xyz - c;
 			float d2 = dot(v, v), reach = L.pos.w, cut = reach - SHADE_DL_CUT;
 			if (d2 >= cut * cut) continue;
-			float d = sqrt(d2);
-			float b = saturate((reach - max(d, L.shape.x)) * (1.0 / 15.0));
-			float f = shadeDlCurve(b) * saturate(cut - d);
+			float d = sqrt(d2), de = d, k = 1.0;
 			if (L.vol.w >= 0.0) {
 				int3 q = int3(floor(c - L.vol.xyz));
 				if (any(q < 0) || any(q >= SHADE_DL_VOL)) continue;
-				f *= float(vis.read(uint3(uint(q.x), uint(q.y), uint(L.vol.w) * SHADE_DL_VOL + uint(q.z))).r);
+				float r = float(vis.read(uint3(uint(q.x), uint(q.y), uint(L.vol.w) * SHADE_DL_VOL + uint(q.z))).r);
+				if (L.shape.z > 0.5) de += r * SHADE_DL_DETOUR; // (FT2.11) the detour: as from farther
+				else k = r;
 			}
+			float b = saturate((reach - max(de, L.shape.x)) * (1.0 / 15.0));
+			float f = shadeDlCurve(b) * saturate(cut - de) * k;
 			if (f <= 1e-5) continue;
 			float3 ci = L.color.rgb * f;
 			float w = dot(ci, float3(0.2126, 0.7152, 0.0722));
@@ -275,10 +289,12 @@ static float4 shadeDynLightmap(float4 lm, int2 uv2, float3 p, float3 n, texture2
 			if (d2 >= cut * cut) continue;
 			float d = sqrt(d2);
 			float w = hasN && L.shape.y <= 0.5 ? 0.45 + 0.55 * saturate(dot(nn, v / max(d, 1e-3))) : 1.0;
-			float lv = max(reach - max(d, L.shape.x), 0.0); // block light level 0..15
+			float2 vr = shadeDlReach(D, L, p + nn * 0.3, vis);
+			float de = d + vr.y; // (FT2.11) around what stands in the way: as from farther
+			float lv = max(reach - max(de, L.shape.x), 0.0); // block light level 0..15
 			float3 dyn = lightMap.sample(lightSampler, float2(clamp(lv * (16.0 / 256.0) + 0.03125, 0.03125, 0.96875), sky), level(0.0)).rgb;
 			float a = dot(L.color.rgb, float3(0.2126, 0.7152, 0.0722));
-			float3 ex = max(dyn - lm.rgb, 0.0) * (min(a, 1.0) * w * saturate(cut - d) * shadeDlVisibility(D, L, p + nn * 0.3, vis));
+			float3 ex = max(dyn - lm.rgb, 0.0) * (min(a, 1.0) * w * saturate(cut - de) * vr.x);
 			float y = dot(ex, float3(0.2126, 0.7152, 0.0722));
 			if (y <= 1e-5) continue;
 			best = max(best, ex);

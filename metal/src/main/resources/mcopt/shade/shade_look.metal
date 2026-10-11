@@ -37,7 +37,7 @@ struct ShadeLook {
 	float4 grade3;     // 368  rgb gain (display), w inset s_in
 	float4 tonemap;    // 384  Lottes curve f(x) = x^a / (x^(a d) b + beta): x a, y d, z b, w beta (b, beta solved on the CPU)
 	float4 output;     // 400  x peak P (1 = SDR), y paper white, z dither amplitude (LSB), w largest display value the inverse maps (LDR->HDR)
-	float4 bloom;      // 416  x mix m, y octave spectrum exponent, z fog-glow k, w lens dirt (unused)
+	float4 bloom;      // 416  x mix m, y octave spectrum exponent, z fog-glow k, w (FT2.11) moving water's look for the water module (mcopt.shade.water.falls; was the unused lens dirt)
 	float4 fogR;       // 432  rgb haze extinction sigma (1/block, at the base height), w scale height (blocks)
 	float4 fogM;       // 448  x mist sigma (1/block), y mist scale height, z mist base y (absolute), w mist albedo
 	float4 fogMisc;    // 464  x haze base y (absolute), y border fog start fraction, z border fog radius (blocks, 0 = off), w evening glow (strength x its bell around the sun's elevation, made by ShadeLook)

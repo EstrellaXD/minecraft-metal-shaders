@@ -269,10 +269,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // (FT2.10) water the sky doesn't light (caves, cellars, a strip in a base): x the torch light's caustics on its bottom (block
         // light, mcopt.shade.water.torchCaustics: ShadeLook.waterShadow.w), y how far its reflections follow the ripples (sky light
         // under 0.5, mcopt.shade.water.caveRipples: ShadeLook.eye.z), z its surroundings' share in them (mcopt.shade.water.caveSky:
-        // ShadeLook.eye.y). See shadeWaterAbove
+        // ShadeLook.eye.y). See shadeWaterAbove. w (FT2.11): moving water's look (falling water's sides, currents; mcopt.shade.water.falls:
+        // ShadeLook.bloom.w)
         {
             float b = float(in.v_Light.x), s = saturate(float(in.v_Light.y) * 2.0), c = 1.0 - s * s;
-            wi.cave = half4(half(smoothstep(0.3, 0.8, b) * sl.waterShadow.w), half(c * sl.eye.z), half(saturate(c * sl.eye.y)), 0.0h);
+            wi.cave = half4(half(smoothstep(0.3, 0.8, b) * sl.waterShadow.w), half(c * sl.eye.z), half(saturate(c * sl.eye.y)), half(sl.bloom.w));
         }
         wi.dxz = float4(dpx.xz, dpy.xz);
         wi.detail = float4(0.0);

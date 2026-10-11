@@ -833,6 +833,19 @@ static inline float2 shadeWaterDetailXZ(float2 x) {
 }
 #endif
 
+// (FT2.11, mcopt.shade.water.falls = ShadeWaterIn.cave.w, Gael 2026-10-11: water "cayendo o en cascada se ve muy lisa por afuera y muy
+// cuadrada") Moving water, after Photon (MIT snapshot 26c2906e: flowing water's waves run along the current and are ~2-5x stronger
+// than still water's) and Complementary / BSL (their waves are laid on every face of the water, the sides too; technique only):
+//  - a current (flowing water's top faces) draws its ripples out along the flow, x 1 / (1 - SHADE_WATER_ALONG) (streaks), and
+//    roughens them by 1 + SHADE_WATER_FLOW_ROUGH (the calm of a lake isn't a stream's);
+//  - falling water's sides (shadeWaterFallNormal) get the wave field too, finer and drawn out downward, sliding down.
+// k: ShadeWaterIn.cave.w (1 = this look, 0 = FT2.10's).
+#define SHADE_WATER_ALONG 0.5
+#define SHADE_WATER_FLOW_ROUGH 1.4
+// x drawn out along the unit current fd (0 for still water: unchanged): J x with J = I - a fd fd^T (symmetric, so the slopes of
+// h(J x) are J grad h and the screen footprints J dx too)
+static inline float2 shadeWaterAlong(float2 x, float2 fd, float a) { return x - fd * (a * dot(x, fd)); }
+
 // ---- the surface ------------------------------------------------------------------------------------------------------------
 struct ShadeWaterIn {
 	float3 p;        // camera-relative position of the surface fragment
@@ -845,7 +858,8 @@ struct ShadeWaterIn {
 	half sky;        // sky light 0..1
 	half shadow;     // sun/moon visibility at the surface (shadow map)
 	half4 cave;      // (FT2.10) water the sky doesn't light (shadeWaterAbove): x the torch light's caustics weight, y the ripples' share in its
-	                 // reflections, z its surroundings' share in them (the sky's shape in the place's light), w 0
+	                 // reflections, z its surroundings' share in them (the sky's shape in the place's light), w (FT2.11) moving water's look
+	                 // (mcopt.shade.water.falls, ShadeLook.bloom.w; 0 = FT2.10): ripples on falling water's sides, rougher streaky currents
 	float3 lit;      // light on an upward white surface (shadeLit(1, up, ...)): sun, sky and block light, radiance
 	float4 dxz;      // screen derivatives of the position's xz (dfdx(p).xz, dfdy(p).xz): the baked waves' mip/anisotropy
 	float exposure;  // the exposure this frame is drawn with (M1: sf.time.z; M2 HDR: ShadeGpu.exposure.x)
@@ -884,6 +898,11 @@ static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, 
 	float2 xa = shadeWaterXZ(w.p.xz, f);
 	float2 x = xa - w.flowDir * (t * SHADE_WATER_FLOW_SPEED); // as shadeWaterNormal: flowing water carries its waves downstream
 	float2 cell = (floor(xa * 16.0) + 0.5) * (1.0 / 16.0) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED);
+	// (FT2.11) drawn out along the current, as shadeWaterNormal (its J then turns the returned slope into the world's)
+	float al = SHADE_WATER_ALONG * min(float(w.cave.w), 1.0);
+	x = shadeWaterAlong(x, w.flowDir, al);
+	cell = shadeWaterAlong(cell, w.flowDir, al);
+	float4 dxz = float4(shadeWaterAlong(w.dxz.xy, w.flowDir, al), shadeWaterAlong(w.dxz.zw, w.flowDir, al));
 #ifdef SHADE_WATER_SMOOTH
 	// FT1.3 (style photon): no 1/16-block cells and no crest pattern: each cell tilted the reflection on its own, and mirrored
 	// clouds and shores broke into small rectangles (Gael: "reflejos pixeleados")
@@ -895,7 +914,7 @@ static inline float4 shadeWaterDetailIn(ShadeWaterIn w, constant ShadeFrame &f, 
 #endif
 	float g = (1.0 - q) * (s / SHADE_WAVE_TILE); // a snapped coordinate changes slower across the pixel
 	half4 d = waves.sample(shadeWaveDetailSampler, shadeWaterDetailXZ(mix(x, cell, q)) * (1.0 / SHADE_WAVE_TILE),
-	                       gradient2d(shadeWaterRot(w.dxz.xy) * g, shadeWaterRot(w.dxz.zw) * g));
+	                       gradient2d(shadeWaterRot(dxz.xy) * g, shadeWaterRot(dxz.zw) * g));
 	return float4(shadeWaterRotT(float2(d.xy)) * (s * far), float(d.z) * far, -float(d.w) * (nearP / 0.19));
 }
 #endif
@@ -931,15 +950,19 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 	pattern = 0.0;
 	float t = shadeWaterTime(f);
 	float2 x = shadeWaterXZ(w.p.xz, f) - w.flowDir * (t * SHADE_WATER_FLOW_SPEED); // flowing water carries its waves downstream
+	// (FT2.11) a current draws them out along its flow (streaks; the slopes come back through the same J below) and roughens them
+	float mv = float(w.cave.w), al = SHADE_WATER_ALONG * min(mv, 1.0);
+	x = shadeWaterAlong(x, w.flowDir, al);
+	float4 dxz = float4(shadeWaterAlong(w.dxz.xy, w.flowDir, al), shadeWaterAlong(w.dxz.zw, w.flowDir, al));
 #ifdef SHADE_WATER_SMOOTH
 	const float fade = 1.0 / 170.0; // FT1.3: the ripples' texture carries farther (Gael's references: textured to the horizon)
 #else
 	const float fade = 1.0 / 90.0;
 #endif
-	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + 0.6 * length(w.flowDir)) * exp(-length(w.p) * fade);
+	float strength = wp.tune.x * (1.0 + 1.6 * wp.state.z) * (1.0 + (0.6 + SHADE_WATER_FLOW_ROUGH * mv) * length(w.flowDir)) * exp(-length(w.p) * fade);
 #ifdef SHADE_WAVE_BAKE
 	if (wp.state.w > 0.5) { // this frame's bake exists
-		half4 b = waves.sample(shadeWaveSampler, x * (1.0 / SHADE_WAVE_TILE), gradient2d(w.dxz.xy * (1.0 / SHADE_WAVE_TILE), w.dxz.zw * (1.0 / SHADE_WAVE_TILE)));
+		half4 b = waves.sample(shadeWaveSampler, x * (1.0 / SHADE_WAVE_TILE), gradient2d(dxz.xy * (1.0 / SHADE_WAVE_TILE), dxz.zw * (1.0 / SHADE_WAVE_TILE)));
 		height = float(b.z) * strength;
 		float2 gb = float2(b.xy) * strength;
 #ifdef SHADE_WATER_DETAIL
@@ -962,6 +985,7 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 		}
 #endif
 #endif
+		gb = shadeWaterAlong(gb, w.flowDir, al); // (FT2.11) slopes of the drawn-out field, in the world's xz
 		return normalize(float3(-gb.x, 1.0, -gb.y));
 	}
 #endif
@@ -979,8 +1003,36 @@ static float3 shadeWaterNormal(ShadeWaterIn w, constant ShadeFrame &f, constant 
 		height *= k;
 	}
 #endif
+	g = shadeWaterAlong(g, w.flowDir, al); // (FT2.11) slopes of the drawn-out field, in the world's xz
 	return normalize(float3(-g.x, 1.0, -g.y));
 }
+
+#ifdef SHADE_WAVE_BAKE
+// (FT2.11) Falling water's sides (vertical faces of the water; FT2.10 drew them as flat glass): the baked wave field laid on the face,
+// SHADE_WATER_FALL_SCALE times finer, drawn out downward by 1 / SHADE_WATER_FALL_STRETCH and sliding down at SHADE_WATER_FALL_SCROLL
+// (streaks running down the fall, as the vanilla flow texture runs down in Complementary and BSL, here as waves: Gael wants the realistic
+// water everywhere). Strength k (ShadeWaterIn.cave.w, faded with distance and toward grazing views, where Photon fades its waves on
+// such faces too: the ripples would only alias there). height: the field's height (for the white water streaks).
+#define SHADE_WATER_FALL_SCALE 3.0
+#define SHADE_WATER_FALL_STRETCH 0.3
+#define SHADE_WATER_FALL_SLOPE 0.45        // the slopes' scale at k = 1 (x the finer field's own: ~4x a calm lake's ripples)
+#define SHADE_WATER_FALL_SCROLL (192.0 / SHADE_WATER_CLOCK_WRAP) // tiles per second down (a whole number of tiles per clock wrap: no jump)
+static float3 shadeWaterFallNormal(ShadeWaterIn w, constant ShadeFrame &f, texture2d<half> waves, float3 v, thread float &height) {
+	float3 nf = w.nFace;
+	float3 tu = normalize(float3(-nf.z, 0.0, nf.x)); // across the fall (horizontal, in the face)
+	float2 xa = shadeWaterXZ(w.p.xz, f);
+	float ya = w.p.y + f.cameraFract.y + fmod(f.cameraBlock.y, 2048.0);
+	float2 c = float2(dot(xa, tu.xz), ya * SHADE_WATER_FALL_STRETCH) * (SHADE_WATER_FALL_SCALE / SHADE_WAVE_TILE);
+	c.y += shadeWaterTime(f) * SHADE_WATER_FALL_SCROLL;
+	// the field's texels per pixel across the fall (the finer axis): its mip
+	float lod = max(log2(max(w.footprint * (SHADE_WATER_FALL_SCALE * float(SHADE_WAVE_BAKE_SIZE) / SHADE_WAVE_TILE), 1e-4)), 0.0);
+	half4 b = waves.sample(shadeWaveSampler, c, level(lod));
+	float k = float(w.cave.w) * SHADE_WATER_FALL_SLOPE * exp(-length(w.p) * (1.0 / 120.0)) * smoothstep(0.0, 0.3, abs(dot(nf, v)));
+	float2 s = float2(b.xy) * (float2(SHADE_WATER_FALL_SCALE, SHADE_WATER_FALL_SCALE * SHADE_WATER_FALL_STRETCH) * k);
+	height = float(b.z);
+	return normalize(nf - s.x * tu - s.y * float3(0.0, 1.0, 0.0));
+}
+#endif
 
 // Caustic focusing (1 = none) on a bottom at camera-relative pf, depth dy under the surface. The sun's rays that reach pf
 // crossed the surface up-sun of it; there the waves' curvature bends them together or apart, and the light per area is the
@@ -1045,6 +1097,11 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 		float graze = 1.0 - saturate(-v.y);
 		n = normalize(mix(n, float3(0.0, 1.0, 0.0), 0.8 * graze * graze * graze * graze));
 	}
+#ifdef SHADE_WAVE_BAKE
+	else if (w.cave.w > 0.0h && abs(w.nFace.y) < 0.5 && wp.state.w > 0.5) { // (FT2.11) falling water's sides
+		n = shadeWaterFallNormal(w, f, waves, v, height);
+	}
+#endif
 	float cosV = max(dot(-v, n), 0.02);
 	float fres = shadeWaterFresnel(cosV) * wp.tune.z;
 #ifdef SHADE_LEAN_ABOVE

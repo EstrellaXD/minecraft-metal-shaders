@@ -21,8 +21,10 @@
 // water's 18-23); far terrain's own pipelines use 24 but rebind shade after drawing.
 // Manual retain/release (the dylib builds with -fno-objc-arc), like the other files.
 #import "mcmetal.h"
+#include <stdio.h>
 
 #define DL_RING_MAX 8
+#define DL_FLOOD_WORDS 6728 // dynlight_vis.metal DL_FWORDS: 32 x 29 x 29 bytes
 
 typedef struct {
 	id<MTLBuffer> ring[DL_RING_MAX];
@@ -32,6 +34,8 @@ typedef struct {
 	id<MTLTexture> vis;
 	int slabs;
 	id<MTLComputePipelineState> visPso, irrPso;
+	id<MTLComputePipelineState> floodPso, floodOutPso; // (FT2.11) shade_dl_flood(_out): the volumes as light spreads through air; nil = rays only
+	id<MTLBuffer> ways;                               // (FT2.11) the flood's ways, DL_FLOOD_WORDS per slab
 	id<MTLTexture> irr, dir;  // the irradiance volume: rgb light, mean light direction (one voxel per block)
 } DlState;
 
@@ -69,6 +73,17 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 		DlState *s = calloc(1, sizeof(DlState));
 		s->visPso = pso;
 		s->irrPso = ipso;
+		// (FT2.11) the flood fill (27 KB of threadgroup memory per volume): without it the volumes stay rays (mc_dl_has_flood tells Java)
+		id<MTLFunction> ff = [[lib newFunctionWithName:@"shade_dl_flood"] autorelease];
+		id<MTLFunction> fo = [[lib newFunctionWithName:@"shade_dl_flood_out"] autorelease];
+		e = nil;
+		s->floodPso = ff ? [ctx->device newComputePipelineStateWithFunction:ff error:&e] : nil;
+		s->floodOutPso = s->floodPso && fo ? [ctx->device newComputePipelineStateWithFunction:fo error:&e] : nil;
+		if (!s->floodOutPso) {
+			fprintf(stderr, "[mcopt] shade: dynamic light flood fill unavailable (rays only): %s\n", e ? e.localizedDescription.UTF8String : "missing");
+			[s->floodPso release];
+			s->floodPso = nil;
+		}
 		s->ringSize = ring < 2 ? 2 : ring > DL_RING_MAX ? DL_RING_MAX : ring;
 		for (int i = 0; i < s->ringSize; i++) {
 			s->ring[i] = [ctx->device newBufferWithLength:bytes options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
@@ -82,6 +97,10 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 			s->occupancy[i].label = @"mcopt shade: block occupancy";
 		}
 		s->slabs = slabs < 1 ? 1 : slabs > 64 ? 64 : slabs;
+		if (s->floodPso) {
+			s->ways = [ctx->device newBufferWithLength:(NSUInteger) s->slabs * DL_FLOOD_WORDS * 4 options:MTLResourceStorageModePrivate];
+			s->ways.label = @"mcopt shade: dynamic light flood";
+		}
 		MTLTextureDescriptor *td = [[MTLTextureDescriptor new] autorelease];
 		td.textureType = MTLTextureType3D;
 		td.pixelFormat = MTLPixelFormatR8Unorm;
@@ -115,6 +134,9 @@ void mc_dl_free(DlState *s) {
 	[s->vis release];
 	[s->visPso release];
 	[s->irrPso release];
+	[s->floodPso release];
+	[s->floodOutPso release];
+	[s->ways release];
 	[s->irr release];
 	[s->dir release];
 	free(s);
@@ -181,20 +203,38 @@ void mc_dl_bind(Enc *enc) {
 	[r setFragmentTexture:s->dir atIndex:25];
 }
 
+// (FT2.11) 1 when the flood fill's pipeline exists (DlVisParams.info.y = 1 is honoured), else 0.
+int mc_dl_has_flood(DlState *s) {
+	return s && s->floodPso && s->floodOutPso && s->ways ? 1 : 0;
+}
+
 // The visibility volumes for this frame (params: DlVisParams, volumes of them), on the frame's command buffer before the
-// world passes (ends any open render encoder; the backend reopens its own).
+// world passes (ends any open render encoder; the backend reopens its own). (FT2.11) DlVisParams.info.y = 1: as light spreads
+// through air (shade_dl_flood, one threadgroup per volume), else along rays (shade_dl_vis).
 void mc_dl_vis(Enc *enc, DlState *s, const void *params, int length, int volumes) {
 	if (!s || volumes <= 0) return;
 	if (volumes > s->slabs) volumes = s->slabs;
+	bool flood = length >= 8 && ((const uint32_t *) params)[1] == 1u && mc_dl_has_flood(s);
 	@autoreleasepool {
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
 		id<MTLComputeCommandEncoder> c = [cb computeCommandEncoder];
-		c.label = @"mcopt shade: dynamic light visibility";
-		[c setComputePipelineState:s->visPso];
+		c.label = flood ? @"mcopt shade: dynamic light flood" : @"mcopt shade: dynamic light visibility";
+		[c setComputePipelineState:flood ? s->floodPso : s->visPso];
 		[c setBytes:params length:length atIndex:0];
 		[c setBuffer:s->occupancy[s->occSlot] offset:0 atIndex:1];
 		[c setTexture:s->vis atIndex:0];
-		[c dispatchThreads:MTLSizeMake(32, 32, 32 * volumes) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
+		if (flood) {
+			// the ways (a threadgroup per volume), then the slabs from them (a thread per voxel; the serial encoder orders the two)
+			NSUInteger n = s->floodPso.maxTotalThreadsPerThreadgroup;
+			n = n >= 1024 ? 1024 : n / 32 * 32;
+			if (n < 32) n = 32;
+			[c setBuffer:s->ways offset:0 atIndex:2];
+			[c dispatchThreadgroups:MTLSizeMake((NSUInteger) volumes, 1, 1) threadsPerThreadgroup:MTLSizeMake(n, 1, 1)];
+			[c setComputePipelineState:s->floodOutPso];
+			[c dispatchThreads:MTLSizeMake(32, 32, 32 * volumes) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
+		} else {
+			[c dispatchThreads:MTLSizeMake(32, 32, 32 * volumes) threadsPerThreadgroup:MTLSizeMake(8, 8, 4)];
+		}
 		[c endEncoding];
 	}
 }

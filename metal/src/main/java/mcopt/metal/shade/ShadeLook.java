@@ -262,7 +262,10 @@ public final class ShadeLook {
 		put4(b, TONEMAP, this.contrast, SHOULDER, this.toneB, this.toneBeta);
 		float inverseMax = Math.min(0.80f, 0.95f / (this.toneB * SHOULDER));
 		put4(b, OUTPUT, 1f, 1f, 1f, inverseMax);
-		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeConfig.LOOK], 0.06f * (1f + f.rain), 0f);
+		// w (FT2.11): moving water's look (mcopt.shade.water.falls, live, 0..2; 0 = FT2.10): ripples sliding down falling water's sides and
+		// streaky, rougher currents (water.metal shadeWaterFallNormal / shadeWaterAlong); the bloom never used w (lens dirt, reserved)
+		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeConfig.LOOK], 0.06f * (1f + f.rain),
+			Math.min(Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.falls", 1f), 0f), 2f));
 		float haze = 1f + 1.0f * f.rain;
 		put4(b, FOG_R, HAZE_SIGMA[0] * haze, HAZE_SIGMA[1] * haze, HAZE_SIGMA[2] * haze, HAZE_H);
 		// (FT2.7, audit idx 49) the mist's albedo goes to 0.6 with the rain as its other terms do, linearly: a step at rain 0.5 cut its

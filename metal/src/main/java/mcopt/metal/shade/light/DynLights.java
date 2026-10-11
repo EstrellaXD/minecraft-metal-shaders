@@ -104,6 +104,8 @@ public final class DynLights {
 	private static final int[] irrBox = {0, 0, 0, IRR_X - 1, IRR_Y - 1, IRR_Z - 1};
 	private static int irrVoxels;
 	private static long visParams;
+	/** (FT2.11) the native side has the flood fill's pipelines (shade_dl_flood): mcopt.shade.dynLights.soft can be honoured. */
+	private static boolean flood;
 	private static final Map<Long, Src> SOURCES = new HashMap<>();
 	private static final ArrayList<Src> ACTIVE = new ArrayList<>();
 	private static final long[] cells = new long[GRID_X * GRID_Y * GRID_Z];
@@ -127,6 +129,8 @@ public final class DynLights {
 		float cur, target, seed, score;
 		int slab = -1, volGen;
 		boolean wantVolume;
+		/** (FT2.11) its slab holds the flood fill's detour (shade_dl_flood) rather than rays' 0/1: ShadeDynLight.shape.z. */
+		boolean volSoft;
 		double volX, volY, volZ;
 		float volReach;
 
@@ -158,6 +162,8 @@ public final class DynLights {
 				MemoryUtil.memPutByte(err, (byte) 0);
 				state = DynLightNative.create(ctx, MemoryUtil.memAddress(src), BYTES, RING, Math.max(1, DynLightConfig.VOLUMES), Occupancy.BYTES, IRR_X, IRR_Y, IRR_Z, err, 4096);
 				if (state == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
+				flood = DynLightNative.hasFlood(state);
+				if (!flood) System.out.println("[mcopt] shade: dynamic lights: no flood fill pipeline, rays only (mcopt.shade.dynLights.soft has no effect)");
 			} finally {
 				MemoryUtil.memFree(src);
 			}
@@ -238,14 +244,22 @@ public final class DynLights {
 		}
 
 		// visibility volumes: the strongest lights near enough for the occupancy window keep a slab of the 3D texture while
-		// they stay selected; a slab is recomputed only when its light moved, changed reach or the occupancy changed
+		// they stay selected; a slab is recomputed only when its light moved, changed reach or the occupancy changed.
+		// (FT2.11, both read every frame) -Dmcopt.shade.dynLights.playerShadows (false): the player's own light (at the eye: the
+		// camera sees nothing it doesn't reach) gets no volume, no shadows at all, as in Photon, Complementary and BSL (Gael
+		// 2026-10-11: hard shadows and a sudden step from shadow to light around his torch); true = FT2.10. -Dmcopt.shade.dynLights.soft
+		// (true): the volumes hold the detour light takes around what stands in its way (it bends around corners and fades behind
+		// them, like a placed torch's); false = FT2.10's rays.
+		boolean playerShadows = Boolean.parseBoolean(System.getProperty("mcopt.shade.dynLights.playerShadows", "false").trim());
+		boolean soft = flood && !"false".equalsIgnoreCase(System.getProperty("mcopt.shade.dynLights.soft", "true").trim());
 		int volumes = 0, dirty = 0;
 		if (DynLightConfig.OCCLUSION && occupancy != null) {
 			int gen = occupancy.generation;
 			for (int i = 0; i < ACTIVE.size(); i++) {
 				Src s = ACTIVE.get(i);
 				boolean want = false;
-				if (i < count && volumes < DynLightConfig.VOLUMES && s.reach <= 16f) { // lightning and other wide flashes: open sky anyway
+				// lightning and other wide flashes: open sky anyway
+				if (i < count && volumes < DynLightConfig.VOLUMES && s.reach <= 16f && (playerShadows || !s.omni)) {
 					double dx = s.x - camX, dy = s.y - camY, dz = s.z - camZ;
 					want = Math.abs(dx) <= DynLightConfig.VOLUME_RANGE && Math.abs(dy) <= DynLightConfig.VOLUME_RANGE && Math.abs(dz) <= DynLightConfig.VOLUME_RANGE;
 				}
@@ -262,8 +276,8 @@ public final class DynLights {
 					fresh = true;
 				}
 				if (s.slab < 0) continue;
-				if (!fresh && s.volReach == s.reach && Math.abs(s.volX - s.x) < 0.04 && Math.abs(s.volY - s.y) < 0.04 && Math.abs(s.volZ - s.z) < 0.04
-					&& (s.volGen == gen || !occupancy.changedSince(s.x, s.y, s.z, s.reach, s.volGen))) {
+				if (!fresh && s.volReach == s.reach && s.volSoft == soft && Math.abs(s.volX - s.x) < 0.04 && Math.abs(s.volY - s.y) < 0.04
+					&& Math.abs(s.volZ - s.z) < 0.04 && (s.volGen == gen || !occupancy.changedSince(s.x, s.y, s.z, s.reach, s.volGen))) {
 					s.volGen = gen; // nothing it reaches changed: keep the slab
 					continue;
 				}
@@ -281,11 +295,13 @@ public final class DynLights {
 				s.volY = s.y;
 				s.volZ = s.z;
 				s.volReach = s.reach;
+				s.volSoft = soft;
 				s.volGen = gen;
 				dirty++;
 			}
 		}
 		MemoryUtil.memPutInt(visParams, dirty);
+		MemoryUtil.memPutInt(visParams + 4, soft ? 1 : 0); // DlVisParams.info.y: the flood fill (FT2.11)
 		volumesLastFrame = volumes;
 		volumesComputed = dirty;
 
@@ -305,7 +321,7 @@ public final class DynLights {
 			float flick = s.fire && DynLightConfig.FLICKER ? flicker(s.seed) : 1f;
 			float k = s.cur * flick;
 			int at = LIGHTS_OFFSET + i * LIGHT_BYTES;
-			b.putFloat(at + 48, s.core).putFloat(at + 52, s.omni ? 1f : 0f).putFloat(at + 56, 0f).putFloat(at + 60, 0f);
+			b.putFloat(at + 48, s.core).putFloat(at + 52, s.omni ? 1f : 0f).putFloat(at + 56, s.slab >= 0 && s.volSoft ? 1f : 0f).putFloat(at + 60, 0f);
 			float rx = (float) (s.x - camX), ry = (float) (s.y - camY), rz = (float) (s.z - camZ);
 			b.putFloat(at, rx).putFloat(at + 4, ry).putFloat(at + 8, rz).putFloat(at + 12, s.reach);
 			b.putFloat(at + 16, s.r * k).putFloat(at + 20, s.g * k).putFloat(at + 24, s.b * k).putFloat(at + 28, s.spec);

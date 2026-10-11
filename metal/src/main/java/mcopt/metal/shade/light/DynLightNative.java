@@ -35,6 +35,7 @@ final class DynLightNative {
 	private static final MethodHandle VIS = fn("mc_dl_vis", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 	private static final MethodHandle OCCUPANCY = fn("mc_dl_occupancy", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle FALLBACK = fn("mc_dl_fallback", JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle HAS_FLOOD = fn("mc_dl_has_flood", JAVA_INT, JAVA_LONG);
 
 	private DynLightNative() {
 	}
@@ -104,6 +105,15 @@ final class DynLightNative {
 	static void irr(long enc, long state, int x0, int y0, int z0, int w, int h, int d) {
 		try {
 			IRR.invokeExact(enc, state, x0, y0, z0, w, h, d);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** (FT2.11) Whether the flood fill's pipeline exists (else DlVisParams.info.y = 1 falls back to rays). */
+	static boolean hasFlood(long state) {
+		try {
+			return (int) HAS_FLOOD.invokeExact(state) != 0;
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

@@ -47,7 +47,7 @@ import net.minecraft.world.level.levelgen.RandomState;
  * <li>{@code {"type": "clip", "name": n, "anchor": a, "dim": d, "time": t, "weather": "clear|rain|thunder", "y": mode,
  * "smooth": 0.5, "keys": [[t, x, y, z, yaw, pitch], ...], "lookAt": [x, y, z] or [[t, x, y, z], ...], "face": "path",
  * "ease": true, "pre": 0.6, "post": 0.4, "wait": 0, "props": {k: v}, "hand": "torch+air", "setup": [cmd], "teardown": [cmd],
- * "events": [[t, cmd]], "stills": [t, ...], "advanceTime": false}}: settles at the start (and first at the end when the
+ * "events": [[t, cmd]], "stills": [t, ...], "advanceTime": false, "hud": "f3", "gui": 3, "hotbar": [item, ...]}}: settles at the start (and first at the end when the
  * path is long, so the chunks on the way are built), holds {@code wait} s, then records pre + the path + post as phase
  * {@code CINE_<NAME>}; afterwards the stills ({@code <name>_<t>}) at those path times, held still.</li>
  * </ul>
@@ -89,10 +89,12 @@ final class CineShots {
 			if (it.has("skip") && it.get("skip").getAsBoolean()) continue;
 			String type = str(it, "type", "clip");
 			String an = str(it, "anchor", null);
-			if (an != null && !ANCHORS.containsKey(an) && !PLANNED.contains(an)) {
-				if (!anchors.has(an)) throw new IllegalArgumentException("mcbench.cine: unknown anchor " + an);
-				PLANNED.add(an);
-				steps.add(anchorStep(an, anchors.getAsJsonObject(an)));
+			for (String need : new String[] {an, str(it, "lookAnchor", null)}) {
+				if (need != null && !ANCHORS.containsKey(need) && !PLANNED.contains(need)) {
+					if (!anchors.has(need)) throw new IllegalArgumentException("mcbench.cine: unknown anchor " + need);
+					PLANNED.add(need);
+					steps.add(anchorStep(need, anchors.getAsJsonObject(need)));
+				}
 			}
 			switch (type) {
 				case "scout" -> scout(steps, it, an);
@@ -266,6 +268,7 @@ final class CineShots {
 	static int[] refine(ServerLevel l, JsonObject a, int x, int z) {
 		String how = str(a, "refine", "");
 		if (how.isEmpty()) return new int[] {x, z};
+		if (how.equals("water")) return water(l, a, x, z);
 		int rr = (int) num(a, "refineRadius", 96);
 		int bx = x, bz = z;
 		double bs = -1e18;
@@ -294,6 +297,43 @@ final class CineShots {
 		}
 		BenchDriver.log(String.format(Locale.ROOT, "cine: refine %s %d,%d -> %d,%d (score %.1f)", how, x, z, bx, bz, bs));
 		return new int[] {bx, bz};
+	}
+
+	/**
+	 * Server thread, "refine": "water": the nearest open water (a 9x9 patch all water at the surface) going out from the point
+	 * along "toward": [dx, dz] between "min" and "max" blocks (default 40..260), up to "side" blocks (64) to either side.
+	 */
+	static int[] water(ServerLevel l, JsonObject a, int x, int z) {
+		double dx = 1, dz = 0;
+		if (a.has("toward")) {
+			dx = a.getAsJsonArray("toward").get(0).getAsDouble();
+			dz = a.getAsJsonArray("toward").get(1).getAsDouble();
+		}
+		double len = Math.hypot(dx, dz);
+		dx /= len;
+		dz /= len;
+		int min = (int) num(a, "min", 40), max = (int) num(a, "max", 260), side = (int) num(a, "side", 64);
+		for (int t = min; t <= max; t += 4) {
+			for (int k = 0; k <= side; k += 8) {
+				for (int sgn = -1; sgn <= 1; sgn += 2) {
+					if (k == 0 && sgn > 0) continue;
+					int cx = (int) Math.round(x + dx * t - dz * k * sgn), cz = (int) Math.round(z + dz * t + dx * k * sgn);
+					boolean open = true;
+					for (int i = -4; i <= 4 && open; i += 2) {
+						for (int j = -4; j <= 4 && open; j += 2) {
+							int h = height(l, cx + i, cz + j);
+							open = !l.getFluidState(new net.minecraft.core.BlockPos(cx + i, h - 1, cz + j)).isEmpty();
+						}
+					}
+					if (open) {
+						BenchDriver.log(String.format(Locale.ROOT, "cine: refine water %d,%d -> %d,%d (%d out)", x, z, cx, cz, t));
+						return new int[] {cx, cz};
+					}
+				}
+			}
+		}
+		BenchDriver.log("cine: refine water: none found, kept " + x + "," + z);
+		return new int[] {x, z};
 	}
 
 	private static boolean is(BiomeResolver br, ChunkGenerator gen, ServerLevel l, RandomState rs, int x, int z, String id) {
@@ -522,18 +562,20 @@ final class CineShots {
 		}
 		if (it.has("lookAt")) {
 			JsonArray la = it.getAsJsonArray("lookAt");
-			double base = p.mode.equals("abs") ? 0 : a.y();
+			// "lookAnchor": the lookAt keys are relative to that anchor instead (e.g. a peak seen from a lake)
+			Anchor la0 = it.has("lookAnchor") ? anchor(it.get("lookAnchor").getAsString()) : a;
+			double base = p.mode.equals("abs") ? 0 : la0.y();
 			if (la.get(0).isJsonArray()) {
 				p.lt = new double[la.size()];
 				p.lp = new double[la.size()][3];
 				for (int i = 0; i < la.size(); i++) {
 					JsonArray k = la.get(i).getAsJsonArray();
 					p.lt[i] = k.get(0).getAsDouble();
-					p.lp[i] = new double[] {a.x() + k.get(1).getAsDouble(), base + k.get(2).getAsDouble(), a.z() + k.get(3).getAsDouble()};
+					p.lp[i] = new double[] {la0.x() + k.get(1).getAsDouble(), base + k.get(2).getAsDouble(), la0.z() + k.get(3).getAsDouble()};
 				}
 			} else {
 				p.lt = new double[] {0};
-				p.lp = new double[][] {{a.x() + la.get(0).getAsDouble(), base + la.get(1).getAsDouble(), a.z() + la.get(2).getAsDouble()}};
+				p.lp = new double[][] {{la0.x() + la.get(0).getAsDouble(), base + la.get(1).getAsDouble(), la0.z() + la.get(2).getAsDouble()}};
 			}
 		}
 		return p;
@@ -678,6 +720,10 @@ final class CineShots {
 		boolean rain = !weather.equals("clear");
 		double pre = num(it, "pre", 0.6), post = num(it, "post", 0.4), wait = num(it, "wait", 0), smooth = num(it, "smooth", 0.5);
 		String hand = str(it, "hand", null);
+		boolean f3 = "f3".equals(str(it, "hud", ""));
+		int gui = (int) num(it, "gui", 0);
+		List<String> hotbar = list(it, "hotbar");
+		int[] prevGui = {-1};
 		boolean advance = it.has("advanceTime") && it.get("advanceTime").getAsBoolean();
 		Map<String, String> props = new LinkedHashMap<>();
 		if (it.has("props")) for (var e : it.getAsJsonObject("props").entrySet()) props.put(e.getKey(), e.getValue().getAsString());
@@ -753,6 +799,12 @@ final class CineShots {
 				boolean far = path[0].travel() > 48;
 				place(s, a.dim(), far ? path[0].pose(path[0].length()) : start);
 				hand(mc, hand);
+				for (int k = 0; k < hotbar.size(); k++) BenchDriver.cmd(s, "item replace entity @a hotbar." + (k + 1) + " with minecraft:" + hotbar.get(k));
+				if (gui > 0) {
+					prevGui[0] = mc.options.guiScale().get();
+					mc.options.guiScale().set(gui);
+					mc.resizeGui();
+				}
 				BenchDriver.log("cine clip " + name + " @" + time + " " + weather + (props.isEmpty() ? "" : " " + props) + (far ? " (end first)" : ""));
 			}
 
@@ -764,7 +816,7 @@ final class CineShots {
 		steps.add(new BenchDriver.Settle(name + "-a", rain, 2, 150) {
 			@Override
 			boolean poll(Minecraft mc, long now) {
-				if (hand != null) LightShots.showHud(mc);
+				hud(mc, hand, f3);
 				return super.poll(mc, now);
 			}
 		});
@@ -782,7 +834,7 @@ final class CineShots {
 		steps.add(new BenchDriver.Settle(name, rain, 3, 150) {
 			@Override
 			boolean poll(Minecraft mc, long now) {
-				if (hand != null) LightShots.showHud(mc);
+				hud(mc, hand, f3);
 				return super.poll(mc, now);
 			}
 		});
@@ -791,9 +843,7 @@ final class CineShots {
 		steps.add(new BenchDriver.Step("cine-hold-" + name, 0) {
 			@Override
 			boolean poll(Minecraft mc, long now) {
-				if (mc.gui.screen() != null) mc.gui.setScreen(null);
-				if (hand != null) LightShots.showHud(mc);
-				else BenchDriver.hideHud(mc);
+				hud(mc, hand, f3);
 				return BenchDriver.secs(now - BenchDriver.curStart) >= hold;
 			}
 		});
@@ -820,8 +870,7 @@ final class CineShots {
 				frames++;
 				worst = Math.max(worst, now - last);
 				last = now;
-				if (mc.gui.screen() != null) mc.gui.setScreen(null);
-				if (hand != null) LightShots.showHud(mc);
+				hud(mc, hand, f3);
 				while (ev < evT.size() && s - pre >= evT.get(ev)[0]) {
 					BenchDriver.cmd(BenchDriver.server(mc), fill(evC.get(ev), anchor(an), path[0].pose(0)));
 					ev++;
@@ -850,9 +899,7 @@ final class CineShots {
 
 				@Override
 				boolean poll(Minecraft mc, long now) {
-					if (mc.gui.screen() != null) mc.gui.setScreen(null);
-					if (hand != null) LightShots.showHud(mc);
-					else BenchDriver.hideHud(mc);
+					hud(mc, hand, f3);
 					return BenchDriver.secs(now - BenchDriver.curStart) >= 2.5;
 				}
 			});
@@ -864,6 +911,13 @@ final class CineShots {
 				MinecraftServer s = BenchDriver.server(mc);
 				for (var e : before.entrySet()) set(e.getKey(), e.getValue());
 				hand(mc, null);
+				for (int k = 0; k < hotbar.size(); k++) BenchDriver.cmd(s, "item replace entity @a hotbar." + (k + 1) + " with minecraft:air");
+				hud(mc, null, false);
+				if (prevGui[0] >= 0) {
+					mc.options.guiScale().set(prevGui[0]);
+					mc.resizeGui();
+					prevGui[0] = -1;
+				}
 				for (String c : teardown) BenchDriver.cmd(s, fill(c, anchor(an), path[0].pose(0)));
 			}
 
@@ -872,6 +926,19 @@ final class CineShots {
 				return BenchDriver.secs(now - BenchDriver.curStart) >= 0.3;
 			}
 		});
+	}
+
+	/** The HUD for a clip: shown with items in hand or with F3 (the debug overlay, vanilla's default entries), else hidden (F1). */
+	static void hud(Minecraft mc, String hand, boolean f3) {
+		if (hand != null || f3) {
+			if (mc.gui.screen() != null) mc.gui.setScreen(null);
+			if (mc.gui.hud.isHidden()) mc.gui.hud.toggle();
+			if (hand != null && mc.player != null && mc.player.getInventory().getSelectedSlot() != 0) mc.player.getInventory().setSelectedSlot(0);
+		} else {
+			if (mc.gui.screen() != null) mc.gui.setScreen(null);
+			BenchDriver.hideHud(mc);
+		}
+		if (mc.debugEntries.isOverlayVisible() != f3) mc.debugEntries.setOverlayVisible(f3);
 	}
 
 	static List<String> list(JsonObject o, String k) {

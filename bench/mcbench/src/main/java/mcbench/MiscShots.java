@@ -38,7 +38,7 @@ import net.minecraft.server.MinecraftServer;
  * (item ids, e.g. {@code air+torch}: the comma separates properties; 2026-10-10) puts the player in creative with those items and the HUD shown, so the
  * first-person hand renders and its held light shows; {@code -} (or the variant's restore) brings spectator, empty hands and the
  * hidden HUD back. {@code -Dmcbench.variantSetup} / {@code -Dmcbench.variantTeardown} ({@code cmd;;cmd}, '+' for a space):
- * server commands run before the first group settles / after the last group.</li>
+ * server commands run once the first group has settled (its chunks loaded; it settles again after them) / after the last group.</li>
  * </ul>
  */
 final class MiscShots {
@@ -284,16 +284,22 @@ final class MiscShots {
 		double hold = Double.parseDouble(System.getProperty("mcbench.variantHold", "2.5"));
 		String scene = "var-" + tag;
 		steps.add(new CloudShots.WeatherScene(scene, time, weather, pose));
-		// -Dmcbench.variantSetup=cmd;;cmd (2026-10-09; '+' = space): server commands run once, at the first group's pose before it settles (e.g.
+		// -Dmcbench.variantSetup=cmd;;cmd (2026-10-09; '+' = space): server commands run once, at the first group's pose once it has settled (2026-10-12: chunks loaded; e.g.
 		// plant a dense test forest around it with execute positioned ... over motion_blocking_no_leaves run place feature)
-		if (!setupDone) {
+		// (2026-10-12) after the first settle: the chunks at the pose are loaded, so commands there (fill, place) take effect; then a
+		// second settle for what they changed
+		boolean setupHere = !setupDone;
+		steps.add(new BenchDriver.Settle(scene, rain, 3, 120));
+		if (setupHere) {
 			setupDone = true;
 			String setup = System.getProperty("mcbench.variantSetup", "").trim();
 			int k = 0;
 			// ('+' stands for a space: mcbench-run splits its --jvm string on spaces)
-			if (!setup.isEmpty()) for (String c : setup.split(";;")) if (!c.isBlank()) steps.add(command("var-setup-" + (k++), c.trim().replace('+', ' ')));
+			if (!setup.isEmpty()) {
+				for (String c : setup.split(";;")) if (!c.isBlank()) steps.add(command("var-setup-" + (k++), c.trim().replace('+', ' ')));
+				steps.add(new BenchDriver.Settle(scene, rain, 3, 120));
+			}
 		}
-		steps.add(new BenchDriver.Settle(scene, rain, 3, 120));
 		steps.add(new BenchDriver.Hold(scene, rain ? Math.max(BenchDriver.SHOT_WAIT, 5) : Math.max(BenchDriver.SHOT_WAIT, 3)));
 		steps.add(command("var-freeze-" + tag, "tick freeze"));
 		Map<String, Object> json = new LinkedHashMap<>();

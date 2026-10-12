@@ -1,0 +1,11 @@
+{
+	"schemaVersion": 1,
+	"id": "mcbench",
+	"version": "${version}",
+	"name": "mcbench",
+	"description": "Automated benchmark + screenshot harness. Inert unless -Dmcbench.out is set.",
+	"license": "Apache-2.0",
+	"environment": "client",
+	"mixins": ["mcbench.mixins.json"],
+	"depends": { "fabricloader": ">=0.19.5", "minecraft": "~26.3", "java": ">=25" }
+}

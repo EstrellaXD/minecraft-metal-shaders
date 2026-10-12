@@ -94,7 +94,16 @@ public final class Profile {
 		}
 		String name = System.getProperty("mcopt.profile", file.getProperty("profile", "")).trim();
 		if (name.isEmpty()) name = DEFAULT;
-		if (!Files.exists(cfg)) writeDefault(cfg, name); // first launch: record the effective profile (none stays none)
+		if (!Files.exists(cfg)) { // first launch: record the effective profile (none stays none) and the shaders' defaults, applied now too
+			writeDefault(cfg, name);
+			if (Files.isRegularFile(cfg)) {
+				try (Reader r = Files.newBufferedReader(cfg, StandardCharsets.UTF_8)) {
+					file.load(r);
+				} catch (IOException e) {
+					System.out.println("[mcopt] profile: can't read " + cfg + ": " + e);
+				}
+			}
+		}
 		Map<String, String> flags = new TreeMap<>();
 		if (!name.isEmpty() && !name.equals("none")) {
 			Properties p = new Properties();
@@ -169,6 +178,13 @@ public final class Profile {
 			# profile=alpha: measured vanilla performance options (chunk meshing, render lists, startup), the default.
 			# To turn it off:  profile=none
 			profile=%s
+			#
+			# Metal Shaders (mcopt-shade): lighting, shadows, sky, clouds, water, god rays. false = mcopt's plain Metal renderer.
+			mcopt.shade=true
+			# Quality preset: performance, balanced, quality or ultra.
+			mcopt.shade.preset=balanced
+			# Art style: epic, storybook or natural.
+			mcopt.shade.look=epic
 			#
 			# Far terrain (EXPERIMENTAL, off by default; for Macs with 10 or more GPU cores): remove the # below.
 			#mcopt.lod=true

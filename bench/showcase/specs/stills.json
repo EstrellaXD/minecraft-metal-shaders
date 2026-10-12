@@ -1,0 +1,354 @@
+{
+ "anchors": {
+  "lake": {
+   "at": [
+    -1100,
+    128
+   ],
+   "y": 63
+  },
+  "cherry": {
+   "at": [
+    688,
+    168
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "jungle": {
+   "at": [
+    -320,
+    1080
+   ]
+  },
+  "birch": {
+   "at": [
+    -352,
+    512
+   ],
+   "refine": "forest",
+   "refineRadius": 96
+  },
+  "pine": {
+   "at": [
+    -792,
+    0
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "badlands": {
+   "at": [
+    -1008,
+    2240
+   ],
+   "refine": "high",
+   "refineRadius": 96
+  },
+  "flower": {
+   "at": [
+    1152,
+    -1032
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "meadow": {
+   "at": [
+    -384,
+    -440
+   ]
+  }
+ },
+ "items": [
+  {
+   "type": "clip",
+   "name": "lake_sunset",
+   "anchor": "lake",
+   "time": 12350,
+   "pre": 0,
+   "post": 0,
+   "y": "ground",
+   "smooth": 1.5,
+   "keys": [
+    [
+     0,
+     26,
+     3.2,
+     0,
+     90,
+     -1
+    ],
+    [
+     15,
+     -12,
+     4.0,
+     -2,
+     90,
+     1
+    ]
+   ],
+   "stills": [
+    2,
+    8
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "cherry_high_sunset",
+   "anchor": "cherry",
+   "time": 12200,
+   "pre": 0,
+   "post": 0,
+   "keys": [
+    [
+     0,
+     34,
+     24,
+     -24,
+     90,
+     9
+    ],
+    [
+     14,
+     34,
+     22,
+     20,
+     96,
+     8
+    ]
+   ],
+   "stills": [
+    3,
+    12
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "pine_high_sunset",
+   "anchor": "pine",
+   "time": 12100,
+   "pre": 0,
+   "post": 0,
+   "keys": [
+    [
+     0,
+     90,
+     30,
+     -10,
+     90,
+     6
+    ],
+    [
+     15,
+     40,
+     26,
+     6,
+     90,
+     5
+    ]
+   ],
+   "stills": [
+    8
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "jungle_sunset",
+   "anchor": "jungle",
+   "time": 12000,
+   "pre": 0,
+   "post": 0,
+   "keys": [
+    [
+     0,
+     46,
+     6,
+     -4,
+     92,
+     -1
+    ],
+    [
+     13,
+     30,
+     7,
+     2,
+     86,
+     -2
+    ]
+   ],
+   "stills": [
+    3,
+    7
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "badlands_sunset",
+   "anchor": "badlands",
+   "time": 12100,
+   "pre": 0,
+   "post": 0,
+   "y": "ground",
+   "smooth": 1.0,
+   "keys": [
+    [
+     0,
+     0,
+     4,
+     0,
+     62,
+     5
+    ],
+    [
+     14,
+     -6,
+     5,
+     3,
+     116,
+     4
+    ]
+   ],
+   "stills": [
+    2
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "clouds_above_sunset",
+   "anchor": "lake",
+   "time": 12300,
+   "pre": 0,
+   "post": 0,
+   "y": "abs",
+   "keys": [
+    [
+     0,
+     40,
+     300,
+     0,
+     90,
+     6
+    ],
+    [
+     16,
+     -60,
+     300,
+     10,
+     90,
+     4
+    ]
+   ],
+   "stills": [
+    4,
+    12
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "cherry_walk_sunset",
+   "anchor": "cherry",
+   "time": 12000,
+   "pre": 0,
+   "post": 0,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": 90,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 40,
+    "look": [
+     8,
+     -3
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    5,
+    9
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "cherry_walk_morning",
+   "anchor": "cherry",
+   "time": 300,
+   "pre": 0,
+   "post": 0,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 24,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 40,
+    "look": [
+     -8,
+     -4
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    3,
+    6
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "birch_morning",
+   "anchor": "birch",
+   "time": 450,
+   "pre": 0,
+   "post": 0,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 48,
+    "look": [
+     0,
+     -8
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    2
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "flower_morning",
+   "anchor": "flower",
+   "time": 600,
+   "pre": 0,
+   "post": 0,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 22,
+    "speed": 2.0,
+    "canopy": false,
+    "search": 40,
+    "look": [
+     0,
+     -3
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    6
+   ]
+  }
+ ]
+}

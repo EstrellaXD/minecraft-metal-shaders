@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Create / refresh the Prism dev instances used by mcbench-run: "mcopt DEV" (Metal) and "mcopt DEV-IRIS" (GL + Iris);
+with --only "mcopt DEV-DH" also "mcopt DEV-DH" (Metal + Distant Horizons 3.3.4 + Fabric API, ZGC; never created by default).
+
+Usage: mcbench-setup-instances [--reset-mods] [--reset-dh-config] [--only "<instance>" ...]
+  --only NAME   only (re)create these instances (repeatable). Default: "mcopt DEV" and "mcopt DEV-IRIS".
+  --reset-dh-config   DEV-DH: overwrite config/DistantHorizons.toml with work/packs/dh/DistantHorizons.toml
+                      (otherwise it is copied only when absent; DH rewrites it with every option on first launch).
+
+Idempotent: rewrites instance.cfg, mmc-pack.json and options.txt (bench settings) every time; keeps saves/, mods/,
+config/ and shaderpacks/ unless --reset-mods. Reads (never writes) the user's "mcopt Metal 26.3" and
+"mcopt Shaders 26.3" instances for the component pack and the jars.
+"""
+import os, shutil, sys, json
+
+PRISM = os.path.expanduser("~/Library/Application Support/PrismLauncher")
+INST = os.path.join(PRISM, "instances")
+WORK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WRAP = os.path.join(WORK, "bin", "mcbench-wrap")
+SRC_METAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "instances-backup", "mcopt Metal 26.3")  # 2026-10-10: copy of the removed instance
+SRC_SHADERS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "instances-backup", "mcopt Shaders 26.3")  # 2026-10-10: copy of the removed instance
+SODIUM = os.path.join(SRC_METAL, "minecraft/mods/sodium-fabric-0.9.3-alpha.1+mc26.3.jar")
+MCOPT = os.path.join(SRC_METAL, "minecraft/mods/mcopt-0.2.0-alpha.3.jar")
+IRIS = os.path.join(SRC_SHADERS, "minecraft/mods/iris-fabric-1.11.7+mc26.3.jar")
+COMPL = os.path.join(SRC_SHADERS, "minecraft/shaderpacks/ComplementaryReimagined_r5.9.3.zip")
+# DEV-DH: unmodified jars from Modrinth (sha512 checked when downloaded) and the DH config template, in work/packs/dh
+DH_DIR = os.path.join(WORK, "packs", "dh")
+DH_JAR = os.path.join(DH_DIR, "DistantHorizons-3.3.4-26.3-fabric-neoforge.jar")
+FAPI_JAR = os.path.join(DH_DIR, "fabric-api-0.161.0+26.3.jar")
+DH_TOML = os.path.join(DH_DIR, "DistantHorizons.toml")
+
+# Bench options (options.txt). Window size/fullscreen are set per run by mcbench-run (overrideWidth/overrideHeight
+# are in window points: x2 on this Retina display = framebuffer pixels).
+OPTIONS = {
+    "onboardAccessibility": "false", "skipMultiplayerWarning": "true", "tutorialStep": "none", "narrator": "0",
+    "realmsNotifications": "false", "musicToast": '"never"', "joinedFirstServer": "true",
+    "pauseOnLostFocus": "false", "inactivityFpsLimit": '"minimized"', "enableVsync": "false", "maxFps": "260",
+    "renderDistance": "16", "simulationDistance": "8", "graphicsPreset": '"custom"', "ao": "true",
+    "biomeBlendRadius": "2", "renderClouds": '"true"', "cloudRange": "64", "particles": "0", "mipmapLevels": "4",
+    "entityShadows": "true", "entityDistanceScaling": "1.0", "cutoutLeaves": "true", "improvedTransparency": "false",
+    "weatherRadius": "10", "maxAnisotropyBit": "1", "textureFiltering": "1", "prioritizeChunkUpdates": "1",
+    "chunkSectionFadeInTime": "0.0", "guiScale": "0", "fov": "0.0", "bobView": "false", "fullscreen": "false",
+    "exclusiveFullscreen": "true", "overrideWidth": "1512", "overrideHeight": "982", "showAutosaveIndicator": "false",
+    "soundCategory_master": "0.0", "startedCleanly": "true", "telemetryOptInExtra": "false", "sharePresence": '"none"',
+}
+
+
+def ini_quote(v):
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def write_cfg(path, name, notes, jvmargs):
+    src = open(os.path.join(SRC_METAL, "instance.cfg")).read().splitlines()
+    keep = {}
+    for line in src:
+        if "=" in line and not line.startswith("["):
+            k, v = line.split("=", 1)
+            keep[k] = v
+    for k in ("lastLaunchTime", "lastTimePlayed", "totalTimePlayed", "ManagedPack", "ManagedPackID", "ManagedPackName",
+              "ManagedPackType", "ManagedPackVersionID", "ManagedPackVersionName"):
+        keep.pop(k, None)
+    keep.update({
+        "name": name, "notes": ini_quote(notes), "iconKey": "flame",
+        "OverrideJavaArgs": "true", "JvmArgs": ini_quote(jvmargs),
+        "OverrideCommands": "true", "WrapperCommand": ini_quote('"' + WRAP + '"'), "PreLaunchCommand": "", "PostExitCommand": "",
+        "OverrideWindow": "true", "MinecraftWinWidth": "1512", "MinecraftWinHeight": "982", "LaunchMaximized": "false",
+        "OverrideConsole": "true", "ShowConsole": "false", "ShowConsoleOnError": "false", "AutoCloseConsole": "true",
+        "CloseAfterLaunch": "false", "QuitAfterGameStop": "false", "RecordGameTime": "false", "ShowGameTime": "false",
+        "OverrideMemory": "true", "MaxMemAlloc": "6144", "MinMemAlloc": "1024",
+    })
+    with open(path, "w") as f:
+        f.write("[General]\n")
+        for k in sorted(keep, key=str.lower):
+            f.write(f"{k}={keep[k]}\n")
+
+
+def write_options(path):
+    base = {}
+    srcopt = os.path.join(SRC_METAL, "minecraft/options.txt")
+    if os.path.exists(path):
+        srcopt = path
+    for line in open(srcopt):
+        line = line.rstrip("\n")
+        if ":" in line:
+            k, v = line.split(":", 1)
+            base[k] = v
+    base.update(OPTIONS)
+    with open(path, "w") as f:
+        for k, v in base.items():
+            f.write(f"{k}:{v}\n")
+
+
+def make(folder, name, notes, jvm, mods, iris_pack=None, reset_mods=False, mcopt_props=None):
+    d = os.path.join(INST, folder)
+    mc = os.path.join(d, "minecraft")
+    os.makedirs(os.path.join(mc, "mods"), exist_ok=True)
+    os.makedirs(os.path.join(mc, "config"), exist_ok=True)
+    shutil.copyfile(os.path.join(SRC_METAL, "mmc-pack.json"), os.path.join(d, "mmc-pack.json"))
+    write_cfg(os.path.join(d, "instance.cfg"), name, notes, jvm)
+    opt = os.path.join(mc, "options.txt")
+    write_options(opt)
+    md = os.path.join(mc, "mods")
+    if reset_mods or not os.listdir(md):
+        for f in os.listdir(md):
+            os.remove(os.path.join(md, f))
+        for m in mods:
+            shutil.copyfile(m, os.path.join(md, os.path.basename(m)))
+    if iris_pack:
+        sp = os.path.join(mc, "shaderpacks")
+        os.makedirs(sp, exist_ok=True)
+        dst = os.path.join(sp, os.path.basename(iris_pack))
+        if not os.path.exists(dst):
+            shutil.copyfile(iris_pack, dst)
+        with open(os.path.join(mc, "config", "iris.properties"), "w") as f:
+            f.write("# written by mcbench-setup-instances\n")
+            f.write(f"shaderPack={os.path.basename(iris_pack)}\nenableShaders=true\ndisableUpdateMessage=true\n")
+    # mcopt: alpha profile (what a fresh install gets), written so mcopt doesn't write its own first-launch file
+    mp = os.path.join(mc, "config", "mcopt.properties")
+    with open(mp, "w") as f:
+        f.write("# mcbench dev instance: mcopt's default profile (flags on the command line win)\nprofile=alpha\n")
+        for k, v in (mcopt_props or {}).items():
+            f.write(f"{k}={v}\n")
+    print("ok:", d)
+
+
+def main():
+    reset = "--reset-mods" in sys.argv
+    only = [sys.argv[i + 1] for i, a in enumerate(sys.argv[:-1]) if a == "--only"]
+    names = only or ["mcopt DEV", "mcopt DEV-IRIS"]
+    for n in names:
+        if n not in ("mcopt DEV", "mcopt DEV-IRIS", "mcopt DEV-DH"):
+            sys.exit("unknown dev instance: " + n)
+    for p in (SODIUM, MCOPT, IRIS, COMPL, WRAP):
+        if not os.path.exists(p):
+            sys.exit("missing: " + p)
+    os.chmod(WRAP, 0o755)
+    if "mcopt DEV-DH" in names:
+        for p in (DH_JAR, FAPI_JAR, DH_TOML):
+            if not os.path.exists(p):
+                sys.exit("missing: " + p)
+        make("mcopt DEV-DH", "mcopt DEV-DH",
+             "mcbench dev instance (Metal + Distant Horizons 3.3.4 + Fabric API, ZGC). Created by work/bin/mcbench-setup-instances --only 'mcopt DEV-DH'. Launch only via work/bin/mcbench-run.",
+             "-XX:+UseZGC -Dmcopt.edgeCap=false", [MCOPT, SODIUM, DH_JAR, FAPI_JAR], reset_mods=reset)
+        cfg = os.path.join(INST, "mcopt DEV-DH", "minecraft", "config", "DistantHorizons.toml")
+        if "--reset-dh-config" in sys.argv or not os.path.exists(cfg):
+            shutil.copyfile(DH_TOML, cfg)
+            print("ok: wrote", cfg)
+    if "mcopt DEV" not in names and "mcopt DEV-IRIS" not in names:
+        return
+    if "mcopt DEV" in names: make("mcopt DEV", "mcopt DEV",
+         "mcbench dev instance (Metal). Created by work/bin/mcbench-setup-instances. Launch only via work/bin/mcbench-run.",
+         "-Dmcopt.edgeCap=false", [MCOPT, SODIUM], reset_mods=reset)
+    if "mcopt DEV-IRIS" in names: make("mcopt DEV-IRIS", "mcopt DEV-IRIS",
+         "mcbench dev instance (OpenGL + Iris + Complementary baseline). Created by work/bin/mcbench-setup-instances. Launch only via work/bin/mcbench-run.",
+         "-Dmcopt.metal=false -Dmcopt.edgeCap=false", [MCOPT, SODIUM, IRIS], iris_pack=COMPL, reset_mods=reset,
+         # mcopt's alpha profile sets mcopt.chunk.mesh=all,biome; its "lambda" part (BlockRendererMixin) breaks Iris's
+         # Sodium BlockRenderer mixin (InvalidInjectionException -> crash at startup). Keep the rest of the profile.
+         mcopt_props={"mcopt.metal": "false", "mcopt.chunk.mesh": "air,bounds,vis,biome"})
+
+
+if __name__ == "__main__":
+    main()

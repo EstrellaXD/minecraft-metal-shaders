@@ -1,0 +1,320 @@
+#!/bin/bash
+# mcbench-run: launch one automated bench/screenshot run of a Prism DEV instance and collect the results.
+#
+#   mcbench-run --instance "mcopt DEV"|"mcopt DEV-IRIS"|"mcopt DEV-DH" --mods <jar> [--mods <jar> ...] [--jvm "<extra jvm args>"] [--label <name>]
+#               [--scenes all|perf|shots] [--seconds N] [--shaderpack <zip>|none] [--timeout-min N]
+#               [--display builtin|main|keep|<name>] [--fullscreen|--windowed] [--window WxH]
+#               [--env KEY=VAL] [--no-gpu-times] [--fresh-world] [--wait-user-min N] [--direct (default)] [--prism]
+#
+# See work/HARNESS.md. Exit 0 only when results.json was written with no error.txt and no crash report.
+# Exit codes: 0 ok, 1 run failed, 2 usage, 3 the user is playing Minecraft (waited 30 min), 4 lock wait timed out.
+set -u
+
+WORK="$(cd "$(dirname "$0")/.." && pwd)"
+PRISM_APP="/Users/gaelquintanilla/Downloads/Prism Launcher.app"
+INST_ROOT="$HOME/Library/Application Support/PrismLauncher/instances"
+STATE="$WORK/.mcbench"
+LOCK="$WORK/.gamelock"
+DEV_INSTANCES=("mcopt DEV" "mcopt DEV-IRIS" "mcopt DEV-DH")
+
+INSTANCE="" ; MODS=() ; JVM="" ; LABEL="run" ; SCENES="all" ; SECONDS_ARG="20" ; SHADERPACK="" ; TIMEOUT_MIN=15
+WINDOW="" ; FULLSCREEN=1 ; DISPLAY_T="builtin" ; ENVS=() ; GPU_TIMES=1 ; FRESH=0 ; WAIT_USER_MIN=30 ; WAIT_LOCK_MIN=90 ; DIRECT="${MCBENCH_DIRECT:-1}"  # default: offline direct launch (no Prism, no Microsoft login)
+
+die() { echo "mcbench-run: $*" >&2; exit 2; }
+log() { echo "[mcbench-run $(date +%H:%M:%S)] $*" >&2; }
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--instance) INSTANCE="$2"; shift 2 ;;
+		--mods) MODS+=("$2"); shift 2 ;;
+		--jvm) JVM="$JVM $2"; shift 2 ;;
+		--label) LABEL="$2"; shift 2 ;;
+		--scenes) SCENES="$2"; shift 2 ;;
+		--seconds) SECONDS_ARG="$2"; shift 2 ;;
+		--shaderpack) SHADERPACK="$2"; shift 2 ;;
+		--timeout-min) TIMEOUT_MIN="$2"; shift 2 ;;
+		--window) WINDOW="$2"; shift 2 ;;
+		--fullscreen) FULLSCREEN=1; shift ;;
+		--windowed) FULLSCREEN=0; shift ;;
+		--display) DISPLAY_T="$2"; shift 2 ;;
+		--env) ENVS+=("$2"); shift 2 ;;
+		--no-gpu-times) GPU_TIMES=0; shift ;;
+		--fresh-world) FRESH=1; shift ;;
+		--wait-user-min) WAIT_USER_MIN="$2"; shift 2 ;;
+		--direct) DIRECT=1; shift ;;
+		--prism) DIRECT=0; shift ;;  # launch through Prism (logs in to the user's Microsoft account: avoid)
+		-h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+		*) die "unknown argument: $1" ;;
+	esac
+done
+
+[ -n "$INSTANCE" ] || die "--instance is required"
+ok=0; for d in "${DEV_INSTANCES[@]}"; do [ "$INSTANCE" = "$d" ] && ok=1; done
+[ $ok = 1 ] || die "refusing instance '$INSTANCE': only ${DEV_INSTANCES[*]} (never the user's instances)"
+IDIR="$INST_ROOT/$INSTANCE"; MCDIR="$IDIR/minecraft"
+[ -d "$MCDIR" ] || die "instance dir missing: $IDIR (run work/bin/mcbench-setup-instances)"
+case "$SCENES" in all|perf|shots) ;; *) die "--scenes must be all|perf|shots" ;; esac
+for m in ${MODS[@]+"${MODS[@]}"}; do [ -f "$m" ] || die "mod jar not found: $m"; done
+if [ -n "$SHADERPACK" ] && [ "$SHADERPACK" != none ]; then [ -f "$SHADERPACK" ] || die "shaderpack not found: $SHADERPACK"; fi
+if [ -n "$WINDOW" ]; then [[ "$WINDOW" =~ ^[0-9]+x[0-9]+$ ]] || die "--window must be WxH in points, e.g. 960x540"; fi
+LABEL="$(echo "$LABEL" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-*$//')"
+BENCH_JAR="$(ls -t "$WORK"/mcbench/build/libs/mcbench-*.jar 2>/dev/null | grep -v sources | head -1)"
+[ -f "$BENCH_JAR" ] || die "mcbench jar not built: cd work/mcbench && ./gradlew build"
+mkdir -p "$STATE" "$WORK/bench-results"
+
+# ---------------------------------------------------------------- global lock (one game at a time)
+lock_owner() { cat "$LOCK/pid" 2>/dev/null; }
+OWN_LOCK=0
+QUEUE="$WORK/.gamelock-queue"
+TICKET=""
+# FIFO: every waiter holds a ticket (queue/<epoch>-<pid>); only the oldest live ticket may take the lock.
+acquire_lock() {
+	local waited=0
+	mkdir -p "$QUEUE"
+	TICKET="$QUEUE/$(date +%s)-$$"
+	echo "$LABEL $INSTANCE" > "$TICKET"
+	while :; do
+		local t first=""
+		for t in $(ls "$QUEUE" 2>/dev/null | sort -n); do
+			kill -0 "${t#*-}" 2>/dev/null || { rm -f "$QUEUE/$t"; continue; }
+			first="$t"; break
+		done
+		if [ "$QUEUE/$first" = "$TICKET" ] && mkdir "$LOCK" 2>/dev/null; then break; fi
+		local p; p="$(lock_owner)"
+		if [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; then
+			log "removing stale lock of dead pid $p ($(cat "$LOCK/info" 2>/dev/null))"
+			rm -rf "$LOCK"; continue
+		fi
+		if [ -z "$p" ] && [ -d "$LOCK" ] && [ "$(( $(date +%s) - $(stat -f %m "$LOCK") ))" -gt 120 ]; then
+			log "removing lock without pid file"; rm -rf "$LOCK"; continue
+		fi
+		[ $waited -eq 0 ] && log "waiting for the game lock held by pid $p ($(cat "$LOCK/info" 2>/dev/null)); queue: $(ls "$QUEUE" | wc -l | tr -d ' ')"
+		sleep 10; waited=$((waited + 10))
+		[ $waited -ge $((WAIT_LOCK_MIN * 60)) ] && { rm -f "$TICKET"; echo "mcbench-run: gave up waiting for the game lock after $WAIT_LOCK_MIN min" >&2; exit 4; }
+	done
+	rm -f "$TICKET"; TICKET=""
+	echo $$ > "$LOCK/pid"
+	echo "$LABEL $INSTANCE since $(date '+%F %T')" > "$LOCK/info"
+	OWN_LOCK=1
+}
+
+GAMEPID=""
+cleanup() {
+	if [ -n "$GAMEPID" ] && kill -0 "$GAMEPID" 2>/dev/null; then
+		log "stopping game pid $GAMEPID"; kill -TERM "$GAMEPID" 2>/dev/null; sleep 5; kill -KILL "$GAMEPID" 2>/dev/null
+	fi
+	[ -n "$TICKET" ] && rm -f "$TICKET"
+	[ $OWN_LOCK = 1 ] && [ "$(lock_owner)" = "$$" ] && rm -rf "$LOCK"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+
+acquire_lock
+
+# ---------------------------------------------------------------- never disturb the user
+# A Minecraft JVM whose working directory is not one of the dev instances means the user (or another launcher) is playing.
+mc_pids() {  # prints "pid<TAB>cwd" for every running Minecraft-looking JVM
+	local pid cmd cwd
+	for pid in $(pgrep -x java 2>/dev/null; pgrep -f 'bin/java' 2>/dev/null); do
+		cmd="$(ps -o command= -p "$pid" 2>/dev/null)" || continue
+		echo "$cmd" | grep -qiE 'gradle|kotlin-daemon' && continue
+		echo "$cmd" | grep -qiE 'minecraft|prismlauncher|fabric|net\.minecraft|launchwrapper|EntryPoint' || continue
+		cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+		printf '%s\t%s\n' "$pid" "$cwd"
+	done | sort -u
+}
+is_dev_cwd() { local d; for d in "${DEV_INSTANCES[@]}"; do case "$1" in "$INST_ROOT/$d/"*|"$INST_ROOT/$d") return 0 ;; esac; done; return 1; }
+waited=0
+while :; do
+	other=""
+	while IFS=$'\t' read -r pid cwd; do
+		[ -z "$pid" ] && continue
+		if is_dev_cwd "$cwd"; then
+			log "killing leftover dev-instance game pid $pid ($cwd)"; kill -TERM "$pid" 2>/dev/null; sleep 5; kill -KILL "$pid" 2>/dev/null
+		else
+			other="$other $pid(${cwd:-?})"
+		fi
+	done < <(mc_pids)
+	[ -z "$other" ] && break
+	[ $waited -eq 0 ] && log "Minecraft is running outside the dev instances:$other -- the user may be playing; waiting (poll 30 s, up to $WAIT_USER_MIN min)"
+	[ $waited -ge $((WAIT_USER_MIN * 60)) ] && { echo "mcbench-run: the user is playing Minecraft (pids:$other); not launching. Try again later." >&2; exit 3; }
+	sleep 30; waited=$((waited + 30))
+done
+
+# ---------------------------------------------------------------- wait for a quiet machine (builds skew numbers)
+# Other agents compile (gradle) between runs; wait up to QUIET_MAX_S for the summed CPU of all processes to stay under
+# MCBENCH_QUIET_PCT (350 %, of 1000 %) for two samples 5 s apart (idle desktop with the Claude app + WindowServer ~200 %). Never fails the run; the CPU log below shows what ran during it.
+QUIET_MAX_S=${MCBENCH_QUIET_MAX_S:-300}
+cpu_sum() { ps -A -o %cpu= | awk '{s+=$1} END {printf "%d", s}'; }
+qw=0; quiet=0
+while [ $qw -lt "$QUIET_MAX_S" ]; do
+	if [ "$(cpu_sum)" -lt "${MCBENCH_QUIET_PCT:-350}" ]; then quiet=$((quiet + 1)); [ $quiet -ge 2 ] && break; else quiet=0; fi
+	[ $qw -eq 0 ] && log "machine busy ($(cpu_sum)% CPU); waiting up to ${QUIET_MAX_S}s for it to calm down"
+	sleep 5; qw=$((qw + 5))
+done
+[ $qw -ge "$QUIET_MAX_S" ] && log "still busy after ${QUIET_MAX_S}s; running anyway (see cpu-load.txt)"
+
+# ---------------------------------------------------------------- prepare the instance
+RD="$WORK/bench-results/$(date +%Y%m%d-%H%M%S)-$LABEL"
+mkdir -p "$RD"
+log "result dir: $RD"
+{ pmset -g batt | head -2; pmset -g | grep -iE 'lowpowermode|powermode'; } > "$RD/power.txt" 2>/dev/null
+grep -q "Battery Power" "$RD/power.txt" && log "note: running on battery (see power.txt)"
+
+if [ ${#MODS[@]} -gt 0 ]; then
+	rm -f "$MCDIR"/mods/*.jar
+	for m in "${MODS[@]}"; do cp "$m" "$MCDIR/mods/"; done
+else
+	rm -f "$MCDIR"/mods/mcbench-*.jar
+fi
+cp "$BENCH_JAR" "$MCDIR/mods/"
+ls "$MCDIR/mods" > "$RD/mods.txt"
+
+if [ -n "$SHADERPACK" ]; then
+	mkdir -p "$MCDIR/config" "$MCDIR/shaderpacks"
+	if [ "$SHADERPACK" = none ]; then
+		printf 'shaderPack=\nenableShaders=false\ndisableUpdateMessage=true\n' > "$MCDIR/config/iris.properties"
+	else
+		cp "$SHADERPACK" "$MCDIR/shaderpacks/"
+		printf 'shaderPack=%s\nenableShaders=true\ndisableUpdateMessage=true\n' "$(basename "$SHADERPACK")" > "$MCDIR/config/iris.properties"
+	fi
+fi
+[ -f "$MCDIR/config/iris.properties" ] && cp "$MCDIR/config/iris.properties" "$RD/"
+
+# window: options.txt overrideWidth/overrideHeight (window points; framebuffer = x2 on Retina) and fullscreen
+set_opt() { python3 - "$MCDIR/options.txt" "$1" "$2" <<'EOF'
+import sys
+p, k, v = sys.argv[1:]
+lines = open(p).read().splitlines()
+out, done = [], False
+for l in lines:
+    if l.split(":", 1)[0] == k:
+        out.append(f"{k}:{v}"); done = True
+    else:
+        out.append(l)
+if not done: out.append(f"{k}:{v}")
+open(p, "w").write("\n".join(out) + "\n")
+EOF
+}
+if [ -n "$WINDOW" ]; then set_opt overrideWidth "${WINDOW%x*}"; set_opt overrideHeight "${WINDOW#*x}"; fi
+# the game always starts windowed on the main display; mcbench then moves it to --display and goes fullscreen
+set_opt fullscreen false
+grep -E '^(fullscreen|exclusiveFullscreen|overrideWidth|overrideHeight|renderDistance|simulationDistance|maxFps|enableVsync):' "$MCDIR/options.txt" > "$RD/options-bench.txt"
+
+if [ $FRESH = 1 ]; then rm -rf "$MCDIR/saves/mcbench-world"; log "deleted mcbench-world (fresh world)"; fi
+
+# JVM args: authoritative copy in $STATE/<id>.args (injected by mcbench-wrap); instance.cfg JvmArgs mirrors it
+# (minus space-containing args). Prism caches instance.cfg while it runs, so only the wrapper path is reliable.
+ARGS=("-Dmcbench.out=$RD" "-Dmcbench.scenes=$SCENES" "-Dmcbench.seconds=$SECONDS_ARG" "-Dmcbench.label=$LABEL"
+	"-Dmcbench.timeoutSec=$(( TIMEOUT_MIN * 60 - 30 ))" "-Dmcbench.display=$DISPLAY_T"
+	"-Dmcbench.fullscreen=$([ "$FULLSCREEN" = 1 ] && echo true || echo false)" "-Dmcopt.edgeCap=false")
+[ $GPU_TIMES = 1 ] && ARGS+=("-Dmcopt.metal.gpuTimes=true")
+# per-instance base flags (the wrapper drops Prism's own -Dmcopt.* args, so they must come from here)
+[ "$INSTANCE" = "mcopt DEV-IRIS" ] && ARGS+=("-Dmcopt.metal=false" "-Dmcopt.chunk.mesh=air,bounds,vis,biome")
+# DEV-DH (Distant Horizons + Fabric API): generational ZGC, as recommended for DH (Java 25: ZGC is generational by default)
+[ "$INSTANCE" = "mcopt DEV-DH" ] && ARGS+=("-XX:+UseZGC")
+read -ra EXTRA <<< "$JVM"
+ARGS+=(${EXTRA[@]+"${EXTRA[@]}"})
+printf '%s\n' "${ARGS[@]}" > "$STATE/$INSTANCE.args"
+cp "$STATE/$INSTANCE.args" "$RD/jvm-args.txt"
+: > "$STATE/$INSTANCE.env"
+for e in ${ENVS[@]+"${ENVS[@]}"}; do echo "$e" >> "$STATE/$INSTANCE.env"; done
+# (Prism splits JvmArgs on spaces, so args containing a space -- the result dir -- are left out of the mirror.)
+python3 - "$IDIR/instance.cfg" "${ARGS[@]}" <<'EOF'
+import sys
+p = sys.argv[1]
+v = " ".join(a for a in sys.argv[2:] if " " not in a)
+q = '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+lines = open(p).read().splitlines()
+lines = [("JvmArgs=" + q) if l.startswith("JvmArgs=") else l for l in lines]
+open(p, "w").write("\n".join(lines) + "\n")
+EOF
+
+# ---------------------------------------------------------------- launch via Prism (or directly, offline: --direct)
+rm -f "$STATE/$INSTANCE.pid"
+START_TS=$(date +%s)
+touch "$RD/.start"
+if [ "$DIRECT" = 1 ]; then
+	# no Prism, no Microsoft login (bin/mcbench-direct: Prism's command line from a template, offline session)
+	log "launching '$INSTANCE' directly (offline, no Prism)"
+	"$WORK/bin/mcbench-direct" "$INSTANCE" >/dev/null || { echo "mcbench-direct failed" > "$RD/error.txt"; }
+else
+	log "launching '$INSTANCE' via Prism"
+	open -n -a "$PRISM_APP" --args --launch "$INSTANCE"
+fi
+# background CPU sampler: top 5 processes every 5 s (anything but the game using lots of CPU = suspect numbers)
+( while [ -d "$RD" ] && [ ! -f "$RD/.sampler-stop" ]; do
+	echo "== $(date +%H:%M:%S) total $(cpu_sum)%"; ps -A -o %cpu=,comm= | sort -rn | head -5 | sed 's|  */.*/| |'; sleep 5
+  done > "$RD/cpu-load.txt" 2>/dev/null ) &
+SAMPLER=$!
+
+while [ ! -s "$STATE/$INSTANCE.pid" ]; do
+	sleep 2
+	if [ $(( $(date +%s) - START_TS )) -gt 240 ]; then
+		echo "Prism did not start the game within 240 s (account/launch problem? see $INST_ROOT/../logs)" > "$RD/error.txt"
+		# a Prism that this runner started for a dev instance and that hangs (seen 2026-10-06: stuck after an account
+		# refresh) would swallow every later launch through IPC: end it (only "prismlauncher --launch <dev instance>")
+		for P in $(pgrep -f "prismlauncher --launch mcopt DEV(-IRIS|-DH)?\$" 2>/dev/null); do
+			log "ending hung Prism $P ($(ps -o args= -p "$P" | sed 's|.*/prismlauncher|prismlauncher|'))"; kill -TERM "$P" 2>/dev/null
+		done
+		break
+	fi
+done
+GAMEPID="$(cat "$STATE/$INSTANCE.pid" 2>/dev/null)"
+[ -n "$GAMEPID" ] && log "game pid $GAMEPID"
+
+STATUS=""
+DEADLINE=$(( START_TS + TIMEOUT_MIN * 60 ))
+while [ -n "$GAMEPID" ]; do
+	if [ -f "$RD/results.json" ] || [ -f "$RD/error.txt" ]; then
+		# let the game quit by itself (saves the world), then make sure it's gone
+		for _ in $(seq 1 45); do kill -0 "$GAMEPID" 2>/dev/null || break; sleep 2; done
+		break
+	fi
+	if [ -n "$(find "$MCDIR/crash-reports" -newer "$RD/.start" -type f 2>/dev/null | head -1)" ]; then STATUS="crash"; sleep 5; break; fi
+	if ! kill -0 "$GAMEPID" 2>/dev/null; then sleep 2; [ -f "$RD/results.json" ] || STATUS="exited"; break; fi
+	if [ "$(date +%s)" -gt $DEADLINE ]; then STATUS="timeout"; break; fi
+	sleep 2
+done
+if [ -n "$GAMEPID" ] && kill -0 "$GAMEPID" 2>/dev/null; then
+	log "game still running: terminating pid $GAMEPID"
+	kill -TERM "$GAMEPID" 2>/dev/null
+	for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$GAMEPID" 2>/dev/null || break; sleep 1; done
+	kill -KILL "$GAMEPID" 2>/dev/null
+fi
+GAMEPID=""
+
+# ---------------------------------------------------------------- collect
+touch "$RD/.sampler-stop"; wait "$SAMPLER" 2>/dev/null; rm -f "$RD/.sampler-stop"
+cp "$MCDIR/logs/latest.log" "$RD/latest.log" 2>/dev/null
+find "$MCDIR/crash-reports" -newer "$RD/.start" -type f -exec cp {} "$RD/" \; 2>/dev/null
+find "$MCDIR" -maxdepth 1 -name 'hs_err_pid*.log' -newer "$RD/.start" -exec cp {} "$RD/" \; 2>/dev/null
+cp "$STATE/$INSTANCE.cmdline" "$RD/cmdline.txt" 2>/dev/null
+rm -f "$RD/.start"
+case "$STATUS" in
+	crash) echo "game crashed (crash report copied)" >> "$RD/error.txt" ;;
+	exited) echo "game exited without results.json" >> "$RD/error.txt" ;;
+	timeout) echo "mcbench-run timeout after $TIMEOUT_MIN min" >> "$RD/error.txt" ;;
+esac
+
+echo "$RD"
+if [ -f "$RD/results.json" ] && [ ! -f "$RD/error.txt" ] && ! ls "$RD"/crash-*.txt >/dev/null 2>&1; then
+	python3 - "$RD/results.json" "$LABEL" <<'EOF'
+import json, sys
+r = json.load(open(sys.argv[1])); label = sys.argv[2]
+d = r.get("display", {}); p = r.get("perf", {}); g = r.get("gpu", {})
+parts = [f"OK {label}: fb {d.get('framebufferWidth')}x{d.get('framebufferHeight')} {d.get('gpuBackend','')}"]
+for k in ("spin", "flight"):
+    s = p.get(k)
+    if s:
+        t = f"{k} {s['avgFps']} fps (1% low {s['low1Fps']}, p99 {s['p99Ms']} ms)"
+        if k in g and g[k].get("gpuMsPerFrame") is not None: t += f" gpu {g[k]['gpuMsPerFrame']} ms/f"
+        parts.append(t)
+parts.append(f"{len(r.get('screenshots', []))} shots")
+if r.get("warnings"): parts.append(f"{len(r['warnings'])} warnings")
+print(" | ".join(parts))
+EOF
+	exit 0
+fi
+echo "FAILED $LABEL: $(head -3 "$RD/error.txt" 2>/dev/null | tr '\n' ' ')"
+exit 1

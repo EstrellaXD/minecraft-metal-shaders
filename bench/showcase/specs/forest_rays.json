@@ -1,0 +1,125 @@
+{
+ "anchors": {
+  "over": {
+   "at": [
+    -1124,
+    159
+   ],
+   "y": 63
+  },
+  "snowy": {
+   "at": [
+    -72,
+    -1624
+   ],
+   "refine": "high",
+   "refineRadius": 96
+  },
+  "grove": {
+   "at": [
+    -1192,
+    -1760
+   ],
+   "refine": "high",
+   "refineRadius": 96
+  },
+  "spruce": {
+   "at": [
+    400,
+    -1048
+   ],
+   "refine": "forest",
+   "refineRadius": 120
+  },
+  "jungle": {
+   "at": [
+    -320,
+    1080
+   ],
+   "refine": "forest",
+   "refineRadius": 120
+  }
+ },
+ "items": [
+  {
+   "type": "clip",
+   "name": "spruce_rays_morning",
+   "anchor": "spruce",
+   "time": 350,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.05"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 24,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -12
+    ],
+    "clear": 2.0
+   },
+   "stills": [
+    4,
+    10
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "spruce_rays_side",
+   "anchor": "spruce",
+   "time": 600,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.05"
+   },
+   "walk": {
+    "yaw": -60,
+    "length": 24,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     -25,
+     -10
+    ],
+    "clear": 2.0
+   },
+   "stills": [
+    6
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "jungle_rays_morning",
+   "anchor": "jungle",
+   "time": 450,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.05"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 22,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -12
+    ],
+    "clear": 2.0
+   },
+   "stills": [
+    5,
+    10
+   ]
+  }
+ ]
+}

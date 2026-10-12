@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Print a markdown table of mcbench result dirs.
+
+  mcbench-summary <result dir> [...]          # explicit dirs
+  mcbench-summary --label baseline-mcopt-metal  # every work/bench-results/*-<label> dir
+  mcbench-summary --last 6                      # the 6 newest result dirs
+"""
+import glob, json, os, sys
+
+WORK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RES = os.path.join(WORK, "bench-results")
+
+
+def dirs_from_args(a):
+    out = []
+    i = 0
+    while i < len(a):
+        if a[i] == "--label":
+            out += sorted(d for d in glob.glob(os.path.join(RES, "*-" + a[i + 1])) if os.path.isdir(d)); i += 2
+        elif a[i] == "--last":
+            out += sorted(d for d in glob.glob(os.path.join(RES, "*")) if os.path.isdir(d))[-int(a[i + 1]):]; i += 2
+        else:
+            out.append(a[i]); i += 1
+    return out
+
+
+def row(d):
+    name = os.path.basename(d.rstrip("/"))
+    rj = os.path.join(d, "results.json")
+    if not os.path.exists(rj) or os.path.exists(os.path.join(d, "error.txt")):
+        err = open(os.path.join(d, "error.txt")).readline().strip() if os.path.exists(os.path.join(d, "error.txt")) else "no results.json"
+        return f"| {name} | FAILED: {err} |"
+    r = json.load(open(rj))
+    disp = r.get("display", {})
+    p, g = r.get("perf", {}), r.get("gpu", {})
+    power = ""
+    pt = os.path.join(d, "power.txt")
+    if os.path.exists(pt):
+        power = "AC" if "AC Power" in open(pt).read() else "battery"
+    cells = [name, f"{disp.get('framebufferWidth')}x{disp.get('framebufferHeight')} {'fs' if disp.get('windowFullscreen') else 'win'}",
+             disp.get("gpuBackend", "?"), power]
+    for k in ("spin", "flight"):
+        s = p.get(k, {})
+        gg = g.get(k, {})
+        cells += [str(s.get("avgFps", "-")), str(s.get("low1Fps", "-")), str(s.get("p50Ms", "-")), str(s.get("p99Ms", "-")),
+                  str(gg.get("gpuMsPerFrame", "-"))]
+    return "| " + " | ".join(cells) + " |"
+
+
+def main():
+    ds = dirs_from_args(sys.argv[1:])
+    if not ds:
+        print(__doc__); sys.exit(2)
+    print("| run | framebuffer | backend | power | spin avg fps | spin 1% low | spin p50 ms | spin p99 ms | spin GPU ms/f | flight avg fps | flight 1% low | flight p50 ms | flight p99 ms | flight GPU ms/f |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for d in ds:
+        print(row(d))
+
+
+if __name__ == "__main__":
+    main()

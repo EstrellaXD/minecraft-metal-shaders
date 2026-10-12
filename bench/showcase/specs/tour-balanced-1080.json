@@ -1,0 +1,153 @@
+{
+ "anchors": {
+  "lake": {
+   "at": [
+    -1100,
+    128
+   ],
+   "y": 63
+  },
+  "cherry": {
+   "at": [
+    688,
+    168
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "jagged": {
+   "at": [
+    -1456,
+    472
+   ],
+   "refine": "high",
+   "refineRadius": 64
+  }
+ },
+ "items": [
+  {
+   "type": "clip",
+   "name": "tour_lake_balanced_1080",
+   "anchor": "lake",
+   "time": 12350,
+   "y": "ground",
+   "smooth": 1.5,
+   "keys": [
+    [
+     0,
+     22,
+     3.2,
+     0,
+     90,
+     -1
+    ],
+    [
+     10,
+     -2,
+     3.6,
+     -1,
+     90,
+     1
+    ]
+   ],
+   "hud": "f3",
+   "gui": 3,
+   "hand": "diamond_pickaxe+air",
+   "hotbar": [
+    "diamond_sword",
+    "torch",
+    "cherry_log",
+    "bread",
+    "compass",
+    "spyglass",
+    "lantern",
+    "oak_sapling"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6
+  },
+  {
+   "type": "clip",
+   "name": "tour_cherry_balanced_1080",
+   "anchor": "cherry",
+   "time": 11900,
+   "walk": {
+    "yaw": 80,
+    "length": 20,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 40,
+    "look": [
+     10,
+     -2
+    ],
+    "clear": 2.2
+   },
+   "hud": "f3",
+   "gui": 3,
+   "hand": "diamond_pickaxe+air",
+   "hotbar": [
+    "diamond_sword",
+    "torch",
+    "cherry_log",
+    "bread",
+    "compass",
+    "spyglass",
+    "lantern",
+    "oak_sapling"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6
+  },
+  {
+   "type": "clip",
+   "name": "tour_peak_balanced_1080",
+   "anchor": "jagged",
+   "time": 23900,
+   "y": "ground",
+   "smooth": 1.0,
+   "keys": [
+    [
+     0,
+     0,
+     2.5,
+     0,
+     -110,
+     2
+    ],
+    [
+     10,
+     -2,
+     2.8,
+     2,
+     -70,
+     0
+    ]
+   ],
+   "hud": "f3",
+   "gui": 3,
+   "hand": "diamond_pickaxe+air",
+   "hotbar": [
+    "diamond_sword",
+    "torch",
+    "cherry_log",
+    "bread",
+    "compass",
+    "spyglass",
+    "lantern",
+    "oak_sapling"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6
+  }
+ ]
+}

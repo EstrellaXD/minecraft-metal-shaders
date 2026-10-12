@@ -1,0 +1,40 @@
+#!/bin/bash
+# mcbench-wrap: Prism "WrapperCommand" of the dev instances ("mcopt DEV", "mcopt DEV-IRIS", "mcopt DEV-DH").
+# Prism runs: mcbench-wrap <java> <jvm args...> <main class> ...  with cwd = <instance>/minecraft.
+# Prism keeps instance settings in memory while it runs, so editing instance.cfg's JvmArgs from outside is not
+# reliable. mcbench-run therefore writes the per-run JVM args to $STATE/<instance id>.args (one per line) and this
+# wrapper injects them, dropping any -Dmcbench.* / -Dmcopt.* / -Diris.* Prism passed itself (stale or not) so the
+# args file is authoritative. Optional $STATE/<id>.env lines (KEY=VALUE) are exported first (e.g. MTL_HUD_ENABLED=1).
+# Writes $STATE/<id>.pid (the java pid: we exec) and $STATE/<id>.cmdline.
+STATE="$(cd "$(dirname "$0")/.." && pwd)/.mcbench"
+mkdir -p "$STATE"
+mcdir="${INST_MC_DIR:-$PWD}"
+id="${INST_ID:-$(basename "$(dirname "$mcdir")")}"
+extra=()
+if [ -f "$STATE/$id.args" ]; then
+	while IFS= read -r l || [ -n "$l" ]; do [ -n "$l" ] && extra+=("$l"); done < "$STATE/$id.args"
+fi
+if [ -f "$STATE/$id.env" ]; then
+	while IFS= read -r l || [ -n "$l" ]; do [ -n "$l" ] && export "$l"; done < "$STATE/$id.env"
+fi
+java="$1"
+shift
+# Before -cp every JVM option starts with "-": anything else there is a fragment of a space-containing value Prism split
+# from a (possibly cached, stale) JvmArgs string -- dropped. From -cp on, everything is kept verbatim.
+rest=()
+cp=0
+for a in "$@"; do
+	if [ $cp = 1 ]; then rest+=("$a"); continue; fi
+	case "$a" in
+		-cp|-classpath|--class-path) cp=1; rest+=("$a") ;;
+		-Dmcbench.*|-Dmcopt.*|-Diris.*) ;;
+		-*) rest+=("$a") ;;
+		*) echo "mcbench-wrap: dropping stray JVM arg fragment: $a" >&2 ;;
+	esac
+done
+# Opt-in (--env MCBENCH_STDERR=<file>): append the game's stderr to a file, e.g. Metal debug-layer messages
+# (MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_ERROR_MODE=nslog), which the unified log redacts as <private>.
+if [ -n "${MCBENCH_STDERR:-}" ]; then exec 2>>"$MCBENCH_STDERR"; fi
+echo $$ > "$STATE/$id.pid"
+{ echo "$java"; printf '%s\n' "${extra[@]}" "${rest[@]}"; } > "$STATE/$id.cmdline"
+exec "$java" "${extra[@]}" "${rest[@]}"

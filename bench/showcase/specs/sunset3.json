@@ -1,0 +1,311 @@
+{
+ "anchors": {
+  "over": {
+   "at": [
+    -1124,
+    159
+   ],
+   "y": 63
+  },
+  "snowy": {
+   "at": [
+    -72,
+    -1624
+   ],
+   "refine": "high",
+   "refineRadius": 96
+  },
+  "grove": {
+   "at": [
+    -1192,
+    -1760
+   ],
+   "refine": "high",
+   "refineRadius": 96
+  },
+  "spruce": {
+   "at": [
+    400,
+    -1048
+   ],
+   "refine": "forest",
+   "refineRadius": 120
+  },
+  "jungle": {
+   "at": [
+    -320,
+    1080
+   ],
+   "refine": "forest",
+   "refineRadius": 120
+  }
+ },
+ "items": [
+  {
+   "type": "clip",
+   "name": "west_sunset",
+   "anchor": "over",
+   "time": 12400,
+   "pre": 0.8,
+   "post": 0.6,
+   "y": "abs",
+   "keys": [
+    [
+     0,
+     0.5,
+     98,
+     0,
+     90,
+     2
+    ],
+    [
+     16,
+     -14,
+     96.5,
+     2,
+     92,
+     3
+    ]
+   ],
+   "stills": [
+    1,
+    10
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "west_sunset_low",
+   "anchor": "over",
+   "time": 12620,
+   "pre": 0.8,
+   "post": 0.6,
+   "y": "abs",
+   "keys": [
+    [
+     0,
+     6,
+     99,
+     -6,
+     86,
+     1
+    ],
+    [
+     16,
+     -8,
+     98,
+     6,
+     94,
+     2
+    ]
+   ],
+   "stills": [
+    2,
+    12
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "west_sunset_high",
+   "anchor": "over",
+   "time": 12450,
+   "pre": 0.8,
+   "post": 0.6,
+   "y": "abs",
+   "keys": [
+    [
+     0,
+     20,
+     118,
+     10,
+     90,
+     9
+    ],
+    [
+     16,
+     4,
+     112,
+     0,
+     90,
+     7
+    ]
+   ],
+   "stills": [
+    8
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "snowy_red_sunset",
+   "anchor": "snowy",
+   "time": 12780,
+   "pre": 0.8,
+   "post": 0.6,
+   "y": "ground",
+   "smooth": 1.0,
+   "keys": [
+    [
+     0,
+     0,
+     4,
+     0,
+     80,
+     4
+    ],
+    [
+     16,
+     -2,
+     5,
+     2,
+     100,
+     3
+    ]
+   ],
+   "stills": [
+    2,
+    12
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "grove_red_sunset",
+   "anchor": "grove",
+   "time": 12800,
+   "pre": 0.8,
+   "post": 0.6,
+   "y": "ground",
+   "smooth": 1.0,
+   "keys": [
+    [
+     0,
+     0,
+     4,
+     0,
+     82,
+     4
+    ],
+    [
+     16,
+     -2,
+     5,
+     2,
+     98,
+     3
+    ]
+   ],
+   "stills": [
+    6
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "snowy_sunset",
+   "anchor": "snowy",
+   "time": 12500,
+   "pre": 0.8,
+   "post": 0.6,
+   "y": "ground",
+   "smooth": 1.0,
+   "keys": [
+    [
+     0,
+     0,
+     6,
+     0,
+     75,
+     5
+    ],
+    [
+     16,
+     -3,
+     6.5,
+     3,
+     105,
+     4
+    ]
+   ],
+   "stills": [
+    8
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "spruce_rays_morning",
+   "anchor": "spruce",
+   "time": 350,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.05"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 24,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -12
+    ],
+    "clear": 2.0
+   },
+   "stills": [
+    4,
+    10
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "spruce_rays_side",
+   "anchor": "spruce",
+   "time": 600,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.05"
+   },
+   "walk": {
+    "yaw": -60,
+    "length": 24,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     -25,
+     -10
+    ],
+    "clear": 2.0
+   },
+   "stills": [
+    6
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "jungle_rays_morning",
+   "anchor": "jungle",
+   "time": 450,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.05"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 22,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -12
+    ],
+    "clear": 2.0
+   },
+   "stills": [
+    5,
+    10
+   ]
+  }
+ ]
+}

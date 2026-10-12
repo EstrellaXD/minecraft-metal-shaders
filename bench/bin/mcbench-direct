@@ -1,0 +1,61 @@
+#!/bin/bash
+# mcbench-direct: start a dev instance's game WITHOUT Prism, offline (no Microsoft login), through mcbench-wrap.
+# Used by `mcbench-run --direct` (or MCBENCH_DIRECT=1). Why: Prism logs into Microsoft (api.minecraftservices.com
+# /launcher/login) on every launch; ~25 bench launches in 2 h got that endpoint to answer HTTP 429/403 for the user's
+# real account (2026-10-07). The bench world is single-player, so the game needs no session: this runs the same java
+# command line Prism would (JVM args, classpath, natives) with Fabric's KnotClient as the main class and an offline
+# session (access token "0") for the profile that already owns the bench world's player data.
+#
+# The JVM/classpath template comes from a Prism-launched run (`<instance>.direct-template` in work/.mcbench, made by
+# `mcbench-direct --template <instance> <cmdline.txt>` from a result dir's cmdline.txt); refresh it after Prism updates
+# the instance's libraries. Usage: mcbench-direct <instance>   (runs in the background, prints the wrapper's pid)
+set -euo pipefail
+W="$(cd "$(dirname "$0")/.." && pwd)"
+STATE="$W/.mcbench"
+PRISM="$HOME/Library/Application Support/PrismLauncher"
+
+if [ "${1:-}" = "--template" ]; then
+	inst="$2"; src="$3"
+	# drop the java line, the per-run injected -Dmcbench/-Dmcopt/-Diris args and Prism's launcher jar / entry point
+	python3 - "$src" "$STATE/$inst.direct-template" <<'EOF'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+java, rest = lines[0], lines[1:]
+out = [java]
+cp_next = False
+for a in rest:
+    if cp_next:
+        a = ":".join(p for p in a.split(":") if not p.endswith("/NewLaunch.jar"))
+        cp_next = False
+    elif a in ("-cp", "-classpath", "--class-path"):
+        cp_next = True
+    elif a.startswith(("-Dmcbench.", "-Dmcopt.", "-Diris.")) or a == "org.prismlauncher.EntryPoint":
+        continue
+    out.append(a)
+open(sys.argv[2], "w").write("\n".join(out) + "\n")
+EOF
+	echo "template: $STATE/$inst.direct-template"
+	exit 0
+fi
+
+inst="$1"
+case "$inst" in "mcopt DEV"|"mcopt DEV-IRIS"|"mcopt DEV-DH") ;; *) echo "mcbench-direct: dev instances only" >&2; exit 2 ;; esac
+tpl="$STATE/$inst.direct-template"
+[ -f "$tpl" ] || { echo "mcbench-direct: no template $tpl (make one with --template)" >&2; exit 2; }
+mcdir="$PRISM/instances/$inst/minecraft"
+# the profile that owns the bench world's player (name from the last log, uuid from the world's player data)
+# (|| true: after the daily log rotation latest.log may not hold the line, and with pipefail a failed grep would end the
+# script silently: every run since midnight then "did not start within 240 s"; fall back to the rotated logs, then mcbench)
+name="$( { cat "$mcdir/logs/latest.log"; gzcat "$mcdir"/logs/*.log.gz; } 2>/dev/null | grep -o 'Setting user: [A-Za-z0-9_]*' | tail -1 | sed 's/Setting user: //' || true)"
+[ -n "$name" ] || name="mcbench"
+uuid="$(ls "$mcdir/saves/mcbench-world/players/data/" 2>/dev/null | sed -n 's/\.dat$//p' | head -1 || true)"
+[ -n "$uuid" ] || uuid="$(python3 -c "import uuid,hashlib,sys; h=bytearray(hashlib.md5(('OfflinePlayer:'+sys.argv[1]).encode()).digest()); h[6]=h[6]&0x0f|0x30; h[8]=h[8]&0x3f|0x80; print(uuid.UUID(bytes=bytes(h)))" "$name")"
+index="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['assetIndex']['id'])" "$PRISM/meta/net.minecraft/26.3.json")"
+args=()
+while IFS= read -r l || [ -n "$l" ]; do [ -n "$l" ] && args+=("$l"); done < "$tpl"
+cd "$mcdir"
+export INST_ID="$inst" INST_MC_DIR="$mcdir" INST_NAME="$inst"
+nohup "$W/bin/mcbench-wrap" "${args[@]}" net.fabricmc.loader.impl.launch.knot.KnotClient \
+	--username "$name" --version 26.3 --gameDir "$mcdir" --assetsDir "$PRISM/assets" --assetIndex "$index" \
+	--uuid "$uuid" --accessToken 0 --versionType release >/dev/null 2>&1 &
+echo $!

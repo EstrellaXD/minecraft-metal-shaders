@@ -1,0 +1,277 @@
+{
+ "anchors": {
+  "lake": {
+   "at": [
+    -1100,
+    128
+   ],
+   "y": 63
+  },
+  "cherry": {
+   "at": [
+    688,
+    168
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "jungle": {
+   "at": [
+    -320,
+    1080
+   ]
+  },
+  "birch": {
+   "at": [
+    -352,
+    512
+   ],
+   "refine": "forest",
+   "refineRadius": 96
+  },
+  "pine": {
+   "at": [
+    -792,
+    0
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "badlands": {
+   "at": [
+    -1008,
+    2240
+   ],
+   "refine": "high",
+   "refineRadius": 96
+  },
+  "flower": {
+   "at": [
+    1152,
+    -1032
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "meadow": {
+   "at": [
+    -384,
+    -440
+   ]
+  }
+ },
+ "items": [
+  {
+   "type": "clip",
+   "name": "cherry_walk_sunset",
+   "anchor": "cherry",
+   "time": 12000,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": 90,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 40,
+    "look": [
+     8,
+     -3
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    5
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "cherry_walk_morning",
+   "anchor": "cherry",
+   "time": 300,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 24,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 40,
+    "look": [
+     -8,
+     -4
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    6
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "birch_morning",
+   "anchor": "birch",
+   "time": 450,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 48,
+    "look": [
+     0,
+     -8
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    6
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "flower_morning",
+   "anchor": "flower",
+   "time": 600,
+   "pre": 0.8,
+   "post": 0.6,
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "walk": {
+    "yaw": -90,
+    "length": 22,
+    "speed": 2.0,
+    "canopy": false,
+    "search": 40,
+    "look": [
+     0,
+     -3
+    ],
+    "clear": 2.2
+   },
+   "stills": [
+    5
+   ]
+  },
+  {
+   "type": "clip",
+   "name": "f3_cherry_sunset",
+   "anchor": "cherry",
+   "time": 11900,
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": 80,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 40,
+    "look": [
+     10,
+     -2
+    ],
+    "clear": 2.2
+   },
+   "hud": "f3",
+   "gui": 3,
+   "hand": "diamond_pickaxe+air",
+   "hotbar": [
+    "diamond_sword",
+    "torch",
+    "cherry_log",
+    "bread",
+    "compass",
+    "spyglass",
+    "lantern",
+    "oak_sapling"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   }
+  },
+  {
+   "type": "clip",
+   "name": "f3_birch_morning",
+   "anchor": "birch",
+   "time": 500,
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": -80,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": true,
+    "search": 56,
+    "look": [
+     -6,
+     -6
+    ],
+    "clear": 2.2
+   },
+   "hud": "f3",
+   "gui": 3,
+   "hand": "diamond_pickaxe+air",
+   "hotbar": [
+    "diamond_sword",
+    "torch",
+    "cherry_log",
+    "bread",
+    "compass",
+    "spyglass",
+    "lantern",
+    "oak_sapling"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   }
+  },
+  {
+   "type": "clip",
+   "name": "f3_meadow_sunset",
+   "anchor": "meadow",
+   "time": 12000,
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": 90,
+    "length": 26,
+    "speed": 2.0,
+    "canopy": false,
+    "search": 40,
+    "look": [
+     0,
+     -2
+    ],
+    "clear": 2.2
+   },
+   "hud": "f3",
+   "gui": 3,
+   "hand": "diamond_pickaxe+air",
+   "hotbar": [
+    "diamond_sword",
+    "torch",
+    "cherry_log",
+    "bread",
+    "compass",
+    "spyglass",
+    "lantern",
+    "oak_sapling"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   }
+  }
+ ]
+}

@@ -1,0 +1,414 @@
+{
+ "anchors": {
+  "cherry_grove": {
+   "biome": "minecraft:cherry_grove",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "jagged_peaks": {
+   "biome": "minecraft:jagged_peaks",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "frozen_peaks": {
+   "biome": "minecraft:frozen_peaks",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "snowy_slopes": {
+   "biome": "minecraft:snowy_slopes",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "grove": {
+   "biome": "minecraft:grove",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "meadow": {
+   "biome": "minecraft:meadow",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "old_growth_pine_taiga": {
+   "biome": "minecraft:old_growth_pine_taiga",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "old_growth_spruce_taiga": {
+   "biome": "minecraft:old_growth_spruce_taiga",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "old_growth_birch_forest": {
+   "biome": "minecraft:old_growth_birch_forest",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "birch_forest": {
+   "biome": "minecraft:birch_forest",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "dark_forest": {
+   "biome": "minecraft:dark_forest",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "pale_garden": {
+   "biome": "minecraft:pale_garden",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "flower_forest": {
+   "biome": "minecraft:flower_forest",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "mangrove_swamp": {
+   "biome": "minecraft:mangrove_swamp",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "jungle": {
+   "biome": "minecraft:jungle",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "bamboo_jungle": {
+   "biome": "minecraft:bamboo_jungle",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "badlands": {
+   "biome": "minecraft:badlands",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "wooded_badlands": {
+   "biome": "minecraft:wooded_badlands",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "savanna_plateau": {
+   "biome": "minecraft:savanna_plateau",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "stony_peaks": {
+   "biome": "minecraft:stony_peaks",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "warm_ocean": {
+   "biome": "minecraft:warm_ocean",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "snowy_plains": {
+   "biome": "minecraft:snowy_plains",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "river": {
+   "biome": "minecraft:river",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  },
+  "beach": {
+   "biome": "minecraft:beach",
+   "near": [
+    0,
+    0
+   ],
+   "radius": 5000
+  }
+ },
+ "items": [
+  {
+   "type": "scout",
+   "anchor": "cherry_grove",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "jagged_peaks",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "frozen_peaks",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "snowy_slopes",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "grove",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "meadow",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "old_growth_pine_taiga",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "old_growth_spruce_taiga",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "old_growth_birch_forest",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "birch_forest",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "dark_forest",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "pale_garden",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "flower_forest",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "mangrove_swamp",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "jungle",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "bamboo_jungle",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "badlands",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "wooded_badlands",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "savanna_plateau",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "stony_peaks",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "warm_ocean",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "snowy_plains",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "river",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  },
+  {
+   "type": "scout",
+   "anchor": "beach",
+   "r": 90,
+   "h": 55,
+   "dirs": 2,
+   "startDeg": 45,
+   "time": 6000
+  }
+ ]
+}

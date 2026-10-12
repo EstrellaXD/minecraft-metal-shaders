@@ -1,0 +1,344 @@
+{
+ "anchors": {
+  "spruce": {
+   "at": [
+    400,
+    -1048
+   ],
+   "refine": "forest",
+   "refineRadius": 120
+  },
+  "pine": {
+   "at": [
+    -792,
+    0
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  },
+  "jungle": {
+   "at": [
+    -320,
+    1080
+   ],
+   "refine": "forest",
+   "refineRadius": 120
+  },
+  "lake": {
+   "at": [
+    -1100,
+    128
+   ],
+   "y": 63
+  },
+  "over": {
+   "at": [
+    -1124,
+    159
+   ],
+   "y": 63
+  },
+  "birch": {
+   "at": [
+    -352,
+    512
+   ],
+   "refine": "forest",
+   "refineRadius": 96
+  },
+  "cherry": {
+   "at": [
+    688,
+    168
+   ],
+   "refine": "forest",
+   "refineRadius": 64
+  }
+ },
+ "items": [
+  {
+   "type": "clip",
+   "name": "surv_spruce_rays",
+   "anchor": "spruce",
+   "time": 400,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": -90,
+    "length": 22,
+    "speed": 1.8,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -12
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_pine_rays",
+   "anchor": "pine",
+   "time": 450,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": -90,
+    "length": 22,
+    "speed": 1.8,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -10
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_jungle_rays",
+   "anchor": "jungle",
+   "time": 500,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": -90,
+    "length": 20,
+    "speed": 1.8,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     -10
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_lake_sunset",
+   "anchor": "lake",
+   "time": 12450,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": 90,
+    "length": 22,
+    "speed": 1.8,
+    "canopy": false,
+    "search": 50,
+    "look": [
+     0,
+     0
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_cherry_sunset",
+   "anchor": "cherry",
+   "time": 12100,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": 90,
+    "length": 22,
+    "speed": 1.8,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     6,
+     -2
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_f3_spruce",
+   "anchor": "spruce",
+   "time": 600,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "hud": "f3",
+   "gui": 3,
+   "walk": {
+    "yaw": -70,
+    "length": 22,
+    "speed": 1.8,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     -10,
+     -10
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_f3_west",
+   "anchor": "over",
+   "time": 12450,
+   "mode": "survival",
+   "hand": "iron_sword+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "hud": "f3",
+   "gui": 3,
+   "walk": {
+    "yaw": 90,
+    "length": 20,
+    "speed": 1.8,
+    "canopy": false,
+    "search": 40,
+    "look": [
+     0,
+     -1
+    ],
+    "clear": 2.0
+   }
+  },
+  {
+   "type": "clip",
+   "name": "surv_night_torch",
+   "anchor": "birch",
+   "time": 18000,
+   "mode": "survival",
+   "hand": "torch+shield",
+   "hotbar": [
+    "iron_pickaxe",
+    "torch",
+    "oak_planks",
+    "bread",
+    "cooked_beef",
+    "crafting_table",
+    "compass",
+    "water_bucket"
+   ],
+   "props": {
+    "mcbench.bob": "0.06"
+   },
+   "pre": 0.8,
+   "post": 0.6,
+   "walk": {
+    "yaw": -90,
+    "length": 20,
+    "speed": 1.6,
+    "canopy": true,
+    "search": 60,
+    "look": [
+     0,
+     8
+    ],
+    "clear": 2.0
+   }
+  }
+ ]
+}

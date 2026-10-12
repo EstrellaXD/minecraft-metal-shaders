@@ -720,6 +720,7 @@ final class CineShots {
 		boolean rain = !weather.equals("clear");
 		double pre = num(it, "pre", 0.6), post = num(it, "post", 0.4), wait = num(it, "wait", 0), smooth = num(it, "smooth", 0.5);
 		String hand = str(it, "hand", null);
+		String mode = str(it, "mode", "creative");
 		boolean f3 = "f3".equals(str(it, "hud", ""));
 		int gui = (int) num(it, "gui", 0);
 		List<String> hotbar = list(it, "hotbar");
@@ -798,7 +799,7 @@ final class CineShots {
 				BenchDriver.hideHud(mc);
 				boolean far = path[0].travel() > 48;
 				place(s, a.dim(), far ? path[0].pose(path[0].length()) : start);
-				hand(mc, hand);
+				hand(mc, hand, mode);
 				for (int k = 0; k < hotbar.size(); k++) BenchDriver.cmd(s, "item replace entity @a hotbar." + (k + 1) + " with minecraft:" + hotbar.get(k));
 				if (gui > 0) {
 					prevGui[0] = mc.options.guiScale().get();
@@ -910,7 +911,7 @@ final class CineShots {
 			void start(Minecraft mc, long now) {
 				MinecraftServer s = BenchDriver.server(mc);
 				for (var e : before.entrySet()) set(e.getKey(), e.getValue());
-				hand(mc, null);
+				hand(mc, null, mode);
 				for (int k = 0; k < hotbar.size(); k++) BenchDriver.cmd(s, "item replace entity @a hotbar." + (k + 1) + " with minecraft:air");
 				hud(mc, null, false);
 				if (prevGui[0] >= 0) {
@@ -954,13 +955,22 @@ final class CineShots {
 
 	private static String handOn;
 
-	/** "main+off" item ids: creative with those items and the HUD shown (the first-person hand renders); null: spectator, empty, hidden HUD. */
-	static void hand(Minecraft mc, String h) {
+	/**
+	 * "main+off" item ids: creative (or mode "survival": hearts, hunger and the XP bar on the HUD; no fall damage, 30 levels,
+	 * BenchDriver.applyPose lets the player fly) with those items and the HUD shown (the first-person hand renders); null:
+	 * spectator, empty hands, hidden HUD.
+	 */
+	static void hand(Minecraft mc, String h, String mode) {
 		if (java.util.Objects.equals(h, handOn)) return;
 		MinecraftServer s = BenchDriver.server(mc);
 		if (h != null) {
 			String[] it = h.split("\\+", 2);
-			BenchDriver.cmd(s, "gamemode creative @a");
+			if (mode.equals("survival")) {
+				BenchDriver.cmd(s, "gamerule fall_damage false");
+				BenchDriver.cmd(s, "gamemode survival @a");
+				BenchDriver.cmd(s, "xp set @a 30 levels");
+				BenchDriver.cmd(s, "xp set @a 60 points");
+			} else BenchDriver.cmd(s, "gamemode creative @a");
 			BenchDriver.cmd(s, "item replace entity @a weapon.mainhand with minecraft:" + it[0].trim());
 			BenchDriver.cmd(s, "item replace entity @a weapon.offhand with minecraft:" + (it.length > 1 ? it[1].trim() : "air"));
 			LightShots.showHud(mc);

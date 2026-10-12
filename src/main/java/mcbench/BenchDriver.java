@@ -379,6 +379,7 @@ public final class BenchDriver {
 		LocalPlayer pl = mc.player;
 		if (f == null || pl == null) return;
 		Pose p = f.apply(now);
+		pl.getAbilities().mayfly = true; // (survival cine clips: no falling between the frames that place the camera)
 		pl.getAbilities().flying = true;
 		pl.setDeltaMovement(Vec3.ZERO);
 		pl.snapTo(p.x(), p.y(), p.z(), p.yaw(), p.pitch());

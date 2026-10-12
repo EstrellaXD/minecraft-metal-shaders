@@ -128,14 +128,16 @@ public final class ShadeOutput {
 	/** The pause menu's label (short: the button is 204 pixels wide). */
 	public static String label() {
 		int c = CHOICES[index];
-		if (!available()) return "Salida: Nativa (DH)";
-		return c < 0 ? "Salida: Nativa" : "Salida: " + c + "p";
+		if (!available()) return ShadeLang.t("Salida: Nativa (DH)", "Output: Native (DH)");
+		return c < 0 ? ShadeLang.t("Salida: Nativa", "Output: Native") : ShadeLang.t("Salida: ", "Output: ") + c + "p";
 	}
 
 	/** The pause menu button's tooltip. */
 	public static String tooltip() {
-		return taauMode() ? "Resolución de la imagen del mundo; el menú y el texto siguen nítidos. Más baja = más FPS."
-			: "Resolución de todo el juego, como la de un monitor (el menú y el texto también). Más baja = más FPS.";
+		return taauMode() ? ShadeLang.t("Resolución de la imagen del mundo; el menú y el texto siguen nítidos. Más baja = más FPS.",
+				"Resolution of the world image; the menus and text stay sharp. Lower = more FPS.")
+			: ShadeLang.t("Resolución de todo el juego, como la de un monitor (el menú y el texto también). Más baja = más FPS.",
+				"Resolution of the whole game, like a monitor's (menus and text too). Lower = more FPS.");
 	}
 
 	/** The F3 line's part: "salida 1920x1080" while scaled, else "". */

@@ -99,10 +99,11 @@ public final class ShadeResolution {
 			// a frame Auto drew (right after cycling to Auto the last frame still had the fixed choice's height)
 			int[] size = worldSize();
 			mcopt.metal.shade.taa.ShadeTaa taa = mcopt.metal.shade.taa.ShadeTaa.current();
-			return size == null || taa == null || !taa.lastAuto() ? "Resolución: Auto (dinámica)" : "Resolución: Auto (" + size[1] + "p)";
+			String auto = ShadeLang.t("Resolución: Auto", "Resolution: Auto");
+			return size == null || taa == null || !taa.lastAuto() ? auto + ShadeLang.t(" (dinámica)", " (dynamic)") : auto + " (" + size[1] + "p)";
 		}
-		if (c < 0) return "Resolución: Nativa";
-		return "Resolución: " + c + "p";
+		if (c < 0) return ShadeLang.t("Resolución: Nativa", "Resolution: Native");
+		return ShadeLang.t("Resolución: ", "Resolution: ") + c + "p";
 	}
 
 	/** Next choice (the pause-menu button), saved to config/mcopt.properties. */

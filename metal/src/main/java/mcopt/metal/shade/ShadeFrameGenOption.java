@@ -40,13 +40,16 @@ public final class ShadeFrameGenOption {
 
 	/** The menu label (short: the pause menu's buttons are 204 pixels wide). */
 	public static String label() {
-		return "Gen. de cuadros: " + (chosen ? "Sí" : "No") + (chosen != running() ? " (al reiniciar)" : "");
+		return ShadeLang.t("Gen. de cuadros: ", "Frame gen: ") + (chosen ? ShadeLang.t("Sí", "On") : ShadeLang.t("No", "Off"))
+			+ (chosen != running() ? ShadeLang.t(" (al reiniciar)", " (on restart)") : "");
 	}
 
 	/** The tooltip: what it does and its price. */
 	public static String tooltip() {
-		return "Generación de cuadros (MetalFX): el Mac dibuja hasta la mitad de los Hz de la pantalla y crea un cuadro intermedio"
-			+ " entre cada par. Se ve más fluido, pero responde un poco más tarde. Se aplica al reiniciar el juego.";
+		return ShadeLang.t("Generación de cuadros (MetalFX): el Mac dibuja hasta la mitad de los Hz de la pantalla y crea un cuadro intermedio"
+			+ " entre cada par. Se ve más fluido, pero responde un poco más tarde. Se aplica al reiniciar el juego.",
+			"Frame generation (MetalFX): the Mac draws up to half the display's Hz and creates an in-between frame for each pair."
+			+ " Smoother, but responds a little later. Applies after restarting the game.");
 	}
 
 	/** Flips the choice and saves it to config/mcopt.properties. */

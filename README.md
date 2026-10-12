@@ -110,12 +110,17 @@ Settings live in `config/mcopt.properties` in your game folder (written on the f
 | `mcopt.shade` | `true` / `false` (false = mcopt's plain Metal renderer) | `true` |
 | `mcopt.shade.preset` | `performance`, `balanced`, `quality`, `ultra` | `balanced` |
 | `mcopt.shade.look` | `epic`, `storybook`, `natural` | `epic` |
-| `mcopt.shade.output` | `native`, `1440`, `1200`, `1080`, `900` (also the **"Salida"** button in the pause menu) | `native` |
+| `mcopt.shade.output` | `native`, `1440`, `1200`, `1080`, `900` (also the **Output** button in the pause menu) | `native` |
 
 For the most FPS: Video Settings → VSync off, Max Framerate unlimited. To see your FPS, press **F3**.
 
 **Distant Horizons** (optional): add Distant Horizons 3.3.4 for 26.3 and Fabric API to the mods folder. It runs on Metal
-too; in its settings, turning off its own SSAO and anti-aliasing gives the best results with these shaders.
+too, and its far terrain is lit by the same shaders (DH's own SSAO, anti-aliasing and fog are turned off while they run).
+
+- **Bottom half of the screen dark with DH?** DH's *Vanilla Fade Mode* is on `DOUBLE_PASS` (DH's default), which clashes
+  with the shaders. Since **1.0-alpha.2** the mod sets it to `NONE` by itself at startup. On 1.0-alpha: open
+  `config/DistantHorizons.toml`, set `vanillaFadeMode = "NONE"` (or `SINGLE_PASS`), and restart the game (DH reads it only
+  at startup).
 
 ## How it was made
 
@@ -156,6 +161,8 @@ la misma Mac a la misma resolución da **90–120 FPS** (preset balanceado), y *
 Pon el jar de [Releases](https://github.com/GaelQuinta/minecraft-metal-shaders/releases/latest) y el de Sodium en la
 carpeta `mods` y abre el juego: los shaders se activan solos (preset balanceado). Para cambiar el preset, edita
 `config/mcopt.properties` (`mcopt.shade.preset=performance|balanced|quality|ultra`); la resolución de salida se cambia con
-el botón **"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 (opcional).
+el botón **"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional). Si con DH la mitad de
+abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
+reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.
 
 Es una versión alfa: haz respaldo de tus mundos.

@@ -588,10 +588,25 @@ final class CineShots {
 	 * blocks to each side free of anything solid (trunks, leaves) up to headroom blocks above the ground; the most covered by canopy with "canopy", else the smoothest.
 	 */
 	static JsonObject walk(ServerLevel l, Anchor a, JsonObject it, Map<String, Object> json) {
+		// dense forests (giant spruce) may have no straight free walk at the asked limits: loosen them step by step
+		double[][] relax = {{1, 1, 1}, {0.6, 1, 0.8}, {0.35, 0.67, 0.65}, {0.2, 0.67, 0.5}};
+		IllegalStateException last = null;
+		for (double[] r : relax) {
+			try {
+				return walkTry(l, a, it, json, r[0], r[1], r[2]);
+			} catch (IllegalStateException e) {
+				last = e;
+				BenchDriver.log("cine: " + e.getMessage() + ", loosening");
+			}
+		}
+		throw last;
+	}
+
+	static JsonObject walkTry(ServerLevel l, Anchor a, JsonObject it, Map<String, Object> json, double clearF, double headF, double lenF) {
 		JsonObject w = it.getAsJsonObject("walk");
-		double yaw0 = num(w, "yaw", 0), len = num(w, "length", 24), speed = num(w, "speed", 2.4), search = num(w, "search", 40);
-		double yawRange = num(w, "yawRange", 25), eye = num(w, "eye", 1.62), sway = num(w, "sway", 0), clear = num(w, "clear", 1.6);
-		int headroom = (int) num(w, "headroom", 3);
+		double yaw0 = num(w, "yaw", 0), len = num(w, "length", 24) * lenF, speed = num(w, "speed", 2.4), search = num(w, "search", 40);
+		double yawRange = num(w, "yawRange", 25), eye = num(w, "eye", 1.62), sway = num(w, "sway", 0), clear = num(w, "clear", 1.6) * clearF;
+		int headroom = (int) Math.round(num(w, "headroom", 3) * headF);
 		boolean canopy = w.has("canopy") && w.get("canopy").getAsBoolean();
 		double lookYaw = 0, lookPitch = -3;
 		if (w.has("look")) {

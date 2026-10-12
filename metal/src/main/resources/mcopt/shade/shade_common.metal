@@ -88,16 +88,29 @@ struct ShadeFrame {
 	float4 wxLine;              // 1008 (2026-10-11, M3 weather; mcopt.shade.snowLine) the camera biome's snow line, absolute world y:
 	                            //      x the lowest snow cover reaches, y the highest rain's wetness and puddles reach (each kept from
 	                            //      the last time it snowed / rained; +-1e4 = everywhere / nowhere), z blend half-width (blocks),
-	                            //      w 1 = on (0: no height limit, M3's look)
+	                            //      w bits: 1 = the snow line is on (else no height limit, M3's look), 2 = (2026-10-12,
+	                            //      mcopt.shade.wetWalls) wet walls without the glossy film, mirror rays below the horizon see the ground,
+	                            //      4 = (mcopt.shade.wetVegLight) wet vegetation darkens a third as much, 8 = (mcopt.shade.wetVegPuddles)
+	                            //      grass tops hold about a third of the puddles, shallower
 };
 
 // (2026-10-11, ShadeFrame.wxLine) how much of the snow cover (x) and of the rain's wetness and puddles (y) reaches a surface at
 // absolute height yAbs: snow above the camera biome's snow line (blended over the game's +-8 blocks of noise), rain fully up to
 // the line and fading over the 16 blocks above it (rain still falls on some columns there; better wet than white)
 static inline half2 shadeWxReach(float yAbs, constant ShadeFrame &f) {
-	if (f.wxLine.w < 0.5) return half2(1.0h);
+	if ((int(f.wxLine.w + 0.5) & 1) == 0) return half2(1.0h);
 	return half2(half(smoothstep(f.wxLine.x - f.wxLine.z, f.wxLine.x + f.wxLine.z, yAbs)),
 	             half(1.0 - smoothstep(f.wxLine.y, f.wxLine.y + 2.0 * f.wxLine.z, yAbs)));
+}
+
+// (2026-10-12, ShadeFrame.wxLine.w bit 2, mcopt.shade.wetWalls) the wet walls / downward mirror rays fix (weather_surface.metal)
+static inline bool shadeWxWalls(constant ShadeFrame &f) { return (int(f.wxLine.w + 0.5) & 2) != 0; }
+static inline bool shadeWxVegLight(constant ShadeFrame &f) { return (int(f.wxLine.w + 0.5) & 4) != 0; }
+static inline bool shadeWxVegPuddles(constant ShadeFrame &f) { return (int(f.wxLine.w + 0.5) & 8) != 0; }
+// How much albedo reads as vegetation (grass tops, leaves): green over red and blue, relative to green (weather_surface.metal)
+static inline half shadeWxVegHue(half3 albedo) {
+	half g = max(albedo.g, 0.001h);
+	return saturate(((g - max(albedo.r, albedo.b)) / g - 0.1h) * 2.5h);
 }
 
 // mcopt.shade.dev bits (sunPath.z): switch features off to price them in game; 0 in normal use.

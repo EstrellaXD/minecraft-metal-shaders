@@ -134,6 +134,7 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			half snow = n.y > 0.5h && sl.wet.z > 0.001
 				? half(smoothstep(1.0 - float(sl.wet.z) * 1.15, 1.15 - float(sl.wet.z) * 1.15, 0.65) * saturate(float(sl.wet.z) * 40.0)) * open * reach.x : 0.0h;
 			half om = half(sl.wet.x) * open * face * (1.0h - snow) * reach.y;
+			if (shadeWxVegLight(sf)) om *= 1.0h - 0.67h * shadeWxVegHue(albedo); // (2026-10-12) like shadeWetAlbedo: no seam at the chunks' edge
 			if (om > 0.0h) albedo = pow(max(albedo, half3(1e-4h)), half3(1.0h + 0.65h * om)) * (1.0h - 0.08h * om);
 			if (snow > 0.0h) albedo = mix(albedo, half3(0.86h, 0.88h, 0.92h), snow);
 		}

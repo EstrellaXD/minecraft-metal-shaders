@@ -210,6 +210,7 @@ struct ShadeWet {
 	half dark; // extra darkening exponent of the film (ShadeLook.waterAbs.x: mcopt.shade.wetDark, 0.2)
 	half tex;  // the texel's height proxy -1..1 (sodium_terrain.fs.metal, shadeWetTexHeight): + raised (drier), - a crevice (wetter)
 	half grain; // (2026-10-11, SHADE_SNOW_GRAIN) the texel against its sprite's mean - 1, -0.5..0.5: the block's texture under the snow
+	half vegK;  // (2026-10-12, shadeWxVegLight) 1: vegetation's albedo darkens a third as much (shadeWetAlbedo)
 };
 
 // (M3.3 wet ground) the texel's height proxy: its luminance against its sprite's mean (the atlas' coarsest mip), scaled by
@@ -221,8 +222,9 @@ static inline half shadeWetTexHeight(half3 texel, half3 mean, constant ShadeLook
 // How wet the surface at camera-relative p is. n: snapped face normal (toward the camera); sky: sky light 0..1 (rain only
 // reaches sky light 15: open sky; 14 under an overhang's edge gets a little); thin: crossed plants; foliage: leaves and the
 // like (no puddles; they get wet and snow-covered); footprint: blocks per pixel (ripples fade where they would alias).
+// veg: shadeWxVegHue of the surface's albedo (2026-10-12, shadeWxVegPuddles: fewer, shallower puddles on grass tops).
 static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool foliage, float footprint, constant ShadeFrame &f,
-                                constant ShadeLook &L, texture2d<half> noise, bool baked) {
+                                constant ShadeLook &L, texture2d<half> noise, bool baked, half veg = 0.0h) {
 	ShadeWet w;
 	w.omega = 0.0h;
 	w.puddle = 0.0h;
@@ -234,6 +236,7 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	w.dark = 0.0h;
 	w.tex = 0.0h;
 	w.grain = 0.0h;
+	w.vegK = shadeWxVegLight(f) ? 1.0h : 0.0h;
 	half open = smoothstep(0.90h, 0.995h, sky);
 	if (open <= 0.0h || shadeDev(f, SHADE_DEV_WX_DRY)) return w;
 	half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h; // walls get wet streaks, undersides stay dry
@@ -241,7 +244,10 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	half rainHere = reach.y;
 	w.omega = half(L.wet.x) * open * face * (thin ? 0.45h : foliage ? 0.7h : 1.0h) * rainHere;
 	// (M3.3 wet ground: solid blocks take the soaked film; crossed plants and leaves keep M3.2's light film)
-	if (SHADE_WET_ALL_ON(L) && !thin && !foliage) {
+	// (2026-10-12, shadeWxWalls; Gael: a pit's wet walls looked whitish, "as if reflecting something that isn't there") only the
+	// up faces: water runs off walls, which keep the darkening and a faint rough sheen (as Photon, BSL and SEUS: puddles and
+	// smoothness on up faces only)
+	if (SHADE_WET_ALL_ON(L) && !thin && !foliage && (n.y > 0.5h || !shadeWxWalls(f))) {
 		w.film = 1.0h;
 		w.dark = half(L.waterAbs.x);
 	}
@@ -266,9 +272,14 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	if (puddly) {
 		float field = fields.x;
 		float t = mix(0.80, 0.575, float(L.wet.y)); // ~30 % of open ground at full puddles (25 % at 0.60)
+		// (2026-10-12, Gael: rain looked odd; at grazing views the puddles on lawns read as glass slabs) water soaks into a lawn
+		// and the blades stand out of what pools: grass tops hold about a third of the puddles (threshold +0.12), x0.7 deep
+		half vegP = shadeWxVegPuddles(f) ? veg : 0.0h;
+		t += 0.12 * float(vegP);
 		// (FT2.8, audit idx 90) times the puddles' last 2.5 %: the field's cores (~0.5 % of open ground) stayed full mirrors down to
 		// puddles 0 and blinked out at once when the weather turned dry
-		half P = half(smoothstep(t, t + 0.035, field) * saturate(float(L.wet.y) * 40.0)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow) * rainHere;
+		half P = half(smoothstep(t, t + 0.035, field) * saturate(float(L.wet.y) * 40.0)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow) * rainHere
+			* (1.0h - 0.3h * vegP);
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter
 		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open * rainHere);
 		w.puddle = P;
@@ -302,9 +313,13 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 // is under it a little more; snow covers it.
 static inline half3 shadeWetAlbedo(half3 albedo, ShadeWet w) {
 	half3 a = albedo;
-	if (w.omega > 0.0h) a = pow(max(a, half3(1e-4h)), half3(1.0h + 0.65h * w.omega)) * (1.0h - 0.08h * w.omega);
+	// (2026-10-12, vegK; Gael: "ours looks odd" in rain; measured: wet grass a third as bright as dry) grass and leaves (green over
+	// red and blue, relative to green: the same test as shadeWetShade's) darken a third as much: water beads on the blades instead
+	// of soaking in; Photon and Complementary don't darken them at all outside puddles, SEUS by albedo^(1 + 0.6 w)
+	half om = w.omega * (1.0h - 0.67h * w.vegK * shadeWxVegHue(albedo));
+	if (om > 0.0h) a = pow(max(a, half3(1e-4h)), half3(1.0h + 0.65h * om)) * (1.0h - 0.08h * om);
 	if (w.film > 0.0h) {
-		if (w.dark != 0.0h) a = pow(max(a, half3(1e-4h)), half3(1.0h + w.dark * w.omega));
+		if (w.dark != 0.0h) a = pow(max(a, half3(1e-4h)), half3(1.0h + w.dark * om));
 		// (M3.3 wet ground) the rim darkens on toward the puddle, which dims a little less on top of it: the same x0.7 at its
 		// middle as M3.2's puddle, reached gradually instead of at the puddle's edge
 		a *= (1.0h - 0.12h * w.low) * (1.0h - 0.2h * w.puddle);
@@ -522,6 +537,8 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	// leaves: green albedo) holds less of a film than stone, wood or paths
 	float veg = saturate((float(albedo.g) - max(float(albedo.r), float(albedo.b))) * 8.0);
 	float rough = mix(min(mix(0.8, 0.38, float(w.omega)) + 0.25 * veg, 0.95), 0.03, P);
+	bool walls = shadeWxWalls(f);
+	if (walls && nf.y < 0.5) rough = max(rough, 0.75); // (2026-10-12) walls and undersides: a damp, rough surface
 	// (M3.3 wet ground) solid ground soaks into a smooth film (ShadeLook.water.y: ~0.2 on stone, paths, wood, sand; vegetation
 	// + water.z, so grass tops are glossy but rougher), smoother in the field's hollows and toward standing water over the rim
 	// (low), then the puddle's 0.03; the film covers the ground (k) as it soaks
@@ -585,6 +602,10 @@ static float3 shadeWetShade(float3 radiance, half3 albedo, ShadeWet w, ShadeWetL
 	if (wHit < 1.0) {
 		refl = blur < 1.0 ? shadeWxSkyRefl(r, in.prevExposure, in.histOk && P > 0.0, f, L, lut, lutS, hist, histDepth) : float3(0.0);
 		refl = mix(refl, float3(f.ambientSky.rgb) * 1.1, blur) * open;
+		// (2026-10-12, shadeWxWalls) a mirror ray below the horizon sees the ground (a pit's floor, the far wall, the slope below
+		// a terrace), not the sky: shadeWxSkyRefl clamps it to the horizon, the brightest part of an overcast sky, which lit wet
+		// walls seen from above whitish. Toward the ground's bounced light instead, over +-0.15 around the horizon
+		if (walls) refl = mix(float3(f.ambientGround.rgb) * open, refl, smoothstep(-0.15, 0.15, r.y));
 	}
 	refl = mix(refl, hitC, wHit);
 	if (wet <= 0.004h) return radiance;

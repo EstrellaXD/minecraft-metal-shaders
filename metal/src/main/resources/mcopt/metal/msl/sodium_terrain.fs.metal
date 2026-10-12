@@ -343,9 +343,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
 #if defined(SHADE_WEATHER) && !defined(SHADE_LEAN_DRY)
         // M3 weather (weather_surface.metal): rain-soaked, darker albedo, puddles on open top faces, snow cover
 #ifdef MCOPT_HDR
-        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, sr.weatherNoise, sl.ssr.z > 0.5);
+        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, sr.weatherNoise, sl.ssr.z > 0.5, shadeWxVegHue(albedo));
 #else
-        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, skyLut, false);
+        ShadeWet wet = shadeWetSurface(p, n, in.v_Light.y, thin, foliage, max(length(dpx), length(dpy)), sf, sl, skyLut, false, shadeWxVegHue(albedo));
 #endif
 #ifdef SHADE_WET_ALL
         // M3.3 wet ground: the film gathers in the texture's darker texels (a height proxy: the texel against its sprite's mean,

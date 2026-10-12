@@ -301,10 +301,19 @@ public final class ShadeWeather {
 		}
 	}
 
-	/** Writes ShadeFrame.wxLine at {@code at} (call from ShadeFrame.pack): snow floor, rain top, blend half-width, on. */
+	/**
+	 * Writes ShadeFrame.wxLine at {@code at} (call from ShadeFrame.pack): snow floor, rain top, blend half-width, and in w the bits
+	 * 1 = the snow line is on, 2 = (2026-10-12) mcopt.shade.wetWalls (true; read every frame, for in-session A/B): walls take no
+	 * glossy film (they only darken, with a faint rough sheen) and mirror rays below the horizon see the ground's light, not the sky;
+	 * 4 = (2026-10-12) mcopt.shade.wetVegLight (true, read every frame): grass and leaves darken a third as much when wet (water
+	 * beads on blades; porous stone, dirt and wood keep the full darkening); 8 = (2026-10-12) mcopt.shade.wetVegPuddles (true, read
+	 * every frame): grass tops hold about a third of the puddles, shallower (blades stand out of the water: x0.7).
+	 */
 	public static void packLine(ByteBuffer b, int at) {
 		boolean on = ON && SNOW_LINE;
-		put4(b, at, on ? snowFloor : -1e4f, on ? rainTop : 1e4f, LINE_BAND, on ? 1f : 0f);
+		int bits = (on ? 1 : 0) | (flag("mcopt.shade.wetWalls", true) ? 2 : 0) | (flag("mcopt.shade.wetVegLight", true) ? 4 : 0)
+			| (flag("mcopt.shade.wetVegPuddles", true) ? 8 : 0);
+		put4(b, at, on ? snowFloor : -1e4f, on ? rainTop : 1e4f, LINE_BAND, bits);
 	}
 
 	private static void put4(ByteBuffer b, int at, float x, float y, float z, float w) {

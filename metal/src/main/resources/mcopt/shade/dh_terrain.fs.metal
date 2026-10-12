@@ -130,9 +130,10 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 		if (sl.wet.x > 0.0 || sl.wet.z > 0.001) {
 			half open = smoothstep(0.90h, 0.995h, sky);
 			half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h;
+			half2 reach = shadeWxReach(p.y + sf.cameraFract.y + sf.cameraBlock.y, sf); // (2026-10-11) snow above the snow line, rain below
 			half snow = n.y > 0.5h && sl.wet.z > 0.001
-				? half(smoothstep(1.0 - float(sl.wet.z) * 1.15, 1.15 - float(sl.wet.z) * 1.15, 0.65) * saturate(float(sl.wet.z) * 40.0)) * open : 0.0h;
-			half om = half(sl.wet.x) * open * face * (1.0h - snow);
+				? half(smoothstep(1.0 - float(sl.wet.z) * 1.15, 1.15 - float(sl.wet.z) * 1.15, 0.65) * saturate(float(sl.wet.z) * 40.0)) * open * reach.x : 0.0h;
+			half om = half(sl.wet.x) * open * face * (1.0h - snow) * reach.y;
 			if (om > 0.0h) albedo = pow(max(albedo, half3(1e-4h)), half3(1.0h + 0.65h * om)) * (1.0h - 0.08h * om);
 			if (snow > 0.0h) albedo = mix(albedo, half3(0.86h, 0.88h, 0.92h), snow);
 		}

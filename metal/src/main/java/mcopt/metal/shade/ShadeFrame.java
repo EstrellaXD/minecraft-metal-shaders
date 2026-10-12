@@ -35,8 +35,9 @@ public final class ShadeFrame {
 		CAMERA_BLOCK = 448, CAMERA_FRACT = 464, SUN_DIR_WORLD = 480, SUN_DIR_VIEW = 496, MOON_DIR_WORLD = 512, LIGHT_DIR_WORLD = 528,
 		SUN_COLOR = 544, AMBIENT_SKY = 560, AMBIENT_GROUND = 576, AMBIENT_BLOCK = 592, FOG_COLOR = 608, FOG_RANGE = 624, FOG_SKY = 640,
 		SKY_COLOR = 656, ZENITH_COLOR = 672, HORIZON = 688, CASCADE_SPLITS = 816, SHADOW_PARAMS = 832, SCREEN = 848, TIME = 864,
-		WEATHER = 880, JITTER = 896, ATMOSPHERE = 912, AMBIENT_TOWARD = 928, AMBIENT_AWAY = 944, FLAGS = 960, FLAGS2 = 976, SUN_PATH = 992;
-	public static final int SIZE = 1008;
+		WEATHER = 880, JITTER = 896, ATMOSPHERE = 912, AMBIENT_TOWARD = 928, AMBIENT_AWAY = 944, FLAGS = 960, FLAGS2 = 976, SUN_PATH = 992,
+		WX_LINE = 1008;
+	public static final int SIZE = 1024;
 
 	/** mcopt.shade.dev: feature-off bits for pricing them in game (SHADE_DEV_* in shade_common.metal); 0 normally. */
 	static final int DEV_BITS = Integer.getInteger("mcopt.shade.dev", 0);
@@ -183,6 +184,8 @@ public final class ShadeFrame {
 		b.putInt(FLAGS, this.dimension).putInt(FLAGS + 4, this.fogType).putInt(FLAGS + 8, this.shadowsEnabled ? 1 : 0).putInt(FLAGS + 12, this.debug);
 		b.putInt(FLAGS2, this.frameIndex).putInt(FLAGS2 + 4, this.underwater ? 1 : 0).putInt(FLAGS2 + 8, this.cascades).putInt(FLAGS2 + 12, this.eyeSkyLight);
 		put4(b, SUN_PATH, (float) Math.sin(Math.toRadians(ShadeSky.SUN_TILT)), (float) Math.cos(Math.toRadians(ShadeSky.SUN_TILT)), devBits(), this.waterTime);
+		// (2026-10-11) where snow and rain reach on the terrain (the camera biome's snow line; ShadeWeather.packLine)
+		mcopt.metal.shade.weather.ShadeWeather.packLine(b, WX_LINE);
 	}
 
 	/** Only the shadow fields, for patching a slot already packed this frame. */

@@ -209,6 +209,7 @@ struct ShadeWet {
 	half var;
 	half dark; // extra darkening exponent of the film (ShadeLook.waterAbs.x: mcopt.shade.wetDark, 0.2)
 	half tex;  // the texel's height proxy -1..1 (sodium_terrain.fs.metal, shadeWetTexHeight): + raised (drier), - a crevice (wetter)
+	half grain; // (2026-10-11, SHADE_SNOW_GRAIN) the texel against its sprite's mean - 1, -0.5..0.5: the block's texture under the snow
 };
 
 // (M3.3 wet ground) the texel's height proxy: its luminance against its sprite's mean (the atlas' coarsest mip), scaled by
@@ -232,10 +233,13 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	w.var = 0.0h;
 	w.dark = 0.0h;
 	w.tex = 0.0h;
+	w.grain = 0.0h;
 	half open = smoothstep(0.90h, 0.995h, sky);
 	if (open <= 0.0h || shadeDev(f, SHADE_DEV_WX_DRY)) return w;
 	half face = n.y > 0.5h ? 1.0h : n.y < -0.5h ? 0.0h : 0.55h; // walls get wet streaks, undersides stay dry
-	w.omega = half(L.wet.x) * open * face * (thin ? 0.45h : foliage ? 0.7h : 1.0h);
+	half2 reach = shadeWxReach(p.y + f.cameraFract.y + f.cameraBlock.y, f); // (2026-10-11) x snow, y rain
+	half rainHere = reach.y;
+	w.omega = half(L.wet.x) * open * face * (thin ? 0.45h : foliage ? 0.7h : 1.0h) * rainHere;
 	// (M3.3 wet ground: solid blocks take the soaked film; crossed plants and leaves keep M3.2's light film)
 	if (SHADE_WET_ALL_ON(L) && !thin && !foliage) {
 		w.film = 1.0h;
@@ -244,17 +248,17 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 	float2 xa = shadeWxXZ(p.xz, f);
 	bool snowy = false, puddly = false;
 #ifdef SHADE_SNOW_COVER
-	snowy = L.wet.z > 0.001 && n.y > 0.5h;
+	snowy = L.wet.z > 0.001 && n.y > 0.5h && reach.x > 0.0h;
 #endif
 #ifdef SHADE_PUDDLES
-	puddly = L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h;
+	puddly = L.wet.y > 0.001 && n.y > 0.5h && !thin && !foliage && sky > 0.95h && rainHere > 0.0h;
 #endif
 	float2 fields = snowy || puddly ? shadeWxFields(xa, noise, baked && !shadeDev(f, SHADE_DEV_WX_ANALYTIC), puddly, snowy) : float2(0.0);
 #ifdef SHADE_SNOW_COVER
 	if (snowy) {
 		float drift = fields.y;
 		// (FT2.8, audit idx 90: the last 2.5 % fades out instead of the deepest drifts' cores vanishing in one frame)
-		w.snow = half(smoothstep(1.0 - float(L.wet.z) * 1.15, 1.15 - float(L.wet.z) * 1.15, drift + 0.15) * saturate(float(L.wet.z) * 40.0)) * open;
+		w.snow = half(smoothstep(1.0 - float(L.wet.z) * 1.15, 1.15 - float(L.wet.z) * 1.15, drift + 0.15) * saturate(float(L.wet.z) * 40.0)) * open * reach.x;
 		w.omega *= 1.0h - w.snow;
 	}
 #endif
@@ -264,15 +268,15 @@ static ShadeWet shadeWetSurface(float3 p, half3 n, half sky, bool thin, bool fol
 		float t = mix(0.80, 0.575, float(L.wet.y)); // ~30 % of open ground at full puddles (25 % at 0.60)
 		// (FT2.8, audit idx 90) times the puddles' last 2.5 %: the field's cores (~0.5 % of open ground) stayed full mirrors down to
 		// puddles 0 and blinked out at once when the weather turned dry
-		half P = half(smoothstep(t, t + 0.035, field) * saturate(float(L.wet.y) * 40.0)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow);
+		half P = half(smoothstep(t, t + 0.035, field) * saturate(float(L.wet.y) * 40.0)) * smoothstep(0.95h, 0.995h, sky) * (1.0h - w.snow) * rainHere;
 		// a darker wet rim around each puddle, and the ground between them stays a little wetter
-		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open);
+		w.omega = max(w.omega, half(smoothstep(t - 0.07, t, field)) * half(L.wet.y) * open * rainHere);
 		w.puddle = P;
 		if (SHADE_WET_ALL_ON(L)) {
 			// (M3.3 wet ground) the film thickens toward the puddles over the field's last ShadeLook.waterAbs.w below the threshold
 			// (0.12: about half a block to two blocks around each puddle: a smooth film -> standing water rim), and hollows hold a
 			// smoother film than its rises (blocks-wide patches: no pixel noise)
-			w.low = half(smoothstep(t - L.waterAbs.w, t, field)) * half(L.wet.y) * open * (1.0h - w.snow); // (band: ShadeLook.waterAbs.w)
+			w.low = half(smoothstep(t - L.waterAbs.w, t, field)) * half(L.wet.y) * open * (1.0h - w.snow) * rainHere; // (band: ShadeLook.waterAbs.w)
 			w.var = half(clamp(field - 0.5, -0.3, 0.3));
 		}
 #ifdef SHADE_RIPPLES
@@ -305,7 +309,7 @@ static inline half3 shadeWetAlbedo(half3 albedo, ShadeWet w) {
 		// middle as M3.2's puddle, reached gradually instead of at the puddle's edge
 		a *= (1.0h - 0.12h * w.low) * (1.0h - 0.2h * w.puddle);
 	} else if (w.puddle > 0.0h) a *= 1.0h - 0.3h * w.puddle;
-	if (w.snow > 0.0h) a = mix(a, half3(0.86h, 0.88h, 0.92h), w.snow);
+	if (w.snow > 0.0h) a = mix(a, half3(0.86h, 0.88h, 0.92h) * (1.0h + 0.35h * w.grain), w.snow);
 	return a;
 }
 

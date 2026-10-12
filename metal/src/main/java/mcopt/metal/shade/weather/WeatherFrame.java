@@ -30,6 +30,10 @@ import net.minecraft.world.level.biome.Biome;
 public final class WeatherFrame {
 	private static long lastPrecipCheck;
 	private static Biome.Precipitation precipitation = Biome.Precipitation.NONE;
+	/** The camera biome's snow line (absolute y; NaN: no level), refreshed with the precipitation. */
+	private static float line = Float.NaN;
+	/** How far above / below the camera the snow line still counts (blocks): surfaces there take the snow / the rain. */
+	private static final float LINE_REACH = 256f;
 	private static float afterglow;
 	private static final float[] glowDir = {0f, 1f, 0f};
 
@@ -46,19 +50,48 @@ public final class WeatherFrame {
 		long now = System.nanoTime();
 		if (level == null || !overworld) {
 			precipitation = Biome.Precipitation.NONE;
+			line = Float.NaN;
 		} else if (snap || now - lastPrecipCheck > 500_000_000L) {
 			lastPrecipCheck = now;
 			try {
-				precipitation = level.getPrecipitationAt(BlockPos.containing(camX, camY, camZ));
+				BlockPos pos = BlockPos.containing(camX, camY, camZ);
+				precipitation = level.getPrecipitationAt(pos);
+				line = snowLine(level.getBiome(pos).value(), level.getSeaLevel());
 			} catch (RuntimeException e) {
 				precipitation = Biome.Precipitation.NONE;
+				line = Float.NaN;
 			}
 		}
 		float r = overworld ? rainLevel : 0f;
-		float rainTarget = precipitation == Biome.Precipitation.RAIN ? Math.min(1f, r * (1f + 0.25f * thunder)) : 0f;
-		float snowTarget = precipitation == Biome.Precipitation.SNOW ? r : 0f;
-		ShadeWeather.step(dt, rainTarget, snowTarget, overworld ? thunder : 0f, dayIndex, seconds, snap);
+		float rainAmount = Math.min(1f, r * (1f + 0.25f * thunder));
+		float rainTarget, snowTarget;
+		if (ShadeWeather.SNOW_LINE && !Float.isNaN(line)) {
+			// (2026-10-11) something falls at the camera: rain on the terrain below the snow line (shadeWetSurface limits it by
+			// height) when the line is within reach of the camera. Snow cover only in snowy biomes (snow at every height: snowy
+			// plains, taigas, slopes, frozen peaks...): Gael, in rain on a stony mountain: "where it isn't snowy, rain should only
+			// make it reflective". Above the line of the other biomes the game's own snow shows (mcopt.shade.snowLine.cover=true:
+			// the shader's snow cover there too, above the line)
+			boolean falling = precipitation != Biome.Precipitation.NONE;
+			rainTarget = falling && line > camY - LINE_REACH ? rainAmount : 0f;
+			snowTarget = falling && line < camY + LINE_REACH && (line <= -1e4f || ShadeWeather.SNOW_LINE_COVER) ? r : 0f;
+		} else {
+			rainTarget = precipitation == Biome.Precipitation.RAIN ? rainAmount : 0f;
+			snowTarget = precipitation == Biome.Precipitation.SNOW ? r : 0f;
+		}
+		ShadeWeather.step(dt, rainTarget, snowTarget, precipitation == Biome.Precipitation.SNOW, line, (float) camY, overworld ? thunder : 0f,
+			dayIndex, seconds, snap);
 		lightning(level, camX, camY, camZ, overworld, dt, seconds);
+	}
+
+	/**
+	 * The y above which it snows instead of raining in biome b (Biome.getPrecipitationAt / getHeightAdjustedTemperature: below
+	 * sea level + 17 the base temperature, above it 0.05 colder per 40 blocks, give or take the +-8 blocks of the game's
+	 * temperature noise; snow below 0.15). -1e4: snow at every height, 1e4: never (or nothing falls in b: deserts, savannas).
+	 */
+	static float snowLine(Biome b, int seaLevel) {
+		if (!b.hasPrecipitation()) return 1e4f;
+		float t = b.getBaseTemperature();
+		return t < 0.15f ? -1e4f : seaLevel + 17 + (t - 0.15f) * 800f;
 	}
 
 	/**

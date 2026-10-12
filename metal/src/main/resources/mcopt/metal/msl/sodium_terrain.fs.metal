@@ -353,6 +353,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         if (wet.film > 0.0h && wet.omega > 0.05h && sl.waterAbs.z > 0.0)
             wet.tex = shadeWetTexHeight(half3(texel.rgb), half3(u_BlockTex.sample(u_BlockTexSmplr, uv, level(4.0)).rgb), sl);
 #endif
+#ifdef SHADE_SNOW_GRAIN
+        // (2026-10-11) the snow cover keeps a trace of the block's texture (the texel against its sprite's mean): snow lying on the
+        // block instead of a flat white sheet
+        if (wet.snow > 0.0h)
+            wet.grain = half(clamp(float(shadeLumaH(half3(texel.rgb))) / max(float(shadeLumaH(half3(u_BlockTex.sample(u_BlockTexSmplr, uv, level(4.0)).rgb))), 0.02) - 1.0, -0.5, 0.5));
+#endif
         half3 wetAlbedo = debug == 3 ? albedo : shadeWetAlbedo(albedo, wet);
 #else
         half3 wetAlbedo = albedo;

@@ -54,6 +54,8 @@ import mcopt.metal.shade.ShadeMsl;
  * <li>{@code mcopt.shade.rainBudget} (M3.3; empty = M3.2): comma list of gate, ripples, steps: the rain budget options
  * ({@link #RAIN_BUDGET}).</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
+ * <li>{@code mcopt.shade.snowLine} (2026-10-11, true): snow cover only above the camera biome's snow line, rain's wetness and
+ * puddles only below it ({@link #SNOW_LINE}); false = M3's look (the whole terrain takes what falls at the camera).</li>
  * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
  * <li>{@code mcopt.shade.lightning} (true): bolts light the scene and the sky, and glow (the game's "Hide Lightning Flashes"
  * option turns the flash light off).</li>
@@ -106,6 +108,23 @@ public final class ShadeWeather {
 	/** M3.3 pricing: the options switchable by their dev bits (mcopt.shade.dev) in one session; off = the shaders of M3.2. */
 	public static final boolean B_DEV = flag("mcopt.shade.rainBudget.dev", false);
 	public static final boolean SNOW = flag("mcopt.shade.snowCover", true);
+	/**
+	 * (2026-10-11, Gael: rain on a stony mountain turned the ground below flat white with dark holes) Where the snow and the rain
+	 * reach on the terrain. The game decides rain or snow by the temperature at the camera's height, and above sea level + 17 the
+	 * temperature falls with height (Biome.getHeightAdjustedTemperature): windswept hills (0.2) snow above y ~120 and rain below.
+	 * Standing above that line made the whole terrain snow-covered, the rained-on ground below included. Now the camera biome's
+	 * line (WeatherFrame.snowLine) limits each: snow cover above it (and only in snowy biomes unless SNOW_LINE_COVER), wetness
+	 * and puddles below it, fading out over the 16 blocks above it (the game's own +-8 blocks of temperature noise: rain still
+	 * falls on some columns there). Each limit is kept from the last time it snowed / rained, so snow left from a snowy biome
+	 * still fades over minutes after walking into a warm one, as before. false = M3's look.
+	 */
+	public static final boolean SNOW_LINE = flag("mcopt.shade.snowLine", true);
+	/** (2026-10-11, mcopt.shade.snowGrain, true) the snow cover keeps a trace of the block's texture (false: flat white, M3). */
+	public static final boolean SNOW_GRAIN = flag("mcopt.shade.snowGrain", true);
+	/** (SNOW_LINE) mcopt.shade.snowLine.cover (false): the snow cover also above the snow line of biomes that aren't snowy. */
+	public static final boolean SNOW_LINE_COVER = flag("mcopt.shade.snowLine.cover", false);
+	/** Blend half-width of the snow line (blocks): the game's temperature noise moves it +-8 (Biome.TEMPERATURE_NOISE x 8). */
+	static final float LINE_BAND = 8f;
 	public static final boolean SLANT = flag("mcopt.shade.rainSlant", true);
 	public static final boolean LIGHTNING = flag("mcopt.shade.lightning", true);
 	/** HDR only: the terrain reads the tint map through ShadeResources (no reader in LDR, so no tint pass either). */
@@ -137,6 +156,8 @@ public final class ShadeWeather {
 	static float wetness, puddles, snow, rain;
 	/** Wind direction (radians from +x toward +z), slant, gust; snowfall at the camera 0..1 (smoothed: snow flakes' look). */
 	static float windAngle, slant, gust, snowfall;
+	/** (SNOW_LINE) The lowest y the snow cover reaches and the highest the rain's wetness reaches, absolute; at first everywhere. */
+	static float snowFloor = -1e4f, rainTop = 1e4f;
 	/** This frame's flash: direction (camera-relative, unit) and its light. */
 	static final float[] flashDir = {0f, 1f, 0f};
 	static float flash;
@@ -168,10 +189,12 @@ public final class ShadeWeather {
 
 	/**
 	 * One frame of the weather's slow state. dt: seconds since the last frame; rainTarget / snowTarget: the rain level where it
-	 * rains / snows at the camera (0 elsewhere: deserts, other dimensions); thunder 0..1; snap: jump to the targets (world
-	 * load, dimension change, teleport).
+	 * rains / snows on the terrain around the camera (0 elsewhere: deserts, other dimensions); snowing: it snows at the camera
+	 * itself (the flakes' look); line: the camera biome's snow line (absolute y; NaN: unknown), camY: the camera's y; thunder
+	 * 0..1; snap: jump to the targets (world load, dimension change, teleport).
 	 */
-	static void step(float dt, float rainTarget, float snowTarget, float thunder, float dayIndex, float seconds, boolean snap) {
+	static void step(float dt, float rainTarget, float snowTarget, boolean snowing, float line, float camY, float thunder, float dayIndex,
+	                 float seconds, boolean snap) {
 		float s = dt * TIME_SCALE;
 		// wetness: soaks in over ~20 s of rain, dries over a couple of minutes; puddles fill once the ground is wet and dry
 		// slower still; snow builds over ~40 s and lingers for minutes
@@ -182,7 +205,7 @@ public final class ShadeWeather {
 			puddles = wetTarget;
 			snow = snowTarget;
 			rain = rainTarget;
-			snowfall = snowTarget > 0.05f ? 1f : 0f;
+			snowfall = snowing && snowTarget > 0.05f ? 1f : 0f;
 		} else {
 			// (FT2.8, audit idx 90) drying toward slightly below 0, clamped: the values reach exactly 0 in finite time (puddles ~3.4
 			// minutes sooner than the exponential's tail under 0.003, snow ~7), so the terrain's lean dry variant comes back that much earlier
@@ -190,7 +213,20 @@ public final class ShadeWeather {
 			puddles = dryTo(puddles, puddleTarget, s, 10f, 110f);
 			snow = dryTo(snow, snowTarget, s, 30f, 240f);
 			rain = approach(rain, rainTarget, dt, 1.5f, 3f);
-			snowfall = approach(snowfall, snowTarget > 0.05f ? 1f : 0f, dt, 1.5f, 1.5f);
+			snowfall = approach(snowfall, snowing && snowTarget > 0.05f ? 1f : 0f, dt, 1.5f, 1.5f);
+		}
+		if (SNOW_LINE && !Float.isNaN(line)) {
+			// within 400 blocks of the camera (+-1e4 = everywhere / nowhere), eased over ~1.5 s: no jump at a biome's border
+			float lo = camY - 400f, hi = camY + 400f, lt = Math.clamp(line, lo, hi);
+			float k = snap ? 1f : 1f - (float) Math.exp(-dt / 1.5f);
+			if (snowTarget > 0f) {
+				float v = Math.clamp(snowFloor, lo, hi);
+				snowFloor = v + (lt - v) * k;
+			}
+			if (rainTarget > 0f) {
+				float v = Math.clamp(rainTop, lo, hi);
+				rainTop = v + (lt - v) * k;
+			}
 		}
 		float forceWet = floatFlag("mcopt.shade.wetness", FORCE_WET); // (M3.3: read every frame, for A/B shots after the rain)
 		if (forceWet >= 0f) {
@@ -265,6 +301,12 @@ public final class ShadeWeather {
 		}
 	}
 
+	/** Writes ShadeFrame.wxLine at {@code at} (call from ShadeFrame.pack): snow floor, rain top, blend half-width, on. */
+	public static void packLine(ByteBuffer b, int at) {
+		boolean on = ON && SNOW_LINE;
+		put4(b, at, on ? snowFloor : -1e4f, on ? rainTop : 1e4f, LINE_BAND, on ? 1f : 0f);
+	}
+
 	private static void put4(ByteBuffer b, int at, float x, float y, float z, float w) {
 		b.putFloat(at, x).putFloat(at + 4, y).putFloat(at + 8, z).putFloat(at + 12, w);
 	}
@@ -285,7 +327,8 @@ public final class ShadeWeather {
 
 	/** For logs: wetness, puddles, snow, rain, flash. */
 	public static String describeState() {
-		return String.format(Locale.ROOT, "wet %.2f puddles %.2f snow %.2f rain %.2f flash %.2f", wetness, puddles, snow, rain, flash);
+		return String.format(Locale.ROOT, "wet %.2f puddles %.2f snow %.2f rain %.2f flash %.2f", wetness, puddles, snow, rain, flash)
+			+ (SNOW_LINE ? String.format(Locale.ROOT, ", snow from y %.0f, rain up to y %.0f", snowFloor, rainTop) : "");
 	}
 
 	/** The MSL in front of the Sodium terrain stages (after ShadeMsl.prelude, before the water module): defines + weather_surface.metal. */
@@ -314,6 +357,7 @@ public final class ShadeWeather {
 			.append(PUDDLE_QUAD ? "#define SHADE_PUDDLE_QUAD\n" : "");
 		if (RIPPLES) s.append("#define SHADE_RIPPLES\n#define SHADE_RIPPLE_LAYERS ").append(RIPPLE_LAYERS).append('\n');
 		if (SNOW) s.append("#define SHADE_SNOW_COVER\n");
+		if (SNOW && SNOW_GRAIN) s.append("#define SHADE_SNOW_GRAIN\n"); // (2026-10-11)
 		if (LIGHTNING) s.append("#define SHADE_LIGHTNING\n");
 		if (COLOR_SHADOWS || (!Shade.ENABLED && flag("mcopt.shade.colorShadows", true))) s.append("#define SHADE_COLOR_SHADOW\n");
 		return s.append(ShadeMsl.resource("weather_surface.metal")).append('\n').toString();

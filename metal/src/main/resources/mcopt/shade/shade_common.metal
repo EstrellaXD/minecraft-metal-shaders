@@ -40,7 +40,7 @@
 using namespace metal;
 
 // ---- per-frame values -------------------------------------------------------------------------------------------------
-// Byte offsets are fixed: mcopt.metal.shade.ShadeFrame (Java) writes exactly this layout, 1008 bytes. Change both together.
+// Byte offsets are fixed: mcopt.metal.shade.ShadeFrame (Java) writes exactly this layout, 1024 bytes. Change both together.
 struct ShadeFrame {
 	float4x4 view;              //   0  world -> view (rotation only)
 	float4x4 proj;              //  64  view -> clip as the world is drawn (view bobbing, hurt tilt and nausea included);
@@ -85,7 +85,20 @@ struct ShadeFrame {
 	float4 sunPath;             // 992  x sin, y cos of the sun path tilt (mcopt.shade.sunTilt: the sun and moon orbit rotated about
 	                            //      world x, toward +z at noon), z dev bits (mcopt.shade.dev, for pricing features: SHADE_DEV_*),
 	                            //      w the water's animation clock in seconds (real time with mcopt.shade.waterClock)
+	float4 wxLine;              // 1008 (2026-10-11, M3 weather; mcopt.shade.snowLine) the camera biome's snow line, absolute world y:
+	                            //      x the lowest snow cover reaches, y the highest rain's wetness and puddles reach (each kept from
+	                            //      the last time it snowed / rained; +-1e4 = everywhere / nowhere), z blend half-width (blocks),
+	                            //      w 1 = on (0: no height limit, M3's look)
 };
+
+// (2026-10-11, ShadeFrame.wxLine) how much of the snow cover (x) and of the rain's wetness and puddles (y) reaches a surface at
+// absolute height yAbs: snow above the camera biome's snow line (blended over the game's +-8 blocks of noise), rain fully up to
+// the line and fading over the 16 blocks above it (rain still falls on some columns there; better wet than white)
+static inline half2 shadeWxReach(float yAbs, constant ShadeFrame &f) {
+	if (f.wxLine.w < 0.5) return half2(1.0h);
+	return half2(half(smoothstep(f.wxLine.x - f.wxLine.z, f.wxLine.x + f.wxLine.z, yAbs)),
+	             half(1.0 - smoothstep(f.wxLine.y, f.wxLine.y + 2.0 * f.wxLine.z, yAbs)));
+}
 
 // mcopt.shade.dev bits (sunPath.z): switch features off to price them in game; 0 in normal use.
 #define SHADE_DEV_NO_FOG_LUT 1    // terrain fog without the LUT lookup (constant horizon colour)

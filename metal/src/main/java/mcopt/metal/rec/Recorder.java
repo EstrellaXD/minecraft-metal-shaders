@@ -48,6 +48,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * <li>-Dmcopt.rec.bitrate=12M, -Dmcopt.rec.codec=h264_videotoolbox, -Dmcopt.rec.ffmpeg=/opt/homebrew/bin/ffmpeg,
  * -Dmcopt.rec.args="..." (more encoder options, space separated), -Dmcopt.rec.slots=6 (readback buffers, 3-16),
  * -Dmcopt.rec.speed=true (VideoToolbox's speed-over-quality and real-time hints).</li>
+ * <li>-Dmcopt.rec.phases=PREFIX: record only while the bench phase starts with PREFIX (e.g. mcbench's {@code cine_<clip>}
+ * phases); between them the video's clock stands still, so the clips follow each other in one file (cut them with OUT.csv).</li>
  * <li>-Dmcopt.rec.probe=MS: measurement only: recording switches on and off every MS ms and the mean frame time of each state
  * is logged every 5 s (the recorder's own cost, in the same run; the video repeats frames while it is off).
  * -Dmcopt.rec.null=true: measurement only, frames are converted and read back but not encoded.</li>
@@ -81,6 +83,8 @@ final class Recorder {
 	private static final boolean ENCODE = Boolean.parseBoolean(System.getProperty("mcopt.rec.encode", "true"));
 	/** -Dmcopt.rec.null=true: measurement only: frames are converted and read back but not encoded (no ffmpeg, no file). */
 	private static final boolean NULL = Boolean.getBoolean("mcopt.rec.null");
+	/** -Dmcopt.rec.phases=PREFIX: record only while the bench phase starts with it; the video's clock stands still in between (one file, clips back to back). */
+	private static final String GATE = System.getProperty("mcopt.rec.phases", "").trim().toLowerCase(Locale.ROOT);
 	private static final boolean VT = CODEC.equals("vt") && !NULL && ENCODE;
 	private static final int PARAMS_BYTES = 64;
 	private static final int SLOT_READY = 2;
@@ -112,6 +116,8 @@ final class Recorder {
 	private final double periodNs = 1e9 / FPS;
 	private volatile State state = State.WAIT;
 	private long firstNs, t0, lastK = -1, skippedK = -1;
+	/** -Dmcopt.rec.phases: whether the last frame was inside the gate. */
+	private boolean gateOn;
 	private int srcW, srcH, gridW, gridH;
 	/** Per slot: its CSV line, handed from the render thread to the writer with the slot. */
 	private final AtomicReferenceArray<String> meta = new AtomicReferenceArray<>(SLOTS);
@@ -321,7 +327,14 @@ final class Recorder {
 			boolean on = this.probe(now);
 			if (!on) return;
 		}
-		long k = (long) Math.floor((now - this.t0) / this.periodNs);
+		if (!GATE.isEmpty()) {
+			boolean on = phase.startsWith(GATE);
+			// (re-entering: the clock goes on from the tick after the last recorded one, so the gap leaves no frames)
+			if (on && !this.gateOn) this.t0 = now - (long) ((this.lastK + 1) * this.periodNs);
+			this.gateOn = on;
+			if (!on) return;
+		}
+		long k =(long) Math.floor((now - this.t0) / this.periodNs);
 		if (k <= this.lastK) return;
 		int w = view.getWidth(0), h = view.getHeight(0);
 		if (w != this.srcW || h != this.srcH) this.layout(w, h);

@@ -87,4 +87,43 @@ public final class DhCompat {
 			return "";
 		}
 	}
+
+	/**
+	 * Before DH reads its config (Profile, from the first mixin config plugin; DH loads its config in its client entrypoint),
+	 * makes {@code vanillaFadeMode} NONE in {@code <game dir>/config/DistantHorizons.toml} when it would be DOUBLE_PASS: the
+	 * value in the file, or DH's default when the file or the key is missing. Under mcopt-shade DOUBLE_PASS wipes the near
+	 * world (FT2.8 audit idx 100: only the LODs' dark silhouette is left under the sky), and DH settles the mode at startup,
+	 * so a live override can't fix it (ShadeDh). SINGLE_PASS and NONE are left alone; a file of another config version is
+	 * left alone too (DH resets or migrates it itself). Only DH's file is touched, one value; the rest of it stays as written.
+	 * Returns what was done (for the log), or null when nothing changed.
+	 */
+	public static String fixVanillaFade(Path gameDir) {
+		Path toml = gameDir.resolve("config").resolve("DistantHorizons.toml");
+		try {
+			if (!Files.exists(toml)) { // first launch with DH: DH fills in every other setting with its defaults
+				Files.createDirectories(toml.getParent());
+				Files.writeString(toml, "_version = 5\n\n[client.advanced.graphics.quality]\n\tvanillaFadeMode = \"NONE\"\n", StandardCharsets.UTF_8,
+					java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
+				return "wrote " + toml + " with vanillaFadeMode = \"NONE\" (DH's default DOUBLE_PASS hides the near world under the shaders)";
+			}
+			String text = Files.readString(toml, StandardCharsets.UTF_8);
+			Matcher version = Pattern.compile("(?m)^\\s*_version\\s*=\\s*(\\d+)").matcher(text);
+			if (version.find() && !version.group(1).equals("5")) return null;
+			Matcher key = Pattern.compile("(?m)^(\\s*vanillaFadeMode\\s*=\\s*)\"?([A-Za-z_]+)\"?").matcher(text);
+			String fixed;
+			boolean present = key.find();
+			if (present) {
+				if (!key.group(2).equalsIgnoreCase("DOUBLE_PASS")) return null;
+				fixed = text.substring(0, key.start()) + key.group(1) + "\"NONE\"" + text.substring(key.end());
+			} else {
+				Matcher table = Pattern.compile("(?m)^\\s*\\[client\\.advanced\\.graphics\\.quality\\][^\\n]*\\n").matcher(text);
+				fixed = table.find() ? text.substring(0, table.end()) + "\tvanillaFadeMode = \"NONE\"\n" + text.substring(table.end())
+					: text + (text.endsWith("\n") || text.isEmpty() ? "" : "\n") + "\n[client.advanced.graphics.quality]\n\tvanillaFadeMode = \"NONE\"\n";
+			}
+			Files.writeString(toml, fixed, StandardCharsets.UTF_8);
+			return "set vanillaFadeMode = \"NONE\" in " + toml + " (it was " + (present ? "" : "DH's default ") + "DOUBLE_PASS, which hides the near world under the shaders)";
+		} catch (IOException | RuntimeException e) {
+			return "can't check vanillaFadeMode in " + toml + ": " + e;
+		}
+	}
 }

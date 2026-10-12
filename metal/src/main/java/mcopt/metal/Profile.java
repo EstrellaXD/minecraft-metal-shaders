@@ -71,6 +71,7 @@ public final class Profile {
 			// In each of the gl cases DH crashes on the Metal backend (GL engine, or the compat mixin left out), so say so.
 			System.out.println("[mcopt] Distant Horizons " + version + " detected: mcopt.metal=" + explicit + " (set explicitly)"
 				+ (gl != null && Boolean.parseBoolean(explicit) ? "; WARNING: DH will likely crash on Metal here: " + gl : ""));
+			if (gl == null && Boolean.parseBoolean(explicit)) vanillaFade();
 			return;
 		}
 		if (gl != null) {
@@ -79,7 +80,20 @@ public final class Profile {
 			System.out.println("[mcopt] Distant Horizons " + version + " detected, using OpenGL: " + gl + "; mcopt's other optimizations stay on");
 		} else {
 			System.out.println("[mcopt] Distant Horizons " + version + " detected: staying on Metal (DH's Blaze3D renderer runs on mcopt's backend; -Dmcopt.metal=false for OpenGL)");
+			vanillaFade();
 		}
+	}
+
+	/**
+	 * With the shaders on (mcopt.shade) and DH on Metal: DH's vanilla fade DOUBLE_PASS (its default) out of its config file
+	 * before DH reads it ({@link DhCompat#fixVanillaFade}). -Dmcopt.shade.dh.fixFade=false, or an explicit mcopt.shade.dh.fade
+	 * (the bench's A/B of the fade modes), leaves the file alone.
+	 */
+	private static void vanillaFade() {
+		if (!Boolean.parseBoolean(System.getProperty("mcopt.shade")) || "false".equals(System.getProperty("mcopt.shade.dh.fixFade"))
+			|| System.getProperty("mcopt.shade.dh.fade") != null) return;
+		String done = DhCompat.fixVanillaFade(gameDir());
+		if (done != null) System.out.println("[mcopt] Distant Horizons: " + done);
 	}
 
 	private static void applyFlags() {

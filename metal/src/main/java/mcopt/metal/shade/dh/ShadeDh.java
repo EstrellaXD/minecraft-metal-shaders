@@ -122,10 +122,12 @@ public final class ShadeDh {
 		try {
 			apply(SSAO, shading ? off("mcopt.shade.dh.ssao") : null);
 			apply(AA, shading ? off("mcopt.shade.dh.aa") : null);
-			// (FT2.8, audit idx 100, NOT fixed) DH's DOUBLE_PASS vanilla fade (DH's default) wipes the near world while DH composites
+			// (FT2.8, audit idx 100) DH's DOUBLE_PASS vanilla fade (DH's default) wipes the near world while DH composites
 			// straight into the HDR target (fade28-DOUBLE_PASS: only the LODs' dark silhouette left). An override to SINGLE_PASS from the
 			// first frame changed nothing (fade28-DOUBLE-fixed: the same image), and switching SINGLE_PASS to NONE live broke the far LODs
-			// (*ft28-dh): DH settles it at startup. NONE and SINGLE_PASS from startup are fine (fade28-NONE): only a warning here
+			// (*ft28-dh): DH settles it at startup. NONE and SINGLE_PASS from startup are fine (fade28-NONE): only a warning here; since
+			// v1.0-alpha.2 Profile takes DOUBLE_PASS out of DistantHorizons.toml before DH reads it (DhCompat.fixVanillaFade), so this
+			// shows only when the player picks DOUBLE_PASS in DH's settings during the session
 			apply(FADE, shading ? named(fadeEnum, "mcopt.shade.dh.fade", "dh") : null);
 			if (shading && DIRECT && !warnedFade && "DOUBLE_PASS".equals(String.valueOf(getTrue.invoke(FADE.entry)))) {
 				warnedFade = true;

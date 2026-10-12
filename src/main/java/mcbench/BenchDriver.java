@@ -259,6 +259,7 @@ public final class BenchDriver {
 			MiscShots.plan(steps); // opt-in -Dmcbench.ab=... / -Dmcbench.variantShots=... (M3.3 misc: generic A/B phases and variant shots)
 			WetShots.plan(steps); // opt-in -Dmcbench.wet=ground,sunset,night,storm,path,sand,stone (M3.3 wet ground A/B shots)
 			RobustShots.plan(steps); // opt-in -Dmcbench.robust=gui,transp,dims,resize,rejoin,fail (M3.3 robustness)
+			CineShots.plan(steps); // opt-in -Dmcbench.cine=<spec.json> (2026-10-11: camera paths for the showcase videos)
 		}
 		// leave the saved world clear at noon: the next run then starts without rain (shader packs smooth wetness/fog
 		// over tens of seconds, so a world saved in the rain would haze the next run's first scenes)
@@ -694,6 +695,8 @@ public final class BenchDriver {
 		@Override
 		boolean poll(Minecraft mc, long now) {
 			if (spot.torchesPlaced && spot.torchVersion >= TORCH_VERSION) return true;
+			// -Dmcbench.torches=false (2026-10-11): no torch grid (a showcase world)
+			if (!Boolean.parseBoolean(System.getProperty("mcbench.torches", "true"))) return true;
 			MinecraftServer s = server(mc);
 			List<Step> extra = new ArrayList<>();
 			extra.add(new Scene("torch-setup", 6000, false, () -> spot.overview));
@@ -916,7 +919,7 @@ public final class BenchDriver {
 	 * reports every visible section built (Sodium: isTerrainRenderComplete) for 1.5 s, rain level at its target, and at
 	 * least minSec. Times out (with a warning, not a failure) after maxSec.
 	 */
-	static final class Settle extends Step {
+	static class Settle extends Step {
 		final String scene;
 		final boolean rain;
 		final double minSec;

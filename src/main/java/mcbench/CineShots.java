@@ -196,7 +196,8 @@ final class CineShots {
 	static Anchor resolve(ServerLevel l, String dim, JsonObject a) {
 		if (a.has("at")) {
 			JsonArray at = a.getAsJsonArray("at");
-			int x = at.get(0).getAsInt(), z = at.get(1).getAsInt();
+			int[] r = refine(l, a, at.get(0).getAsInt(), at.get(1).getAsInt());
+			int x = r[0], z = r[1];
 			int y = a.has("y") ? a.get("y").getAsInt() : height(l, x, z);
 			return new Anchor(x, y, z, dim, l.getBiome(new net.minecraft.core.BlockPos(x, y, z)).getRegisteredName());
 		}
@@ -251,9 +252,48 @@ final class CineShots {
 				best = h;
 			}
 		}
+		int[] r = refine(l, a, best[0], best[1]);
+		best = new int[] {r[0], r[1]};
 		int y = height(l, best[0], best[1]);
 		BenchDriver.log(String.format(Locale.ROOT, "cine: %s first at %d,%d, patch of %d samples (step %d), middle %d,%d y%d", id, hx, hz, hits.size(), step, best[0], best[1], y));
 		return new Anchor(best[0], y, best[1], dim, id);
+	}
+
+	/**
+	 * Server thread. "refine": "forest" moves the anchor to the densest dry-land canopy within refineRadius (default 96),
+	 * "high" to the highest ground there; else it stays.
+	 */
+	static int[] refine(ServerLevel l, JsonObject a, int x, int z) {
+		String how = str(a, "refine", "");
+		if (how.isEmpty()) return new int[] {x, z};
+		int rr = (int) num(a, "refineRadius", 96);
+		int bx = x, bz = z;
+		double bs = -1e18;
+		for (int dx = -rr; dx <= rr; dx += 8) {
+			for (int dz = -rr; dz <= rr; dz += 8) {
+				int cx = x + dx, cz = z + dz;
+				double sc;
+				if (how.equals("high")) sc = height(l, cx, cz);
+				else {
+					int n = 0;
+					for (int i = -12; i <= 12; i += 4) {
+						for (int j = -12; j <= 12; j += 4) {
+							int g = height(l, cx + i, cz + j), top = l.getHeight(Heightmap.Types.MOTION_BLOCKING, cx + i, cz + j);
+							boolean dry = l.getFluidState(new net.minecraft.core.BlockPos(cx + i, g - 1, cz + j)).isEmpty();
+							if (dry && top - g >= 3) n++;
+						}
+					}
+					sc = n - Math.hypot(dx, dz) / 48.0;
+				}
+				if (sc > bs) {
+					bs = sc;
+					bx = cx;
+					bz = cz;
+				}
+			}
+		}
+		BenchDriver.log(String.format(Locale.ROOT, "cine: refine %s %d,%d -> %d,%d (score %.1f)", how, x, z, bx, bz, bs));
+		return new int[] {bx, bz};
 	}
 
 	private static boolean is(BiomeResolver br, ChunkGenerator gen, ServerLevel l, RandomState rs, int x, int z, String id) {
@@ -499,6 +539,106 @@ final class CineShots {
 		return p;
 	}
 
+	/**
+	 * Server thread: a clip's keys from {@code "walk": {"yaw": 90, "length": 24, "speed": 2.4, "search": 40, "yawRange": 25,
+	 * "canopy": true, "eye": 1.62, "look": [yawOffset, pitch], "sway": 0, "clear": 1.6, "headroom": 3}}: the straight walk of
+	 * that length near the anchor, heading about yaw, over dry ground with steps of at most one block, the columns within clear
+	 * blocks to each side free of anything solid (trunks, leaves) up to headroom blocks above the ground; the most covered by canopy with "canopy", else the smoothest.
+	 */
+	static JsonObject walk(ServerLevel l, Anchor a, JsonObject it, Map<String, Object> json) {
+		JsonObject w = it.getAsJsonObject("walk");
+		double yaw0 = num(w, "yaw", 0), len = num(w, "length", 24), speed = num(w, "speed", 2.4), search = num(w, "search", 40);
+		double yawRange = num(w, "yawRange", 25), eye = num(w, "eye", 1.62), sway = num(w, "sway", 0), clear = num(w, "clear", 1.6);
+		int headroom = (int) num(w, "headroom", 3);
+		boolean canopy = w.has("canopy") && w.get("canopy").getAsBoolean();
+		double lookYaw = 0, lookPitch = -3;
+		if (w.has("look")) {
+			lookYaw = w.getAsJsonArray("look").get(0).getAsDouble();
+			lookPitch = w.getAsJsonArray("look").get(1).getAsDouble();
+		}
+		int half = (int) Math.ceil(search + len / 2 + 2), n = 2 * half + 1;
+		int[][] hgt = new int[n][n];
+		boolean[][] ok = new boolean[n][n], cover = new boolean[n][n];
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				int x = a.x() - half + i, z = a.z() - half + j;
+				int h = height(l, x, z);
+				hgt[i][j] = h;
+				boolean free = l.getFluidState(new net.minecraft.core.BlockPos(x, h - 1, z)).isEmpty();
+				for (int dy = 0; dy <= headroom && free; dy++) {
+					net.minecraft.core.BlockPos bp = new net.minecraft.core.BlockPos(x, h + dy, z);
+					free = l.getBlockState(bp).getCollisionShape(l, bp).isEmpty() && l.getFluidState(bp).isEmpty();
+				}
+				ok[i][j] = free;
+				cover[i][j] = l.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - h >= 3;
+			}
+		}
+		double best = -1e18, bsx = 0, bsz = 0, byaw = yaw0;
+		int steps = (int) Math.round(len / 0.5);
+		for (double dyaw = -yawRange; dyaw <= yawRange + 1e-6; dyaw += 5) {
+			double yr = Math.toRadians(yaw0 + dyaw), dx = -Math.sin(yr), dz = Math.cos(yr), px = -dz, pz = dx;
+			for (double ox = -search; ox <= search; ox += 3) {
+				for (double oz = -search; oz <= search; oz += 3) {
+					double sx = a.x() + 0.5 + ox - dx * len / 2, sz = a.z() + 0.5 + oz - dz * len / 2;
+					double rough = 0, cov = 0;
+					int prev = Integer.MIN_VALUE;
+					boolean good = true;
+					for (int k = 0; k <= steps && good; k++) {
+						double x = sx + dx * k * 0.5, z = sz + dz * k * 0.5;
+						for (int side = -2; side <= 2 && good; side++) {
+							double off = clear * side / 2;
+							int gi = (int) Math.floor(x + px * off) - (a.x() - half), gj = (int) Math.floor(z + pz * off) - (a.z() - half);
+							if (gi < 0 || gj < 0 || gi >= n || gj >= n || !ok[gi][gj]) good = false;
+						}
+						if (!good) break;
+						int gi = (int) Math.floor(x) - (a.x() - half), gj = (int) Math.floor(z) - (a.z() - half);
+						int h = hgt[gi][gj];
+						if (prev != Integer.MIN_VALUE) {
+							if (Math.abs(h - prev) > 1) good = false;
+							rough += Math.abs(h - prev);
+						}
+						prev = h;
+						if (cover[gi][gj]) cov++;
+					}
+					if (!good) continue;
+					double score = (canopy ? cov / (steps + 1) * 10 : 0) - rough * 0.3 - Math.hypot(ox, oz) / 32 - Math.abs(dyaw) / 30;
+					if (score > best) {
+						best = score;
+						bsx = sx;
+						bsz = sz;
+						byaw = yaw0 + dyaw;
+					}
+				}
+			}
+		}
+		if (best == -1e18) throw new IllegalStateException("mcbench.cine: no free walk of " + len + " blocks near the anchor heading " + yaw0);
+		double yr = Math.toRadians(byaw), ex = bsx - Math.sin(yr) * len, ez = bsz + Math.cos(yr) * len, T = len / speed;
+		JsonObject spec = it.deepCopy();
+		spec.remove("walk");
+		spec.addProperty("y", "ground");
+		JsonArray keys = new JsonArray();
+		double fy = byaw + lookYaw;
+		keys.add(key(0, bsx - a.x(), eye, bsz - a.z(), fy, lookPitch));
+		if (sway != 0) keys.add(key(T / 2, (bsx + ex) / 2 - a.x(), eye, (bsz + ez) / 2 - a.z(), fy + sway, lookPitch));
+		keys.add(key(T, ex - a.x(), eye, ez - a.z(), fy, lookPitch));
+		spec.add("keys", keys);
+		if (!spec.has("smooth")) spec.addProperty("smooth", 0.35);
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("from", new double[] {bsx, bsz});
+		m.put("to", new double[] {ex, ez});
+		m.put("yaw", byaw);
+		m.put("score", best);
+		json.put("walk", m);
+		BenchDriver.log(String.format(Locale.ROOT, "cine: walk %.1f,%.1f -> %.1f,%.1f heading %.0f (score %.2f)", bsx, bsz, ex, ez, byaw, best));
+		return spec;
+	}
+
+	private static JsonArray key(double t, double x, double y, double z, double yaw, double pitch) {
+		JsonArray k = new JsonArray();
+		for (double v : new double[] {t, x, y, z, yaw, pitch}) k.add(v);
+		return k;
+	}
+
 	/** Server thread: the terrain under the path (leaves ignored), every 1/20 s, raised to the highest point nearby and smoothed. */
 	static void planGround(ServerLevel l, CamPath p, double smooth) {
 		int n = (int) Math.ceil(p.length() * 20) + 1;
@@ -572,7 +712,8 @@ final class CineShots {
 				Anchor a = anchor(an);
 				ServerLevel l = s.getLevel(dimKey(a.dim()));
 				f = CompletableFuture.supplyAsync(() -> {
-					CamPath p = parsePath(it, a);
+					JsonObject spec = it.has("walk") ? walk(l, a, it, json) : it;
+					CamPath p = parsePath(spec, a);
 					if (p.mode.equals("ground")) planGround(l, p, smooth);
 					return p;
 				}, s);
@@ -657,14 +798,15 @@ final class CineShots {
 			}
 		});
 		steps.add(new BenchDriver.Step("cine-" + name, 0) {
-			long t0;
-			int ev;
+			long t0, last, worst;
+			int ev, frames;
 
 			@Override
 			void start(Minecraft mc, long now) {
 				BenchDriver.setPhase(phase);
-				t0 = now;
-				ev = 0;
+				t0 = last = now;
+				ev = frames = 0;
+				worst = 0;
 				CamPath p = path[0];
 				BenchDriver.pose = t -> p.pose(Math.clamp(BenchDriver.secs(t - t0) - pre, 0, p.length()));
 				if (advance) BenchDriver.cmd(BenchDriver.server(mc), "gamerule advance_time true");
@@ -675,6 +817,9 @@ final class CineShots {
 			@Override
 			boolean poll(Minecraft mc, long now) {
 				double s = BenchDriver.secs(now - t0);
+				frames++;
+				worst = Math.max(worst, now - last);
+				last = now;
 				if (mc.gui.screen() != null) mc.gui.setScreen(null);
 				if (hand != null) LightShots.showHud(mc);
 				while (ev < evT.size() && s - pre >= evT.get(ev)[0]) {
@@ -683,6 +828,9 @@ final class CineShots {
 				}
 				if (s < pre + path[0].length() + post) return false;
 				json.put("recordedTo", System.currentTimeMillis());
+				json.put("avgFps", Math.round(frames / s * 10) / 10.0);
+				json.put("worstFrameMs", Math.round(worst / 1e5) / 10.0);
+				BenchDriver.log(String.format(Locale.ROOT, "cine: %s done, %.1f fps average, worst frame %.1f ms", name, frames / s, worst / 1e6));
 				if (advance) BenchDriver.cmd(BenchDriver.server(mc), "gamerule advance_time false");
 				BenchDriver.setPhase("SETTLE");
 				Pose last = path[0].pose(path[0].length());

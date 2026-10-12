@@ -17,11 +17,17 @@ import net.minecraft.client.gui.screens.PauseScreen;
  */
 final class UiShots {
 	/**
-	 * -Dmcbench.uiButton (2026-10-09; default "Resolución:"): the label prefix of the button pressed, e.g. "Salida:" (mcopt-shade's
+	 * -Dmcbench.uiButton (2026-10-09; default "Resolución:|Resolution:"): the label prefix of the button pressed, e.g. "Salida:" (mcopt-shade's
 	 * output resolution: 5 choices, -Dmcbench.uiChoices=5); -Dmcbench.uiChoices: how many choices it cycles through (restore).
 	 */
-	private static final String BUTTON = System.getProperty("mcbench.uiButton", "Resolución:");
+	private static final String BUTTON = System.getProperty("mcbench.uiButton", "Resolución:|Resolution:");
 	private static final int PRESSES = 4, CHOICES = Integer.getInteger("mcbench.uiChoices", 7);
+
+	/** (2026-10-11) mcopt-shade's buttons follow the game's language: BUTTON holds '|'-separated prefixes ("Salida:|Output:"). */
+	private static boolean labelMatches(String label) {
+		for (String prefix : BUTTON.split("\\|")) if (label.startsWith(prefix)) return true;
+		return false;
+	}
 
 	private UiShots() {
 	}
@@ -78,7 +84,7 @@ final class UiShots {
 	private static void press(Minecraft mc) {
 		if (mc.gui.screen() == null) return;
 		for (GuiEventListener l : mc.gui.screen().children()) {
-			if (l instanceof Button b && b.getMessage().getString().startsWith(BUTTON)) {
+			if (l instanceof Button b && labelMatches(b.getMessage().getString())) {
 				b.onPress(null);
 				return;
 			}

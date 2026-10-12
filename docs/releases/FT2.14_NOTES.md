@@ -1,4 +1,4 @@
-# FT2.14 (2026-10-12 00:35) — bloques mojados más naturales con lluvia
+# FT2.14 (2026-10-12 00:30) — bloques mojados más naturales con lluvia
 
 Instancias: **"mcopt Shaders Metal 26.3 (FT2.14)"** y **"(FT2.14 + DH)"** (config de las FT2.13, jar nuevo y tu
 "Mundo principal prueba shaders" más nuevo, el de la FT2.13 guardado a las 23:52, en las dos). En GitHub: versión

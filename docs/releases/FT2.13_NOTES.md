@@ -1,4 +1,4 @@
-# FT2.13 (2026-10-11 23:55) — lluvia sin nieve falsa + Distant Horizons de fábrica
+# FT2.13 (2026-10-11 23:36) — lluvia sin nieve falsa + Distant Horizons de fábrica
 
 Instancias: **"mcopt Shaders Metal 26.3 (FT2.13)"** y **"(FT2.13 + DH)"** (config de las FT2.12, jar nuevo, copia de tu
 "Mundo principal prueba shaders" de cada una). En GitHub: versión **1.0-alpha.3**. Jar: `mcopt-shade-FT2.13.jar` (ft1 bbdb7af).

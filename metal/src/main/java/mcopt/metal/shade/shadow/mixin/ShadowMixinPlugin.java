@@ -21,10 +21,10 @@ public final class ShadowMixinPlugin implements IMixinConfigPlugin {
 		&& Boolean.parseBoolean(System.getProperty("mcopt.shade.shadows", "true")) && Boolean.parseBoolean(System.getProperty("mcopt.metal", "true"));
 
 	/**
-	 * mcopt 0.3 port (v12): the terrain casters came from Sodium, which this build doesn't have (see ShadowCasters); the
-	 * pass stays off until they come from mcopt's own renderer (P4). Vanilla's blob shadows stay meanwhile.
+	 * mcopt 0.3 port (v12): the terrain casters came from Sodium up to 1.1; since P4 they come from mcopt's own renderer
+	 * (ShadowPass.ownDraw, OwnTerrain.shadowCull).
 	 */
-	private static final boolean TERRAIN_CASTERS = false;
+	private static final boolean TERRAIN_CASTERS = true;
 
 	@Override
 	public void onLoad(String mixinPackage) {

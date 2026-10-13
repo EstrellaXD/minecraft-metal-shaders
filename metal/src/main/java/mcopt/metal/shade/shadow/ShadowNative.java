@@ -35,14 +35,20 @@ final class ShadowNative {
 		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	// M3.3: far cascade spread (second map, swap), the shadow passes' GPU timers, the lite tint map
 	private static final MethodHandle RENDER_EX = fn("mc_shadow_render_ex", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
-		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT, JAVA_INT, JAVA_INT);
+		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG);
+	// v12: mcopt's own terrain as casters (mc_shadow_own_init with own's library; the per-cascade draw goes with renderEx)
+	private static final MethodHandle OWN_INIT = fn("mc_shadow_own_init", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle OWN_LIBRARY = fn("mco_library", JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle SPREAD_INIT = fn("mc_shadow_spread_init", JAVA_INT, JAVA_LONG);
 	private static final MethodHandle SWAP = fn("mc_shadow_swap", null, JAVA_LONG);
 	private static final MethodHandle TIMES_FRAME = fn("mc_shadow_times_frame", JAVA_INT, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle TIMES = fn("mc_shadow_times", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle TINT_LITE_INIT = fn("mc_shadow_tint_lite_init", JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle TINT_RENDER_EX = fn("mc_shadow_tint_render_ex", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG,
-		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
+		JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG);
+	// v12: own terrain's translucent units as coloured-shadow casters (the draw goes with tintRenderEx), the rectangles it leaves
+	private static final MethodHandle OWN_TINT_INIT = fn("mc_shadow_own_tint_init", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle OWN_TINT_RECT = fn("mc_shadow_own_tint_rect", null, JAVA_LONG, JAVA_INT, JAVA_LONG);
 	private static final MethodHandle DEBUG = fn("mc_shadow_debug", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 
 	private ShadowNative() {
@@ -51,6 +57,16 @@ final class ShadowNative {
 	private static MethodHandle fn(String name, MemoryLayout ret, MemoryLayout... args) {
 		var symbol = MetalBridge.library().find(name).orElseThrow(() -> new IllegalStateException("libmcmetal has no " + name));
 		return LINKER.downcallHandle(symbol, ret == null ? FunctionDescriptor.ofVoid(args) : FunctionDescriptor.of(ret, args));
+	}
+
+	/** v12: own's shadow pipelines from its library (mco_library(own)); 0 = ready. */
+	static int ownInit(long shadow, long own, boolean compact, boolean fat, long err, int errCap) {
+		try {
+			long lib = (long) OWN_LIBRARY.invokeExact(own);
+			return (int) OWN_INIT.invokeExact(shadow, lib, compact ? 1 : 0, fat ? 1 : 0, err, errCap);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
 	}
 
 	static long create(long ctx, long source, int resolution, int layers, int depthBits, long err, int errCap) {
@@ -188,13 +204,13 @@ final class ShadowNative {
 
 	/**
 	 * M3.3: render with a target (0 the bound map, 1 the back map), load (1 keep the slice's content) and a GPU timer kind
-	 * (-1 none; 0 near, 1 far whole, 2 far part).
+	 * (-1 none; 0 near, 1 far whole, 2 far part). own (v12): an OwnShadowDraw (mcshadow.m, ShadowPass.OWN_*) or 0.
 	 */
 	static int renderEx(long enc, long shadow, int layer, long cascade, int cascadeBytes, long chunks, long chunksOffset, long regions, long regionsOffset,
-		long draws, int drawCount, long atlas, float slopeScale, float clamp, int target, int load, int timerKind) {
+		long draws, int drawCount, long atlas, float slopeScale, float clamp, int target, int load, int timerKind, long own) {
 		try {
 			return (int) RENDER_EX.invokeExact(enc, shadow, layer, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas,
-				slopeScale, clamp, target, load, timerKind);
+				slopeScale, clamp, target, load, timerKind, own);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -245,11 +261,31 @@ final class ShadowNative {
 		}
 	}
 
+	/** own (v12): an OwnShadowTint (mcshadow.m, ShadowPass.OWN_TINT_*) or 0. */
 	static int tintRenderEx(long enc, long shadow, long cascade, int cascadeBytes, long chunks, long chunksOffset, long regions, long regionsOffset, long draws,
-		int drawCount, long atlas, long params, int paramBytes, int lite, int timerKind, int areaW, int areaH) {
+		int drawCount, long atlas, long params, int paramBytes, int lite, int timerKind, int areaW, int areaH, long own) {
 		try {
 			return (int) TINT_RENDER_EX.invokeExact(enc, shadow, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params,
-				paramBytes, lite, timerKind, areaW, areaH);
+				paramBytes, lite, timerKind, areaW, areaH, own);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** v12: own's coloured-shadow pipelines (after tintInit) and a list of cap units; 0 = ready. */
+	static int ownTintInit(long shadow, long own, boolean compact, int cap, long err, int errCap) {
+		try {
+			long lib = (long) OWN_LIBRARY.invokeExact(own);
+			return (int) OWN_TINT_INIT.invokeExact(shadow, lib, compact ? 1 : 0, cap, err, errCap);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** v12: the rect slot's 5 ints into out (mc_shadow_own_tint_rect). */
+	static void ownTintRect(long shadow, int slot, long out) {
+		try {
+			OWN_TINT_RECT.invokeExact(shadow, slot, out);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}

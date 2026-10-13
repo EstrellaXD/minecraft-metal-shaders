@@ -78,10 +78,16 @@ public final class ShadeTerrain {
 		return t;
 	});
 	private static long own;
-	private static MethodHandle shadeFs;
+	private static MethodHandle shadeFs, shadeBuilt;
+	private static double builtSeen;
 	private static boolean said, failedSaid, prewarmed;
 
 	private ShadeTerrain() {
+	}
+
+	/** The native Own* of mcopt's own terrain once created (the shadow pass builds its pipelines from its library), else 0. */
+	public static long ownHandle() {
+		return own;
 	}
 
 	/** What goes in front of own/terrain.metal when shading is on. */
@@ -96,6 +102,7 @@ public final class ShadeTerrain {
 			MethodHandle shade = linker.downcallHandle(native_("mco_shade"), FunctionDescriptor.ofVoid(JAVA_LONG, JAVA_INT));
 			shade.invokeExact(own, 1);
 			shadeFs = linker.downcallHandle(native_("mco_shade_fs"), FunctionDescriptor.ofVoid(JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT));
+			shadeBuilt = linker.downcallHandle(native_("mco_shade_built"), FunctionDescriptor.ofVoid(JAVA_LONG, JAVA_LONG));
 		} catch (Throwable t) {
 			throw new IllegalStateException("mcopt-shade: own terrain's shade slots", t);
 		}
@@ -125,9 +132,32 @@ public final class ShadeTerrain {
 		} catch (Throwable t) {
 			throw new IllegalStateException(t);
 		}
+		logBuilt(key);
 		if (!said && opaque != 0) {
 			said = true;
 			System.out.println("[mcopt] shade: mcopt's own terrain lit per pixel (" + LIBRARIES.size() + " stage variants building or built)");
+		}
+	}
+
+	private static final long BUILT = org.lwjgl.system.MemoryUtil.nmemAlloc(16);
+	private static long builtLogAt;
+
+	/**
+	 * The shaded pipelines own built on the render thread since the last line (a lean variant met for the first time: the
+	 * frame that needs it waits for them), logged at most every 2 s.
+	 */
+	private static void logBuilt(int key) {
+		try {
+			shadeBuilt.invokeExact(own, BUILT);
+		} catch (Throwable t) {
+			return;
+		}
+		double n = org.lwjgl.system.MemoryUtil.memGetDouble(BUILT), ms = org.lwjgl.system.MemoryUtil.memGetDouble(BUILT + 8);
+		long now = System.nanoTime();
+		if (n > builtSeen && now - builtLogAt > 2_000_000_000L) {
+			System.out.println(String.format("[mcopt] shade: own terrain pipelines built on the render thread: %.0f so far, %.0f ms in all (stage key %x)", n, ms, key));
+			builtSeen = n;
+			builtLogAt = now;
 		}
 	}
 

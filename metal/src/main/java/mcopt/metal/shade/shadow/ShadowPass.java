@@ -401,7 +401,13 @@ public final class ShadowPass {
 	 * 4 texels for the receivers' normal offset and bilinear taps; into this frame's ShadeLook (ssr.w, tintRect).
 	 */
 	private void publishTint(boolean any) {
+		this.publishTint(any, false);
+	}
+
+	/** publishTint, with own terrain's casters as the tint pass found them a few passes ago (v12) when own is set. */
+	private void publishTint(boolean any, boolean own) {
 		boolean on = any && this.tintRect();
+		if (own) on = this.ownTintRect(on);
 		float[] r = this.tintRectNow;
 		mcopt.metal.shade.ShadeBindings.setShadowTint(on ? this.tintSubNow ? 2 : 1 : 0, r[0], r[1], r[2], r[3]);
 	}
@@ -467,6 +473,184 @@ public final class ShadowPass {
 	private static long blockAtlas() {
 		return MetalBridge.viewHandle(net.minecraft.client.Minecraft.getInstance().getTextureManager()
 			.getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS).getTextureView());
+	}
+
+	/** v12: OwnShadowDraw (mcshadow.m) bytes. */
+	private static final int OWN_DRAW_BYTES = 112;
+	/** v12: 1 own's shadow pipelines are built, -1 they failed (logged), 0 not tried. */
+	private int ownReady;
+
+	/**
+	 * v12 (mcopt 0.3 port, P4): cascade c's casters from mcopt's own terrain: OwnTerrain.shadowCull culls its units into the
+	 * lists of slot c (in the pre command buffer, which runs before the frame's), and mc_shadow_render_ex draws them
+	 * (own/terrain.metal own_shadow_vs). Light mode by construction: every compiled section within the view distance whose box
+	 * reaches into the cascade, the faces turned toward the light (the cull's facing test from 4096 blocks along it). 0 when
+	 * there is nothing to draw (no own terrain, nothing published yet, its pipelines failed).
+	 */
+	private long ownDraw(MemoryStack stack, int c, float[] matrix) {
+		mcopt.metal.own.OwnTerrain own = mcopt.metal.own.OwnTerrain.get();
+		long handle = mcopt.metal.shade.terrain.ShadeTerrain.ownHandle();
+		if (own == null || handle == 0 || this.ownReady < 0) return 0;
+		if (this.ownReady == 0) {
+			long err = stack.ncalloc(1, 1024, 1);
+			if (ShadowNative.ownInit(this.shadow, handle, mcopt.metal.own.OwnTerrain.compact(), mcopt.metal.own.OwnTerrain.fat(), err, 1024) != 0) {
+				this.ownReady = -1;
+				System.out.println("[mcopt] shade: no terrain shadows: own terrain's shadow pipelines failed: " + MemoryUtil.memUTF8(err));
+				return 0;
+			}
+			this.ownReady = 1;
+		}
+		if (!own.shadowCull(c, new org.joml.Matrix4f().set(matrix), (float) this.light[0], (float) this.light[1], (float) this.light[2])) return 0;
+		long[] b = own.shadowBuffers(c);
+		long d = stack.ncalloc(16, OWN_DRAW_BYTES, 1);
+		for (int i = 0; i < 5; i++) MemoryUtil.memPutLong(d + i * 8L, b[i]);
+		MemoryUtil.memPutInt(d + 40, (int) b[5]);
+		MemoryUtil.memPutInt(d + 44, 1);
+		// the far cascade's cutout drawn as opaque without the plants (ShadowConfig.FAR_CUTOUT_OPAQUE), as with Sodium's lists
+		MemoryUtil.memPutInt(d + 48, c == 1 && ShadowConfig.FAR_CUTOUT_OPAQUE ? 2 : 1);
+		int bx = (int) Math.floor(this.camX), by = (int) Math.floor(this.camY), bz = (int) Math.floor(this.camZ);
+		MemoryUtil.memPutInt(d + 56, bx);
+		MemoryUtil.memPutInt(d + 60, by);
+		MemoryUtil.memPutInt(d + 64, bz);
+		MemoryUtil.memPutFloat(d + 72, (float) (bx - this.camX));
+		MemoryUtil.memPutFloat(d + 76, (float) (by - this.camY));
+		MemoryUtil.memPutFloat(d + 80, (float) (bz - this.camZ));
+		// M3.3 far spread: only this frame's part of the far cascade's sections (the cull lists them all)
+		if (c == 1 && this.casters.farPart >= 0) {
+			MemoryUtil.memPutInt(d + 92, 2);
+			MemoryUtil.memPutInt(d + 96, this.casters.farPart);
+			MemoryUtil.memPutInt(d + 100, this.casters.farParts);
+		}
+		return d;
+	}
+
+	/** v12: OwnShadowTint (mcshadow.m) bytes; rect ring slots (OWN_TINT_RING there); the tint list's units. */
+	private static final int OWN_TINT_BYTES = 208, OWN_TINT_RING = 8, OWN_TINT_CAP = 32768;
+	/** v12: rect slots are read this many tint passes after they were written (the GPU is done with them by then). */
+	private static final int OWN_TINT_BACK = Math.max(3, Math.min(OWN_TINT_RING - 1, Integer.getInteger("mcopt.metal.inFlight", 2) + 2));
+	/** v12: 1 own's tint pipelines are built, -1 they failed (logged), 0 not tried. */
+	private int ownTintReady;
+	/** v12: own tint passes so far (the rect slot is ownTintPasses % OWN_TINT_RING), and per slot the camera and cascade 0's translation. */
+	private long ownTintPasses;
+	private final double[] ownTintCam = new double[OWN_TINT_RING * 3];
+	private final float[] ownTintMove = new float[OWN_TINT_RING * 2];
+	private final int[] ownTintRead = new int[5];
+
+	/**
+	 * v12 (P4b): the coloured shadows' casters from mcopt's own terrain, for this frame's tint pass (cascade 0, after ownDraw
+	 * drew its depth): the translucent units of every section within the view distance inside the cascade's sides, culled on the
+	 * GPU in the tint pass itself (own/terrain.metal own_shadow_tcull). 0 when there is nothing to draw.
+	 */
+	private long ownTint(MemoryStack stack) {
+		mcopt.metal.own.OwnTerrain own = mcopt.metal.own.OwnTerrain.get();
+		long handle = mcopt.metal.shade.terrain.ShadeTerrain.ownHandle();
+		if (own == null || handle == 0 || this.ownReady != 1 || this.ownTintReady < 0) return 0;
+		net.minecraft.client.renderer.ViewArea va = Minecraft.getInstance().levelRenderer.viewArea();
+		if (va == null) return 0;
+		if (this.ownTintReady == 0) {
+			long err = stack.ncalloc(1, 1024, 1);
+			if (ShadowNative.ownTintInit(this.shadow, handle, mcopt.metal.own.OwnTerrain.compact(), OWN_TINT_CAP, err, 1024) != 0) {
+				this.ownTintReady = -1;
+				System.out.println("[mcopt] shade: no coloured shadows from mcopt's own terrain: " + MemoryUtil.memUTF8(err));
+				return 0;
+			}
+			this.ownTintReady = 1;
+		}
+		long[] b = own.shadowBuffers(0);
+		if (b[0] == 0 || b[1] == 0 || b[2] == 0 || b[6] <= 0) return 0;
+		long d = stack.ncalloc(16, OWN_TINT_BYTES, 1);
+		MemoryUtil.memPutLong(d, b[0]);
+		MemoryUtil.memPutLong(d + 8, b[1]);
+		MemoryUtil.memPutLong(d + 16, b[2]);
+		MemoryUtil.memPutInt(d + 24, (int) (this.ownTintPasses % OWN_TINT_RING));
+		// OwnTcullFrame: cascade 0's side planes (camera-relative), camera block, offset and section, view distance, sections
+		long f = d + 32;
+		Matrix4f clip = new Matrix4f().set(java.util.Arrays.copyOfRange(this.matrices, 0, 16));
+		org.joml.Vector4f pl = new org.joml.Vector4f();
+		int[] planes = {org.joml.Matrix4fc.PLANE_NX, org.joml.Matrix4fc.PLANE_PX, org.joml.Matrix4fc.PLANE_NY, org.joml.Matrix4fc.PLANE_PY};
+		for (int i = 0; i < 4; i++) {
+			clip.frustumPlane(planes[i], pl);
+			MemoryUtil.memPutFloat(f + i * 16L, pl.x);
+			MemoryUtil.memPutFloat(f + i * 16L + 4, pl.y);
+			MemoryUtil.memPutFloat(f + i * 16L + 8, pl.z);
+			MemoryUtil.memPutFloat(f + i * 16L + 12, pl.w);
+		}
+		int bx = (int) Math.floor(this.camX), by = (int) Math.floor(this.camY), bz = (int) Math.floor(this.camZ);
+		float ox = (float) (bx - this.camX), oy = (float) (by - this.camY), oz = (float) (bz - this.camZ);
+		MemoryUtil.memPutInt(f + 64, bx);
+		MemoryUtil.memPutInt(f + 68, by);
+		MemoryUtil.memPutInt(f + 72, bz);
+		MemoryUtil.memPutFloat(f + 80, ox);
+		MemoryUtil.memPutFloat(f + 84, oy);
+		MemoryUtil.memPutFloat(f + 88, oz);
+		MemoryUtil.memPutInt(f + 96, bx >> 4);
+		MemoryUtil.memPutInt(f + 100, by >> 4);
+		MemoryUtil.memPutInt(f + 104, bz >> 4);
+		MemoryUtil.memPutInt(f + 112, va.getViewDistance());
+		MemoryUtil.memPutInt(f + 116, (int) b[6]);
+		// own_shadow_tint_vs' OwnShadowFrame
+		long g = d + 160;
+		MemoryUtil.memPutInt(g, bx);
+		MemoryUtil.memPutInt(g + 4, by);
+		MemoryUtil.memPutInt(g + 8, bz);
+		MemoryUtil.memPutFloat(g + 16, ox);
+		MemoryUtil.memPutFloat(g + 20, oy);
+		MemoryUtil.memPutFloat(g + 24, oz);
+		return d;
+	}
+
+	/** v12: notes this frame's own tint pass (its slot's camera and cascade 0's translation) once it is encoded. */
+	private void ownTintEncoded() {
+		int k = (int) (this.ownTintPasses % OWN_TINT_RING);
+		this.ownTintCam[k * 3] = this.camX;
+		this.ownTintCam[k * 3 + 1] = this.camY;
+		this.ownTintCam[k * 3 + 2] = this.camZ;
+		this.ownTintMove[k * 2] = this.matrices[12];
+		this.ownTintMove[k * 2 + 1] = this.matrices[13];
+		this.ownTintPasses++;
+	}
+
+	/**
+	 * v12: widens tintRectNow by own terrain's casters as the pass OWN_TINT_BACK passes ago found them (their rectangle in that
+	 * frame's light clip space, moved onto this frame's: the camera's move through this cascade's rows, and the change of its
+	 * translation; the light's own turn in between is covered by a small pad). any: tintRectNow already holds casters. Returns
+	 * whether it holds any now.
+	 */
+	private boolean ownTintRect(boolean any) {
+		if (this.ownTintPasses < OWN_TINT_BACK) return any;
+		int k = (int) ((this.ownTintPasses - OWN_TINT_BACK) % OWN_TINT_RING);
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			long out = stack.ncalloc(4, 5, 4);
+			ShadowNative.ownTintRect(this.shadow, k, out);
+			for (int i = 0; i < 5; i++) this.ownTintRead[i] = MemoryUtil.memGetInt(out + i * 4L);
+		}
+		if (this.ownTintRead[4] <= 0) return any;
+		float x0 = -ordered(this.ownTintRead[0]), y0 = -ordered(this.ownTintRead[1]), x1 = ordered(this.ownTintRead[2]), y1 = ordered(this.ownTintRead[3]);
+		if (!(x0 <= x1 && y0 <= y1)) return any;
+		float[] m = this.matrices;
+		double dx = this.ownTintCam[k * 3] - this.camX, dy = this.ownTintCam[k * 3 + 1] - this.camY, dz = this.ownTintCam[k * 3 + 2] - this.camZ;
+		float mx = (float) (m[0] * dx + m[4] * dy + m[8] * dz) + m[12] - this.ownTintMove[k * 2];
+		float my = (float) (m[1] * dx + m[5] * dy + m[9] * dz) + m[13] - this.ownTintMove[k * 2 + 1];
+		float pad = 8f / Math.max(this.tintRes, 1) + 0.02f;
+		float[] r = this.tintRectNow;
+		float a0 = x0 + mx - pad, b0 = y0 + my - pad, a1 = x1 + mx + pad, b1 = y1 + my + pad;
+		if (any) {
+			r[0] = Math.min(r[0], a0);
+			r[1] = Math.min(r[1], b0);
+			r[2] = Math.max(r[2], a1);
+			r[3] = Math.max(r[3], b1);
+		} else {
+			r[0] = a0;
+			r[1] = b0;
+			r[2] = a1;
+			r[3] = b1;
+		}
+		return r[0] < 1f && r[2] > -1f && r[1] < 1f && r[3] > -1f;
+	}
+
+	/** own_shadow_tint_vs' ordered-int bits back to the float. */
+	private static float ordered(int i) {
+		return Float.intBitsToFloat(i >= 0 ? i : i ^ 0x7fffffff);
 	}
 
 	private void render() {
@@ -576,8 +760,9 @@ public final class ShadowPass {
 				// first keeps what the slice holds
 				int load = c == 1 && this.farMode >= 2 && this.farPartNow > 0 ? 1 : 0;
 				int timer = !this.timing ? -1 : c == 0 ? 0 : this.farMode == 1 ? 1 : 2;
+				long own = this.ownDraw(stack, c, back ? this.backMatrix : java.util.Arrays.copyOfRange(this.matrices, c * 16, c * 16 + 16));
 				int gpuEncoder = ShadowNative.renderEx(enc, this.shadow, c, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
-					regions.slice().offset(), draws, n, atlas, -ShadowConfig.BIAS_SLOPE, -8f * depthPerTexel, back ? 1 : 0, load, timer);
+					regions.slice().offset(), draws, n, atlas, -ShadowConfig.BIAS_SLOPE, -8f * depthPerTexel, back ? 1 : 0, load, timer, own);
 				if (c == 0 && tint) {
 					// M3 coloured shadows: the near cascade's translucent casters into the tint map (unbiased matrix: receivers compare their own depth)
 					MemoryUtil.memPutFloat(cascadeData + 64, 0f);
@@ -593,13 +778,17 @@ public final class ShadowPass {
 					lite &= this.tintLite != 0;
 					this.tintRes = lite ? 512 : mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOW_RES;
 					// M3.3 mcopt.shade.tintSub: draw (clear, store) only the casters' rectangle, at the map's texel size, in its top-left corner
-					this.tintSubNow = ShadowConfig.tintSub() && nTint > 0 && (tintDev & 2) == 0;
+					// (v12: own terrain's casters are found on the GPU during the pass, so the map is drawn whole for them: no rectangle)
+					long ownTint = own != 0 ? this.ownTint(stack) : 0;
+					this.tintSubNow = ShadowConfig.tintSub() && nTint > 0 && (tintDev & 2) == 0 && ownTint == 0;
 					int[] area = this.tintSubNow && this.tintRect() ? this.tintSubMatrix(cascadeData, this.tintRes) : new int[2];
 					if ((tintDev & 2) == 0) {
 						ShadowNative.tintRenderEx(enc, this.shadow, cascadeData, CASCADE_BYTES, chunksHandle, chunks.slice().offset(), regionsHandle,
-							regions.slice().offset(), tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES, lite ? 1 : 0, this.timing ? 3 : -1, area[0], area[1]);
+							regions.slice().offset(), tintDraws, nTint, translucentAtlas, params, TINT_PARAM_BYTES, lite ? 1 : 0, this.timing ? 3 : -1, area[0], area[1],
+							ownTint);
+						if (ownTint != 0) this.ownTintEncoded();
 					}
-					this.publishTint(nTint > 0 && (tintDev & 1) == 0);
+					this.publishTint(nTint > 0 && (tintDev & 1) == 0, ownTint != 0 && (tintDev & 1) == 0);
 					mcopt.metal.shade.ShadeRender.resource(mcopt.metal.shade.weather.ShadeWeather.RES_SHADOW_TINT, lite ? this.tintLite : this.tintMap);
 				}
 				if (tracing) {

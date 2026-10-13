@@ -136,6 +136,7 @@ typedef struct {
 	int shade;
 	id<MTLLibrary> shadeLib[2];
 	int shadeKey, shadeHdrLib;
+	double shadeBuilt[2];  // pipelines built with shade_own_fs on the render thread and their milliseconds (mco_shade_built)
 } Own;
 
 static void ownErr(NSError *e, const char *what, char *err, int cap) {
@@ -278,8 +279,19 @@ void mco_shade(Own *w, int on) {
 	w->shade = on;
 }
 
+// mcopt-shade (the shadow pass, mcshadow.m mc_shadow_own_init): w's library, which holds own_shadow_vs (not retained).
+id<MTLLibrary> mco_library(Own *w) {
+	return w->library;
+}
+
 // mcopt-shade (ShadeTerrain.frame, every frame): the shaded fragment stage's libraries (not retained: Java keeps them for the
 // session) and their variant key; pipeline states are cached per key (ShadeLean: a lean variant changes the stage).
+// mcopt-shade: the shaded pipelines ownPipeline has built so far and the milliseconds they took (render thread), into out[2].
+void mco_shade_built(Own *w, double *out) {
+	out[0] = w->shadeBuilt[0];
+	out[1] = w->shadeBuilt[1];
+}
+
 void mco_shade_fs(Own *w, id<MTLLibrary> opaque, id<MTLLibrary> translucent, int key, int hdr) {
 	w->shadeLib[0] = opaque;
 	w->shadeLib[1] = translucent;
@@ -621,6 +633,7 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 			if ((enc->colors[c] ? enc->colors[c].pixelFormat : MTLPixelFormatInvalid) != k->colors[c]) same = 0;
 		if (same) return k->pso;
 	}
+	double shadeT0 = shadeFs >= 0 ? CFAbsoluteTimeGetCurrent() : 0;  // (mcopt-shade: mco_shade_built)
 	@autoreleasepool {
 		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
 		pd.label = ownLayerName(cutout);
@@ -693,6 +706,10 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 		k->cutout = cutout;
 		k->pso = pso;
 		k->shadeFs = shadeFs;
+		if (shadeFs >= 0) {
+			w->shadeBuilt[0] += 1;
+			w->shadeBuilt[1] += (CFAbsoluteTimeGetCurrent() - shadeT0) * 1000.0;
+		}
 		return pso;
 	}
 }

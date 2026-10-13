@@ -62,7 +62,44 @@ typedef struct {
 	int timeN[4], timeCount;
 	uint64_t timeLast[4];
 	int timeRan[4];  // per ring slot: bit k = pass kind k was encoded with that slot's samples
+	// mcopt 0.3 port (v12): mcopt's own terrain as casters (own/terrain.metal own_shadow_vs / own_shadow_cutout_fs, built from
+	// own's library by mc_shadow_own_init), drawn from OwnTerrain.shadowCull's lists with their indirect arguments
+	id<MTLRenderPipelineState> ownSolid, ownCutout;
+	id<MTLBuffer> ownIndices;  // {0, 1, 2, 2, 3, 0} + 4q for 64 quads (own's draw units)
+	// (v12) own terrain's coloured-shadow casters (mc_shadow_own_tint_init): own_shadow_tint_vs linked with shadow_tint_fs, the
+	// translucent units' cull (own_shadow_tcull_reset / own_shadow_tcull / own_shadow_tcull_finish), its list and indirect arguments,
+	// and OWN_TINT_RING slots of {x0 negated, y0 negated, x1, y1 (ordered-int bits), quads} the pass writes for ShadowPass to read
+	id<MTLRenderPipelineState> ownTint;
+	id<MTLComputePipelineState> ownTcullReset, ownTcull, ownTcullFinish;
+	id<MTLBuffer> ownTintList, ownTintArgs, ownTintRect;
+	uint32_t ownTintCap;
 } Shadow;
+
+#define OWN_TINT_RING 8
+
+// own/terrain.metal OwnShadowFrame
+typedef struct { int32_t camBlock[4]; float camOffset[4]; uint32_t listBase, flags, part, parts; } OwnShadowFrame;
+
+// A cascade's own-terrain draw (Java ShadowPass writes it): the buffers of OwnTerrain.shadowBuffers(slot), what to draw, and
+// own_shadow_vs' OwnShadowFrame (listBase and the plant bit set per list here).
+typedef struct {
+	id<MTLBuffer> arena, sections, recs, lists, args;
+	uint32_t listCap;
+	uint32_t solid;   // 1: draw the solid list
+	uint32_t cutout;  // 0 not drawn, 1 with the alpha test, 2 as opaque without the any-facing units (far cascade)
+	uint32_t pad;
+	OwnShadowFrame frame;
+} OwnShadowDraw;
+
+// (v12) the tint pass's own-terrain casters (Java ShadowPass writes it): the buffers of OwnTerrain.shadowBuffers(0), the rect
+// slot this pass writes (0 .. OWN_TINT_RING - 1), own/terrain.metal's OwnTcullFrame (the cascade's side planes, camera, view
+// distance, section count; cap filled here) and own_shadow_tint_vs' OwnShadowFrame (camera block and offset).
+typedef struct {
+	id<MTLBuffer> arena, sections, recs;
+	uint32_t slot, pad;
+	uint8_t cull[128];
+	OwnShadowFrame frame;
+} OwnShadowTint;
 
 #define SHADOW_TIME_RING 4
 #define SHADOW_TIME_KINDS 4  // 0 near cascade, 1 far cascade (whole), 2 far cascade (one spread part), 3 tint pass
@@ -170,6 +207,144 @@ static void entClear(EntDraw *list, int *count) {
 	*count = 0;
 }
 
+// own's library (mco_library): its shadow pipelines, compact / FAT as own was built. 0 = ready, 1 = failed (err filled).
+int mc_shadow_own_init(Shadow *s, id<MTLLibrary> lib, int compact, int fat, char *err, int errCap) {
+	if (!s || !lib) return 1;
+	if (s->ownSolid) return 0;
+	@autoreleasepool {
+		MTLFunctionConstantValues *cv = [[MTLFunctionConstantValues new] autorelease];
+		bool c = compact != 0, f = fat != 0;
+		[cv setConstantValue:&c type:MTLDataTypeBool atIndex:1];
+		[cv setConstantValue:&f type:MTLDataTypeBool atIndex:2];
+		NSError *e = nil;
+		id<MTLFunction> vs = [[lib newFunctionWithName:@"own_shadow_vs" constantValues:cv error:&e] autorelease];
+		id<MTLFunction> fs = vs ? [[lib newFunctionWithName:@"own_shadow_cutout_fs"] autorelease] : nil;
+		if (!vs || !fs) {
+			copyErr(e, "own shadow functions missing", err, errCap);
+			return 1;
+		}
+		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
+		pd.label = @"mcopt shadow own solid";
+		pd.vertexFunction = vs;
+		pd.depthAttachmentPixelFormat = s->format;
+		pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+		id<MTLRenderPipelineState> solid = [s->device newRenderPipelineStateWithDescriptor:pd error:&e];
+		pd.label = @"mcopt shadow own cutout";
+		pd.fragmentFunction = fs;
+		id<MTLRenderPipelineState> cutout = solid ? [s->device newRenderPipelineStateWithDescriptor:pd error:&e] : nil;
+		if (!cutout) {
+			[solid release];
+			copyErr(e, "own shadow pipelines failed", err, errCap);
+			return 1;
+		}
+		uint16_t idx[64 * 6];
+		for (int q = 0; q < 64; q++) {
+			uint16_t b = (uint16_t) (q * 4);
+			uint16_t k[6] = {b, (uint16_t) (b + 1), (uint16_t) (b + 2), (uint16_t) (b + 2), (uint16_t) (b + 3), b};
+			memcpy(idx + q * 6, k, sizeof k);
+		}
+		s->ownIndices = [s->device newBufferWithBytes:idx length:sizeof idx options:MTLResourceStorageModeShared];
+		s->ownSolid = solid;
+		s->ownCutout = cutout;
+	}
+	return 0;
+}
+
+// The own-terrain lists of d into the open cascade encoder r (the cutout's atlas bound at fragment texture 0 by the caller).
+static void ownDraw(Shadow *s, id<MTLRenderCommandEncoder> r, const OwnShadowDraw *d, id<MTLTexture> atlas) {
+	if (!d || !s->ownSolid || !d->arena || !d->args) return;
+	[r setVertexBuffer:d->arena offset:0 atIndex:0];
+	[r setVertexBuffer:d->sections offset:0 atIndex:1];
+	[r setVertexBuffer:d->recs offset:0 atIndex:2];
+	[r setVertexBuffer:d->lists offset:0 atIndex:5];
+	for (int layer = 0; layer < 2; layer++) {
+		uint32_t how = layer == 0 ? d->solid : d->cutout;
+		if (!how || (how == 1 && layer == 1 && !atlas)) continue;
+		OwnShadowFrame f = d->frame;
+		f.listBase = (uint32_t) layer * d->listCap;
+		if (layer == 1 && how == 2) f.flags |= 1u;
+		[r setVertexBytes:&f length:sizeof f atIndex:4];
+		[r setRenderPipelineState:layer == 1 && how == 1 ? s->ownCutout : s->ownSolid];
+		[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexType:MTLIndexTypeUInt16 indexBuffer:s->ownIndices indexBufferOffset:0
+			indirectBuffer:d->args indirectBufferOffset:(NSUInteger) layer * 20];
+	}
+}
+
+// (v12) own terrain as coloured-shadow casters: the pipelines from own's library (compact as own was built) and shadow.metal's
+// shadow_tint_fs (after mc_shadow_tint_init), a list of cap units. 0 = ready, 1 = failed (err filled).
+int mc_shadow_own_tint_init(Shadow *s, id<MTLLibrary> lib, int compact, int cap, char *err, int errCap) {
+	if (!s || !lib || !s->tint) return 1;
+	if (s->ownTint) return 0;
+	@autoreleasepool {
+		MTLFunctionConstantValues *cv = [[MTLFunctionConstantValues new] autorelease];
+		bool c = compact != 0, f = false;
+		[cv setConstantValue:&c type:MTLDataTypeBool atIndex:1];
+		[cv setConstantValue:&f type:MTLDataTypeBool atIndex:2];
+		NSError *e = nil;
+		id<MTLFunction> vs = [[lib newFunctionWithName:@"own_shadow_tint_vs" constantValues:cv error:&e] autorelease];
+		id<MTLFunction> fs = [[s->library newFunctionWithName:@"shadow_tint_fs"] autorelease];
+		id<MTLFunction> k0 = [[lib newFunctionWithName:@"own_shadow_tcull_reset"] autorelease];
+		id<MTLFunction> k1 = [[lib newFunctionWithName:@"own_shadow_tcull"] autorelease];
+		id<MTLFunction> k2 = [[lib newFunctionWithName:@"own_shadow_tcull_finish"] autorelease];
+		if (!vs || !fs || !k0 || !k1 || !k2) {
+			copyErr(e, "own tint functions missing", err, errCap);
+			return 1;
+		}
+		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
+		pd.label = @"mcopt shadow tint own";
+		pd.vertexFunction = vs;
+		pd.fragmentFunction = fs;
+		pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+		MTLRenderPipelineColorAttachmentDescriptor *ca = pd.colorAttachments[0];  // (as mc_shadow_tint_init's)
+		ca.pixelFormat = MTLPixelFormatRGBA16Float;
+		ca.blendingEnabled = YES;
+		ca.rgbBlendOperation = MTLBlendOperationMin;
+		ca.alphaBlendOperation = MTLBlendOperationMax;
+		ca.sourceRGBBlendFactor = MTLBlendFactorOne;
+		ca.destinationRGBBlendFactor = MTLBlendFactorOne;
+		ca.sourceAlphaBlendFactor = MTLBlendFactorOne;
+		ca.destinationAlphaBlendFactor = MTLBlendFactorOne;
+		id<MTLRenderPipelineState> pso = [s->device newRenderPipelineStateWithDescriptor:pd error:&e];
+		id<MTLComputePipelineState> c0 = pso ? [s->device newComputePipelineStateWithFunction:k0 error:&e] : nil;
+		id<MTLComputePipelineState> c1 = c0 ? [s->device newComputePipelineStateWithFunction:k1 error:&e] : nil;
+		id<MTLComputePipelineState> c2 = c1 ? [s->device newComputePipelineStateWithFunction:k2 error:&e] : nil;
+		uint32_t n = cap > 0 ? (uint32_t) cap : 1;
+		id<MTLBuffer> list = c2 ? [s->device newBufferWithLength:(NSUInteger) n * 4 options:MTLResourceStorageModePrivate] : nil;
+		id<MTLBuffer> args = list ? [s->device newBufferWithLength:32 options:MTLResourceStorageModePrivate] : nil;
+		id<MTLBuffer> rect = args ? [s->device newBufferWithLength:OWN_TINT_RING * 32 options:MTLResourceStorageModeShared] : nil;
+		if (!rect) {
+			[pso release];
+			[c0 release];
+			[c1 release];
+			[c2 release];
+			[list release];
+			[args release];
+			copyErr(e, "own tint pipelines or buffers failed", err, errCap);
+			return 1;
+		}
+		memset(rect.contents, 0, OWN_TINT_RING * 32);
+		list.label = @"mcopt shadow tint own list";
+		s->ownTint = pso;
+		s->ownTcullReset = c0;
+		s->ownTcull = c1;
+		s->ownTcullFinish = c2;
+		s->ownTintList = list;
+		s->ownTintArgs = args;
+		s->ownTintRect = rect;
+		s->ownTintCap = n;
+	}
+	return 0;
+}
+
+// (v12) rect slot `slot` as the tint pass left it (out: 5 ints, see Shadow.ownTintRect); zeros before mc_shadow_own_tint_init.
+void mc_shadow_own_tint_rect(Shadow *s, int slot, int32_t *out) {
+	if (!s || !s->ownTintRect || slot < 0 || slot >= OWN_TINT_RING) {
+		memset(out, 0, 5 * sizeof(int32_t));
+		return;
+	}
+	memcpy(out, (const uint8_t *) s->ownTintRect.contents + slot * 32, 5 * sizeof(int32_t));
+}
+
 void mc_shadow_free(Shadow *s) {
 	if (!s) return;
 	entClear(s->pending, &s->pendingCount);
@@ -192,6 +367,16 @@ void mc_shadow_free(Shadow *s) {
 	[s->back release];
 	[s->times release];
 	[s->tintLite release];
+	[s->ownSolid release];
+	[s->ownCutout release];
+	[s->ownIndices release];
+	[s->ownTint release];
+	[s->ownTcullReset release];
+	[s->ownTcull release];
+	[s->ownTcullFinish release];
+	[s->ownTintList release];
+	[s->ownTintArgs release];
+	[s->ownTintRect release];
 	free(s);
 }
 
@@ -208,22 +393,22 @@ static void timerAttach(Shadow *s, MTLRenderPassDescriptor *rp, int kind);
 
 int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp,
-	int target, int load, int timerKind);
+	int target, int load, int timerKind, const OwnShadowDraw *own);
 
 int mc_shadow_render(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp) {
 	return mc_shadow_render_ex(enc, s, layer, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, slopeScale, clamp,
-		0, 0, -1);
+		0, 0, -1, NULL);
 }
 
 /*
  * mc_shadow_render with M3.3's choices: target 0 = the map receivers bind, 1 = the back map (mc_shadow_spread_init; the far
  * cascade drawn in parts); load 1 keeps what the slice holds (the parts drawn before) instead of clearing it; timerKind
- * >= 0 times the pass (mc_shadow_times_frame), -1 not.
+ * >= 0 times the pass (mc_shadow_times_frame), -1 not. own (v12, NULL: none): mcopt's own terrain's lists for this cascade.
  */
 int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, float slopeScale, float clamp,
-	int target, int load, int timerKind) {
+	int target, int load, int timerKind, const OwnShadowDraw *own) {
 	id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
 	int profiled = -1;
 	id<MTLTexture> map = target == 1 && s->back ? s->back : s->map;
@@ -287,6 +472,7 @@ int mc_shadow_render_ex(Enc *enc, Shadow *s, int layer, const void *cascade, int
 			[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:QUAD_INDICES indexType:MTLIndexTypeUInt16 indexBuffer:ib
 				indexBufferOffset:0 instanceCount:count baseVertex:0 baseInstance:first];
 		}
+		ownDraw(s, r, own, atlas);  // (v12: mcopt's own terrain)
 		// M3: last frame's entities into the near cascade (shifted onto this frame's camera)
 		if (layer == 0 && s->readyCount > 0 && s->entity) {
 			[r setRenderPipelineState:s->entity];
@@ -663,7 +849,7 @@ id<MTLTexture> mc_shadow_tint_lite_init(Shadow *s, int resolution) {
 
 int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes,
-	int lite, int timerKind, int areaW, int areaH);
+	int lite, int timerKind, int areaW, int areaH, const OwnShadowTint *own);
 
 /*
  * The tint pass for the near cascade: clears the map to (1, 1, 1, 0) (no tint, no caster) and draws the translucent lists
@@ -673,21 +859,49 @@ int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int casca
 int mc_shadow_tint_render(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes) {
 	return mc_shadow_tint_render_ex(enc, s, cascade, cascadeBytes, chunks, chunksOffset, regions, regionsOffset, draws, drawCount, atlas, params, paramBytes, 0, -1,
-		0, 0);
+		0, 0, NULL);
 }
 
 // mc_shadow_tint_render into the lite map (lite 1, after mc_shadow_tint_lite_init) or the normal one, timed as timerKind (-1: no).
 // areaW x areaH > 0 (M3.3 mcopt.shade.tintSub): only that top-left part of the map is cleared, drawn and stored (the casters'
 // rectangle; cascade's matrix maps it onto the area), the rest keeps whatever it held (receivers never read it).
+// own (v12, NULL: none; after mc_shadow_own_tint_init): own terrain's translucent units too, culled here on the GPU first (so the
+// pass runs every time: what they cover is known only after it, in the rect slot it writes).
 int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int cascadeBytes, id<MTLBuffer> chunks, uint64_t chunksOffset,
 	id<MTLBuffer> regions, uint64_t regionsOffset, const uint8_t *draws, int drawCount, id<MTLTexture> atlas, const void *params, int paramBytes,
-	int lite, int timerKind, int areaW, int areaH) {
+	int lite, int timerKind, int areaW, int areaH, const OwnShadowTint *own) {
 	if (!s->tint || !s->tintMap) return 0;
 	id<MTLTexture> map = lite && s->tintLite ? s->tintLite : s->tintMap;
 	bool *dirty = map == s->tintLite ? &s->tintLiteDirty : &s->tintDirty;
-	if (drawCount == 0 && !*dirty) return 0;
+	bool ownOn = own && s->ownTint && own->arena && own->sections && own->recs && atlas && own->slot < OWN_TINT_RING;
+	if (drawCount == 0 && !*dirty && !ownOn) return 0;
 	id<MTLCommandBuffer> cmd = mc_frame_cmd(enc);
 	@autoreleasepool {
+		if (ownOn) {
+			uint8_t cull[128];
+			memcpy(cull, own->cull, sizeof cull);
+			memcpy(cull + 120, &s->ownTintCap, 4);
+			uint32_t sections;
+			memcpy(&sections, cull + 116, 4);
+			id<MTLComputeCommandEncoder> c = [cmd computeCommandEncoder];
+			c.label = @"mcopt shadow tint cull (own)";
+			[c setBytes:cull length:sizeof cull atIndex:0];
+			[c setBuffer:own->sections offset:0 atIndex:1];
+			[c setBuffer:own->recs offset:0 atIndex:2];
+			[c setBuffer:s->ownTintArgs offset:0 atIndex:3];
+			[c setBuffer:s->ownTintList offset:0 atIndex:4];
+			[c setBuffer:s->ownTintRect offset:own->slot * 32 atIndex:5];
+			[c setComputePipelineState:s->ownTcullReset];
+			[c dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+			if (sections > 0) {
+				[c setComputePipelineState:s->ownTcull];
+				NSUInteger w = s->ownTcull.threadExecutionWidth;
+				[c dispatchThreads:MTLSizeMake(sections, 1, 1) threadsPerThreadgroup:MTLSizeMake(w, 1, 1)];
+			}
+			[c setComputePipelineState:s->ownTcullFinish];
+			[c dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+			[c endEncoding];
+		}
 		MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
 		rp.colorAttachments[0].texture = map;
 		rp.colorAttachments[0].loadAction = MTLLoadActionClear;
@@ -732,8 +946,28 @@ int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int casca
 					indexBufferOffset:0 instanceCount:count baseVertex:0 baseInstance:first];
 			}
 		}
+		if (ownOn) {
+			OwnShadowFrame f = own->frame;
+			f.listBase = 0;
+			[r setRenderPipelineState:s->ownTint];
+			[r setCullMode:MTLCullModeNone];
+			[r setDepthClipMode:MTLDepthClipModeClamp];
+			[r setVertexBuffer:own->arena offset:0 atIndex:0];
+			[r setVertexBuffer:own->sections offset:0 atIndex:1];
+			[r setVertexBuffer:own->recs offset:0 atIndex:2];
+			[r setVertexBytes:cascade length:cascadeBytes atIndex:3];
+			[r setVertexBytes:&f length:sizeof f atIndex:4];
+			[r setVertexBuffer:s->ownTintList offset:0 atIndex:5];
+			[r setVertexBytes:params length:paramBytes atIndex:6];
+			[r setVertexBuffer:s->ownTintRect offset:own->slot * 32 atIndex:7];
+			[r setFragmentTexture:atlas atIndex:0];
+			[r setFragmentSamplerState:s->atlasSampler atIndex:0];
+			[r setFragmentBytes:params length:paramBytes atIndex:0];
+			[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexType:MTLIndexTypeUInt16 indexBuffer:s->ownIndices indexBufferOffset:0
+				indirectBuffer:s->ownTintArgs indirectBufferOffset:0];
+		}
 		[r endEncoding];
 	}
-	*dirty = drawCount > 0;
+	*dirty = drawCount > 0 || ownOn;
 	return 1;
 }

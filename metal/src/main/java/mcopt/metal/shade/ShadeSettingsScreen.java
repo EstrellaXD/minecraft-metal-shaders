@@ -126,7 +126,11 @@ public final class ShadeSettingsScreen extends OptionsSubScreen {
 			slider("Olas", "Waves", "La altura de las olas.", "How high the waves are.", 0, 200, ShadeSettings.wavesPercent(), ShadeSettingsScreen::pct,
 				ShadeSettings::setWaves),
 			slider("Reflejos", "Reflections", "Qué tanto refleja el agua.", "How strongly the water reflects.", 0, 200, ShadeSettings.reflectPercent(),
-				ShadeSettingsScreen::pct, ShadeSettings::setReflect));
+				ShadeSettingsScreen::pct, ShadeSettings::setReflect),
+			choice("Reflejo del paisaje", "Scene reflections",
+				"Sí: el agua refleja montañas, árboles y nubes que están en pantalla. Solo cielo: más FPS frente a lagos y mares.",
+				"On: the water mirrors hills, trees and clouds on screen. Sky only: more FPS around lakes and seas.", 2, ShadeSettings.ssr() ? 0 : 1,
+				v -> v == 0 ? t("Sí", "On") : t("Solo cielo", "Sky only"), v -> ShadeSettings.setSsr(v == 0)));
 	}
 
 	@Override

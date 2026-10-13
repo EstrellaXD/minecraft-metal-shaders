@@ -44,13 +44,14 @@ import java.util.Map;
  * <li>{@code mcopt.shade.water.color}: natural (the biome's), blue, turquoise, green, clear.</li>
  * <li>{@code mcopt.shade.water.clarity} (100): percent, 25..300 (how far the eye sees into water).</li>
  * <li>{@code mcopt.shade.waterWaves}, {@code mcopt.shade.waterReflect} (1): wave height and reflection strength, 0..2.</li>
+ * <li>{@code mcopt.shade.user.ssr} (true): screen-space reflections on the water (false: sky and sun only, faster).</li>
  * </ul>
  */
 public final class ShadeSettings {
 	public static final String PRESET = "mcopt.shade.preset", LOOK = "mcopt.shade.look", EV = "mcopt.shade.ev",
 		SATURATION = "mcopt.shade.user.saturation", BLOOM = "mcopt.shade.user.bloom", GODRAYS = "mcopt.shade.user.godrays",
 		HAZE = "mcopt.shade.user.haze", CLOUDS = "mcopt.shade.clouds.mode", AURORA = "mcopt.shade.aurora",
-		WATER_COLOR = "mcopt.shade.water.color", WATER_CLARITY = "mcopt.shade.water.clarity", WAVES = "mcopt.shade.waterWaves",
+		SSR = "mcopt.shade.user.ssr", WATER_COLOR = "mcopt.shade.water.color", WATER_CLARITY = "mcopt.shade.water.clarity", WAVES = "mcopt.shade.waterWaves",
 		REFLECT = "mcopt.shade.waterReflect";
 
 	public static final String[] PRESETS = {"performance", "balanced", "quality", "ultra"};
@@ -77,6 +78,7 @@ public final class ShadeSettings {
 	private static volatile int aurora = indexOf(AURORAS, System.getProperty(AURORA, "auto"), 2);
 	private static volatile int waterColor = indexOf(WATER_COLORS, System.getProperty(WATER_COLOR, "natural"), 0);
 	private static volatile float waves = clamp(floatProp(WAVES, 1f), 0f, 2f), reflect = clamp(floatProp(REFLECT, 1f), 0f, 2f);
+	private static volatile boolean ssr = !"false".equalsIgnoreCase(System.getProperty(SSR, "true").trim());
 	/** The preset chosen in the screen (Shade.TIER is the running one until the next start). */
 	private static volatile int presetChoice = Shade.TIER;
 
@@ -104,6 +106,7 @@ public final class ShadeSettings {
 		waterColor = indexOf(WATER_COLORS, System.getProperty(WATER_COLOR, "natural"), 0);
 		waves = clamp(floatProp(WAVES, 1f), 0f, 2f);
 		reflect = clamp(floatProp(REFLECT, 1f), 0f, 2f);
+		ssr = !"false".equalsIgnoreCase(System.getProperty(SSR, "true").trim());
 	}
 
 	// ---- the values, read every frame -----------------------------------------------------------------------------------
@@ -170,6 +173,11 @@ public final class ShadeSettings {
 		return reflect;
 	}
 
+	/** Screen-space reflections on the water (false: the sky and the sun only; ~1.2 ms less looking over a lake on an M4). */
+	public static boolean ssr() {
+		return ssr;
+	}
+
 	// ---- the screen's side ---------------------------------------------------------------------------------------------
 	public static int presetChoice() {
 		return presetChoice;
@@ -221,6 +229,11 @@ public final class ShadeSettings {
 
 	public static int reflectPercent() {
 		return Math.round(reflect * 100f);
+	}
+
+	public static void setSsr(boolean on) {
+		ssr = on;
+		changed(SSR, Boolean.toString(on));
 	}
 
 	public static void setPreset(int i) {
@@ -302,6 +315,7 @@ public final class ShadeSettings {
 		setClarity(100);
 		setWaves(100);
 		setReflect(100);
+		setSsr(true);
 	}
 
 	private static synchronized void changed(String key, String value) {

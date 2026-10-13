@@ -58,7 +58,7 @@ struct ShadeWaterParams {
 	float4 flow;   // the same for minecraft:block/water_flow
 	float4 state;  // x 1 when the copies hold this frame's opaque scene, y water surface height above the eye (under water),
 	               // z wetness 0..1, w 1 when texture(20) holds this frame's baked waves
-	float4 tune;   // x wave strength (mcopt.shade.waterWaves), y SSR max distance (blocks), z reflection strength, w caustics 0/1
+	float4 tune;   // x wave strength (mcopt.shade.waterWaves), y SSR max distance (blocks; (1.1) 0 = screen reflections off), z reflection strength, w caustics 0/1
 };
 
 constexpr sampler shadeWaterLinear(filter::linear, address::clamp_to_edge, coord::normalized);
@@ -1144,7 +1144,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float4 ssrHit = float4(0.0);
 	float ssrW = 0.0;
 	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
-	if (fq > 0.022 && !SHADE_WDEV_IS(f, SHADE_WDEV_NO_SSR)) {
+	if (fq > 0.022 && wp.tune.y > 0.0 && !SHADE_WDEV_IS(f, SHADE_WDEV_NO_SSR)) { // (1.1) tune.y 0: the player turned screen reflections off
 		ssrHit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
 		ssrW = ssrHit.a * smoothstep(0.022, 0.03, fq);
 	}
@@ -1247,7 +1247,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// looking steeply down (within ~45 degrees of straight down) the surface reflects 2% and what it would mirror is mostly
 	// behind the camera: no march there, faded in up to ~50 degrees (quad-uniform: SSR's lanes work together)
 	float fq = shadeQuadMax(shadeWaterFresnel(cosV));
-	if (fq > 0.022 && !SHADE_WDEV_IS(f, SHADE_WDEV_NO_SSR)) {
+	if (fq > 0.022 && wp.tune.y > 0.0 && !SHADE_WDEV_IS(f, SHADE_WDEV_NO_SSR)) { // (1.1) tune.y 0: the player turned screen reflections off
 		float4 hit = shadeSsr(w.p + n * 0.02, rr, w.pixel, wp.tune.y, w.exposure, w.prevExposure, f, w.look, scene, depth, prev, hz);
 		hitWeight = hit.a * smoothstep(0.022, 0.03, fq);
 		refl = mix(refl, hit.rgb, hitWeight);
@@ -1341,7 +1341,7 @@ static float3 shadeWaterBelow(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	// the water below, mirrored
 	float3 below = w.fog * (0.65 + 0.5 * saturate(height * 7.0 + 0.3)); // the mirror ripples
 #ifdef SHADE_SSR
-	if (shadeQuadMax(fres) > 0.05) { // quad-uniform (SSR's lanes work together)
+	if (shadeQuadMax(fres) > 0.05 && wp.tune.y > 0.0) { // quad-uniform (SSR's lanes work together)
 		float4 hit = shadeSsr(w.p + n * 0.02, reflect(v, n), w.pixel, min(wp.tune.y, 48.0), w.exposure, 0.0, f, w.look, scene, depth, prev, hz);
 		below = mix(below, hit.rgb, hit.a);
 	}
@@ -1377,7 +1377,7 @@ static float4 shadeGlossy(float3 radiance, float alpha, float3 p, float3 n, floa
 	float3 refl = shadeWaterSkyRefl(float3(r.x, abs(r.y), r.z), float3(r.x, abs(r.y), r.z), p, prevExposure, f, L, R, lut, lutS, depth, prev) * open;
 	float hitWeight = 0.0;
 #ifdef SHADE_SSR
-	if (wp.state.x > 0.5 && shadeQuadMax(fres) > 0.03) { // quad-uniform (SSR's lanes work together)
+	if (wp.state.x > 0.5 && wp.tune.y > 0.0 && shadeQuadMax(fres) > 0.03) { // quad-uniform (SSR's lanes work together)
 		float4 hit = shadeSsr(p + n * 0.02, r, pixel, min(wp.tune.y, 128.0), exposure, prevExposure, f, L, scene, depth, prev, hz);
 		hitWeight = hit.a;
 		refl = mix(refl, hit.rgb, hit.a);

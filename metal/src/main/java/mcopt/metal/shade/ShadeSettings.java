@@ -36,7 +36,8 @@ import java.util.Map;
  * <li>{@code mcopt.shade.preset}: performance, balanced, quality, ultra (at the next start).</li>
  * <li>{@code mcopt.shade.look}: epic, storybook, natural.</li>
  * <li>{@code mcopt.shade.ev} (0): brightness in EV, -2..2.</li>
- * <li>{@code mcopt.shade.user.saturation}, {@code .bloom}, {@code .godrays}, {@code .haze} (100): percent, 0..200.</li>
+ * <li>{@code mcopt.shade.user.saturation} (100): percent, 0..150 (2x turned a sunset neon orange, v11-s1).</li>
+ * <li>{@code mcopt.shade.user.bloom}, {@code .godrays}, {@code .haze} (100): percent, 0..200.</li>
  * <li>{@code mcopt.shade.clouds.mode}: volumetric, blocky (12-block cells like vanilla's, ray-traced and lit), vanilla (the
  * game's own, lit by the shaders), off. Default: volumetric, or blocky with mcopt.shade.clouds.style=blocky or the storybook
  * look at startup.</li>
@@ -70,7 +71,7 @@ public final class ShadeSettings {
 
 	private static volatile int look = indexOf(LOOKS, System.getProperty(LOOK, "epic"), 0);
 	private static volatile float ev = clamp(floatProp(EV, 0f), -2f, 2f);
-	private static volatile int saturation = percent(SATURATION, 100, 0, 200), bloom = percent(BLOOM, 100, 0, 200),
+	private static volatile int saturation = percent(SATURATION, 100, 0, 150), bloom = percent(BLOOM, 100, 0, 200),
 		godrays = percent(GODRAYS, 100, 0, 200), haze = percent(HAZE, 100, 0, 200), clarity = percent(WATER_CLARITY, 100, 25, 300);
 	/** The clouds' default (no mcopt.shade.clouds.mode): blocky with mcopt.shade.clouds.style=blocky or the storybook look at startup. */
 	private static final String DEFAULT_CLOUDS = defaultClouds();
@@ -96,7 +97,7 @@ public final class ShadeSettings {
 	public static void sync() {
 		look = indexOf(LOOKS, System.getProperty(LOOK, "epic"), 0);
 		ev = clamp(floatProp(EV, 0f), -2f, 2f);
-		saturation = percent(SATURATION, 100, 0, 200);
+		saturation = percent(SATURATION, 100, 0, 150);
 		bloom = percent(BLOOM, 100, 0, 200);
 		godrays = percent(GODRAYS, 100, 0, 200);
 		haze = percent(HAZE, 100, 0, 200);

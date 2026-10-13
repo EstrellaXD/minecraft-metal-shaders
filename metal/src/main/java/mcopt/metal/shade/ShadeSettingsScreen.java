@@ -62,7 +62,7 @@ public final class ShadeSettingsScreen extends OptionsSubScreen {
 		List<Integer> values = new java.util.ArrayList<>();
 		for (int i = 0; i < count; i++) values.add(i);
 		return new OptionInstance<>(caption(es, en), tipEs == null ? OptionInstance.noTooltip() : OptionInstance.cachedConstantTooltip(Component.literal(t(tipEs, tipEn))),
-			(cap, v) -> Options.genericValueLabel(cap, Component.literal(label.apply(v))), new OptionInstance.Enum<>(values, Codec.INT), current, v -> set.accept(v));
+			(cap, v) -> Component.literal(label.apply(v)), new OptionInstance.Enum<>(values, Codec.INT), current, v -> set.accept(v)); // (the button adds "caption: ")
 	}
 
 	/** A slider over min..max (applied while dragging), shown through label. */
@@ -94,7 +94,7 @@ public final class ShadeSettingsScreen extends OptionsSubScreen {
 		this.list.addSmall(
 			slider("Brillo", "Brightness", "Exposición de la imagen (0 = como viene).", "Exposure of the image (0 = default).", -20, 20, ShadeSettings.evTenths(),
 				v -> (v > 0 ? "+" : "") + String.format(java.util.Locale.ROOT, "%.1f", v / 10f), ShadeSettings::setEvTenths),
-			slider("Saturación", "Saturation", "Intensidad de los colores.", "How colourful the image is.", 0, 200, ShadeSettings.saturationPercent(),
+			slider("Saturación", "Saturation", "Intensidad de los colores.", "How colourful the image is.", 0, 150, ShadeSettings.saturationPercent(),
 				ShadeSettingsScreen::pct, ShadeSettings::setSaturation),
 			slider("Resplandor", "Bloom", "El brillo que se esparce alrededor del sol, las antorchas y la lava.", "The glow around the sun, torches and lava.", 0, 200,
 				ShadeSettings.bloomPercent(), ShadeSettingsScreen::pct, ShadeSettings::setBloom),

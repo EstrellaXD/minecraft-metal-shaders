@@ -3596,9 +3596,12 @@ static bool ownTintWater(float2 uv, constant OwnTintParams &tp) {
 }
 
 // (water left out, tp.mode.x: units of water quads only aren't listed: most of a lake's, which the draw would only drop)
+// One simdgroup per section (dispatched as sectionCount x 32 threads): the lanes test a unit's quads together. One thread per
+// section walking every quad of every unit took ~1 ms a frame over a lake (all-water units never stop early).
 kernel void own_shadow_tcull(constant OwnTcullFrame &f [[buffer(0)]], device const Section *sections [[buffer(1)]], device const Rec *recs [[buffer(2)]],
 	device atomic_uint *args [[buffer(3)]], device uint *list [[buffer(4)]], device const void *arenaRaw [[buffer(6)]], constant OwnTintParams &tp [[buffer(7)]],
-	uint i [[thread_position_in_grid]]) {
+	uint tid [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+	uint i = tid >> 5;  // (the same for the whole simdgroup: every exit below is uniform)
 	if (i >= f.sectionCount) return;
 	Section s = sections[i];
 	if (s.recCount == 0) return;
@@ -3618,10 +3621,11 @@ kernel void own_shadow_tcull(constant OwnTcullFrame &f [[buffer(0)]], device con
 		if (((meta >> 9) & 3) != 2 || (meta & (1u << 18)) != 0) continue;  // (one version: the order-indexed units, not tsorted's copies)
 		if (tp.mode.x > 0.5) {
 			Rec rec = recs[r];
-			bool any = false;
-			for (uint q = 0; q <= (meta & 63) && !any; q++) any = !ownTintWater(ownTintUv(arenaRaw, ownTintVertex(arenaRaw, rec, q)), tp);
-			if (!any) continue;
+			bool mine = false;
+			for (uint q = lane; q <= (meta & 63); q += 32) mine = mine || !ownTintWater(ownTintUv(arenaRaw, ownTintVertex(arenaRaw, rec, q)), tp);
+			if (!simd_any(mine)) continue;
 		}
+		if (lane != 0) continue;
 		uint at = atomic_fetch_add_explicit(&args[1], 1, memory_order_relaxed);
 		if (at < f.cap) list[at] = r;
 	}

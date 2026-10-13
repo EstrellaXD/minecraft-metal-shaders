@@ -900,9 +900,9 @@ int mc_shadow_tint_render_ex(Enc *enc, Shadow *s, const void *cascade, int casca
 			[c setComputePipelineState:s->ownTcullReset];
 			[c dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
 			if (sections > 0) {
+				// a simdgroup (32 threads) per section: own_shadow_tcull's lanes test a unit's quads together
 				[c setComputePipelineState:s->ownTcull];
-				NSUInteger w = s->ownTcull.threadExecutionWidth;
-				[c dispatchThreads:MTLSizeMake(sections, 1, 1) threadsPerThreadgroup:MTLSizeMake(w, 1, 1)];
+				[c dispatchThreads:MTLSizeMake((NSUInteger) sections * 32, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
 			}
 			[c setComputePipelineState:s->ownTcullFinish];
 			[c dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];

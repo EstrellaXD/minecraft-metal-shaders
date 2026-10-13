@@ -109,6 +109,12 @@ static float4 soSampleRgss(texture2d<float> source, sampler s, float2 uv, float2
 		float mipExact = max(0.0, log2(sqrt(minDerivative * maxDerivative) / minPixelSize));
 		float mipLow = floor(mipExact);
 		const float2 offsets[4] = {float2(0.125, 0.375), float2(-0.125, -0.375), float2(0.375, -0.125), float2(-0.375, 0.125)};
+#ifdef SHADE_RGSS_ONE
+		// (v12, ShadeMsl: on unless -Dmcopt.shade.rgssOne=false) 4 taps at the nearest whole mip instead of 8 across two: as 1.1
+		float4 rgss = float4(0.0);
+		for (int i = 0; i < 4; ++i) rgss += source.sample(s, uv + offsets[i] * pixelSize, level(floor(mipExact + 0.5)));
+		rgss *= 0.25;
+#else
 		float4 low = float4(0.0), high = float4(0.0);
 		for (int i = 0; i < 4; ++i) {
 			float2 at = uv + offsets[i] * pixelSize;
@@ -116,6 +122,7 @@ static float4 soSampleRgss(texture2d<float> source, sampler s, float2 uv, float2
 			high += source.sample(s, at, level(mipLow + 1.0));
 		}
 		float4 rgss = mix(low, high, fract(mipExact)) * 0.25;
+#endif
 		color = blend >= 1.0 ? rgss : mix(color, rgss, blend);
 	}
 	return color;

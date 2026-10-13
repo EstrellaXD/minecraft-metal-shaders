@@ -93,7 +93,10 @@ public final class ShadeMsl {
 		// fixed pattern keeps them still
 		+ (mcopt.metal.shade.taa.TaaConfig.ENABLED && Boolean.getBoolean("mcopt.shade.pcssNoise") ? "#define SHADE_PCSS_TAA 1\n" : "")
 		// (FT2.8, audit idx 82) the terrain's RGSS taps only where they count (mcopt.shade.rgssGate; false = Sodium's 5 taps everywhere)
-		+ (Boolean.parseBoolean(System.getProperty("mcopt.shade.rgssGate", "true")) ? "#define SHADE_RGSS_GATE 1\n" : "");
+		+ (Boolean.parseBoolean(System.getProperty("mcopt.shade.rgssGate", "true")) ? "#define SHADE_RGSS_GATE 1\n" : "")
+		// (v12) own terrain's RGSS as 1.1's: 4 taps at the nearest whole mip, not own's 8 across two (lake spin -0.3 ms, flight -0.5 ms;
+		// shots within 0.7-1.6 of 255); -Dmcopt.shade.rgssOne=false = own's two-level blend
+		+ (!"false".equals(System.getProperty("mcopt.shade.rgssOne")) ? "#define SHADE_RGSS_ONE 1\n" : "");
 
 	public static String prelude() {
 		if (prelude == null) {

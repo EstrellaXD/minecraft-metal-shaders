@@ -785,9 +785,12 @@ static inline float shadeGgxSpec(float3 n, float3 v, float3 l, float alpha) {
 // Absorption (1/block) from the biome's water colour (the vertex tint, linear): pure water's red-first absorption plus the
 // tint's own darkness per channel (vanilla's default blue gives clear teal shallows and deep blue; swamp water turns green
 // and murky; warm oceans stay clear cyan).
-static inline float3 shadeWaterSigmaA(half3 tint) {
-	float3 t = max(float3(shadeToLinear(tint)), float3(0.004));
+static inline float3 shadeWaterSigmaALin(float3 tintLinear) {
+	float3 t = max(tintLinear, float3(0.004));
 	return float3(0.26, 0.07, 0.035) + 0.09 * -log(t);
+}
+static inline float3 shadeWaterSigmaA(half3 tint) {
+	return shadeWaterSigmaALin(float3(shadeToLinear(tint)));
 }
 #define SHADE_WATER_SIGMA_S 0.022 // scattering (1/block), grey: the blue of deep water comes from absorbing red and green
 
@@ -1172,6 +1175,14 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float lView = hasFloor ? max(wR - wSurf, 0.0) * dist / max(wSurf, 1e-3) : 1e4;
 	float dy = top ? lView * saturate(-v.y) : lView * 0.5;
 	float3 sigmaA = shadeWaterSigmaA(w.tint);
+	if (w.look != nullptr) {
+		// (1.1) the player's water colour and clarity (ShadeSettings): ShadeLook.vl = the colour as a biome water colour would be
+		// (linear) and its weight (0 = the biome's own); grade0.w divides the absorption (1 = as released)
+		float4 uw = w.look->vl;
+		if (uw.w > 0.0) sigmaA = mix(sigmaA, shadeWaterSigmaALin(uw.rgb), uw.w);
+		float clarity = w.look->grade0.w;
+		if (clarity > 0.0) sigmaA /= clarity;
+	}
 	float3 sigmaT = sigmaA + SHADE_WATER_SIGMA_S;
 	float3 bottom = shadeWaterSceneRadiance(scene.sample(shadeWaterLinear, uvR * size / tex).rgb, w.exposure);
 #ifdef SHADE_CAUSTICS

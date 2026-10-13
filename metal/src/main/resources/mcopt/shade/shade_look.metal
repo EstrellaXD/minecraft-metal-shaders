@@ -31,7 +31,7 @@ struct ShadeLook {
 	float4 sunArt;     // 272  rgb art-graded direct light (= ShadeFrame.sunColor after the art layer), w sun/moon crossfade 0..1
 	float4 ambientArt; // 288  rgb ambient tint applied to the sky light, w ground-bounce strength
 	float4 bounce;     // 304  rgb ground albedo for bounce light, w cave minimum light
-	float4 grade0;     // 320  x EV bias, y saturation, z vibrance, w scene contrast (unused)
+	float4 grade0;     // 320  x EV bias, y saturation, z vibrance, w (1.1) the water's clarity (its absorption divided by it; was the unused scene contrast)
 	float4 grade1;     // 336  rgb white-balance gain, w Purkinje strength
 	float4 grade2;     // 352  rgb lift (display), w black floor phi
 	float4 grade3;     // 368  rgb gain (display), w inset s_in
@@ -41,7 +41,7 @@ struct ShadeLook {
 	float4 fogR;       // 432  rgb haze extinction sigma (1/block, at the base height), w scale height (blocks)
 	float4 fogM;       // 448  x mist sigma (1/block), y mist scale height, z mist base y (absolute), w mist albedo
 	float4 fogMisc;    // 464  x haze base y (absolute), y border fog start fraction, z border fog radius (blocks, 0 = off), w evening glow (strength x its bell around the sun's elevation, made by ShadeLook)
-	float4 vl;         // 480  reserved for the volumetric light module: x strength, y max distance, z HG g, w steps
+	float4 vl;         // 480  (1.1) the water colour the player chose (ShadeSettings): rgb linear, as a biome water colour, w its weight (0 = the biome's own); was reserved for the volumetric light module, read by no shader
 	float4 wet;        // 496  (M3 weather) x wetness, y puddles, z snow cover, w rain intensity (smoothed), all 0..1
 	float4 wind;       // 512  (M3 weather) xy wind direction (unit, world xz), z rain slant (blocks per block of fall), w snowfall at the camera 0..1
 	float4 clouds0;    // 528  M3 clouds: x cumulus base y, y top y (relative to the camera), z cloud shadow strength (0 off), w 1 = volumetric clouds on (vanilla's off)

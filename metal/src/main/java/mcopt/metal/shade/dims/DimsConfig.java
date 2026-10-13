@@ -17,6 +17,7 @@ package mcopt.metal.shade.dims;
 
 import java.util.Locale;
 import mcopt.metal.shade.Shade;
+import mcopt.metal.shade.ShadeSettings;
 import mcopt.metal.shade.ShadeConfig;
 
 /**
@@ -53,6 +54,10 @@ public final class DimsConfig {
 		case "rare" -> 3;
 		default -> 1;
 	} : 0;
+	/** (1.1) The aurora's code this frame: the settings screen's choice (ShadeSettings "Auroras", live), AURORA at startup. */
+	public static int aurora() {
+		return MODULE ? ShadeSettings.aurora() : 0;
+	}
 	public static final boolean MEDIA = MODULE && ShadeConfig.HDR && flag("mcopt.shade.media", true);
 	public static final boolean END_SHADOWS = DIMS && flag("mcopt.shade.endShadows", true);
 	public static final boolean NETHER_SHIMMER = DIMS && flag("mcopt.shade.netherShimmer", Shade.TIER >= 2);

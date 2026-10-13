@@ -139,6 +139,15 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			if (snow > 0.0h) albedo = mix(albedo, half3(0.86h, 0.88h, 0.92h), snow);
 		}
 #endif
+#ifdef SHADE_DH_TRANSLUCENT
+		// (1.1) the player's water colour (ShadeSettings; ShadeLook.vl: linear, weight in w): the LODs' water takes its hue and keeps
+		// DH's brightness, so the far sea matches the near water's chosen colour
+		if (face == 1u && in.color.a < 0.99h && sl.vl.w > 0.0) {
+			float3 u = sl.vl.rgb;
+			float k = shadeLuma(float3(albedo)) / max(shadeLuma(u), 1e-3);
+			albedo = half3(mix(float3(albedo), min(u * k, float3(1.0)), sl.vl.w));
+		}
+#endif
 		radiance = shadeLit2(albedo, n, sky, block, shadow, false, false, sf, sl);
 		// (FT2.7, audit idx 74) a lightning flash lights the LODs like the terrain (shadeWxFlash): no dark seam at the chunks' edge
 		if (sl.flash.w > 0.0) {

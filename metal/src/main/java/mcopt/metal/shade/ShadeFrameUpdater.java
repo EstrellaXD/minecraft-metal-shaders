@@ -259,7 +259,7 @@ public final class ShadeFrameUpdater {
 		f.updateAtmosphere(Math.min(dt, 0.25f), snap);
 		if (snap) LOOK.snapExposure();
 		// M3 sky and dimensions (mcopt.shade.dims / aurora): Nether and End light, palettes and exposure; the aurora's state
-		if (mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.AURORA != 0) {
+		if (mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.aurora() != 0) {
 			mcopt.metal.shade.dims.ShadeDims.update(f, level, sky, camera.blockPos, Math.min(dt, 0.25f), snap);
 		}
 		ShadeShadows.beforePack(camera, f);

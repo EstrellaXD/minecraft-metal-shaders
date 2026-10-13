@@ -423,6 +423,12 @@ public final class ShadeVl {
 
 		float canopyUp = 1f - (float) Math.exp(-dt / 1.5f), canopyDown = 1f - (float) Math.exp(-dt / 4f);
 
+		// (1.1) the player's god-ray strength (ShadeSettings "Rayos de sol", 1 = as released): the shafts, the air's shadows and
+		// the forest air; at 0 the module is off (the final pass's haze unshadowed, as with mcopt.shade.vl=false)
+		float userRays = mcopt.metal.shade.ShadeSettings.godrays();
+		strength *= userRays;
+		canopyMist *= userRays;
+
 		b.clear();
 		put(b, vw, vh, width, height);                                                   // size
 		put(b, strength, airEnd, VlConfig.live("mcopt.shade.vl.stepsLive", VlConfig.STEPS), g); // shape (air mode: its end)
@@ -433,7 +439,7 @@ public final class ShadeVl {
 		// (2026-10-09 look development, live: mcopt.shade.vl.crepGain x the strength, crepTaps, crepFall = the exponent of the falloff
 		// around the light: lower reaches further, the radial rays of Gael's reference photo)
 		// (FT2.3: x2.5, twice the taps and a wider falloff: rays fanning out of the gaps around a visible sun, Gael's reference)
-		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.live("mcopt.shade.vl.crepGain", 1f) : 0f,
+		put(b, VlConfig.SS_TAPS > 0 ? (hdr ? 0.08f + 0.12f * golden : 0.12f + 0.2f * golden) * VlConfig.live("mcopt.shade.vl.crepGain", 1f) * userRays : 0f,
 			VlConfig.SS_TAPS > 0 ? VlConfig.live("mcopt.shade.vl.crepTaps", VlConfig.SS_TAPS) : 0f, onScreen, VlConfig.live("mcopt.shade.vl.crepFall", 6f));
 		// sunPx; z the still view's clamp allowance, w bits: 1 the 3x3 clamp box, 2 the history at this point's distance,
 		// 4 per-texel crepuscular taps over a bilinear sky mask, 8 per-texel offsets of the canopy mist's own steps, 16 of the
@@ -573,6 +579,7 @@ public final class ShadeVl {
 		put(b, VlConfig.live("mcopt.shade.vl.airColLo", 1.5f), VlConfig.live("mcopt.shade.vl.airColNear", 12f), VlConfig.live("mcopt.shade.vl.airColBox", 0f),
 			VlConfig.live("mcopt.shade.vl.crepReproj", 1f));
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
+		if (userRays <= 0f) return false;
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}
 

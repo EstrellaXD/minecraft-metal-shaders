@@ -549,7 +549,7 @@ public final class ShadePost {
 			// (FT2.8, audit idx 45) the exposure histogram of bloom level 2 is dispatched after the final pass, next to the exposure
 			// kernel: here, mid-chain, its ShadeGpu writes made the bloom up passes and the final pass (which bind ShadeGpu) wait for it
 			if (ShadeConfig.AUTO_EXPOSURE && n > 2) histogramSource = bloomLevels[2];
-			float spectrum = ShadeConfig.LOOK == 1 ? 0.9f : ShadeConfig.LOOK == 2 ? 0.3f : 0.6f;
+			float spectrum = ShadeSettings.look() == 1 ? 0.9f : ShadeSettings.look() == 2 ? 0.3f : 0.6f;
 			float sum = 0f;
 			// U_i = w_i L_i + tent(U_i+1) down to U_1; level 0 (half size) is added in the final pass (w0 L0 + bilinear U1):
 			// one half-size pass less, the biggest one

@@ -98,7 +98,17 @@ public final class ShadeClouds {
 
 	/** Whether vanilla's clouds are replaced this frame (MetalRenderPass skips their draw). */
 	public static boolean replacesVanilla() {
-		return ON && active;
+		return ON && (active || userOff);
+	}
+
+	/** (1.1) The settings screen's "Clouds: Off" this frame (in the overworld): neither ours nor vanilla's draw. */
+	private static boolean userOff;
+	/** (1.1) The style last drawn (a switch drops the history once). */
+	private static int lastStyle = -1;
+
+	/** (1.1) The blocky style this frame (ShadeSettings "Clouds: Blocky", live; was CloudConfig.BLOCKY at startup). */
+	public static boolean blocky() {
+		return mcopt.metal.shade.ShadeSettings.clouds() == mcopt.metal.shade.ShadeSettings.CLOUDS_BLOCKY;
 	}
 
 	/**
@@ -108,6 +118,7 @@ public final class ShadeClouds {
 	public static void update(long ctx, long enc, ShadeFrame f, ByteBuffer look) {
 		active = false;
 		over = false;
+		userOff = false;
 		if (failed) {
 			dhClouds(false);
 			PARAMS.packLook(look, false);
@@ -121,9 +132,13 @@ public final class ShadeClouds {
 			// would show through vanilla's clouds; ours draw behind the LODs, in the sky pass)
 			boolean option = game.optionsRenderState.cloudStatus != CloudStatus.OFF || DH;
 			// mcopt.shade.clouds.pause (read every frame; the bench's in-session A/B sets it): as if the module were off
+			// (1.1) the settings screen's choice (ShadeSettings, live): Minecraft = vanilla's clouds (lit by clouds.fs, as with the
+			// module off), Off = none at all (vanilla's skipped too, replacesVanilla; Distant Horizons' own kept off)
+			int userMode = mcopt.metal.shade.ShadeSettings.clouds();
+			userOff = userMode == mcopt.metal.shade.ShadeSettings.CLOUDS_OFF && level != null && f.dimension == ShadeFrame.DIM_OVERWORLD;
 			boolean want = level != null && f.dimension == ShadeFrame.DIM_OVERWORLD && option && ARGB.alpha(game.levelRenderState.cloudColor) > 0
-				&& !Boolean.getBoolean("mcopt.shade.clouds.pause");
-			dhClouds(want);
+				&& !Boolean.getBoolean("mcopt.shade.clouds.pause") && userMode <= mcopt.metal.shade.ShadeSettings.CLOUDS_BLOCKY;
+			dhClouds(want || userOff);
 			if (!want) {
 				wasActive = false;
 				PARAMS.packLook(look, false);
@@ -159,6 +174,9 @@ public final class ShadeClouds {
 			int mode = CloudConfig.modeBits();
 			boolean modeChanged = lastMode < 0 || ((mode ^ lastMode) & CloudConfig.MODE_STABLE) != 0;
 			lastMode = mode;
+			int style = blocky() ? 1 : 0;
+			if (style != lastStyle) modeChanged = true;
+			lastStyle = style;
 			// sizes: a fraction of the output, independent of TAAU's render scale (2026-10-09: the chosen output resolution, not
 			// the window's, ShadeOutput: at "1080p" on a Retina screen the clouds cost what they do on a 1080p monitor)
 			var window = mc.getWindow();
@@ -200,7 +218,7 @@ public final class ShadeClouds {
 			p.windStepZ = sz;
 			float vanillaHeight = game.levelRenderState.cloudHeight;
 			p.base = Float.isNaN(CloudConfig.BASE) ? (Float.isFinite(vanillaHeight) && vanillaHeight > 0f ? vanillaHeight + 8f : 200f) : CloudConfig.BASE;
-			p.top = p.base + (CloudConfig.BLOCKY ? CloudConfig.BLOCK_THICKNESS : CloudConfig.THICKNESS);
+			p.top = p.base + (blocky() ? CloudConfig.BLOCK_THICKNESS : CloudConfig.THICKNESS);
 			p.histW = hw;
 			p.histH = hh;
 			p.marchW = mw;

@@ -27,6 +27,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * shading's render resolution (ShadeResolution: auto, native, 1800p ... 1080p), applied on the next frame and kept in
  * config/mcopt.properties. Only with the native shading's TAAU (it owns the render scale). M3.3: beside it "Gen. de cuadros"
  * (ShadeFrameGenOption: frame generation on/off from the next start), hidden unless -Dmcopt.shade.framegenButton=true.
+ * (1.1) Above them "Shaders..." opens ShadeSettingsScreen (look, light, sky and water settings); with
+ * mcopt.shade.settingsButton=false it is left out.
  */
 @Mixin(PauseScreen.class)
 abstract class ShadePauseScreenMixin extends Screen {
@@ -63,12 +65,23 @@ abstract class ShadePauseScreenMixin extends Screen {
 			}).tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(ShadeOutput.tooltip())))
 				.bounds(this.width / 2 + 2, this.height - 28, 204, 20).build());
 		}
+		int row = resolution ? this.height - 52 : this.height - 28;
+		if (mcopt.metal.shade.Shade.ENABLED && !"false".equals(System.getProperty("mcopt.shade.settingsButton"))) {
+			Screen self = this;
+			this.addRenderableWidget(Button.builder(Component.literal(mcopt.metal.shade.ShadeLang.t("Shaders...", "Shaders...")),
+					button -> mc.gui.setScreen(new mcopt.metal.shade.ShadeSettingsScreen(self)))
+				.tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(mcopt.metal.shade.ShadeLang.t(
+					"Ajustes de los shaders: estilo, brillo, rayos de sol, neblina, nubes y agua.",
+					"Shader settings: style, brightness, god rays, haze, clouds and water."))))
+				.bounds(this.width / 2 - 102, row, 204, 20).build());
+			row -= 24;
+		}
 		if (frameGen) {
 			this.addRenderableWidget(Button.builder(Component.literal(ShadeFrameGenOption.label()), button -> {
 				ShadeFrameGenOption.toggle(mc.gameDirectory.toPath());
 				button.setMessage(Component.literal(ShadeFrameGenOption.label()));
 			}).tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(ShadeFrameGenOption.tooltip())))
-				.bounds(this.width / 2 - 102, resolution ? this.height - 52 : this.height - 28, 204, 20).build());
+				.bounds(this.width / 2 - 102, row, 204, 20).build());
 		}
 	}
 }

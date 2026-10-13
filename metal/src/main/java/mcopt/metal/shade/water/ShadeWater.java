@@ -321,7 +321,9 @@ public final class ShadeWater {
 		for (int i = 0; i < 4; i++) p.putFloat(i * 4, still[i]);
 		for (int i = 0; i < 4; i++) p.putFloat(16 + i * 4, flow[i]);
 		p.putFloat(32, 0f).putFloat(36, surfaceY).putFloat(40, wetness).putFloat(44, 0f);
-		p.putFloat(48, WAVES).putFloat(52, SSR_DIST).putFloat(56, REFLECT).putFloat(60, CAUSTICS ? 1f : 0f);
+		// (1.1) waves and reflections from the settings screen (ShadeSettings, live; mcopt.shade.waterWaves / waterReflect at startup)
+		p.putFloat(48, mcopt.metal.shade.ShadeSettings.waves()).putFloat(52, SSR_DIST).putFloat(56, mcopt.metal.shade.ShadeSettings.reflect())
+			.putFloat(60, CAUSTICS ? 1f : 0f);
 		WaterNative.params(state, MemoryUtil.memAddress(p));
 	}
 }

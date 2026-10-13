@@ -287,7 +287,7 @@ public final class ShadeDims {
 	}
 
 	private static void overworld(ShadeFrame f, ClientLevel level, BlockPos camera, float dt, boolean snap) {
-		if (DimsConfig.AURORA == 0 || level == null || Boolean.getBoolean("mcopt.shade.aurora.pause")) { // (pause: M3.3 bench price, live)
+		if (DimsConfig.aurora() == 0 || level == null || Boolean.getBoolean("mcopt.shade.aurora.pause")) { // (pause: M3.3 bench price, live)
 			aurora = 0f;
 			return;
 		}
@@ -301,7 +301,7 @@ public final class ShadeDims {
 		float chance = mcHash(day) < 0.35f ? 1f : 0f;
 		// auto (Gael, 2026-10-08, "frecuentes"): every clear night in cold biomes (0.6 in cool ones), and on about one night in
 		// three anywhere else at half strength; rare = M3's auto (cold biomes, those nights only); always = every night
-		float want = switch (DimsConfig.AURORA) {
+		float want = switch (DimsConfig.aurora()) {
 			case 2 -> 1f;
 			case 3 -> cold * chance;
 			default -> Math.max(cold, 0.5f * chance);

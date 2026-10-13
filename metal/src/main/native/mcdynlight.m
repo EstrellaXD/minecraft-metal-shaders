@@ -50,7 +50,7 @@ DlState *mc_dl_new(Ctx *ctx, const char *source, int bytes, int ring, int slabs,
 	@autoreleasepool {
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mc_math();
 		NSError *e = nil;
 		id<MTLLibrary> lib = [[ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e] autorelease];
 		if (!lib) {

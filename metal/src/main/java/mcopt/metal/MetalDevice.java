@@ -65,6 +65,13 @@ final class MetalDevice implements GpuDeviceBackend {
 		// -Dmcopt.metal.cbdiag=MS: stall diagnostics on stderr (big buffer allocations, slow command buffers); see mcmetal.m.
 		String diag = System.getProperty("mcopt.metal.cbdiag");
 		if (diag != null) Native.diagEnable(Double.parseDouble(diag));
+		// (1.1.1) -Dmcopt.shade.mathMode=fast|relaxed|safe: the float math mode every MSL library compiles with (mc_math_mode);
+		// fast unless set. relaxed honors Inf and NaN (a test for artifacts a new compiler's fast math might bring)
+		String math = System.getProperty("mcopt.shade.mathMode");
+		if (math != null && !math.equals("fast")) {
+			Native.mathMode(math.equals("safe") ? 0 : 1);
+			System.out.println("[mcopt] metal: shaders compile with " + (math.equals("safe") ? "safe" : "relaxed") + " math");
+		}
 		if (mcopt.metal.cpu.Cpu.PASS || mcopt.metal.cpu.Cpu.CMD_AHEAD) Native.cpuFlags(mcopt.metal.cpu.Cpu.nativeFlags(mcopt.metal.cpu.Cpu.PASS)); // opt-in: see mc_cpu_flags
 	}
 

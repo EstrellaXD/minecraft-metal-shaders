@@ -87,7 +87,7 @@ VlState *mc_vl_new(Ctx *ctx, const char *source, int flags, char *err, int errCa
 	@autoreleasepool {
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mc_math();
 		NSError *e = nil;
 		id<MTLLibrary> lib = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (!lib) {

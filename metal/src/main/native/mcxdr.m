@@ -90,6 +90,17 @@ static NSScreen *layerScreen(CAMetalLayer *layer) {
 	return [NSScreen mainScreen];
 }
 
+// (1.1.1) The display the layer's window is on (its CGDirectDisplayID), for the present pacer's refresh grid (mc_pace); 0
+// when unknown or off the main thread (AppKit), so the pacer keeps the display it has.
+uint32_t mc_layer_display(CAMetalLayer *layer) {
+	if (!layer || ![NSThread isMainThread]) return 0;
+	@autoreleasepool {
+		NSScreen *s = layerScreen(layer);
+		NSNumber *n = s ? s.deviceDescription[@"NSScreenNumber"] : nil;
+		return n ? n.unsignedIntValue : 0;
+	}
+}
+
 // The current EDR headroom of the layer's screen (1 = SDR only; rises once an EDR layer is on screen; depends on the
 // brightness slider), or its potential with potential = 1.
 float mc_xdr_headroom(CAMetalLayer *layer, int potential) {

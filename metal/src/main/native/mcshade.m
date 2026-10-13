@@ -130,7 +130,7 @@ int mc_shade_lut_init(ShadeState *s, Ctx *ctx, const char *source, int width, in
 		}
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mc_math();
 		NSError *e = nil;
 		id<MTLLibrary> lib = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (!lib) {
@@ -305,7 +305,7 @@ id<MTLLibrary> mc_shade_library(Ctx *ctx, const char *source, char *err, int err
 	@autoreleasepool {
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mc_math();
 		NSError *e = nil;
 		id<MTLLibrary> lib = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (!lib) snprintf(err, errCap, "%s", e.localizedDescription.UTF8String);

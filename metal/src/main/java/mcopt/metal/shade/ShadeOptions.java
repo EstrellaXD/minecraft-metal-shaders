@@ -327,7 +327,9 @@ public final class ShadeOptions {
 			toggle("mcopt.shade.media", "En lava o nieve", "Inside lava or snow", "Efecto al tener la cabeza dentro de lava o nieve en polvo.",
 				"The effect with your head inside lava or powder snow.", true));
 
-		page("Rendimiento", "Performance", "Resolución dinámica, FPS objetivo y calidad de reflejos.", "Dynamic resolution, target FPS and reflection quality.",
+		page("Rendimiento", "Performance", "Resolución dinámica, FPS objetivo, calidad de reflejos y compatibilidad.",
+			"Dynamic resolution, target FPS, reflection quality and compatibility.",
+			h("Velocidad", "Speed"),
 			toggle("mcopt.shade.drs", "Resolución dinámica", "Dynamic resolution", "Baja un poco la resolución interna para mantener los FPS.",
 				"Lowers the internal resolution a little to hold the FPS.", true),
 			choice("mcopt.shade.drsFps", "FPS objetivo", "Target FPS", "Los FPS que trata de mantener la resolución dinámica.", "The FPS dynamic resolution tries to hold.",
@@ -345,7 +347,16 @@ public final class ShadeOptions {
 			toggle("mcopt.shade.entities", "Mobs iluminados", "Lit mobs", "Mobs, objetos y partículas iluminados por el shader.",
 				"Mobs, items and particles lit by the shader.", true).restart(),
 			toggle("mcopt.shade.handLight", "Mano iluminada", "Lit hand", "Tu mano iluminada por el shader.", "Your hand lit by the shader.", true)
-				.restart());
+				.restart(),
+			// (1.1.1, macOS 27) for players who see tearing or black/white blocks: MetalSurface.PACE_SYNC (on by default with
+			// shading, Shade.init) and mc_math_mode (MetalDevice)
+			h("Compatibilidad", "Compatibility"),
+			toggle("mcopt.metal.paceSync", "Sin tearing", "No tearing", "Con VSync apagado, cada cuadro espera el refresco de la pantalla para no verse cortado.",
+				"With VSync off, each frame waits for the screen's refresh so it isn't cut in two (tearing).", true).restart(),
+			choice("mcopt.shade.mathMode", "Cálculo de shaders", "Shader math",
+				"Preciso: prueba esto si ves cuadros negros o blancos que crecen (por ejemplo en macOS 27). Puede costar algo de FPS.",
+				"Precise: try this if you see black or white blocks that grow (for example on macOS 27). May cost some FPS.",
+				new String[] {"fast", "relaxed"}, new String[] {"Rápido", "Preciso"}, new String[] {"Fast", "Precise"}, () -> 0).restart());
 	}
 
 	private ShadeOptions() {

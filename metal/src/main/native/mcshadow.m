@@ -94,7 +94,7 @@ Shadow *mc_shadow_new(Ctx *ctx, const char *source, int resolution, int layers, 
 		s->format = depthBits == 16 ? MTLPixelFormatDepth16Unorm : MTLPixelFormatDepth32Float;
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mc_math();
 		NSError *e = nil;
 		s->library = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (s->library) s->solid = depthOnly(s, @"shadow_vs", nil, &e);

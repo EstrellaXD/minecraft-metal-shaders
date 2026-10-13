@@ -31,6 +31,11 @@ final class MetalSurface implements GpuSurfaceBackend {
 	 * paced frame shown more than half a refresh after the refresh it was aimed at adds lead, a frame on time takes a little away.
 	 */
 	static final boolean PACE_ADAPT = Boolean.getBoolean("mcopt.metal.paceAdapt");
+	/**
+	 * (1.1.1) -Dmcopt.metal.paceFollow=true: the pacer's refresh grid comes from the display the window is on, not the main display
+	 * (mc_pace_follow in mcmetal.m). Native shading turns it on unless set (Shade.init).
+	 */
+	private static final boolean PACE_FOLLOW = Boolean.getBoolean("mcopt.metal.paceFollow");
 	private boolean paced;
 	private final long ctx;
 	private final MetalEncoder encoder;
@@ -50,6 +55,7 @@ final class MetalSurface implements GpuSurfaceBackend {
 		// Frame generation schedules every present on the display's refresh grid, which needs vsync (FrameGen).
 		this.paced = !vsync && PACE && !FrameGen.ENABLED;
 		if (PACE_ADAPT) Native.paceAdapt(this.paced ? 1 : 0);
+		if (PACE_FOLLOW) Native.paceFollow(1);
 		// native shading's XDR output (mcopt.shade.xdr): decided before the layer's format is set; a constant false without shading
 		if (mcopt.metal.shade.Shade.ENABLED) mcopt.metal.shade.dims.ShadeXdr.configure(this.layer, FrameGen.ENABLED);
 		Native.layerConfigure(this.ctx, this.layer, config.width(), config.height(), (vsync || FrameGen.ENABLED || PACE_SYNC && this.paced ? 1 : 0) | DRAWABLES << 8);

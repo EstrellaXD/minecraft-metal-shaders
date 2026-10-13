@@ -90,6 +90,12 @@ public final class Shade {
 		// that nextDrawable blocks the render thread (the 1% lows). Present (and acquire) on mcopt's second queue instead,
 		// unless the user chose otherwise.
 		if (System.getProperty("mcopt.metal.presentQueue") == null) System.setProperty("mcopt.metal.presentQueue", "acquire");
+		// (1.1.1, macOS 27) VSync off: the paced presents (one per refresh) still wait for a vblank, as with VSync. Without display
+		// sync a present that goes direct to the display (fullscreen) can land mid-scanout (tearing), and on the 120 Hz panel
+		// paced presents reached the screen in pairs (MetalSurface.PACE_SYNC). The game still renders every frame. And the
+		// refresh grid follows the display the window is on (MetalSurface.PACE_FOLLOW).
+		if (System.getProperty("mcopt.metal.paceSync") == null) System.setProperty("mcopt.metal.paceSync", "true");
+		if (System.getProperty("mcopt.metal.paceFollow") == null) System.setProperty("mcopt.metal.paceFollow", "true");
 		System.out.println("[mcopt] shade: native shading on (shadows " + SHADOWS + ", " + mcopt.metal.shade.shadow.ShadowConfig.RES + " px, "
 			+ mcopt.metal.shade.shadow.ShadowConfig.DIST + " blocks"
 			+ (DEBUG != 0 ? ", debug view " + DEBUG : "") + ")");

@@ -112,6 +112,8 @@ final class Native {
 	private static final MethodHandle PRESENT_QUEUED_ACQUIRE = fn("mc_present_queued_acquire", false, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle PRESENT_DROPPED = fn("mc_present_dropped", false, JAVA_LONG);
 	private static final MethodHandle PACE_ADAPT = fn("mc_pace_adapt", false, null, JAVA_INT);
+	private static final MethodHandle PACE_FOLLOW = fn("mc_pace_follow", false, null, JAVA_INT);
+	private static final MethodHandle MATH_MODE = fn("mc_math_mode", false, null, JAVA_INT);
 	private static final MethodHandle PACE_EXTRA_MS = fn("mc_pace_extra_ms", false, JAVA_DOUBLE);
 	private static final MethodHandle PACE = fn("mc_pace", false, JAVA_INT, JAVA_DOUBLE);
 	private static final MethodHandle SLEEP_PRECISE = fn("mc_sleep_precise", false, null, JAVA_LONG);
@@ -248,6 +250,8 @@ final class Native {
 	static long presentSkipped() { try { return (long) PRESENT_SKIPPED.invokeExact(); } catch (Throwable t) { throw rethrow(t); } }
 	static int presentQueuedAcquire(long enc, long layer, long texture, long cadence) { try { return (int) PRESENT_QUEUED_ACQUIRE.invokeExact(enc, layer, texture, cadence); } catch (Throwable t) { throw rethrow(t); } }
 	static void paceAdapt(int on) { try { PACE_ADAPT.invokeExact(on); } catch (Throwable t) { throw rethrow(t); } }
+	static void paceFollow(int on) { try { PACE_FOLLOW.invokeExact(on); } catch (Throwable t) { throw rethrow(t); } }
+	static void mathMode(int mode) { try { MATH_MODE.invokeExact(mode); } catch (Throwable t) { throw rethrow(t); } }
 	static double paceExtraMs() { try { return (double) PACE_EXTRA_MS.invokeExact(); } catch (Throwable t) { throw rethrow(t); } }
 	static long presentDropped() { try { return (long) PRESENT_DROPPED.invokeExact(); } catch (Throwable t) { throw rethrow(t); } }
 	static void sleepPrecise(long ns) { try { SLEEP_PRECISE.invokeExact(ns); } catch (Throwable t) { throw rethrow(t); } }

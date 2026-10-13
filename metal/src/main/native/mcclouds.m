@@ -145,7 +145,7 @@ CloudState *mc_clouds_new(Ctx *ctx, const char *source, char *err, int errCap) {
 		id<MTLDevice> dev = ctx->device;
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mc_math();
 		NSError *e = nil;
 		s->lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (!s->lib) {

@@ -1076,6 +1076,8 @@ fragment CloudResolveOut cloud_resolve(CloudVsOut in [[stage_in]], constant Clou
 		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
 		o.age = 0.0h;
 	}
+	// (1.1.1) never keep Inf or NaN in the history (shadeBad: fast math may drop isfinite): clear sky instead
+	if (shadeBad(o.color)) o.color = half4(0.0h, 0.0h, 0.0h, 1.0h);
 	return o;
 }
 
@@ -1218,6 +1220,11 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 		o.color = cur.sample(cloudClamp, mpos / c.size.zw);
 		ageOut = 0u;
 		qOut = o.color.a < clear ? cloudDistCode(dNow) : CLOUD_DIST_NONE;
+	}
+	// (1.1.1) never keep Inf or NaN in the history (shadeBad: fast math may drop isfinite): clear sky instead
+	if (shadeBad(o.color)) {
+		o.color = half4(0.0h, 0.0h, 0.0h, 1.0h);
+		qOut = CLOUD_DIST_NONE;
 	}
 	o.data = ushort(min(ageOut, 15u) << 12u | qOut);
 	return o;

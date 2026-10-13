@@ -1,6 +1,8 @@
 // Copyright 2026 mcopt-shade contributors. Licensed under the Apache License, Version 2.0 (LICENSE).
 package mcopt.metal.shade.shadow;
 
+import mcopt.metal.shade.Live;
+
 /**
  * The sun shadow pass's switches. All are system properties, so they can also be set in config/mcopt.properties (Profile
  * applies those before any mixin plugin or class here reads them). Nothing here does anything unless mcopt.shade=true.
@@ -10,9 +12,11 @@ package mcopt.metal.shade.shadow;
  * <li>{@code mcopt.shade.shadowRes} (2048): texels per side of each cascade (512-8192).</li>
  * <li>{@code mcopt.shade.shadowDepth} (32): 32 = Depth32Float, 16 = Depth16Unorm (same speed on the M4 in the synthetic
  * bench, half the memory; precision is ample for both cascades' depth ranges).</li>
- * <li>{@code mcopt.shade.shadowDist} (128): half-width in blocks of the far cascade, centered on the camera.</li>
+ * <li>{@code mcopt.shade.shadowDist} (128): half-width in blocks of the far cascade, centered on the camera. (1.1) live
+ * (16..1024, {@link #dist()}): a change re-fits the far cascade and redraws it whole that frame (ShadowPass.prepare).</li>
  * <li>{@code mcopt.shade.shadowNear} (shadowDist / 4): half-width in blocks of the near cascade, which is redrawn every frame
- * and pushed 40% of its half-width ahead of the camera.</li>
+ * and pushed 40% of its half-width ahead of the camera. (1.1) live with shadowDist ({@link #near()}: 4..dist, the live
+ * dist / 4 by default).</li>
  * <li>{@code mcopt.shade.shadowFarEvery} (4): the far cascade is redrawn every N frames, or sooner when the light direction
  * (quantized to {@code mcopt.shade.shadowSunStep} degrees, default 0.1) changes or the camera moved an eighth of the
  * cascade.</li>
@@ -71,6 +75,20 @@ public final class ShadowConfig {
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 	public static final boolean FAR_CUTOUT_OPAQUE = !"test".equals(System.getProperty("mcopt.shade.shadowFarCutout", "opaque"));
 	public static final boolean STATS = Boolean.getBoolean("mcopt.shade.shadowStats");
+
+	/**
+	 * (1.1) live: mcopt.shade.shadowDist (DIST at startup), 16..1024 blocks: the far cascade's half-width this frame.
+	 * ShadowPass.prepare re-fits the far cascade when it changes (and drops a spread redraw under way).
+	 */
+	static float dist() {
+		return Live.f("mcopt.shade.shadowDist", DIST, 16f, 1024f);
+	}
+
+	/** (1.1) live: mcopt.shade.shadowNear, 4..dist() blocks; default dist() / 4 (NEAR at startup when neither is set). */
+	static float near() {
+		float dist = dist();
+		return clamp(Live.f("mcopt.shade.shadowNear", dist / 4f), 4f, dist);
+	}
 
 	/** M3.3 defaults of the per-frame switches (see the class comment). */
 	static final String FAR_SPREAD_DEFAULT = "true", TINT_TIGHT_DEFAULT = "true", TINT_SUB_DEFAULT = "true";

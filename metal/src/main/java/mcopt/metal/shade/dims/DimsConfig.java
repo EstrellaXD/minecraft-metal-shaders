@@ -16,6 +16,7 @@
 package mcopt.metal.shade.dims;
 
 import java.util.Locale;
+import mcopt.metal.shade.Live;
 import mcopt.metal.shade.Shade;
 import mcopt.metal.shade.ShadeSettings;
 import mcopt.metal.shade.ShadeConfig;
@@ -33,14 +34,21 @@ import mcopt.metal.shade.ShadeConfig;
  * night in three anywhere else, at half strength (Gael, 2026-10-08: "frecuentes"); rare = M3's auto, only some clear nights
  * (hashed per night, ~35%) in cold biomes; always = every night in any biome (look-dev); off.</li>
  * <li>{@code mcopt.shade.media} (true): camera inside lava / powder snow (E26): a glowing, churning lava medium with heat
- * shimmer; frosted cold powder snow.</li>
+ * shimmer; frosted cold powder snow. (1.1) live ({@link #media()}).</li>
  * <li>{@code mcopt.shade.endShadows} (true): the End key light casts shadows (the shadow pass runs in the End; its far
- * cascade stays cached since the light never moves).</li>
- * <li>{@code mcopt.shade.netherShimmer} (preset: quality/ultra on): heat shimmer over distant Nether terrain.</li>
+ * cascade stays cached since the light never moves). (1.1) live ({@link #endShadows()}).</li>
+ * <li>{@code mcopt.shade.netherShimmer} (preset: quality/ultra on): heat shimmer over distant Nether terrain. (1.1) live
+ * ({@link #netherShimmer()}).</li>
  * <li>{@code mcopt.shade.xdr} (auto): EDR output for the Liquid Retina XDR panel (E23): auto = on when a screen reports EDR
  * headroom potential above 1 (the MacBook Pro's built-in panel), on, off. Highlights (sun, lava, torches, glints, bloom
  * cores) go above SDR white up to the screen's current headroom; the GUI, hand and screenshots stay SDR.</li>
- * <li>{@code mcopt.shade.xdrPeak} (4): cap on the highlight peak, in multiples of SDR white (1..16).</li>
+ * <li>{@code mcopt.shade.xdrPeak} (4): cap on the highlight peak, in multiples of SDR white (1..16). (1.1) live (ShadeXdr).</li>
+ * <li>{@code mcopt.shade.xdrKnee} (2): the scene luminance where highlights start to use the headroom (0.5..16). (1.1) live.</li>
+ * <li>(1.1, live) the player's multipliers ({@link #user}: 1 = as released, 0..3): {@code mcopt.shade.user.netherFog} (the
+ * Nether fog's density), {@code .netherFogGlow} (its glow, NETHER_FOG_GAIN), {@code .netherLight} (the Nether's ambient),
+ * {@code .lavaGlow} (the lava sea's up-light), {@code .endFog} (the End haze's density), {@code .endLight} (the End's key light
+ * and ambient), {@code .endSky} (the End sky's gradient, beams and nebula), {@code .auroraBrightness} (the aurora and its
+ * green in the night ambient).</li>
  * </ul>
  */
 public final class DimsConfig {
@@ -68,6 +76,29 @@ public final class DimsConfig {
 		default -> 1;
 	} : 0;
 	public static final float XDR_PEAK = floatFlag("mcopt.shade.xdrPeak", 4f, 1f, 16f);
+
+	/**
+	 * (1.1) live: the camera media this frame (mcopt.shade.media; MEDIA at startup). Their code is in the final pass's dims
+	 * variant, made when DIMS or MEDIA was on at startup (ShadePost), and switched by a feature bit (ShadeDims.pack).
+	 */
+	public static boolean media() {
+		return (DIMS || MEDIA) && Live.b("mcopt.shade.media", true);
+	}
+
+	/** (1.1) live: the End key light's shadows this frame (mcopt.shade.endShadows; END_SHADOWS at startup). */
+	public static boolean endShadows() {
+		return DIMS && Live.b("mcopt.shade.endShadows", true);
+	}
+
+	/** (1.1) live: the Nether's heat shimmer this frame (mcopt.shade.netherShimmer; the preset's default, NETHER_SHIMMER at startup). */
+	public static boolean netherShimmer() {
+		return DIMS && Live.b("mcopt.shade.netherShimmer", Shade.TIER >= 2);
+	}
+
+	/** (1.1) live: a player multiplier of the dimension looks (key: mcopt.shade.user.*; 1 = as released, 0..3). */
+	static float user(String key) {
+		return Live.f(key, 1f, 0f, 3f);
+	}
 
 	private DimsConfig() {
 	}

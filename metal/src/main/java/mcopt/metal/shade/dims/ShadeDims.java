@@ -77,6 +77,8 @@ public final class ShadeDims {
 
 	private static final float[] netherW = {1f, 0f, 0f, 0f, 0f};
 	private static float cold, aurora, flash;
+	/** (1.1) mcopt.shade.user.auroraBrightness this frame (1 = as released, 0..3): on NIGHT.z and the aurora's green in the ambient. */
+	private static float auroraGain = 1f;
 	private static final Vector3f flashDir = new Vector3f(0, 1, 0);
 	private static int sampleTick;
 	private static int lastDim = -1;
@@ -184,10 +186,13 @@ public final class ShadeDims {
 		lastDim = f.dimension;
 		float k = snap || changed ? 1f : 1f - (float) Math.exp(-Math.max(dt, 0f) / 3f);
 		dimsLit = on() && (f.dimension == ShadeFrame.DIM_NETHER || f.dimension == ShadeFrame.DIM_END);
-		endDropsBlob = dimsLit && f.dimension == ShadeFrame.DIM_END && DimsConfig.END_SHADOWS && !"false".equals(System.getProperty("mcopt.shade.dims.endBlob"));
+		// (1.1) mcopt.shade.endShadows live
+		endDropsBlob = dimsLit && f.dimension == ShadeFrame.DIM_END && DimsConfig.endShadows() && !"false".equals(System.getProperty("mcopt.shade.dims.endBlob"));
+		auroraGain = DimsConfig.user("mcopt.shade.user.auroraBrightness"); // (1.1) live
 		if (f.dimension == ShadeFrame.DIM_OVERWORLD) {
 			overworld(f, level, camera, dt, snap || changed);
-			ShadeAurora.decide(aurora); // M3.3: the reduced-resolution aurora pass this frame (mcopt.shade.aurora.half)
+			// M3.3: the reduced-resolution aurora pass this frame (mcopt.shade.aurora.half); (1.1) by the strength as packed
+			ShadeAurora.decide(aurora * auroraGain);
 			return;
 		}
 		aurora = 0f;
@@ -223,7 +228,7 @@ public final class ShadeDims {
 		// ambient: half the palette's hue over a warm neutral (netherrack is red already), at NETHER_AMBIENT after exposure
 		float[] warm = {1.0f, 0.9f, 0.8f};
 		for (int c = 0; c < 3; c++) amb[c] = 0.5f * amb[c] + 0.5f * warm[c];
-		setLuma(amb, NETHER_AMBIENT / E_REF);
+		setLuma(amb, NETHER_AMBIENT * DimsConfig.user("mcopt.shade.user.netherLight") / E_REF); // (1.1) the player's Nether light, live
 		float[] up = amb.clone(), down = amb.clone(), side = amb.clone();
 		scale(up, 0.85f); // the ceiling's light from above is a little dimmer; lava fills from below (shader)
 		scale(down, 1.0f);
@@ -233,15 +238,17 @@ public final class ShadeDims {
 		copy3(side, f.sky.ambientAway);
 		java.util.Arrays.fill(f.sky.light, 0f);
 		f.sky.sunLight = false;
-		// fog in-scatter radiance (pre-exposure) and the lava glow (warm, from the accent of the wastes)
-		setLuma(fog, fogLuma * NETHER_FOG_GAIN / E_REF); // the palette's fog as the screen should show it, a little lifted
+		// fog in-scatter radiance (pre-exposure) and the lava glow (warm, from the accent of the wastes); (1.1) the player's fog
+		// glow, lava glow and fog density (mcopt.shade.user.netherFogGlow / .lavaGlow / .netherFog, live; 1 = as released)
+		float glow = NETHER_FOG_GAIN * DimsConfig.user("mcopt.shade.user.netherFogGlow");
+		setLuma(fog, fogLuma * glow / E_REF); // the palette's fog as the screen should show it, a little lifted
 		copy3(fog, f.sky.horizon[0]);
 		float[] lavaC = {1.0f, 0.42f, 0.12f};
-		setLuma(lavaC, NETHER_LAVA_UP / E_REF * lava);
+		setLuma(lavaC, NETHER_LAVA_UP * DimsConfig.user("mcopt.shade.user.lavaGlow") / E_REF * lava);
 		copy3(lavaC, f.sky.horizon[1]);
-		setLuma(acc, fogLuma * NETHER_FOG_GAIN / E_REF);
+		setLuma(acc, fogLuma * glow / E_REF);
 		copy3(acc, f.sky.horizon[2]);
-		fogDensity = NETHER_SIGMA / Math.max(fogEnd, 16f) * density;
+		fogDensity = NETHER_SIGMA / Math.max(fogEnd, 16f) * density * DimsConfig.user("mcopt.shade.user.netherFog");
 	}
 
 	private static float fogDensity;
@@ -250,12 +257,14 @@ public final class ShadeDims {
 	private static void end(ShadeFrame f, SkyRenderState sky, float k) {
 		float[] key = srgbLin(0xC7B8FF);
 		for (int c = 0; c < 3; c++) key[c] = 0.6f * key[c] / Math.max(luma(key), 1e-6f) + 0.4f; // half way to white: End stone keeps its tint
-		setLuma(key, END_KEY / E_REF);
+		// (1.1) the player's End light (mcopt.shade.user.endLight, live; 1 = as released): the key light and the ambient
+		float light = DimsConfig.user("mcopt.shade.user.endLight");
+		setLuma(key, END_KEY * light / E_REF);
 		copy3(key, f.sky.light);
 		f.sky.sunLight = true;
 		System.arraycopy(endLight, 0, f.sky.lightDir, 0, 3);
 		float[] amb = srgbLin(0x5A4A9A);
-		setLuma(amb, END_AMBIENT / E_REF);
+		setLuma(amb, END_AMBIENT * light / E_REF);
 		copy3(amb, f.sky.ambientSky);
 		float[] ground = amb.clone();
 		scale(ground, 0.55f);
@@ -267,16 +276,18 @@ public final class ShadeDims {
 		float[] fog = srgbLin(0x1A1030);
 		setLuma(fog, END_FOG / E_REF);
 		copy3(fog, f.sky.horizon[0]);
-		// sky: zenith, horizon (sRGB of what the screen shows at E_REF), beams, filaments, nebula hues
-		putSky(f.sky.horizon[2], 0x07050F, 1f);
-		putSky(f.sky.horizon[3], 0x1C1230, 1f);
-		putSky(f.sky.horizon[4], 0x9A6AFF, 1f);
-		putSky(f.sky.horizon[5], 0x6AE0FF, 1f);
-		putSky(f.sky.horizon[6], 0x6A3FA0, 0.7f); // the nebula a little fainter: a hint in the void, not cyan smoke
-		putSky(f.sky.horizon[7], 0x2F7F8F, 0.6f);
+		// sky: zenith, horizon (sRGB of what the screen shows at E_REF), beams, filaments, nebula hues; (1.1) x the player's End
+		// sky (mcopt.shade.user.endSky, live; 1 = as released)
+		float skyGain = DimsConfig.user("mcopt.shade.user.endSky");
+		putSky(f.sky.horizon[2], 0x07050F, skyGain);
+		putSky(f.sky.horizon[3], 0x1C1230, skyGain);
+		putSky(f.sky.horizon[4], 0x9A6AFF, skyGain);
+		putSky(f.sky.horizon[5], 0x6AE0FF, skyGain);
+		putSky(f.sky.horizon[6], 0x6A3FA0, 0.7f * skyGain); // the nebula a little fainter: a hint in the void, not cyan smoke
+		putSky(f.sky.horizon[7], 0x2F7F8F, 0.6f * skyGain);
 		// the dragon fight: vanilla draws no sky at all (boss fog); the final pass paints ours then, in a thicker haze
 		bossFog = net.minecraft.client.Minecraft.getInstance().gui.hud.getBossOverlay().shouldCreateWorldFog();
-		fogDensity = END_FOG_SIGMA * (bossFog ? 2.5f : 1f);
+		fogDensity = END_FOG_SIGMA * DimsConfig.user("mcopt.shade.user.endFog") * (bossFog ? 2.5f : 1f); // (1.1) the player's End haze, live
 		// the End flash (26.x): direction from the sky state's angles, as SkyRenderer places its sprite
 		float target = sky.endFlashIntensity;
 		flash += (target - flash) * Math.min(1f, k * 6f);
@@ -311,9 +322,10 @@ public final class ShadeDims {
 		float k = snap ? 1f : 1f - (float) Math.exp(-Math.max(dt, 0f) / 4f);
 		aurora += (want - aurora) * k;
 		if (aurora > 1e-3f) {
-			// a dimmed copy of its light in the night's ambient: snow and the ground pick up a faint green
+			// a dimmed copy of its light in the night's ambient: snow and the ground pick up a faint green ((1.1) x the player's
+			// aurora brightness)
 			float l = 0.2126f * f.sky.ambientSky[0] + 0.7152f * f.sky.ambientSky[1] + 0.0722f * f.sky.ambientSky[2];
-			float a = aurora * Math.max(l, 1e-5f) * 0.9f;
+			float a = aurora * auroraGain * Math.max(l, 1e-5f) * 0.9f;
 			f.sky.ambientSky[0] += a * 0.25f;
 			f.sky.ambientSky[1] += a * 1.0f;
 			f.sky.ambientSky[2] += a * 0.55f;
@@ -330,10 +342,10 @@ public final class ShadeDims {
 		int features = L.getInt(ShadeLook.TIER + 4);
 		boolean on = on();
 		if (on) features |= FEATURE_DIMS;
-		if (DimsConfig.MEDIA) features |= FEATURE_MEDIA;
-		if (on && DimsConfig.NETHER_SHIMMER) features |= FEATURE_SHIMMER;
+		if (DimsConfig.media()) features |= FEATURE_MEDIA; // (1.1) live
+		if (on && DimsConfig.netherShimmer()) features |= FEATURE_SHIMMER; // (1.1) live
 		L.putInt(ShadeLook.TIER + 4, features);
-		L.putFloat(ShadeLook.NIGHT + 8, aurora);
+		L.putFloat(ShadeLook.NIGHT + 8, aurora * auroraGain); // (1.1) x mcopt.shade.user.auroraBrightness (emission: linear in it)
 		// M3.3: dimTint.w = kind + 4 x these bits (shade_dims.metal SHADE_DIMS_*), live per frame
 		int dimBits = (!"false".equals(System.getProperty("mcopt.shade.dims.motes")) ? 1 : 0)
 			| (ShadeAurora.active() ? 2 : 0) | (DimsDebug.dhClear() ? 4 : 0);
@@ -363,9 +375,12 @@ public final class ShadeDims {
 		}
 	}
 
-	/** This frame's aurora strength (0..1), for logs. */
+	/**
+	 * This frame's aurora strength as packed in NIGHT.z (0..1; (1.1) x the player's aurora brightness, so up to 3), for logs and
+	 * ShadeLean (the sky's variant without the per-pixel aurora below 0.002, as the sky shader skips it there).
+	 */
 	public static float aurora() {
-		return aurora;
+		return aurora * auroraGain;
 	}
 
 	// ---- helpers ---------------------------------------------------------------------------------------------------------

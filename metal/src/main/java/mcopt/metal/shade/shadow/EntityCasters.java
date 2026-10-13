@@ -29,7 +29,8 @@ import mcopt.metal.MetalDrawTap;
  * texture's alpha tested, shifted from the camera they were recorded with onto this frame's).</li>
  * </ol>
  * One frame of latency (invisible at entity speeds); only the near cascade (receivers further away keep the terrain's
- * shadows). mcopt.shade.entityShadows=false turns it off.
+ * shadows). mcopt.shade.entityShadows=false turns it off (startup: the casters' pipeline and buffer); (1.1) the settings
+ * screen's live switch is mcopt.shade.entityShadows.pause (read every frame): our entity shadows off and vanilla's blob back.
  */
 public final class EntityCasters {
 	public static final boolean ON = mcopt.metal.shade.Shade.SHADOWS && mcopt.metal.shade.ShadeConfig.HDR
@@ -51,7 +52,10 @@ public final class EntityCasters {
 	private static int recorded, dropped;
 	/** This frame draws the near cascade (set in beginFrame): otherwise nothing is recorded or copied (Nether, End). */
 	private static boolean active;
-	/** mcopt.shade.entityShadows.pause, read every frame (mcbench's zoo_noshadow phase: the cost A/B in one session). */
+	/**
+	 * mcopt.shade.entityShadows.pause, read every frame (mcbench's zoo_noshadow phase: the cost A/B in one session; (1.1) the
+	 * settings screen's live "entity shadows off"): nothing recorded or cast, and vanilla's blob shadow stays (dropBlob).
+	 */
 	private static boolean paused;
 	private static boolean installed;
 
@@ -118,12 +122,13 @@ public final class EntityCasters {
 	public static boolean dropBlob(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
 		// M3.3 (dims): in the End (no sky light) the key light's map shades every receiver: the blob goes wherever it draws
 		boolean end = mcopt.metal.shade.dims.ShadeDims.endDropsBlob();
+		// (1.1) paused (mcopt.shade.entityShadows.pause, live): no entity casts our shadow, so vanilla's blob stays everywhere
 		if (!LOG) {
-			return shadow != 0 && ShadowPass.enabled() && !ShadowPass.lightIsMoon()
+			return shadow != 0 && !paused && ShadowPass.enabled() && !ShadowPass.lightIsMoon()
 				&& (end || level.getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) >= BLOB_SKY);
 		}
 		// M3.3: the same decision, counted by reason for the log (mcopt.shade.entityShadows.log)
-		if (shadow == 0 || !ShadowPass.enabled()) {
+		if (shadow == 0 || paused || !ShadowPass.enabled()) {
 			blobKeptNoMap++;
 			return false;
 		}

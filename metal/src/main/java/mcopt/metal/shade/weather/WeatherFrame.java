@@ -15,6 +15,7 @@
  */
 package mcopt.metal.shade.weather;
 
+import mcopt.metal.shade.Live;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -65,7 +66,7 @@ public final class WeatherFrame {
 		float r = overworld ? rainLevel : 0f;
 		float rainAmount = Math.min(1f, r * (1f + 0.25f * thunder));
 		float rainTarget, snowTarget;
-		if (ShadeWeather.SNOW_LINE && !Float.isNaN(line)) {
+		if (ShadeWeather.snowLine() && !Float.isNaN(line)) { // (1.1) live
 			// (2026-10-11) something falls at the camera: rain on the terrain below the snow line (shadeWetSurface limits it by
 			// height) when the line is within reach of the camera. Snow cover only in snowy biomes (snow at every height: snowy
 			// plains, taigas, slopes, frozen peaks...): Gael, in rain on a stony mountain: "where it isn't snowy, rain should only
@@ -103,7 +104,7 @@ public final class WeatherFrame {
 		double bx = 0, by = 1, bz = 0;
 		Minecraft mc = Minecraft.getInstance();
 		boolean hidden = mc.options != null && mc.options.hideLightningFlash().get();
-		if (ShadeWeather.LIGHTNING && level != null && overworld && !hidden) {
+		if (ShadeWeather.lightning() && level != null && overworld && !hidden) { // (1.1) live off
 			for (Entity e : level.entitiesForRendering()) {
 				if (!(e instanceof LightningBolt bolt)) continue;
 				double dx = bolt.getX() - camX, dy = bolt.getY() + 40.0 - camY, dz = bolt.getZ() - camZ;
@@ -134,9 +135,13 @@ public final class WeatherFrame {
 		ShadeWeather.flashDir[0] = glowDir[0];
 		ShadeWeather.flashDir[1] = glowDir[1];
 		ShadeWeather.flashDir[2] = glowDir[2];
-		ShadeWeather.flash = afterglow * FLASH_LIGHT;
+		// (1.1) mcopt.shade.flashLight live (0..10)
+		ShadeWeather.flash = afterglow * Live.f("mcopt.shade.flashLight", FLASH_LIGHT, 0f, 10f);
 	}
 
-	/** Flash light at full strength: radiance on a white surface facing it, before exposure (a storm's sky light is ~0.1-0.3). */
-	private static final float FLASH_LIGHT = Float.parseFloat(System.getProperty("mcopt.shade.flashLight", "5"));
+	/**
+	 * Flash light at full strength: radiance on a white surface facing it, before exposure (a storm's sky light is ~0.1-0.3).
+	 * (1.1) the startup value is the default of the live read (mcopt.shade.flashLight, 0..10); a malformed value gives 5.
+	 */
+	private static final float FLASH_LIGHT = ShadeWeather.floatFlag("mcopt.shade.flashLight", 5f);
 }

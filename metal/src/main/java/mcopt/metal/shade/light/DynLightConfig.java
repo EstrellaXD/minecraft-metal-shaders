@@ -15,13 +15,18 @@
  */
 package mcopt.metal.shade.light;
 
+import mcopt.metal.shade.Live;
 import mcopt.metal.shade.Shade;
 
 /**
- * Dynamic light flags (system properties or config/mcopt.properties, read once at startup; everything needs mcopt.shade=true):
+ * Dynamic light flags (system properties or config/mcopt.properties, read once at startup; everything needs mcopt.shade=true).
+ * (1.1) max, range, strength, spec, entity, hand, others and flicker are read live (every frame, through Live; the startup
+ * value below is the default and the clamp is the same); the module, the volumes, the occlusion and the entities' vertex
+ * stages stay startup switches (they decide the shaders and the buffers).
  * <ul>
  * <li>{@code mcopt.shade.dynLights} (true): the module. false = M2.1's shaders byte for byte (no define, no bindings).</li>
- * <li>{@code mcopt.shade.dynLights.max} (64): lights per frame (the nearest / strongest win; the local player's hands first).</li>
+ * <li>{@code mcopt.shade.dynLights.max} (64): lights per frame (the nearest / strongest win; the local player's hands first).
+ * (1.1) live 1..64: a cap only, the buffers stay sized for 64.</li>
  * <li>{@code mcopt.shade.dynLights.range} (48): blocks around the camera lights are gathered from.</li>
  * <li>{@code mcopt.shade.dynLights.volumes} (preset: 8 / 16 / 24 / 32): lights that get a visibility volume (no light through
  * walls); the rest light without occlusion (they are the weakest or farthest).</li>
@@ -75,6 +80,46 @@ public final class DynLightConfig {
 
 	private static int clamp(int v, int min, int max) {
 		return Math.max(min, Math.min(max, v));
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.max (MAX at startup), 1..64: the cap on this frame's lights (DynLights.MAX sizes the buffer). */
+	static int max() {
+		return clamp(Live.i("mcopt.shade.dynLights.max", MAX), 1, 64);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.range (RANGE at startup), 8..60 blocks. */
+	static float range() {
+		return Live.f("mcopt.shade.dynLights.range", RANGE, 8f, 60f);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.strength (STRENGTH at startup), 0..4. */
+	static float strength() {
+		return Live.f("mcopt.shade.dynLights.strength", STRENGTH, 0f, 4f);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.spec (SPEC at startup), 0..4. */
+	static float spec() {
+		return Live.f("mcopt.shade.dynLights.spec", SPEC, 0f, 4f);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.entity (ENTITY at startup), 0..4. */
+	static float entity() {
+		return Live.f("mcopt.shade.dynLights.entity", ENTITY, 0f, 4f);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.hand (HAND at startup): the local player's held light and its hand / body taking it. */
+	static boolean hand() {
+		return Live.b("mcopt.shade.dynLights.hand", HAND);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.others (OTHERS at startup). */
+	static boolean others() {
+		return Live.b("mcopt.shade.dynLights.others", OTHERS);
+	}
+
+	/** (1.1) live: mcopt.shade.dynLights.flicker (FLICKER at startup). */
+	static boolean flicker() {
+		return Live.b("mcopt.shade.dynLights.flicker", FLICKER);
 	}
 
 	static String describe() {

@@ -17,6 +17,7 @@ package mcopt.metal.shade.weather;
 
 import java.nio.ByteBuffer;
 import java.util.Locale;
+import mcopt.metal.shade.Live;
 import mcopt.metal.shade.Shade;
 import mcopt.metal.shade.ShadeLook;
 import mcopt.metal.shade.ShadeMsl;
@@ -55,13 +56,15 @@ import mcopt.metal.shade.ShadeMsl;
  * ({@link #RAIN_BUDGET}).</li>
  * <li>{@code mcopt.shade.snowCover} (true): snow builds up on top faces while it snows at the camera.</li>
  * <li>{@code mcopt.shade.snowLine} (2026-10-11, true): snow cover only above the camera biome's snow line, rain's wetness and
- * puddles only below it ({@link #SNOW_LINE}); false = M3's look (the whole terrain takes what falls at the camera).</li>
- * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms).</li>
+ * puddles only below it ({@link #SNOW_LINE}); false = M3's look (the whole terrain takes what falls at the camera). (1.1) live
+ * (the shaders gate it by a bit of ShadeFrame.wxLine).</li>
+ * <li>{@code mcopt.shade.rainSlant} (true): rain leans with the wind (more in thunderstorms). (1.1) live off: the slanted
+ * vertex stage is compiled at startup only while it is on there; off then leaves the rain upright (slant 0).</li>
  * <li>{@code mcopt.shade.lightning} (true): bolts light the scene and the sky, and glow (the game's "Hide Lightning Flashes"
- * option turns the flash light off).</li>
+ * option turns the flash light off). (1.1) live off: no flash light (the code stays compiled; the bolts still glow).</li>
  * <li>{@code mcopt.shade.colorShadows} (true) and {@code mcopt.shade.colorShadowRes} (1024; 2048 on ultra): coloured light
  * through stained glass, ice and water (near cascade).</li>
- * <li>{@code mcopt.shade.weatherTime} (1): time scale of wetting and drying (the bench uses 10).</li>
+ * <li>{@code mcopt.shade.weatherTime} (1): time scale of wetting and drying (the bench uses 10). (1.1) live, 0.1..100.</li>
  * <li>{@code mcopt.shade.wetness} (-1 = from the weather): force wetness and puddles to this value (look development; M3.3:
  * read again every frame).</li>
  * <li>{@code mcopt.shade.wetAll} (M3.3, true): in rain the whole open ground soaks (a water film with a Fresnel sheen and
@@ -69,7 +72,11 @@ import mcopt.metal.shade.ShadeMsl;
  * read again every frame (false = M3.2's look) for in-session A/B. {@code mcopt.shade.wetRough} (0.2), {@code wetVeg} (0.1),
  * {@code wetSsr} (film reflections' gate, 0 = off), {@code wetDark}, {@code wetVegFilm}, {@code wetTex}, {@code wetRim} likewise
  * ({@link #WET_ALL}).</li>
- * <li>{@code mcopt.shade.snowAmount} (-1 = from the weather): force the snow cover to this value (look development).</li>
+ * <li>{@code mcopt.shade.snowAmount} (-1 = from the weather): force the snow cover to this value (look development). (1.1)
+ * live.</li>
+ * <li>(1.1, live) the player's amounts, multipliers on what the weather packs (1 = as released, 0..2; the result is clamped to
+ * 0..1): {@code mcopt.shade.user.wetness} (the wet film, wet.x), {@code mcopt.shade.user.puddles} (wet.y),
+ * {@code mcopt.shade.user.snow} (the snow cover, wet.z). The weather's own state (soaking, drying) is not changed by them.</li>
  * </ul>
  */
 public final class ShadeWeather {
@@ -170,7 +177,8 @@ public final class ShadeWeather {
 	 * what can be seen): the terrain can take its lean variant without the wet-surface code (ShadeLean).
 	 */
 	public static boolean dry() {
-		return wetness < 0.003f && puddles < 0.003f && snow < 0.003f && rain < 0.003f && snowfall < 0.003f && flash <= 0f;
+		// (1.1) the packed amounts (the player's multipliers applied: at 0 the wet code isn't needed while it rains either)
+		return wetNow() < 0.003f && puddlesNow() < 0.003f && snowNow() < 0.003f && rain < 0.003f && snowfall < 0.003f && flash <= 0f;
 	}
 
 	static boolean flag(String key, boolean fallback) {
@@ -195,7 +203,7 @@ public final class ShadeWeather {
 	 */
 	static void step(float dt, float rainTarget, float snowTarget, boolean snowing, float line, float camY, float thunder, float dayIndex,
 	                 float seconds, boolean snap) {
-		float s = dt * TIME_SCALE;
+		float s = dt * timeScale(); // (1.1) live
 		// wetness: soaks in over ~20 s of rain, dries over a couple of minutes; puddles fill once the ground is wet and dry
 		// slower still; snow builds over ~40 s and lingers for minutes
 		float wetTarget = rainTarget;
@@ -215,7 +223,7 @@ public final class ShadeWeather {
 			rain = approach(rain, rainTarget, dt, 1.5f, 3f);
 			snowfall = approach(snowfall, snowing && snowTarget > 0.05f ? 1f : 0f, dt, 1.5f, 1.5f);
 		}
-		if (SNOW_LINE && !Float.isNaN(line)) {
+		if (snowLine() && !Float.isNaN(line)) {
 			// within 400 blocks of the camera (+-1e4 = everywhere / nowhere), eased over ~1.5 s: no jump at a biome's border
 			float lo = camY - 400f, hi = camY + 400f, lt = Math.clamp(line, lo, hi);
 			float k = snap ? 1f : 1f - (float) Math.exp(-dt / 1.5f);
@@ -233,12 +241,63 @@ public final class ShadeWeather {
 			wetness = Math.min(forceWet, 1f);
 			puddles = Math.min(forceWet, 1f);
 		}
-		if (FORCE_SNOW >= 0f) snow = Math.min(FORCE_SNOW, 1f);
+		float forceSnow = Live.f("mcopt.shade.snowAmount", FORCE_SNOW); // (1.1) live
+		if (forceSnow >= 0f) snow = Math.min(forceSnow, 1f);
 		// wind: a direction per day that wanders slowly; storms lean the rain more and gust
 		double h = Math.sin(dayIndex * 12.9898 + 78.233) * 43758.5453;
 		windAngle = (float) ((h - Math.floor(h)) * Math.PI * 2 + 0.35 * Math.sin(seconds / 97.0));
 		gust = (float) (0.5 + 0.5 * Math.sin(seconds * 0.71) * Math.sin(seconds * 0.23 + 1.3));
-		slant = SLANT ? (0.12f + 0.22f * thunder) * (0.75f + 0.5f * gust) : 0f;
+		slant = rainSlant() ? (0.12f + 0.22f * thunder) * (0.75f + 0.5f * gust) : 0f;
+	}
+
+	/** (1.1) live: mcopt.shade.weatherTime, the time scale of wetting and drying (TIME_SCALE at startup; 0.1..100). */
+	static float timeScale() {
+		return Live.f("mcopt.shade.weatherTime", TIME_SCALE, 0.1f, 100f);
+	}
+
+	/** (1.1) live: mcopt.shade.snowLine, whether the camera biome's snow line limits the snow cover and the rain's wetness. */
+	static boolean snowLine() {
+		return Live.b("mcopt.shade.snowLine", SNOW_LINE);
+	}
+
+	/** (1.1) live off: mcopt.shade.rainSlant (the slanted rain stage exists only when it was on at startup, SLANT). */
+	static boolean rainSlant() {
+		return SLANT && Live.b("mcopt.shade.rainSlant", true);
+	}
+
+	/** (1.1) live off: mcopt.shade.lightning, the flash light (its code compiled only when it was on at startup, LIGHTNING). */
+	static boolean lightning() {
+		return LIGHTNING && Live.b("mcopt.shade.lightning", true);
+	}
+
+	/**
+	 * (1.1) live off: mcopt.shade.colorShadows. The tint map, its pass and the receivers' lookup exist only when it was on at
+	 * startup (COLOR_SHADOWS); off then skips the tint pass (ShadowPass) and the receivers see no casters (ssr.w = 0).
+	 */
+	public static boolean colorShadows() {
+		return COLOR_SHADOWS && Live.b("mcopt.shade.colorShadows", true);
+	}
+
+	/**
+	 * (1.1) live: the player's amount of v (mcopt.shade.user.wetness / .puddles / .snow, 1 = as released, 0..2), clamped to
+	 * 0..1 (what the shaders expect). At 1 the value is passed through untouched, so the image is the released one.
+	 */
+	private static float amount(float v, String key) {
+		float k = Live.f(key, 1f, 0f, 2f);
+		return k == 1f ? v : Math.min(Math.max(v * k, 0f), 1f);
+	}
+
+	/** This frame's packed wetness, puddles and snow cover (wet.x / y / z): the state times the player's amounts. */
+	private static float wetNow() {
+		return amount(wetness, "mcopt.shade.user.wetness");
+	}
+
+	private static float puddlesNow() {
+		return amount(puddles, "mcopt.shade.user.puddles");
+	}
+
+	private static float snowNow() {
+		return amount(snow, "mcopt.shade.user.snow");
 	}
 
 	/** Exponential approach with separate rise / fall time constants (s). */
@@ -270,9 +329,10 @@ public final class ShadeWeather {
 			wetAll ? Math.max(floatFlag("mcopt.shade.wetSsr", WET_SSR), 0f) : 0f);
 		put4(b, ShadeLook.WATER_ABS, floatFlag("mcopt.shade.wetDark", 0.2f), floatFlag("mcopt.shade.wetVegFilm", 0.55f), floatFlag("mcopt.shade.wetTex", 0f),
 			Math.max(floatFlag("mcopt.shade.wetRim", 0.12f), 0.005f));
-		put4(b, ShadeLook.WET, wetness, PUDDLES ? puddles : 0f, SNOW ? snow : 0f, rain);
+		// (1.1) the player's amounts (mcopt.shade.user.wetness / .puddles / .snow, live; 1 = the state as it is)
+		put4(b, ShadeLook.WET, wetNow(), PUDDLES ? puddlesNow() : 0f, SNOW ? snowNow() : 0f, rain);
 		put4(b, ShadeLook.WIND, (float) Math.cos(windAngle), (float) Math.sin(windAngle), slant, snowfall); // w: snowfall (gust only shapes the slant)
-		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], LIGHTNING ? flash : 0f);
+		put4(b, ShadeLook.FLASH, flashDir[0], flashDir[1], flashDir[2], lightning() ? flash : 0f); // (1.1) live off
 		b.putFloat(ShadeLook.SSR + 8, noiseTexture != 0 ? 1f : 0f); // ssr.z: ShadeResources.weatherNoise is baked
 		// ssr.w / tintRect: no coloured-shadow casters until the shadow pass of this frame says otherwise (ShadowPass ->
 		// ShadeBindings.setShadowTint, before the world passes); without a shadow pass the receivers skip the lookup
@@ -310,7 +370,7 @@ public final class ShadeWeather {
 	 * every frame): grass tops hold about a third of the puddles, shallower (blades stand out of the water: x0.7).
 	 */
 	public static void packLine(ByteBuffer b, int at) {
-		boolean on = ON && SNOW_LINE;
+		boolean on = ON && snowLine(); // (1.1) live
 		int bits = (on ? 1 : 0) | (flag("mcopt.shade.wetWalls", true) ? 2 : 0) | (flag("mcopt.shade.wetVegLight", true) ? 4 : 0)
 			| (flag("mcopt.shade.wetVegPuddles", true) ? 8 : 0);
 		put4(b, at, on ? snowFloor : -1e4f, on ? rainTop : 1e4f, LINE_BAND, bits);
@@ -337,7 +397,7 @@ public final class ShadeWeather {
 	/** For logs: wetness, puddles, snow, rain, flash. */
 	public static String describeState() {
 		return String.format(Locale.ROOT, "wet %.2f puddles %.2f snow %.2f rain %.2f flash %.2f", wetness, puddles, snow, rain, flash)
-			+ (SNOW_LINE ? String.format(Locale.ROOT, ", snow from y %.0f, rain up to y %.0f", snowFloor, rainTop) : "");
+			+ (snowLine() ? String.format(Locale.ROOT, ", snow from y %.0f, rain up to y %.0f", snowFloor, rainTop) : "");
 	}
 
 	/** The MSL in front of the Sodium terrain stages (after ShadeMsl.prelude, before the water module): defines + weather_surface.metal. */

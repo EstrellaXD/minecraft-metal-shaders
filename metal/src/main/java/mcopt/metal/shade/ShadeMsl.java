@@ -32,8 +32,8 @@ import mcopt.metal.shade.weather.ShadeWeather;
  * every shaded stage is "#define MCOPT_SHADE" + shade_common.metal + the stage's own source (MetalPipeline prepends the
  * MCOPT_SLOT_* uniform slot defines in front of that). Registered by pipeline name in MetalShaderRegistry:
  * <ul>
- * <li>sodium:pipeline/{solid,cutout,translucent}_terrain: mcopt's own Sodium MSL (plain and pulled vertex, fragment) with
- * MCOPT_SHADE: per-pixel lighting (sodium_terrain.{vs,fs}.metal).</li>
+ * <li>(up to 1.1) sodium:pipeline/{solid,cutout,translucent}_terrain: Sodium's terrain with per-pixel lighting. Since the
+ * mcopt 0.3 port the terrain is mcopt's own renderer's (own/terrain.metal), shaded through {@link #ownPrefix}.</li>
  * <li>minecraft:pipeline/sky: the atmosphere (sky.vs.metal, sky.fs.metal).</li>
  * <li>minecraft:pipeline/celestial: vanilla's sun quad dropped, moon kept (celestial.vs.metal).</li>
  * <li>minecraft:pipeline/sunrise_sunset: dropped in the overworld (sunrise_sunset.vs.metal).</li>
@@ -50,7 +50,12 @@ public final class ShadeMsl {
 	/** Must match SHADE_LUT_W / SHADE_LUT_H in shade_common.metal. */
 	public static final int LUT_WIDTH = 128, LUT_HEIGHT = 80;
 	public static final String SKY = "minecraft:pipeline/sky", CELESTIAL = "minecraft:pipeline/celestial", SUNRISE = "minecraft:pipeline/sunrise_sunset";
-	public static final List<String> TERRAIN = List.of("sodium:pipeline/solid_terrain", "sodium:pipeline/cutout_terrain", "sodium:pipeline/translucent_terrain");
+	/**
+	 * The terrain pipelines registered with shading: none since the mcopt 0.3 port (v12). Up to 1.1 these were Sodium's
+	 * (sodium:pipeline/{solid,cutout,translucent}_terrain, shaded through sodium_terrain.{vs,fs}.metal); mcopt 0.3 draws terrain
+	 * with its own renderer (mcopt.metal.own), which gets the shading through {@link #ownPrefix} instead.
+	 */
+	public static final List<String> TERRAIN = List.of();
 
 	public static final String WEATHER = "minecraft:pipeline/weather", STARS = "minecraft:pipeline/stars", LIGHTNING = "minecraft:pipeline/lightning";
 	/** M3 (mcopt.shade.dims): the End sky box (end_sky.{vs,fs}.metal). */

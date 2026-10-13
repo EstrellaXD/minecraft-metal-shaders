@@ -169,8 +169,16 @@ public final class ShadeWater {
 	static final float SHADOW_SOFT_DEFAULT = 2f;
 	/** M2.1: the water animates on a real-time clock instead of the (server-corrected, tick-based) game time. */
 	public static final boolean CLOCK = Boolean.parseBoolean(System.getProperty("mcopt.shade.waterClock", "true"));
-	/** The pipeline whose first use in a main pass triggers the scene copy. */
-	public static final String TRANSLUCENT = "sodium:pipeline/translucent_terrain";
+	/**
+	 * The pipelines whose first use in a main pass triggers the scene copy: vanilla's translucent terrain (mcopt 0.3 port:
+	 * Sodium's until 1.1; with mcopt's own terrain renderer the copy is taken where it starts its translucent draws instead).
+	 */
+	public static final String TRANSLUCENT = "minecraft:pipeline/translucent_terrain", TRANSLUCENT_MULTIDRAW = "minecraft:pipeline/translucent_terrain_multidraw";
+
+	/** Whether pipelineName is one of the {@link #TRANSLUCENT} pipelines. */
+	public static boolean translucentTerrain(String pipelineName) {
+		return TRANSLUCENT.equals(pipelineName) || TRANSLUCENT_MULTIDRAW.equals(pipelineName);
+	}
 
 	private static long state;
 	private static boolean failed;

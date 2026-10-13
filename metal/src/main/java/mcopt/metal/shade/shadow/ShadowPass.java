@@ -11,7 +11,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import mcopt.metal.MetalBridge;
-import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
@@ -464,6 +463,12 @@ public final class ShadowPass {
 		return new int[] {w, h};
 	}
 
+	/** The block atlas the terrain is drawn with (cutout and translucent casters sample it), as a Metal texture view. */
+	private static long blockAtlas() {
+		return MetalBridge.viewHandle(net.minecraft.client.Minecraft.getInstance().getTextureManager()
+			.getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS).getTextureView());
+	}
+
 	private void render() {
 		Object encoder = MetalBridge.encoder(((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend());
 		if (encoder == null || MetalBridge.inRenderPass(encoder)) {
@@ -515,8 +520,6 @@ public final class ShadowPass {
 			ShadowNative.swap(this.shadow);
 			this.texture = ShadowNative.texture(this.shadow);
 		}
-		// Sodium geometry copies MetalTerrain holds back for its split must land before these passes read the arenas.
-		MetalBridge.flushHeldTerrainCopies(encoder);
 		long enc = MetalBridge.enc(encoder);
 		var memory = ((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).transientMemory();
 		// regions, then every cascade's chunks back to back; one upload each
@@ -528,7 +531,7 @@ public final class ShadowPass {
 		GpuBufferSlice.MappedView chunks = memory.allocateGpuMapped(Math.max(16, (long) totalChunks * ShadowCasters.chunkBytes()), 16L, GpuBuffer.USAGE_UNIFORM);
 		long chunkAt = MemoryUtil.memAddress(chunks.data());
 		long regionsHandle = MetalBridge.useBuffer(encoder, regions.slice().buffer()), chunksHandle = MetalBridge.useBuffer(encoder, chunks.slice().buffer());
-		long atlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.CUTOUT.getAtlas());
+		long atlas = blockAtlas();
 		int first = 0;
 		boolean tracing = MetalBridge.tracing(encoder);
 		try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -583,7 +586,7 @@ public final class ShadowPass {
 					for (int i = 0; i < 8; i++) MemoryUtil.memPutFloat(params + i * 4L, this.waterRects[i]);
 					// mode.x = 1: leave water out (the water module absorbs the light on its way down to the floor itself)
 					MemoryUtil.memPutFloat(params + 32, mcopt.metal.shade.water.ShadeWater.ON ? 1f : 0f);
-					long translucentAtlas = MetalBridge.viewHandle(DefaultTerrainRenderPasses.TRANSLUCENT.getAtlas());
+					long translucentAtlas = atlas;
 					// M3.3 pricing (mcopt.shade.tintDev, per frame): 8 = a 512^2 map, 2 = no pass (the last map is looked up), 1 = no lookup
 					boolean lite = (tintDev & 8) != 0;
 					if (lite && this.tintLite == 0) this.tintLite = ShadowNative.tintLiteInit(this.shadow, 512);

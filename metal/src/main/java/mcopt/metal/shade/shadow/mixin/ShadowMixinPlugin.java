@@ -8,8 +8,8 @@ import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
 /**
- * The sun shadow pass's mixins apply only with -Dmcopt.shade=true (and mcopt.shade.shadows not false) and Sodium loaded:
- * without them the game is byte-for-byte what it is without them. Reads the properties itself so nothing of
+ * The sun shadow pass's mixins apply only with -Dmcopt.shade=true (and mcopt.shade.shadows not false) and terrain casters
+ * to draw: without them the game is byte-for-byte what it is without them. Reads the properties itself so nothing of
  * mcopt.metal.shade loads before the game does.
  */
 public final class ShadowMixinPlugin implements IMixinConfigPlugin {
@@ -19,6 +19,12 @@ public final class ShadowMixinPlugin implements IMixinConfigPlugin {
 
 	private static final boolean ENABLED = Boolean.getBoolean("mcopt.shade") // the same tests as Shade.SHADOWS
 		&& Boolean.parseBoolean(System.getProperty("mcopt.shade.shadows", "true")) && Boolean.parseBoolean(System.getProperty("mcopt.metal", "true"));
+
+	/**
+	 * mcopt 0.3 port (v12): the terrain casters came from Sodium, which this build doesn't have (see ShadowCasters); the
+	 * pass stays off until they come from mcopt's own renderer (P4). Vanilla's blob shadows stay meanwhile.
+	 */
+	private static final boolean TERRAIN_CASTERS = false;
 
 	@Override
 	public void onLoad(String mixinPackage) {
@@ -31,7 +37,7 @@ public final class ShadowMixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-		return ENABLED && net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("sodium");
+		return ENABLED && TERRAIN_CASTERS;
 	}
 
 	@Override

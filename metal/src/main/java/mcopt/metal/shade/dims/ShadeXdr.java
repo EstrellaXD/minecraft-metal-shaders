@@ -31,8 +31,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
  * XDR / EDR output (bible E23; native side mcxdr.m, which documents the frame). Decided once, when the game first configures
- * its surface ({@link #configure}, from MetalSurface): mcopt.shade.xdr = auto (on when a screen can show EDR), on or off; never
- * with frame generation. While on, the final pass (ShadePost) writes the SDR image into main (alpha 0) plus the highlights'
+ * its surface ({@link #configure}, from MetalSurface): mcopt.shade.xdr = auto (on when a screen can show EDR), on or off
+ * (until 1.1 never with upstream's frame generation, which mcopt 0.3 removed). While on, the final pass (ShadePost) writes the SDR image into main (alpha 0) plus the highlights'
  * excess above SDR white into its own RG11B10Float target, and the present composes them into the RGBA16Float extended
  * linear Display P3 drawable. The highlight peak follows the screen's current EDR headroom (smoothed, capped by
  * mcopt.shade.xdrPeak), so the brightness slider never makes highlights jump. Render thread only.
@@ -75,7 +75,7 @@ public final class ShadeXdr {
 	}
 
 	/** MetalSurface.configure, before the layer's format is set (every configure; the decision is taken the first time). */
-	public static void configure(long metalLayer, boolean frameGen) {
+	public static void configure(long metalLayer) {
 		layer = metalLayer;
 		if (decided) return;
 		decided = true;
@@ -85,10 +85,9 @@ public final class ShadeXdr {
 			boolean can = (int) supported.invokeExact() != 0;
 			potential = (float) headroom.invokeExact(metalLayer, 1);
 			on = mode == 2 || mode == 1 && can;
-			if (frameGen) on = false; // frame generation presents its own way
 			enable.invokeExact(on ? 1 : 0);
 			System.out.println("[mcopt] shade: XDR output " + (on ? "on" : "off") + " (mcopt.shade.xdr=" + new String[] {"off", "auto", "on"}[mode]
-				+ ", EDR screen " + can + ", this screen's potential headroom " + potential + (frameGen ? ", frame generation: off" : "") + ")");
+				+ ", EDR screen " + can + ", this screen's potential headroom " + potential + ")");
 		} catch (Throwable t) {
 			on = false;
 			System.out.println("[mcopt] shade: XDR output unavailable: " + t);

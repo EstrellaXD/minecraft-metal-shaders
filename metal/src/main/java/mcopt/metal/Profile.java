@@ -18,8 +18,8 @@ import java.util.TreeMap;
  * <li>Any {@code mcopt.*} key in config/mcopt.properties is applied too, and wins over the profile's value.</li>
  * <li>A flag given on the command line wins over both: a key is only set when System.getProperty(key) is still null.</li>
  * </ul>
- * With no profile named anywhere, {@code alpha} applies (the perf-only set); {@code profile=none} applies no profile,
- * exactly the old no-profile behaviour. If config/mcopt.properties is absent it is written with the effective profile ({@code alpha}, or what -Dmcopt.profile names)
+ * With no profile named anywhere, {@code indie} applies (our own renderer); {@code profile=none} applies no profile,
+ * exactly the old no-profile behaviour (vanilla's renderer). If config/mcopt.properties is absent it is written with the effective profile ({@code indie}, or what -Dmcopt.profile names)
  * and comment lines on how to turn it off and how to try far terrain. For {@code alpha} on the small tier (GPU under
  * 10 cores, or 8 GB of RAM or less, or either unreadable) the keys in {@link #SMALL_OUT} are left out. It runs first in every mixin config plugin
  * and in the preLaunch entrypoint, before any of our classes read a flag; the first call does the work, later calls
@@ -29,7 +29,7 @@ public final class Profile {
 	private static boolean applied;
 	/** Alpha keys left out on the small tier: the 4096-entry clone cache costs memory an 8 GB / small-GPU Mac lacks. */
 	static final java.util.List<String> SMALL_OUT = java.util.List.of("mcopt.chunk.clones", "mcopt.chunk.clonesCleanup");
-	static final String DEFAULT = "alpha";
+	static final String DEFAULT = "indie";
 
 	private Profile() {
 	}
@@ -38,7 +38,10 @@ public final class Profile {
 		if (applied) return;
 		applied = true;
 		applyFlags();
-		distantHorizons();
+		// mcopt-shade: with the shaders on, our Distant Horizons rule (tested DH versions only, far terrain off, DH's fade
+		// fixed); off, upstream's
+		if (Boolean.parseBoolean(System.getProperty("mcopt.shade"))) distantHorizons();
+		else distantHorizonsOnOpenGl();
 	}
 
 	/**
@@ -94,6 +97,44 @@ public final class Profile {
 			|| System.getProperty("mcopt.shade.dh.fade") != null) return;
 		String done = DhCompat.fixVanillaFade(gameDir());
 		if (done != null) System.out.println("[mcopt] Distant Horizons: " + done);
+	}
+
+	/**
+	 * Distant Horizons draws through the Metal backend with its default Blaze3D renderer (DhRenderApiMixin), next to our own
+	 * terrain: it draws its LODs in LevelRenderer.prepareTranslucents and its fades in executeOutline / executeOit, none of
+	 * which our renderer replaces. Its OpenGL renderer can't: DH picks that one when its config says renderingEngine =
+	 * "OPEN_GL" (or when Iris is loaded, which needs Sodium and so never loads with this build), and on the Metal backend it
+	 * then stops at startup ("API doesn't match"). Then mcopt.metal defaults to false (OpenGL, exactly as -Dmcopt.metal=false;
+	 * no own renderer). An explicit mcopt.metal wins. Without DH nothing here runs.
+	 */
+	private static void distantHorizonsOnOpenGl() {
+		if (System.getProperty("mcopt.metal") != null) return;
+		String why;
+		try {
+			net.fabricmc.loader.api.FabricLoader loader = net.fabricmc.loader.api.FabricLoader.getInstance();
+			if (!loader.isModLoaded("distanthorizons")) return;
+			why = loader.isModLoaded("iris") ? "with Iris" : dhOpenGlEngine() ? "set to its OpenGL renderer" : null;
+		} catch (Throwable t) {
+			return;
+		}
+		if (why == null) return;
+		System.setProperty("mcopt.metal", "false");
+		System.out.println("[mcopt] mcopt: Distant Horizons " + why + " needs OpenGL, using OpenGL; mcopt's other optimizations stay on (-Dmcopt.metal=true overrides)");
+	}
+
+	/** config/DistantHorizons.toml says renderingEngine = "OPEN_GL" (its default is AUTO: Blaze3D on 26.x). */
+	private static boolean dhOpenGlEngine() {
+		Path toml = gameDir().resolve("config").resolve("DistantHorizons.toml");
+		if (!Files.isRegularFile(toml)) return false;
+		try {
+			for (String line : Files.readAllLines(toml, StandardCharsets.UTF_8)) {
+				String t = line.strip();
+				if (t.startsWith("renderingEngine")) return t.replace(" ", "").startsWith("renderingEngine=\"OPEN_GL\"");
+			}
+		} catch (IOException | RuntimeException e) {
+			System.out.println("[mcopt] profile: can't read " + toml + ": " + e);
+		}
+		return false;
 	}
 
 	private static void applyFlags() {
@@ -160,10 +201,16 @@ public final class Profile {
 			+ (out.isEmpty() ? "" : "; left out:" + out));
 	}
 
-	private static int gpuCores() {
-		String s = run("/usr/sbin/ioreg", "-rd1", "-c", "AGXAccelerator");
-		java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"gpu-core-count\"\\s*=\\s*(\\d+)").matcher(s);
-		return m.find() ? Integer.parseInt(m.group(1)) : -1;
+	private static int gpuCores = -2;
+
+	/** The GPU's core count from the IORegistry (AGXAccelerator "gpu-core-count"), -1 if unreadable; read once. */
+	public static synchronized int gpuCores() {
+		if (gpuCores == -2) {
+			String s = run("/usr/sbin/ioreg", "-rd1", "-c", "AGXAccelerator");
+			java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"gpu-core-count\"\\s*=\\s*(\\d+)").matcher(s);
+			gpuCores = m.find() ? Integer.parseInt(m.group(1)) : -1;
+		}
+		return gpuCores;
 	}
 
 	private static long memBytes() {
@@ -189,9 +236,12 @@ public final class Profile {
 		String text = """
 			# mcopt settings. Written on first launch; edit freely.
 			#
-			# profile=alpha: measured vanilla performance options (chunk meshing, render lists, startup), the default.
-			# To turn it off:  profile=none
+			# The indie profile: mcopt's own terrain renderer on Apple Metal (no Sodium), plus measured startup and
+			# thread-priority options. To turn all of it off (vanilla's renderer), change the next line to:  profile=none
 			profile=%s
+			#
+			# Single switches win over the profile, e.g. our renderer off but the rest on:
+			#mcopt.own=false
 			#
 			# Metal Shaders (mcopt-shade): lighting, shadows, sky, clouds, water, god rays. false = mcopt's plain Metal renderer.
 			mcopt.shade=true

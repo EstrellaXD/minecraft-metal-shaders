@@ -1,17 +1,21 @@
 package mcopt.metal;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.impl.gui.FabricGuiEntry;
+import net.fabricmc.loader.impl.gui.FabricStatusTree;
+import net.fabricmc.loader.impl.util.Localization;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
 
 /**
  * Stops the launch, before any Metal class loads, on a machine the native library can't run on: it is arm64-only and
- * the mod supports macOS 15 and later (mcopt upstream asks for 26; the native library is built for 15.0, the shaders use
- * Metal Shading Language 3.1, which macOS 14 already has, and the one macOS 26 API, MetalFX frame interpolation, is checked
- * with @available and stays off before 26: a player ran it on Sequoia with -Dmcopt.platformCheck.fake=16.0, 2026-10-13). The message goes to the log and to Fabric's own error dialog (the one it shows
- * for a missing dependency), then the game exits. A plain exception from preLaunch would only show up as "A mod crashed
- * on startup!" with the reason buried in a stack trace. -Dmcopt.platformCheck.fake=linux (or x86_64, or a macOS
- * version like 15.5) pretends to be that platform, to test the message.
+ * the mod supports macOS 15 and later (mcopt upstream asks for 26; the native library is built for 15.0, residency sets
+ * need 15, and the shaders use Metal Shading Language 3.0/3.1, which macOS 14 already has: a player ran it on Sequoia with
+ * -Dmcopt.platformCheck.fake=16.0, 2026-10-13). The message goes to the log in one line and to Fabric's own error dialog
+ * (the one it shows for a missing dependency), then the game exits. The dialog's title line doesn't wrap, so it gets only
+ * the short "NAME can't run on this computer."; the reason and the fix go in its details area, one row each (rows wrap). A
+ * plain exception from preLaunch would only show up as "A mod crashed on startup!" with the reason buried in a stack trace.
+ * -Dmcopt.platformCheck.fake=linux (or x86_64, or a macOS version like 15.5) pretends to be that platform, to test the message.
  */
 final class PlatformCheck {
 	private PlatformCheck() {
@@ -27,15 +31,38 @@ final class PlatformCheck {
 		}
 		String problem = problem(os, arch, version);
 		if (problem == null) return;
-		String message = "mcopt Metal can't run here. " + problem
-			+ " To play on this computer, remove the mcopt-metal jar from the mods folder.";
+		String name = modName();
+		String fix = "To play on this computer, remove the " + (name.equals("mcopt Metal") ? "mcopt-metal" : name) + " jar from the mods folder.";
+		String message = name + " can't run here. " + problem + " " + fix;
 		Log.error(LogCategory.GENERAL, message);
 		try {
-			FabricGuiEntry.displayError(message, null, true); // exits the game
+			FabricGuiEntry.displayError(name + " can't run on this computer.", null, tree -> details(tree, problem, fix, message), true); // exits the game
 		} catch (Throwable t) {
 			throw new IllegalStateException(message, t);
 		}
 		throw new IllegalStateException(message);
+	}
+
+	/**
+	 * The dialog's details area: the reason and the fix in place of Fabric's "No further details available" row, and the
+	 * "Copy error" button Fabric adds only when it builds the details itself (it copies the whole message, as logged).
+	 */
+	private static void details(FabricStatusTree tree, String problem, String fix, String message) {
+		if (tree.tabs.isEmpty()) return;
+		FabricStatusTree.FabricStatusNode node = tree.tabs.get(0).node;
+		node.children.clear();
+		node.addMessage(problem, FabricStatusTree.FabricTreeWarningLevel.ERROR);
+		node.addMessage(fix, FabricStatusTree.FabricTreeWarningLevel.INFO);
+		tree.addButton(Localization.format("gui.button.copyError"), FabricStatusTree.FabricBasicButtonType.CLICK_MANY).withClipboard(message);
+	}
+
+	/** The mod's name from its fabric.mod.json (what Fabric's own dialogs call it): builds differ ("mcopt", "mcopt Metal"). */
+	private static String modName() {
+		try {
+			return FabricLoader.getInstance().getModContainer("mcopt-metal").map(c -> c.getMetadata().getName()).orElse("mcopt Metal");
+		} catch (Throwable t) {
+			return "mcopt Metal";
+		}
 	}
 
 	private static String problem(String os, String arch, String version) {

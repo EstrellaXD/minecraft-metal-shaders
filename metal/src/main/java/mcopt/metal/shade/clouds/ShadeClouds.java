@@ -105,6 +105,15 @@ public final class ShadeClouds {
 	private static boolean userOff;
 	/** (1.1) The style last drawn (a switch drops the history once). */
 	private static int lastStyle = -1;
+	/**
+	 * (1.1) The live settings last drawn whose change needs a reset: the checkerboard (the march target's size), the layer's base
+	 * setting (NaN = vanilla's height) and thickness (the history holds the clouds at the old height: dropped like a teleport),
+	 * the dome (turned on: a fresh one, not one blended from stale or never written texels) and the shadows (turned on: the map
+	 * rendered that frame).
+	 */
+	private static int lastChecker = -1;
+	private static float lastBase = Float.NaN, lastThickness = -1f;
+	private static boolean lastDome, lastShadows;
 
 	/**
 	 * (1.1) The game's cloud texture uploaded as a mask (mc_clouds_vanilla): the blocky style then draws vanilla's own cloud
@@ -216,11 +225,16 @@ public final class ShadeClouds {
 			var window = mc.getWindow();
 			int[] outSize = mcopt.metal.shade.ShadeOutput.current(window.getWidth(), window.getHeight());
 			int ow = outSize[0], oh = outSize[1];
-			float scale = (dev & CloudConfig.DEV_SCALE_ALT) != 0 ? CloudConfig.SCALE_ALT : CloudConfig.SCALE;
+			// (1.1: mcopt.shade.clouds.scale and .checker live, the preset's by default: a change resizes the targets below, which
+			// drops the history, as the dev bits' switch does)
+			float scale = (dev & CloudConfig.DEV_SCALE_ALT) != 0 ? CloudConfig.SCALE_ALT : CloudConfig.scale();
 			int hw = Math.max(16, Math.round(ow * scale)), hh = Math.max(16, Math.round(oh * scale));
 			// (M3.3: dev bit DEV_CHECKER_ALT = the other checkerboard, mcopt.shade.clouds.checkerAlt, for in-session pricing; the
 			// march target's size changes, so the switch drops the history once)
-			int checker = (dev & CloudConfig.DEV_CHECKER_ALT) != 0 ? CloudConfig.CHECKER_ALT : CloudConfig.CHECKER;
+			int checker = (dev & CloudConfig.DEV_CHECKER_ALT) != 0 ? CloudConfig.CHECKER_ALT : CloudConfig.checker();
+			// (1.1: the slot order and age cap follow N too: a change drops the history even where the sizes happen to stay)
+			if (checker != lastChecker) modeChanged = true;
+			lastChecker = checker;
 			hw = (hw + checker - 1) / checker * checker;
 			hh = (hh + checker - 1) / checker * checker;
 			int mw = hw / checker, mh = hh / checker;
@@ -268,19 +282,32 @@ public final class ShadeClouds {
 			} else {
 				lastVanillaX = Double.NaN;
 			}
-			p.base = Float.isNaN(CloudConfig.BASE) ? (Float.isFinite(vanillaHeight) && vanillaHeight > 0f ? vanillaHeight + (cells ? 0f : 8f) : 200f) : CloudConfig.BASE;
-			p.top = p.base + (blocky() ? (cells ? CloudConfig.VANILLA_THICKNESS : CloudConfig.BLOCK_THICKNESS) : CloudConfig.THICKNESS);
+			// (1.1: the base, the thickness and the blocky slab live; a change of the setting drops the history like a teleport, the
+			// clouds it holds stand at the old height. Not a change of vanilla's own cloud height: that kept the history before too)
+			float baseSet = CloudConfig.base();
+			float thickness = blocky() ? CloudConfig.blockThickness(cells) : CloudConfig.thickness();
+			if (Float.compare(baseSet, lastBase) != 0 || thickness != lastThickness) modeChanged = true;
+			lastBase = baseSet;
+			lastThickness = thickness;
+			p.base = Float.isNaN(baseSet) ? (Float.isFinite(vanillaHeight) && vanillaHeight > 0f ? vanillaHeight + (cells ? 0f : 8f) : 200f) : baseSet;
+			p.top = p.base + thickness;
 			p.histW = hw;
 			p.histH = hh;
 			p.marchW = mw;
 			p.marchH = mh;
 			p.checker = checker;
 			p.frame = frame++;
+			// (1.1: the dome live; turned on, the history drops once so the dome pass writes a fresh one: its texels are stale, or
+			// were never written when it was off from the start, and the pass blends 0.4 of a new march into them otherwise)
+			boolean domeOn = CloudConfig.dome();
+			if (domeOn && !lastDome) modeChanged = true;
+			lastDome = domeOn;
 			p.reset = snap || resized || modeChanged;
 			if (p.reset) domeFrames = 0;
-			p.domeValid = CloudConfig.DOME && domeFrames > 0;
+			p.domeValid = domeOn && domeFrames > 0;
 			p.domeUpdates = domeFrames;
-			p.opacity = 1f;
+			// (1.1: the player's mcopt.shade.user.cloudOpacity, live; 1 = as released. CloudParams scales the shadows by it too)
+			p.opacity = CloudConfig.userOpacity();
 			p.dev = dev;
 			p.mode = mode;
 			// the shadow map and the dome change slowly (the wind moves the shadows ~1/25 of a map texel in 4 frames): each every
@@ -289,9 +316,13 @@ public final class ShadeClouds {
 			// the long horizon rays' latency, not their number)
 			int domeEvery = (dev & CloudConfig.DEV_OLD_DOME) != 0 ? 4 : CloudConfig.DOME_EVERY;
 			boolean dome = (p.frame & (domeEvery - 1)) == 1;
-			p.shadowUpdate = CloudConfig.SHADOWS && ((p.frame & 3) == 3 || p.reset);
+			// (1.1: the shadows live; off = no map pass and strength 0 (CloudParams); turned on, the map is rendered this frame, it
+			// holds the frame it was last rendered in, or nothing)
+			boolean shadows = CloudConfig.shadows();
+			p.shadowUpdate = shadows && ((p.frame & 3) == 3 || p.reset || !lastShadows);
+			lastShadows = shadows;
 			p.pack(PACKED, f, WEATHER);
-			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)
+			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (domeOn && (dome || p.reset) ? 4 : 0)
 				| (CloudConfig.GPU_TIMER ? 8 : 0) | ((mode & CloudConfig.MODE_STABLE) != 0 ? 16 : 0) | (cells ? 32 : 0);
 			if (!p.reset) {
 				if ((dev & CloudConfig.DEV_NO_SCREEN) != 0) flags &= ~2;   // pricing: no march / resolve (the consumers read the old history)

@@ -17,6 +17,7 @@ package mcopt.metal.shade.clouds;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import mcopt.metal.shade.Live;
 import mcopt.metal.shade.ShadeFrame;
 import mcopt.metal.shade.ShadeLook;
 import mcopt.metal.shade.ShadeSky;
@@ -66,6 +67,7 @@ public final class CloudParams {
 	public float vanillaStepX;
 	/** How far the cumulus moved since last frame (blocks). */
 	public float windStepX, windStepZ;
+	/** Overall opacity (fades the clouds and their shadows; 1.1: the player's mcopt.shade.user.cloudOpacity, ShadeClouds). */
 	public float opacity = 1f;
 	/** This frame's dev bits (CloudConfig.devBits): the passes read them in lightDir.w, the consumers in ShadeLook.clouds1.z. */
 	public int dev;
@@ -98,7 +100,7 @@ public final class CloudParams {
 		float camY = (float) f.cameraY;
 		put4(b, 160, this.base, this.top, camY, 1f / (2f * CURVATURE_RADIUS));
 		float storm = w.storm;
-		float sigma = 0.15f * CloudConfig.DENSITY * (1f + 0.6f * storm);
+		float sigma = 0.15f * CloudConfig.density() * (1f + 0.6f * storm); // (1.1: density live)
 		put4(b, 176, w.coverage, w.type, sigma, 0.78f);
 		if (this.vanillaCells) {
 			put4(b, 192, (float) wrap(f.cameraX + this.vanillaX, this.vanillaPeriodX), (float) wrap(f.cameraZ + 3.96, this.vanillaPeriodZ),
@@ -107,7 +109,8 @@ public final class CloudParams {
 		} else {
 			put4(b, 192, (float) wrap(f.cameraX + this.windX, WEATHER_PERIOD), (float) wrap(f.cameraZ + this.windZ, WEATHER_PERIOD),
 				(float) wrap(f.cameraX + this.wind3X, NOISE_PERIOD), (float) wrap(f.cameraZ + this.wind3Z, NOISE_PERIOD));
-			put4(b, 208, this.windStepX, this.windStepZ, CloudConfig.CIRRUS ? w.cirrus : 0f, storm);
+			// (1.1: the cirrus on/off live, its coverage x the player's mcopt.shade.user.cirrusAmount)
+			put4(b, 208, this.windStepX, this.windStepZ, CloudConfig.cirrus() ? w.cirrus * CloudConfig.userCirrus() : 0f, storm);
 		}
 
 		// the light the layer gets: the sun until it is well below the horizon (the clouds' altitude sees it longer than the
@@ -118,7 +121,7 @@ public final class CloudParams {
 		if (this.sunLit) {
 			// below the horizon the colour stays that of the setting sun (the column through the planet's shadow turns pure
 			// red): the light fades out instead
-			ShadeSky.transmittanceAbove(Math.max(mid - SEA, 0f) * CloudConfig.ALTITUDE_SCALE / 1000f, Math.max(sunY, 0.01f), f.mie, t);
+			ShadeSky.transmittanceAbove(Math.max(mid - SEA, 0f) * CloudConfig.altitudeScale() / 1000f, Math.max(sunY, 0.01f), f.mie, t); // (1.1: live)
 			float k = ShadeSky.SUN_INTENSITY * smoothstep(-0.1f, 0.0f, sunY) * (1f - 0.55f * f.rain) * (1f - 0.5f * f.thunder);
 			for (int i = 0; i < 3; i++) this.light[i] = t[i] * k;
 			this.lightDir[0] = f.sunDir.x;
@@ -131,23 +134,30 @@ public final class CloudParams {
 			this.lightDir[1] = f.moonDir.y;
 			this.lightDir[2] = f.moonDir.z;
 		}
-		put4(b, 224, this.light[0], this.light[1], this.light[2], this.sunLit ? 1f : 0f);
+		// (1.1) the player's cloud brightness (mcopt.shade.user.cloudBrightness, live; 1 = as released): the light the layer gets
+		// here and its ambient from above and below (ambTop / ambBottom), so the whole layer, cirrus and dome included, scales
+		float bright = CloudConfig.userBrightness();
+		put4(b, 224, this.light[0] * bright, this.light[1] * bright, this.light[2] * bright, this.sunLit ? 1f : 0f);
 		put4(b, 240, this.lightDir[0], this.lightDir[1], this.lightDir[2], this.dev);
 		float[] as = f.sky.ambientSky, ag = f.sky.ambientGround;
 		float albedo = 0.96f - 0.3f * storm;
 		// a low sun: less of the sky's grey-blue fill, so the sunlit sides stay saturated gold against darker bases
-		float fill = this.sunLit ? SUNSET_FILL + (1f - SUNSET_FILL) * smoothstep(0.04f, 0.35f, sunY) : 1f;
-		put4(b, 256, as[0] * fill, as[1] * fill, as[2] * fill, albedo);
-		put4(b, 272, ag[0], ag[1], ag[2], 0.9f);
+		// (1.1: mcopt.shade.clouds.sunsetFill read every frame, SUNSET_FILL its default)
+		float sunsetFill = Live.f("mcopt.shade.clouds.sunsetFill", SUNSET_FILL);
+		float fill = this.sunLit ? sunsetFill + (1f - sunsetFill) * smoothstep(0.04f, 0.35f, sunY) : 1f;
+		put4(b, 256, as[0] * fill * bright, as[1] * fill * bright, as[2] * fill * bright, albedo);
+		put4(b, 272, ag[0] * bright, ag[1] * bright, ag[2] * bright, 0.9f);
 		// aerial perspective toward the sky behind: lighter while the sun is low (the clouds keep their sunset colour)
 		float lowSun = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
 		// (FT2.10: mcopt.shade.clouds.apSunset read every frame, for look development in one session)
 		float ap = 9000f * (1f - 0.65f * f.rain) * (1f + CloudConfig.floatProperty("mcopt.shade.clouds.apSunset", AP_SUNSET) * lowSun);
-		put4(b, 288, CloudConfig.STEPS, CloudConfig.LIGHT_STEPS, 12000f, ap);
+		put4(b, 288, CloudConfig.steps(), CloudConfig.lightSteps(), 12000f, ap); // (1.1: the steps live, uniforms of the march)
 		// cirrus: wraps in its own rotated frame (streak axis fixed in the world), so the period stays exact
 		double ca = Math.cos(CIRRUS_AXIS), sa = Math.sin(CIRRUS_AXIS);
 		double cx = f.cameraX + this.cirrusX, cz = f.cameraZ + this.cirrusZ;
-		put4(b, 304, this.base + CloudConfig.CIRRUS_ABOVE, 0.45f, (float) wrap(cx * ca + cz * sa, WEATHER_PERIOD), (float) wrap(-cx * sa + cz * ca, WEATHER_PERIOD));
+		// (1.1: cirrusAbove live, kept for packLook's cirrus altitude of the same frame)
+		this.cirrusAbove = CloudConfig.cirrusAbove();
+		put4(b, 304, this.base + this.cirrusAbove, 0.45f, (float) wrap(cx * ca + cz * sa, WEATHER_PERIOD), (float) wrap(-cx * sa + cz * ca, WEATHER_PERIOD));
 		// cloud shadow map: on the plane yRef, centred on where the light through the camera crosses it, snapped to texels
 		// The map is not rendered every frame: its frame (world origin, plane, light direction) is kept from the frame that
 		// rendered it, and the consumers' projection is built from that against this frame's camera (a moving camera would
@@ -177,8 +187,8 @@ public final class CloudParams {
 		// base rises with the weather map's fine fBm, from ~400 blocks out, full from ~1500; 0 = every base on the layer's floor,
 		// FT2.9; 0.25: no more stacked plates toward the sunset horizon, ft210-t13/t14)
 		put4(b, 352, this.domeUpdates & 0xffff, Math.min(Math.max(CloudConfig.floatProperty("mcopt.shade.clouds.baseSpread", 0.25f), 0f), 0.6f),
-			0.4f, CloudConfig.DOME_STEPS);
-		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.DETAIL);
+			0.4f, CloudConfig.domeSteps()); // (1.1: dome steps live)
+		put4(b, 368, this.frame & 0xffff, LIGHT_STEP, SEA - 6f, CloudConfig.detail()); // (1.1: detail live)
 		// the angle one march sample covers: the vertical field of view over the history's rows, times the checkerboard (M3.3: at
 		// most 3, so a 4x4 checkerboard reads the noise from the same mip levels as 3x3: the same far billows)
 		float fovY = (float) (2.0 * Math.atan(1.0 / Math.max(Math.abs(f.proj.m11()), 1e-3f)));
@@ -190,7 +200,8 @@ public final class CloudParams {
 		// wind shear: the tops lean downwind by ~40 blocks over the layer (more on windy days)
 		float shear = ShadeClouds.blocky() ? 0f : 25f + 3f * w.windSpeed;
 		put4(b, 432, w.windX * shear, w.windZ * shear, OD_STEP, OD_MIN);
-		this.shadowStrength = CloudConfig.SHADOWS ? CloudConfig.SHADOW_STRENGTH * smoothstep(0.04f, 0.18f, f.sky.lightDir[1]) * this.opacity : 0f;
+		// (1.1: shadows on/off and their strength live; off = 0, the consumers read 1, ShadeClouds skips the map's pass)
+		this.shadowStrength = CloudConfig.shadows() ? CloudConfig.shadowStrength() * smoothstep(0.04f, 0.18f, f.sky.lightDir[1]) * this.opacity : 0f;
 
 		// ---- ShadeLook ----
 		this.shadowExtent = extent;
@@ -202,6 +213,8 @@ public final class CloudParams {
 	}
 
 	private float shadowExtent = 1f, shadowRefY, shadowRelX, shadowRelZ, shadowLx, shadowLz, cameraY;
+	/** (1.1) This frame's cirrus height over the base (CloudConfig.cirrusAbove, live), for packLook. */
+	private float cirrusAbove = CloudConfig.CIRRUS_ABOVE;
 	private double shadowOriginX, shadowOriginZ;
 	private final float[] shadowDir = new float[3];
 	private boolean shadowValid;
@@ -229,7 +242,7 @@ public final class CloudParams {
 		boolean shadowUse = (this.dev & CloudConfig.DEV_NO_SHADOW_USE) == 0;
 		put4(b, ShadeLook.CLOUDS0, this.base - this.cameraY, this.top - this.cameraY, shadowUse ? this.shadowStrength : 0f, 1f);
 		// w (M3.4): 1 = the screen consumers read the history with a cubic B-spline (CloudConfig.smooth)
-		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + CloudConfig.CIRRUS_ABOVE - this.cameraY,
+		put4(b, ShadeLook.CLOUDS1, this.domeValid ? 1f : 0f, this.base + this.cirrusAbove - this.cameraY,
 			this.dev | (CloudConfig.lateFog() ? 0 : CloudConfig.DEV_EARLY_FOG) | (CloudConfig.aerialSun() ? CloudConfig.DEV_AP_SUN : 0), CloudConfig.smooth() ? 1f : 0f);
 	}
 

@@ -21,7 +21,10 @@
 // full-screen fragment passes / compute dispatches on the frame's command buffer with the globals bound.
 // Until a shadow pass provides a map, texture(16) is a 1x1x2 Depth32Float array that is never sampled (ShadeFrame says
 // shadows are off), so shaders that declare the slot always have a valid binding of the right type.
-// Slots 16-19 (buffers, textures) and samplers 12-15 are reserved for shade; nothing in the backend uses them.
+// Slots 16-19 (buffers, textures) and samplers 12-15 are reserved for shade; nothing in the backend uses them, except
+// mcopt 0.3's own terrain (mcown.m): its draws bind vertex buffers 16-23, vertex texture 17 and samplers 14-15 of their own
+// (its fragment stage's slots sit above ours under shading, see terrain.metal OWN_FS_*), and the pass's globals are bound
+// again after them (MetalRenderPass.reapplyPipeline, and mc_shade_reopen_hook inside its split passes).
 // Manual retain/release (the dylib builds with -fno-objc-arc), like the other files.
 #import "mcmetal.h"
 
@@ -186,6 +189,22 @@ int mc_shade_bind_render(id<MTLRenderCommandEncoder> r);
 // Binds the globals into enc's open render encoder (nothing when none is open or nothing is set yet).
 void mc_shade_bind(Enc *enc) {
 	mc_shade_bind_render(enc->render);
+}
+
+void mc_water_bind(Enc *enc);  // mcwater.m
+void mc_dl_bind(Enc *enc);     // mcdynlight.m
+
+// What ShadeBindings.bind binds, for an encoder the backend reopened by itself (each part binds nothing until it is set up).
+static void reopenBind(Enc *enc) {
+	mc_shade_bind(enc);
+	mc_water_bind(enc);
+	mc_dl_bind(enc);
+}
+
+// mcopt 0.3 port (ShadeBindings.init): from now on every pass the backend splits and reopens in the middle of its draws
+// (mcopt's own terrain: its occlusion test, mc_tl_restart) gets the globals back before the next draw (mcmetal.m mc_reopen_hook).
+void mc_shade_reopen_hook(int on) {
+	mc_reopen_hook = on ? reopenBind : NULL;
 }
 
 // (FT2.8, audit idx 46) the ShadeResources textures made resident for the encoder in one call (16 useResource calls per pass

@@ -26,7 +26,9 @@ import org.lwjgl.system.MemoryUtil;
  * the shadow map (a 1x1x2 dummy until the shadow pass sets one) with its comparison sampler, and the sky-view LUT, which
  * is rendered here once per frame. bind() is called by the backend wherever a new encoder starts: after
  * Native.renderBegin opened one (MetalEncoder.createRenderPass), after MetalTerrain's split reopened it
- * (MetalRenderPass.rebind) and after far terrain drew (MetalRenderPass.reapplyPipeline). Render thread only.
+ * (MetalRenderPass.rebind) and after far terrain or mcopt's own terrain drew (MetalRenderPass.reapplyPipeline, also at the end
+ * of restoreAfterSplit). Inside own terrain's split passes (its occlusion test reopens the pass between its draws) the native
+ * side binds the same globals itself (mcshade.m mc_shade_reopen_hook, set up in init). Render thread only.
  */
 public final class ShadeBindings {
 	/** The backend's gate for the bind hooks: a static final, so with shading off the hooks are dead code. */
@@ -77,6 +79,7 @@ public final class ShadeBindings {
 			gpuView = MemoryUtil.memByteBuffer(MetalBridge.bufferContents(gpuBuffer), 512).order(java.nio.ByteOrder.LITTLE_ENDIAN);
 			gpuView.putFloat(176, 1f).putFloat(180, 1f).putFloat(184, 1f);
 			if (mcopt.metal.shade.light.DynLights.ON) mcopt.metal.shade.light.DynLights.init(context); // M3: its bindings exist from the first draw
+			ShadeNative.reopenHook(true); // mcopt 0.3 port: own terrain's mid-pass reopens get the globals back natively
 		} catch (Throwable e) {
 			// Nothing to bind: the shaded pipelines can't be helped, but at least vanilla's face shade comes back.
 			failed = true;

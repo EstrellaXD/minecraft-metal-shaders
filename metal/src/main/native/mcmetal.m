@@ -1288,6 +1288,8 @@ int mc_tl_restart_ok(Enc *enc) {
 	return 0;
 }
 
+extern void (*mc_reopen_hook)(Enc *enc);  // (mcopt-shade, defined at mc_render_reopen)
+
 // mc_tl_restart: the open render encoder ended and reopened on the same attachments, colours loaded back, so the draws before and
 // after are passes of their own (a pass's fragments start after all its vertex work; -Dmcopt.own.tl.a1Split splits phase A's first
 // part this way). mode 2: when the encoder opened with its depth cleared and nothing in it wrote depth since, the depth still holds
@@ -1315,6 +1317,7 @@ int mc_tl_restart(Enc *enc, int mode) {
 			rp.depthAttachment.storeAction = MTLStoreActionUnknown;
 		}
 		openRender(enc, rp);
+		if (mc_reopen_hook) mc_reopen_hook(enc);  // (mcopt-shade, see mc_render_reopen)
 	}
 	return 1 + dead;
 }
@@ -1500,6 +1503,11 @@ void mc_render_resume(Enc *enc, id<MTLComputeCommandEncoder> compute) {
 	mc_render_reopen(enc);
 }
 
+// mcopt-shade (native shading): run right after mc_render_reopen (so mc_render_resume) and mc_tl_restart opened the new
+// encoder, which has no bindings yet: the shaded pipelines drawn next in the same pass (mcopt's own terrain after its
+// occlusion split) find the shade globals there. Set by mcshade.m's mc_shade_reopen_hook; NULL without shading.
+void (*mc_reopen_hook)(Enc *enc);
+
 // Reopens the render pass whose encoder mc_frame_cmd (or mc_render_suspend) ended, on the same attachments with their
 // contents loaded back (native shading's scene copy at the translucent switch, mcwater.m). Like mc_render_resume, the new
 // encoder has no state but the viewport and winding: the caller rebinds the rest.
@@ -1520,6 +1528,7 @@ void mc_render_reopen(Enc *enc) {
 		openRender(enc, rp);
 		if (lastLabel) enc->render.label = [NSString stringWithFormat:@"%@ | reopened %d %s", lastLabel, ++labelReopens, mc_reopen_why];
 		mc_reopen_why = "";
+		if (mc_reopen_hook) mc_reopen_hook(enc);
 	}
 }
 

@@ -80,3 +80,4 @@ id<MTLCommandBuffer> mc_frame_cmd(Enc *enc);  // the frame's command buffer with
 void mc_render_resume(Enc *enc, id<MTLComputeCommandEncoder> compute);
 extern const char *mc_reopen_why;  // -Dmcopt.metal.labels: why the next mc_render_reopen happens (its encoder's name)
 void mc_render_reopen(Enc *enc);  // reopens the pass mc_frame_cmd ended (attachments loaded back; native shading's water capture)
+extern void (*mc_reopen_hook)(Enc *enc);  // mcopt-shade: run after every reopen (mc_render_reopen, mc_tl_restart); NULL without shading

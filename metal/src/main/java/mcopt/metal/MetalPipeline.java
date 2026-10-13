@@ -150,7 +150,15 @@ final class MetalPipeline implements BackendRenderPipeline {
 	static @Nullable MetalPipeline compile(MetalEncoder encoder, CreateInfo info) {
 		if (MetalShaderRegistry.get(info.name()) == null) return compile(encoder, info, false);
 		try {
-			MetalPipeline built = compile(encoder, info, true);
+			MetalPipeline built;
+			try {
+				built = compile(encoder, info, true);
+			} catch (RuntimeException e) {
+				// (mcopt-shade) With shaders compiling several at once (ShadeCompile's pool), a compile that crashes Metal's compiler
+				// service fails the requests in flight with it (XPC_ERROR_CONNECTION_INTERRUPTED): such a failure is tried once more
+				if (MetalShaderRegistry.prewarmRunner() == null || !String.valueOf(e.getMessage()).contains("XPC_ERROR_CONNECTION_INTERRUPTED")) throw e;
+				built = compile(encoder, info, true);
+			}
 			mcopt.metal.shade.ShadeRobust.registryBuilt(info.name(), true); // mcopt-shade M3.3 (no-op unless it failed before)
 			return built;
 		} catch (RuntimeException e) {
@@ -519,9 +527,6 @@ final class MetalPipeline implements BackendRenderPipeline {
 	 * recompile cheap) and cached until the pipeline closes. Needs RETAIN (-Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true).
 	 */
 	long variant(int[] colorFormats, boolean depth, boolean pulled) {
-		synchronized (this) {
-			if (this.closed) throw new IllegalStateException(this.name + " is closed");
-		}
 		if (this.info == null) throw new IllegalStateException("MetalPipeline.variant needs -Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true");
 		if (colorFormats.length != this.info.colorTargetStates().size()) {
 			throw new IllegalArgumentException(this.name + " has " + this.info.colorTargetStates().size() + " color targets, not " + colorFormats.length);

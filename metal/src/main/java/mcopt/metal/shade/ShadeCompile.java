@@ -361,7 +361,7 @@ public final class ShadeCompile {
 		Map<String, Object> b = beforeWorld, now = MetalBridge.compileStats();
 		long first = (long) b.get("firstStartNs"), last = (long) b.get("lastEndNs");
 		System.out.println(String.format(Locale.ROOT,
-			"[mcopt] shade shaders: before the world, %d pipelines + %d variants in %.2f s (first compile to last; %s; summed over threads: MSL %.2f s, libraries %.2f s, pipeline states and prewarm %.2f s)",
+			"[mcopt] shade shaders: before the world: %d pipelines + %d variants compiled in %.2f s (first compile to last; %s; per pipeline, summed: SPIR-V to MSL %.2f s, libraries %.2f s, states and prewarm %.2f s)",
 			(long) b.get("count"), (long) b.get("variants"), first == 0 ? 0 : (last - first) / 1e9,
 			pool != null ? "parallel, " + threads + " threads" : "one after another", (double) b.get("translateMs") / 1e3, (double) b.get("libraryMs") / 1e3,
 			(double) b.get("stateMs") / 1e3));

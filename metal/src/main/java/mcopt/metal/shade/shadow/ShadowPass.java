@@ -72,6 +72,13 @@ public final class ShadowPass {
 	private final double[] light = new double[3];
 	private boolean lightIsMoon;
 	private long lightKey = Long.MIN_VALUE, farLightKey = Long.MIN_VALUE;
+	/** (1.1) The far cascade's half-width it was last fitted for (mcopt.shade.shadowDist is live: a new one re-fits it). */
+	private double fitDist = Double.NaN;
+	/**
+	 * (1.1) This frame's half-widths (ShadowConfig.near() / dist(), fixed in prepare) for the receivers' splits and texel sizes,
+	 * so they always match the cascades drawn this frame.
+	 */
+	private static volatile double nearNow = ShadowConfig.NEAR, distNow = ShadowConfig.DIST;
 	private final boolean[] draw = new boolean[2];
 	private int framesSinceFar = Integer.MAX_VALUE / 2;
 	/** beginFrame ran for this frame token and found shadows possible. renderOk: the last renderFrame drew the maps. */
@@ -159,8 +166,8 @@ public final class ShadowPass {
 	 * distance. shade_shadow.metal picks by the box itself, which covers more. texel0 / texel1: blocks per texel.
 	 */
 	public static void splits(float[] out) {
-		out[0] = (float) ((0.85 - 0.4) * ShadowConfig.NEAR);
-		out[1] = (float) ((0.85 - 0.125) * ShadowConfig.DIST);
+		out[0] = (float) ((0.85 - 0.4) * nearNow); // (1.1) this frame's (shadowDist live)
+		out[1] = (float) ((0.85 - 0.125) * distNow);
 		out[2] = texelSize(0);
 		out[3] = texelSize(1);
 	}
@@ -172,7 +179,7 @@ public final class ShadowPass {
 
 	/** World blocks per shadow texel of cascade i (for the receiver's normal offset). */
 	public static float texelSize(int cascade) {
-		return (float) (2.0 * (cascade == 0 ? ShadowConfig.NEAR : ShadowConfig.DIST) / ShadowConfig.RES);
+		return (float) (2.0 * (cascade == 0 ? nearNow : distNow) / ShadowConfig.RES); // (1.1) this frame's (shadowDist live)
 	}
 
 	/** 1 / resolution: one texel in texture coordinates (ShadeFrame.shadowTexelSize). */
@@ -276,8 +283,8 @@ public final class ShadowPass {
 		SkyRenderState sky = mc.gameRenderer.gameRenderState().levelRenderState.skyRenderState;
 		if (sky.skybox == DimensionType.Skybox.NONE) return; // no sun: Nether
 		if (sky.skybox == DimensionType.Skybox.END) {
-			// M3 (mcopt.shade.endShadows): the End's fixed key light (ShadeDims), so the far cascade stays cached
-			if (!mcopt.metal.shade.dims.DimsConfig.END_SHADOWS || mcopt.metal.shade.dims.ShadeDims.paused()) return;
+			// M3 (mcopt.shade.endShadows; (1.1) live): the End's fixed key light (ShadeDims), so the far cascade stays cached
+			if (!mcopt.metal.shade.dims.DimsConfig.endShadows() || mcopt.metal.shade.dims.ShadeDims.paused()) return;
 			float[] e = mcopt.metal.shade.dims.ShadeDims.endLight();
 			this.light[0] = e[0];
 			this.light[1] = e[1];
@@ -292,14 +299,23 @@ public final class ShadowPass {
 		this.camY = y;
 		this.camZ = z;
 		int res = ShadowConfig.RES;
-		// near: every frame, pushed ahead of the view so more of it covers what's on screen
+		// near: every frame, pushed ahead of the view so more of it covers what's on screen ((1.1) its half-width read live)
 		Vector3f f = cam.orientation.transform(new Vector3f(0, 0, -1));
-		double near = ShadowConfig.NEAR, shift = 0.4 * near;
+		double near = ShadowConfig.near(), shift = 0.4 * near;
 		this.cascades[0].fit(this.light, x + f.x * shift, y + f.y * shift, z + f.z * shift, near, res, NEAR_BACK, DEPTH_FRONT, CASTER_REACH);
 		this.draw[0] = true;
 		// far: kept between redraws, anchored in the world
 		ShadowCascade far = this.cascades[1];
-		double dist = ShadowConfig.DIST;
+		double dist = ShadowConfig.dist();
+		// (1.1) mcopt.shade.shadowDist live: a new distance re-fits the far cascade and redraws it whole this frame (below), and a
+		// spread redraw under way (fitted for the old one) is dropped
+		if (dist != this.fitDist) {
+			this.fitDist = dist;
+			far.valid = false;
+			this.backPart = -1;
+		}
+		nearNow = near;
+		distNow = dist;
 		double dx = x - far.cx, dy = y - far.cy, dz = z - far.cz;
 		boolean moved = dx * dx + dy * dy + dz * dz > (dist / 8) * (dist / 8);
 		// M3.3: spread the far redraw over FAR_EVERY frames (one part of the casters per frame into the back map, all parts with
@@ -475,7 +491,11 @@ public final class ShadowPass {
 		long t0 = ShadowConfig.STATS ? System.nanoTime() : 0;
 		// SHADE_DEV_WX_NO_TINT (16384, mcopt.shade.dev, read per frame): skip the tint pass too, to price coloured shadows in one session
 		// in heavy rain on performance/balanced (ShadeWeather.tintHidden) the receivers' tint has faded out: no pass either
-		boolean tint = this.tintMap != 0 && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0 && !mcopt.metal.shade.weather.ShadeWeather.tintHidden();
+		// (1.1) mcopt.shade.colorShadows live off (ShadeWeather.colorShadows; the map exists only when it was on at startup): no tint
+		// pass, and the receivers are told there are no casters (ssr.w = 0, an empty rectangle), so they skip the lookup
+		boolean colour = mcopt.metal.shade.weather.ShadeWeather.colorShadows();
+		if (this.tintMap != 0 && !colour) mcopt.metal.shade.ShadeBindings.setShadowTint(0, 1f, 1f, -1f, -1f);
+		boolean tint = this.tintMap != 0 && colour && (Integer.getInteger("mcopt.shade.dev", 0) & 16384) == 0 && !mcopt.metal.shade.weather.ShadeWeather.tintHidden();
 		int tintDev = ShadowConfig.tintDev();
 		this.casters.tintTight = ShadowConfig.tintTight();
 		// M3.3 far spread: this frame's far casters are one part of them, cast into the back map's fit (mode 2) or the bound one's
@@ -725,7 +745,7 @@ public final class ShadowPass {
 		}
 		System.out.println(String.format("[mcopt] shade: shadow map %dx%d x %d cascades (%s, %.0f MB), near %.0f / far %.0f blocks, casters: %s, faces: %s, far cutout: %s",
 			ShadowConfig.RES, ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS == 16 ? "Depth16Unorm" : "Depth32Float",
-			CASCADES * (ShadowConfig.DEPTH_BITS / 8.0) * ShadowConfig.RES * ShadowConfig.RES / (1 << 20), ShadowConfig.NEAR, ShadowConfig.DIST,
+			CASCADES * (ShadowConfig.DEPTH_BITS / 8.0) * ShadowConfig.RES * ShadowConfig.RES / (1 << 20), ShadowConfig.near(), ShadowConfig.dist(),
 			ShadowConfig.CULL_LIGHT ? "light" : "camera", ShadowConfig.ALL_FACES ? "all" : "sun-facing", ShadowConfig.FAR_CUTOUT_OPAQUE ? "opaque" : "alpha test"));
 	}
 

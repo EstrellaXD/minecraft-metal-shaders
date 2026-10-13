@@ -107,9 +107,44 @@ final class MetalPipeline implements BackendRenderPipeline {
 
 	/** Time spent creating pipelines so far, by step, for the bench's startup breakdown (read reflectively). */
 	private static long compiled, translateNs, libraryNs, stateNs;
+	/**
+	 * (mcopt-shade) the format variants built so far (variant()): all of them, and those the render thread built itself on first
+	 * use (each one a hitch), with their time; the slowest of those ("name [formats] ms", at most 3); and System.nanoTime() of
+	 * the first pipeline compile's start and the last one's end (with the prewarm variants it builds), the window the startup
+	 * reload spends compiling.
+	 */
+	private static long variantsBuilt, variantNs, renderVariants, renderVariantNs, firstStartNs, lastEndNs;
+	private static final java.util.List<String> slowRenderVariants = new java.util.ArrayList<>();
+	private static final java.util.List<Long> slowRenderVariantNs = new java.util.ArrayList<>();
 
 	static synchronized Map<String, Object> compileStats() {
-		return Map.of("count", compiled, "translateMs", translateNs / 1e6, "libraryMs", libraryNs / 1e6, "stateMs", stateNs / 1e6, "mslCacheHits", mslHits, "mslCacheMismatches", mslMismatches);
+		Map<String, Object> m = new java.util.LinkedHashMap<>(Map.of("count", compiled, "translateMs", translateNs / 1e6, "libraryMs", libraryNs / 1e6, "stateMs", stateNs / 1e6, "mslCacheHits", mslHits, "mslCacheMismatches", mslMismatches));
+		m.put("variants", variantsBuilt);
+		m.put("variantMs", variantNs / 1e6);
+		m.put("renderThreadVariants", renderVariants);
+		m.put("renderThreadVariantMs", renderVariantNs / 1e6);
+		m.put("slowRenderThreadVariants", String.join(", ", slowRenderVariants));
+		m.put("firstStartNs", firstStartNs);
+		m.put("lastEndNs", lastEndNs);
+		return m;
+	}
+
+	/** (mcopt-shade) variant() built one in ns: counted, and kept among the slowest when the render thread built it. */
+	private static synchronized void variantBuilt(String what, long ns) {
+		variantsBuilt++;
+		variantNs += ns;
+		if (!"Render thread".equals(Thread.currentThread().getName())) return;
+		renderVariants++;
+		renderVariantNs += ns;
+		int at = 0;
+		while (at < slowRenderVariantNs.size() && slowRenderVariantNs.get(at) >= ns) at++;
+		if (at >= 3) return;
+		slowRenderVariantNs.add(at, ns);
+		slowRenderVariants.add(at, what + String.format(java.util.Locale.ROOT, " %.0f ms", ns / 1e6));
+		if (slowRenderVariants.size() > 3) {
+			slowRenderVariants.remove(3);
+			slowRenderVariantNs.remove(3);
+		}
 	}
 
 	static @Nullable MetalPipeline compile(MetalEncoder encoder, CreateInfo info) {
@@ -200,6 +235,8 @@ final class MetalPipeline implements BackendRenderPipeline {
 				translateNs += t1 - t0;
 				libraryNs += t2 - t1;
 				stateNs += t3 - t2;
+				if (firstStartNs == 0 || t0 < firstStartNs) firstStartNs = t0;
+				if (t3 > lastEndNs) lastEndNs = t3;
 			}
 		}
 	}
@@ -481,8 +518,10 @@ final class MetalPipeline implements BackendRenderPipeline {
 	 * MetalTerrain twin (0 when there is none). Built on first use from the retained MSL (Metal's shader cache makes the
 	 * recompile cheap) and cached until the pipeline closes. Needs RETAIN (-Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true).
 	 */
-	synchronized long variant(int[] colorFormats, boolean depth, boolean pulled) {
-		if (this.closed) throw new IllegalStateException(this.name + " is closed");
+	long variant(int[] colorFormats, boolean depth, boolean pulled) {
+		synchronized (this) {
+			if (this.closed) throw new IllegalStateException(this.name + " is closed");
+		}
 		if (this.info == null) throw new IllegalStateException("MetalPipeline.variant needs -Dmcopt.shade=true or -Dmcopt.metal.retainMsl=true");
 		if (colorFormats.length != this.info.colorTargetStates().size()) {
 			throw new IllegalArgumentException(this.name + " has " + this.info.colorTargetStates().size() + " color targets, not " + colorFormats.length);
@@ -491,9 +530,14 @@ final class MetalPipeline implements BackendRenderPipeline {
 		MetalShaderRegistry.FormatAdapter canon = MetalShaderRegistry.formatAdapter();
 		if (canon != null) colorFormats = canon.canonical(this.name, colorFormats);
 		String key = java.util.Arrays.toString(colorFormats) + (depth ? "+d" : "") + (pulled ? "+p" : "");
-		Long cached = this.variants.get(key);
-		if (cached != null) return cached;
-		long ctx = this.encoder.ctx, vlib = 0, flib = 0;
+		synchronized (this) {
+			if (this.closed) throw new IllegalStateException(this.name + " is closed");
+			Long cached = this.variants.get(key);
+			if (cached != null) return cached;
+		}
+		// (mcopt-shade) built outside the lock, so the prewarm can build several of a pipeline's variants at once
+		// (MetalShaderRegistry.PrewarmRunner); a key two threads built at the same time keeps the first one stored
+		long t0 = System.nanoTime(), ctx = this.encoder.ctx, vlib = 0, flib = 0, pso;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
 			String vsrc = pulled ? this.pulledMsl : this.vertexMsl, fsrc = this.fragmentMsl;
@@ -507,13 +551,18 @@ final class MetalPipeline implements BackendRenderPipeline {
 			flib = libraryNew(ctx, stack, fsrc, err);
 			if (flib == 0) throw new IllegalStateException(this.name + " variant fragment: " + MemoryUtil.memUTF8(err));
 			long vname = MemoryUtil.memAddress(stack.UTF8(this.vertexEntry)), fname = MemoryUtil.memAddress(stack.UTF8(this.fragmentEntry));
-			long pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, MetalHooks.pixelFormats(colorFormats)), err, 4096);
+			pso = Native.pipelineNew(ctx, vlib, vname, flib, fname, describe(stack, this.info, depth, !pulled, MetalHooks.pixelFormats(colorFormats)), err, 4096);
 			if (pso == 0) throw new IllegalStateException(this.name + " variant " + key + ": " + MemoryUtil.memUTF8(err));
-			this.variants.put(key, pso);
-			return pso;
 		} finally {
 			if (vlib != 0) Native.release(vlib);
 			if (flib != 0) Native.release(flib);
+		}
+		variantBuilt(this.name + " " + key, System.nanoTime() - t0);
+		synchronized (this) {
+			Long stored = this.closed ? null : this.variants.putIfAbsent(key, pso);
+			if (this.closed || stored != null) Native.release(pso); // never handed out: nothing in flight uses it
+			if (this.closed) throw new IllegalStateException(this.name + " is closed");
+			return stored != null ? stored : pso;
 		}
 	}
 
@@ -560,12 +609,42 @@ final class MetalPipeline implements BackendRenderPipeline {
 		for (ColorTargetState c : this.info.colorTargetStates()) {
 			if (c == null || MetalConst.pixelFormat(c.format()) != 70) return; // RGBA8Unorm targets only (what the game's main target is)
 		}
+		MetalShaderRegistry.PrewarmRunner runner = MetalShaderRegistry.prewarmRunner();
+		if (runner != null) {
+			this.prewarm(sets, runner);
+			return;
+		}
 		for (int[] formats : sets) {
 			if (formats == null || formats.length != this.colorTargets) continue;
 			this.state(formats, true);
 			if (this.withoutDepth != 0) this.state(formats, false);
 			if (this.pulled != 0) this.pulledState(formats);
 		}
+	}
+
+	/**
+	 * (mcopt-shade) The loop above with its builds handed to runner (ShadeCompile's pool), several at once: the Sodium
+	 * translucent terrain alone has 24 lean variants of the water fragment, ~0.8 s each with Metal's shader cache cold. A
+	 * build that failed is made again alone through state() / pulledState(), exactly as the loop does it: a real error fails
+	 * again and is logged as before, and a build that only failed because another compile crashed Metal's compiler service
+	 * meanwhile (XPC_ERROR_CONNECTION_INTERRUPTED fails the requests in flight with it) gets its variant after all.
+	 */
+	private void prewarm(int[][] sets, MetalShaderRegistry.PrewarmRunner runner) {
+		List<Runnable> builds = new java.util.ArrayList<>(), again = new java.util.ArrayList<>();
+		for (int[] formats : sets) {
+			if (formats == null || formats.length != this.colorTargets) continue;
+			builds.add(() -> this.variant(formats, true, false));
+			again.add(() -> this.state(formats, true));
+			if (this.withoutDepth != 0) {
+				builds.add(() -> this.variant(formats, false, false));
+				again.add(() -> this.state(formats, false));
+			}
+			if (this.pulled != 0) {
+				builds.add(() -> this.variant(formats, true, true));
+				again.add(() -> this.pulledState(formats));
+			}
+		}
+		for (int failed : runner.runAll(builds)) again.get(failed).run();
 	}
 
 	@Override

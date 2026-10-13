@@ -35,6 +35,7 @@ final class CloudNative {
 	private static final MethodHandle FREE = fn("mc_clouds_free", null, JAVA_LONG);
 	private static final MethodHandle VANILLA = fn("mc_clouds_vanilla", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 	private static final MethodHandle OVER = fn("mc_clouds_over", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
+	private static final MethodHandle WARM = fn("mc_clouds_warm", JAVA_INT, JAVA_LONG, JAVA_LONG);
 
 	private CloudNative() {
 	}
@@ -48,6 +49,15 @@ final class CloudNative {
 		if (t instanceof RuntimeException r) return r;
 		if (t instanceof Error e) throw e;
 		return new IllegalStateException(t);
+	}
+
+	/** (parallel compile) mc_clouds_new's pipelines from lib, built and released: how many failed. */
+	static int warm(long ctx, long lib) {
+		try {
+			return (int) WARM.invokeExact(ctx, lib);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
 	}
 
 	static long create(long ctx, long source, long err, int errCap) {

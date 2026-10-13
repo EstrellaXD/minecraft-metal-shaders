@@ -161,11 +161,13 @@ public final class DynLights {
 		if (state != 0) return true;
 		if (failed) return false;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			ByteBuffer src = MemoryUtil.memUTF8("#define SHADE_DL_KERNELS\n" + ShadeMsl.resource("dynlight.metal") + "\n" + ShadeMsl.resource("dynlight_vis.metal"));
+			ByteBuffer src = MemoryUtil.memUTF8(DynLightConfig.source());
 			try {
 				long err = stack.nmalloc(1, 4096);
 				MemoryUtil.memPutByte(err, (byte) 0);
+				long t0 = mcopt.metal.shade.ShadeCompile.now();
 				state = DynLightNative.create(ctx, MemoryUtil.memAddress(src), BYTES, RING, Math.max(1, DynLightConfig.VOLUMES), Occupancy.BYTES, IRR_X, IRR_Y, IRR_Z, err, 4096);
+				mcopt.metal.shade.ShadeCompile.setup("dynamic lights", t0);
 				if (state == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 				flood = DynLightNative.hasFlood(state);
 				if (!flood) System.out.println("[mcopt] shade: dynamic lights: no flood fill pipeline, rays only (mcopt.shade.dynLights.soft has no effect)");

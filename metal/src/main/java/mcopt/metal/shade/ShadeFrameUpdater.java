@@ -119,6 +119,7 @@ public final class ShadeFrameUpdater {
 		if (encoder == null) return; // not on the Metal backend
 		long enc = MetalBridge.enc(encoder);
 		if (!ShadeBindings.ready() && !ShadeBindings.init(MetalBridge.ctx(encoder))) return;
+		ShadeCompile.frame(); // the startup compile summary, once
 		Minecraft mc = Minecraft.getInstance();
 		ClientLevel level = mc.level;
 		GameRenderState game = mc.gameRenderer.gameRenderState();

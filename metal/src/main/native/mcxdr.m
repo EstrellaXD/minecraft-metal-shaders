@@ -110,8 +110,9 @@ void mc_system_info(CAMetalLayer *layer, char *out, int cap) {
 		NSMutableString *s = [NSMutableString stringWithFormat:@"macOS %@%@", p.operatingSystemVersionString, p.lowPowerModeEnabled ? @", Low Power Mode" : @""];
 		for (NSScreen *sc in [NSScreen screens]) {
 			NSSize px = [sc convertRectToBacking:sc.frame].size;
-			[s appendFormat:@"; %@%@ %.0fx%.0f %ld Hz EDR %.1f", sc == mine ? @"*" : @"", sc.localizedName, px.width, px.height,
-				(long) sc.maximumFramesPerSecond, sc.maximumPotentialExtendedDynamicRangeColorComponentValue];
+			[s appendFormat:@"; %@%@ (display %@) %.0fx%.0f %ld Hz EDR %.1f", sc == mine ? @"*" : @"", sc.localizedName,
+				sc.deviceDescription[@"NSScreenNumber"], px.width, px.height, (long) sc.maximumFramesPerSecond,
+				sc.maximumPotentialExtendedDynamicRangeColorComponentValue];
 		}
 		snprintf(out, cap, "%s", s.UTF8String);
 	}

@@ -37,6 +37,8 @@ final class MetalSurface implements GpuSurfaceBackend {
 	 */
 	private static final boolean PACE_FOLLOW = Boolean.getBoolean("mcopt.metal.paceFollow");
 	private boolean paced;
+	/** (1.1.1) the display whose refreshes the pacer follows, as last logged (PACE_FOLLOW), and a frame counter for the check. */
+	private int loggedDisplay, paceFrames;
 	private final long ctx;
 	private final MetalEncoder encoder;
 	private final long view;
@@ -78,6 +80,13 @@ final class MetalSurface implements GpuSurfaceBackend {
 		if (frameGen != null) {
 			frameGen.frame(textureView, this.layer);
 			return;
+		}
+		if (this.paced && PACE_FOLLOW && (this.paceFrames++ & 255) == 0) {
+			int display = Native.paceDisplay();
+			if (display != 0 && display != this.loggedDisplay) {
+				System.out.println("[mcopt] metal: frames paced to the refreshes of display " + Integer.toUnsignedString(display));
+				this.loggedDisplay = display;
+			}
 		}
 		if (this.paced && !Native.pace(PACE_MARGIN_S)) return;
 		if (MetalEncoder.PRESENT_ACQUIRE) {

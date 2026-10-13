@@ -1183,6 +1183,7 @@ static int paceFollow;
 static CVDisplayLinkRef paceLink;
 static uint32_t paceDisplay;
 void mc_pace_follow(int on) { paceFollow = on; }
+uint32_t mc_pace_display(void) { return paceDisplay; } // 0 until the first paced frame (MetalSurface logs it)
 
 static void startDisplayLink(void) {
 	CVDisplayLinkRef link;
@@ -1193,7 +1194,6 @@ static void startDisplayLink(void) {
 	CVDisplayLinkStart(link); // runs for the life of the process
 	paceLink = link;
 	paceDisplay = display;
-	if (paceFollow) fprintf(stderr, "[mcopt] pace: refresh grid of display %u\n", display);
 }
 
 static void followDisplay(void) {
@@ -1204,7 +1204,6 @@ static void followDisplay(void) {
 	if (CVDisplayLinkSetCurrentCGDisplay(paceLink, display) != kCVReturnSuccess) return;
 	paceDisplay = display;
 	refreshPeriod = 0; // until the new display's first refresh: present everything (mc_pace)
-	fprintf(stderr, "[mcopt] pace: the window moved to display %u\n", display);
 }
 #pragma clang diagnostic pop
 

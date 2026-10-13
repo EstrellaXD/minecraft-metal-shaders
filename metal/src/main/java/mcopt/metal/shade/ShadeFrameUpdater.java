@@ -177,8 +177,10 @@ public final class ShadeFrameUpdater {
 			f.sunDir.set((float) DIR[0], (float) DIR[1], (float) DIR[2]);
 			Shade.celestial(sky.moonAngle, DIR);
 			f.moonDir.set((float) DIR[0], (float) DIR[1], (float) DIR[2]);
-			f.moonPhase = MOON_BRIGHTNESS[Math.floorMod(sky.moonPhase.index(), 8)];
-			moonPhaseIndex = sky.moonPhase.index();
+			// (1.1) user.moonPhases false: always a full moon (its light and its disc)
+			int phase = Live.b(ShadeLook.U + "moonPhases", true) ? sky.moonPhase.index() : 0;
+			f.moonPhase = MOON_BRIGHTNESS[Math.floorMod(phase, 8)];
+			moonPhaseIndex = phase;
 			f.starBrightness = sky.starBrightness;
 			f.dayTime = (float) (sky.sunAngle / (2 * Math.PI) - Math.floor(sky.sunAngle / (2 * Math.PI)));
 			Vector3fc skyColor = sky.skyColor;
@@ -215,6 +217,12 @@ public final class ShadeFrameUpdater {
 		f.fogColor[3] = vanilla;
 		f.fogEnvStart = fog.environmentalStart;
 		f.fogEnvEnd = fog.environmentalEnd;
+		if (f.fogType == ShadeFrame.FOG_WATER) {
+			// (1.1) user.underwaterView: how far the eye sees under water (vanilla's water fog range, stretched)
+			float uw = Live.f(ShadeLook.U + "underwaterView", 1f, 0.25f, 4f);
+			f.fogEnvStart *= uw;
+			f.fogEnvEnd *= uw;
+		}
 		f.fogRenderStart = fog.renderDistanceStart;
 		f.fogRenderEnd = fog.renderDistanceEnd;
 		f.fogSkyEnd = fog.skyEnd;
@@ -224,7 +232,8 @@ public final class ShadeFrameUpdater {
 		f.eyeSkyLight = level != null ? level.getBrightness(LightLayer.SKY, camera.blockPos) : 15;
 		var lightmap = game.lightmapRenderState;
 		f.nightVision = lightmap.nightVisionEffectIntensity;
-		f.minAmbient = 0.0025f + 0.02f * lightmap.brightness + 0.25f * f.nightVision;
+		// (1.1) user.caveLight: the least light a place gets (caves; the game's Brightness option raises it too)
+		f.minAmbient = (0.0025f + 0.02f * lightmap.brightness) * Live.f(ShadeLook.U + "caveLight", 1f, 0f, 6f) + 0.25f * f.nightVision;
 
 		if (!warnedOit && mc.gameRenderer.useImprovedTransparency()) {
 			warnedOit = true; // Sodium's OIT pipelines aren't shaded (M2): water and glass then keep vanilla's light
@@ -247,7 +256,8 @@ public final class ShadeFrameUpdater {
 			f.waterTime = WATER_TIME; // (dev: frozen waves, for image diffs across jars)
 			f.skyTime = WATER_TIME;
 		} else if (mcopt.metal.shade.water.ShadeWater.CLOCK) {
-			waterClock = (waterClock + Math.min(dt, 0.25)) % 4096.0;
+			// (1.1) user.waveSpeed: the water's clock (its waves, ripples, rain rings, falls; also the Nether's shimmer)
+			waterClock = (waterClock + Math.min(dt, 0.25) * Live.f(ShadeLook.U + "waveSpeed", 1f, 0f, 3f)) % 4096.0;
 			skyClock = (skyClock + Math.min(dt, 0.25)) % 65536.0;
 			f.waterTime = (float) waterClock;
 			f.skyTime = (float) skyClock;

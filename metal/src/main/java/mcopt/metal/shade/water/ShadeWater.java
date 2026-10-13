@@ -321,9 +321,12 @@ public final class ShadeWater {
 		for (int i = 0; i < 4; i++) p.putFloat(i * 4, still[i]);
 		for (int i = 0; i < 4; i++) p.putFloat(16 + i * 4, flow[i]);
 		p.putFloat(32, 0f).putFloat(36, surfaceY).putFloat(40, wetness).putFloat(44, 0f);
-		// (1.1) waves, reflections and screen reflections on/off from the settings screen (ShadeSettings, live)
-		p.putFloat(48, mcopt.metal.shade.ShadeSettings.waves()).putFloat(52, mcopt.metal.shade.ShadeSettings.ssr() ? SSR_DIST : 0f).putFloat(56, mcopt.metal.shade.ShadeSettings.reflect())
-			.putFloat(60, CAUSTICS ? 1f : 0f);
+		// (1.1) waves, reflections and screen reflections on/off from the settings screen (ShadeSettings, live), mcopt.shade.ssrDist live,
+		// w the caustics' strength (user.caustics, 0..2; 0 = none; only with the module's code built in, mcopt.shade.caustics at startup)
+		float ssrDist = Math.clamp(mcopt.metal.shade.Live.f("mcopt.shade.ssrDist", SSR_DIST), 8f, 1024f);
+		p.putFloat(48, mcopt.metal.shade.ShadeSettings.waves()).putFloat(52, mcopt.metal.shade.ShadeSettings.ssr() ? ssrDist : 0f)
+			.putFloat(56, mcopt.metal.shade.ShadeSettings.reflect())
+			.putFloat(60, CAUSTICS ? mcopt.metal.shade.Live.f("mcopt.shade.user.caustics", 1f, 0f, 2f) : 0f);
 		WaterNative.params(state, MemoryUtil.memAddress(p));
 	}
 }

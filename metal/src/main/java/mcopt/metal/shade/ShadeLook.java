@@ -33,13 +33,17 @@ import org.joml.Matrix4f;
  * Pure maths, no game types: tools can pack it too.
  */
 public final class ShadeLook {
-	public static final int SIZE = 1024;
+	public static final int SIZE = 1088;
 	// Byte offsets of struct ShadeLook (shade_look.metal).
 	public static final int VIEW_PROJ = 0, PREV_VIEW_PROJ = 64, CELESTIAL = 128, CLOUD_SHADOW_VP = 192, SUN_GEOM = 256, SUN_ART = 272, AMBIENT_ART = 288,
 		BOUNCE = 304, GRADE0 = 320, GRADE1 = 336, GRADE2 = 352, GRADE3 = 368, TONEMAP = 384, OUTPUT = 400, BLOOM = 416, FOG_R = 432, FOG_M = 448,
 		FOG_MISC = 464, VL = 480, WET = 496, WIND = 512, CLOUDS0 = 528, CLOUDS1 = 544, WATER_SHADOW = 560, WATER = 576, WATER_ABS = 592, TINT_RECT = 608,
 		EYE = 624, SKY_GOLD_H = 640, SKY_GOLD_Z = 656, NIGHT = 672, SSR = 688, CLOCK2 = 704, RENDER_SCALE = 720, EXPOSURE_CFG = 736, DIM_TINT = 752, FLASH = 768,
-		DT = 784, TIER = 800, GRADE_IN = 816, GRADE_OUT = 864, GRADE_IN_INV = 912, GRADE_OUT_INV = 960, EXPOSURE_REF = 1008;
+		DT = 784, TIER = 800, GRADE_IN = 816, GRADE_OUT = 864, GRADE_IN_INV = 912, GRADE_OUT_INV = 960, EXPOSURE_REF = 1008,
+		// (1.1) the player's settings the shaders read (ShadeSettings / the settings screen; shade_look.metal user0..3)
+		USER0 = 1024, USER1 = 1040, USER2 = 1056, USER3 = 1072;
+	/** (1.1) Prefix of the player's multipliers (Live: 1 = as released, unless a comment says otherwise). */
+	static final String U = "mcopt.shade.user.";
 
 	/** ShadeLook.tier.y bits (SHADE_FEATURE_* in shade_look.metal). */
 	public static final int FEATURE_HDR = 1, FEATURE_BLOOM = 2, FEATURE_AUTO_EXPOSURE = 4, FEATURE_PCSS = 8, FEATURE_STARS = 16, FEATURE_HAZE = 32,
@@ -109,6 +113,8 @@ public final class ShadeLook {
 	public float toneB, toneBeta, inset, exposureRef;
 	public float starBrightness, moonPhaseAngle, borderRadius;
 	private float eyeSky = 1f;
+	/** (1.1) This frame's rain share of the fog terms (rain x user.rainFog). */
+	float rainFog;
 	private final float[] waterTint = new float[4];
 	private final float[][] gradeIn = new float[3][3], gradeOut = new float[3][3], gradeInInv = new float[3][3], gradeOutInv = new float[3][3];
 	private final Matrix4f celestial = new Matrix4f();
@@ -148,7 +154,8 @@ public final class ShadeLook {
 		// morning / evening asymmetry
 		float lowSun = smooth(-12f, -2f, this.elevation) * (1f - smooth(15f, 35f, this.elevation));
 		if (this.rising > 0f) {
-			this.mistSigma *= 1f + 0.6f * lowSun;
+			// (1.1) user.morningMist: the dawn mist's boost (1 = 0.6, 0 = none, up to 3x)
+			this.mistSigma *= 1f + 0.6f * Live.f(U + "morningMist", 1f, 0f, 3f) * lowSun;
 			this.whiteBalance -= 10f * lowSun;
 			this.saturation -= 0.04f * lowSun;
 		} else {
@@ -166,7 +173,8 @@ public final class ShadeLook {
 				break;
 			}
 		}
-		float goldK = (this.rising > 0f ? 0.7f : 1f) * (1f - rain);
+		// (1.1) user.sunset: the golden-hour sky gain and the evening rose (0 = none, 2 = twice as strong)
+		float goldK = (this.rising > 0f ? 0.7f : 1f) * (1f - rain) * Live.f(U + "sunset", 1f, 0f, 2f);
 		for (int c = 0; c < 6; c++) this.skyGold[c] = 1f + (sg[c + 1] - 1f) * goldK;
 		float rose = 0f;
 		for (int i = 0; i + 1 < SKY_ROSE.length; i++) {
@@ -178,6 +186,9 @@ public final class ShadeLook {
 		}
 		this.skyRose = roseOn() ? rose * goldK * ROSE_LOOK[look] : 0f;
 		ShadeSky.sunsetArt = ShadeConfig.flag("mcopt.shade.sunsetArt", true); // read every frame (bench A/B in one session)
+		// (1.1) user.rainFog: the rain's share of the fog and mist terms below (and ShadeFrame's distance haze), 0 = rain adds none
+		float rainFog = rain * Live.f(U + "rainFog", 1f, 0f, 3f);
+		this.rainFog = rainFog;
 		// night: the keyframes' desaturation would grey the torch-lit pools too; the dim parts get the Purkinje shift (final
 		// pass, luminance-gated) instead, so the grade keeps colour where there is light
 		float night = 1f - smooth(-10f, -2f, this.elevation);
@@ -186,15 +197,22 @@ public final class ShadeLook {
 		this.saturation *= 1f - 0.25f * rain;
 		this.contrast -= 0.08f * rain;
 		this.bloomMix += 0.03f * rain;
-		this.mistSigma *= 1f + 4f * rain;
+		this.mistSigma *= 1f + 4f * rainFog;
 		this.whiteBalance -= 10f * rain;
 		this.lightMul *= 1f - 0.1f * thunder;
-		// (1.1) the player's settings (ShadeSettings, 1 = as released): colour, bloom and the haze's mist
+		// (1.1) the player's settings (ShadeSettings / Live, 1 = as released): colour, contrast, bloom, the ground mist (user.mist;
+		// the haze has its own, user.haze, in the pack), the light's colour depth, the sun's and moon's strength, the sky's fill
 		this.saturation *= ShadeSettings.saturation();
+		this.contrast *= Live.f(U + "contrast", 1f, 0.7f, 1.4f);
 		this.bloomMix *= ShadeSettings.bloom();
-		this.mistSigma *= ShadeSettings.haze();
+		this.mistSigma *= Live.f(U + "mist", 1f, 0f, 3f);
+		this.chromaGamma *= Live.f(U + "sunColor", 1f, 0.5f, 1.6f);
+		this.whiteBalance += Live.f(U + "temperature", 0f, -60f, 60f); // mired: + warmer, - cooler
+		float lightK = f.sky.sunLight ? Live.f(U + "sunLight", 1f, 0.2f, 3f) : Live.f(U + "moonLight", 1f, 0.2f, 4f);
+		float skyK = Live.f(U + "skyLight", 1f, 0.2f, 3f);
+		for (int i = 0; i < 3; i++) this.ambientTint[i] *= skyK;
 		// grade the light (sun or moon) in place: chroma power keeps luminance, deepens the colour
-		gradeLight(f.sky.light, f.sky.sunLight ? this.chromaGamma : 1f, this.lightMul);
+		gradeLight(f.sky.light, f.sky.sunLight ? this.chromaGamma : 1f, this.lightMul * lightK);
 		// white balance (mired shift from D65: positive = the image warmer), partial strength
 		float mired = 1e6f / 6504f + this.whiteBalance;
 		float[] target = blackbody(1e6f / Math.max(mired, 20f)), d65 = blackbody(6504f);
@@ -217,10 +235,11 @@ public final class ShadeLook {
 		invert(this.gradeOut, this.gradeOutInv);
 		// exposure reference: M1's eye-adapted exposure (sky model + eye sky light), with the user's compensation
 		// overcast is darker than a clear day (rain palette, bible §3.3): -0.7 EV at full rain
-		this.exposureRef = f.exposure * (float) Math.pow(2, ShadeSettings.ev() - 0.7f * rain);
+		// (1.1) user.nightEv: the player's night brightness, EV added in the dark (the same night weight as the grade's above)
+		this.exposureRef = f.exposure * (float) Math.pow(2, ShadeSettings.ev() + Live.f(U + "nightEv", 0f, -2f, 3f) * night - 0.7f * rain);
 		this.eyeSky += (f.eyeSkyLight / 15f - this.eyeSky) * (1f - (float) Math.exp(-this.dt / 1.5f));
 		// night sky
-		this.starBrightness = f.starBrightness * (1f - rain);
+		this.starBrightness = f.starBrightness * (1f - rain) * Live.f(U + "stars", 1f, 0f, 4f); // (1.1) user.stars
 		this.moonPhaseAngle = (float) Math.toRadians(45.0 * Math.floorMod(moonPhaseIndex, 8));
 		// celestial frame: e1 = the sun direction, e3 = the (tilted) pole of its path, e2 = e3 x e1
 		float t = (float) Math.toRadians(ShadeSky.SUN_TILT);
@@ -235,10 +254,11 @@ public final class ShadeLook {
 		if (ShadeConfig.HDR) bits |= FEATURE_HDR;
 		if (ShadeConfig.BLOOM) bits |= FEATURE_BLOOM;
 		if (ShadeConfig.AUTO_EXPOSURE) bits |= FEATURE_AUTO_EXPOSURE;
-		if (ShadeConfig.PCSS) bits |= FEATURE_PCSS;
-		if (ShadeConfig.STARS) bits |= FEATURE_STARS;
-		if (ShadeConfig.HAZE) bits |= FEATURE_HAZE;
-		if (ShadeConfig.LIGHT2) bits |= FEATURE_LIGHT_V2;
+		// (1.1) live: soft shadows, our sky's sun / moon / stars, the haze, lighting v2 (the shaders test these bits every frame)
+		if (Live.b("mcopt.shade.pcss", ShadeConfig.PCSS)) bits |= FEATURE_PCSS;
+		if (Live.b("mcopt.shade.stars", ShadeConfig.STARS)) bits |= FEATURE_STARS;
+		if (Live.b("mcopt.shade.haze", ShadeConfig.HAZE)) bits |= FEATURE_HAZE;
+		if (Live.b("mcopt.shade.light2", ShadeConfig.LIGHT2)) bits |= FEATURE_LIGHT_V2;
 		this.features = bits;
 	}
 
@@ -256,14 +276,16 @@ public final class ShadeLook {
 			mcopt.metal.shade.water.ShadeWater.shadowContact(),
 			// w (FT2.10): the torch light's caustics on the bottom of water (mcopt.shade.water.torchCaustics, live; 0 = FT2.9)
 			Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.torchCaustics", 1f), 0f));
-		put4(b, SUN_GEOM, (float) Math.toRadians(ShadeSky.SUN_TILT), SUN_RADIUS, MOON_RADIUS, (float) Math.toRadians(this.elevation));
+		// (1.1) user.sunSize / user.moonSize: the discs (and what is masked around them); the soft shadows keep the real sun's size (user0.x)
+		put4(b, SUN_GEOM, (float) Math.toRadians(ShadeSky.SUN_TILT), SUN_RADIUS * Live.f(U + "sunSize", 1f, 0.3f, 4f), MOON_RADIUS * Live.f(U + "moonSize", 1f, 0.3f, 4f),
+			(float) Math.toRadians(this.elevation));
 		float[] l = f.sky.light;
 		put4(b, SUN_ART, l[0], l[1], l[2], 1f);
-		put4(b, AMBIENT_ART, this.ambientTint[0], this.ambientTint[1], this.ambientTint[2], 0.06f * (1f - 0.7f * f.rain));
+		put4(b, AMBIENT_ART, this.ambientTint[0], this.ambientTint[1], this.ambientTint[2], 0.06f * (1f - 0.7f * f.rain) * Live.f(U + "bounce", 1f, 0f, 4f));
 		put4(b, BOUNCE, 0.62f, 0.56f, 0.44f, 0f);
 		// w (1.1): the water's clarity (ShadeSettings: its absorption divided by it; 1 = as released; was the unused scene contrast)
-		put4(b, GRADE0, 0f, this.saturation, ShadeSettings.look() == 1 ? 0.18f : 0.10f, ShadeSettings.clarity());
-		put4(b, GRADE1, this.wbGain[0], this.wbGain[1], this.wbGain[2], 0.55f);
+		put4(b, GRADE0, 0f, this.saturation, (ShadeSettings.look() == 1 ? 0.18f : 0.10f) * Live.f(U + "vibrance", 1f, 0f, 4f), ShadeSettings.clarity());
+		put4(b, GRADE1, this.wbGain[0], this.wbGain[1], this.wbGain[2], 0.55f * Live.f(U + "purkinje", 1f, 0f, 2f)); // (1.1) user.purkinje: the night's blue shift
 		put4(b, GRADE2, 0f, 0f, 0f, 0.0025f);
 		put4(b, GRADE3, 1f, 1f, 1f, this.inset);
 		put4(b, TONEMAP, this.contrast, SHOULDER, this.toneB, this.toneBeta);
@@ -273,15 +295,18 @@ public final class ShadeLook {
 		// streaky, rougher currents (water.metal shadeWaterFallNormal / shadeWaterAlong); the bloom never used w (lens dirt, reserved)
 		put4(b, BLOOM, this.bloomMix, PRESET_SPECTRUM[ShadeSettings.look()], 0.06f * (1f + f.rain),
 			Math.min(Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.falls", 1f), 0f), 2f));
-		float haze = (1f + 1.0f * f.rain) * ShadeSettings.haze();
+		float haze = (1f + 1.0f * this.rainFog) * ShadeSettings.haze();
 		put4(b, FOG_R, HAZE_SIGMA[0] * haze, HAZE_SIGMA[1] * haze, HAZE_SIGMA[2] * haze, HAZE_H);
 		// (FT2.7, audit idx 49) the mist's albedo goes to 0.6 with the rain as its other terms do, linearly: a step at rain 0.5 cut its
 		// in-scatter (aM / (1 - aM / 2)) by half in one frame, the fog popped darker as the rain came in
-		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * f.rain), SEA + MIST_BASE, MIST_ALBEDO + (0.6f - MIST_ALBEDO) * f.rain);
+		put4(b, FOG_M, this.mistSigma * 1e-3f * MIST_SCALE, MIST_H * (1f + 2f * this.rainFog), SEA + MIST_BASE, MIST_ALBEDO + (0.6f - MIST_ALBEDO) * f.rain);
 		// w: the haze's evening glow, its strength times its bell around the sun's elevation (-1 degree, 2.5 wide): the same for
 		// every pixel, so made here once instead of in shadeHazeInscatter per pixel (2026-10-08 optimisation)
 		double glowBell = Math.exp(-Math.pow((this.elevation + 1.0) / 2.5, 2.0));
-		put4(b, FOG_MISC, SEA + HAZE_BASE, f.rain > 0f ? 0.78f - 0.18f * f.rain : 0.78f, this.borderRadius, (float) (0.6 * (1f - f.rain) * glowBell));
+		// (1.1) user.borderFog: where the render distance's fog starts (share of its radius; 0.78 as released); user.eveningGlow
+		float border = Live.f(U + "borderFog", 0.78f, 0.3f, 0.97f);
+		put4(b, FOG_MISC, SEA + HAZE_BASE, this.rainFog > 0f ? border - 0.18f * this.rainFog * (border / 0.78f) : border, this.borderRadius,
+			(float) (0.6 * (1f - f.rain) * glowBell) * Live.f(U + "eveningGlow", 1f, 0f, 3f));
 		// (1.1) was the volumetric light's reserved slot (read by no shader; ShadeVl has its own parameters): the water colour the
 		// player chose (ShadeSettings), linear rgb and its weight (0 = the biome's own colour)
 		ShadeSettings.waterTint(this.waterTint);
@@ -296,11 +321,13 @@ public final class ShadeLook {
 			Math.min(Math.max(mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.water.caveRipples", 1f), 0f), 1f), this.eyeSky);
 		put4(b, SKY_GOLD_H, this.skyGold[0], this.skyGold[1], this.skyGold[2], ShadeSky.sunsetArt ? 1f : 0f); // w: M3 sunset art
 		put4(b, SKY_GOLD_Z, this.skyGold[3], this.skyGold[4], this.skyGold[5], this.skyRose);
-		put4(b, NIGHT, this.starBrightness, 1f, 0f, this.moonPhaseAngle);
+		put4(b, NIGHT, this.starBrightness, Live.f(U + "milkyWay", 1f, 0f, 4f), 0f, this.moonPhaseAngle); // (1.1) y: user.milkyWay
 		put4(b, RENDER_SCALE, f.renderScale, (float) (Math.log(f.mipScale) / Math.log(2)), f.width, f.height);
 		// at night the meter may brighten less (night stays night: the reference is already lifted for it)
 		float nightUp = EV_UP - (EV_UP - EV_UP_NIGHT) * (1f - smooth(-10f, -2f, this.elevation));
-		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP, TAU_DOWN);
+		// (1.1) user.exposureSpeed: how fast the eye adapts (2 = twice as fast)
+		float speed = Live.f(U + "exposureSpeed", 1f, 0.2f, 5f);
+		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP / speed, TAU_DOWN / speed);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
 		// (FT2.8, audit idx 78) x the aurora's, End sky's and Nether fog's clock; (FT2.9) mcopt.shade.caveAir (true; read every frame,
 		// false = FT2.8.1): y the sky light the air around the camera gets (from the eye's, smoothed: all of it from 10 of 15 up, none
@@ -319,16 +346,29 @@ public final class ShadeLook {
 		putRows(b, GRADE_OUT, this.gradeOut);
 		putRows(b, GRADE_IN_INV, this.gradeInInv);
 		putRows(b, GRADE_OUT_INV, this.gradeOutInv);
-		float lambda = ShadeConfig.AUTO_EXPOSURE ? PRESET_LAMBDA[ShadeSettings.look()] : 0f;
+		// (1.1) live: mcopt.shade.exposure (auto | fixed) and user.autoExposure (how much of the metered scene the exposure follows)
+		boolean autoExposure = ShadeConfig.AUTO_EXPOSURE && !"fixed".equals(Live.s("mcopt.shade.exposure", "auto"));
+		float lambda = autoExposure ? Math.min(PRESET_LAMBDA[ShadeSettings.look()] * Live.f(U + "autoExposure", 1f, 0f, 2f), 1f) : 0f;
 		put4(b, EXPOSURE_REF, this.exposureRef, lambda, METER_KEY, this.snapExposure ? 1f : 0f);
 		this.snapExposure = false;
+		// (1.1) the player's settings for the shaders (shade_look.metal user0..3)
+		// user0: x the soft shadows' sun radius (rad: the real sun's x user.shadowSoftness; shade_m2 PCSS), y the vignette's strength
+		// (0.12 as released, x user.vignette), z leaves' and plants' light through them (user.leafLight), w glowing blocks (user.emissive)
+		put4(b, USER0, SUN_RADIUS * Live.f(U + "shadowSoftness", 1f, 0.25f, 4f), 0.12f * Live.f(U + "vignette", 1f, 0f, 4f),
+			Live.f(U + "leafLight", 1f, 0f, 3f), Live.f(U + "emissive", 1f, 0f, 3f));
+		// user1: x Distant Horizons' far water: its reflections' strength (= the near water's, user waterReflect), y its screen-space
+		// part (1 on, 0 = the player's "sky only"), z the near water's foam (user.foam), w its refraction (user.refraction)
+		put4(b, USER1, ShadeSettings.reflect(), ShadeSettings.ssr() ? 1f : 0f, Live.f(U + "foam", 1f, 0f, 3f), Live.f(U + "refraction", 1f, 0f, 3f));
+		// user2: x the sun's glint on water (user.glint), yzw free
+		put4(b, USER2, Live.f(U + "glint", 1f, 0f, 3f), 0f, 0f, 0f);
+		put4(b, USER3, 0f, 0f, 0f, 0f);
 		mcopt.metal.shade.weather.ShadeWeather.pack(b); // M3 weather: wet, wind, flash
 	}
 
 	// ---- values for modules (volumetric light: its open-air medium follows E06's haze and mist) ---------------------------
 	/** Luminance of the haze extinction at its base (1/block), as packed in fogR this frame. */
 	public float hazeSigmaLuma(ShadeFrame f) {
-		return luma(HAZE_SIGMA[0], HAZE_SIGMA[1], HAZE_SIGMA[2]) * (1f + 1.0f * f.rain) * ShadeSettings.haze();
+		return luma(HAZE_SIGMA[0], HAZE_SIGMA[1], HAZE_SIGMA[2]) * (1f + 1.0f * this.rainFog) * ShadeSettings.haze();
 	}
 
 	/** Mist extinction at its base (1/block), as packed in fogM.x this frame. */
@@ -338,7 +378,7 @@ public final class ShadeLook {
 
 	/** Mist scale height (blocks), as packed in fogM.y. */
 	public float mistHeight(ShadeFrame f) {
-		return MIST_H * (1f + 2f * f.rain);
+		return MIST_H * (1f + 2f * this.rainFog);
 	}
 
 	/**

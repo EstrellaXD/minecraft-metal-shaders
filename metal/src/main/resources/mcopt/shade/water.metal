@@ -1164,6 +1164,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 #else
 	float2 shift = tilt.xy * (0.4 * min(max(dw0, 0.0), 6.0));
 #endif
+	if (w.look != nullptr) shift *= w.look->user1.w; // (1.1) user1.w: the player's refraction
 	float2 uvR = uv + float2(f.proj[0][0] * shift.x, f.proj[1][1] * shift.y) * (0.5 / max(wSurf, 0.5));
 	uvR = clamp(uvR, 0.5 / size, 1.0 - 0.5 / size);
 	float wR = shadeWaterSceneW(depth, uint2(uvR * size), f);
@@ -1198,7 +1199,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 			// (the torch's light comes from above and around: its focus straight down)
 			float3 cl = sunL >= torchL ? f.lightDirWorld.xyz : float3(0.0, 1.0, 0.0);
 			float c = shadeWaterCaustics(w.p + v * lView, dy, f, wp, cl);
-			bottom *= mix(1.0, c * 0.8, 0.75 * fade); // ~energy neutral: the focus averages a bit over 1
+			bottom *= mix(1.0, c * 0.8, min(0.75 * fade * wp.tune.w, 1.0)); // ~energy neutral: the focus averages a bit over 1 ((1.1) tune.w: user.caustics)
 		}
 	}
 #endif
@@ -1270,7 +1271,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 	float soft = smoothstep(0.15, 0.85, float(w.shadow));
 	float3 glint = f.sunColor.rgb * min(spec, 60.0) * soft * open * (1.0 - hitWeight);
 
-	float3 color = mix(body, refl, fres) + glint * wp.tune.z;
+	float3 color = mix(body, refl, fres) + glint * (wp.tune.z * (w.look != nullptr ? w.look->user2.x : 1.0)); // (1.1) user2.x: the glint
 	if (f.flags.w == 5) return float3(hitWeight, fres, 0.0) / max(w.exposure, 1e-3);                               // debug: SSR hits, Fresnel
 	if (f.flags.w == 6) return float3(saturate(lView / 16.0), saturate(dy / 8.0), hasFloor ? 0.0 : 1.0) / max(w.exposure, 1e-3); // debug: path, depth
 
@@ -1294,7 +1295,7 @@ static float3 shadeWaterAbove(ShadeWaterIn w, constant ShadeFrame &f, constant S
 			float3 fn = cross(fx - f0, fz - f0);
 			float upness = abs(fn.y) / max(length(fn), 1e-6);
 			foam *= smoothstep(0.55, 0.85, upness) * (1.0 - smoothstep(16.0, 28.0, dist));
-			color = mix(color, w.lit * 0.5, foam * 0.3);
+			color = mix(color, w.lit * 0.5, foam * (w.look != nullptr ? 0.3 * w.look->user1.z : 0.3)); // (1.1) user1.z: foam
 		}
 	}
 #endif

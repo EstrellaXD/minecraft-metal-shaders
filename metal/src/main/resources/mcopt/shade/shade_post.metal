@@ -396,7 +396,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	// vignette (sparing what is bright)
 	float2 r = (in.uv - 0.5) * float2(float(scene.get_width()) / float(scene.get_height()), 1.0);
 	float vr = pow(saturate(length(r) * 1.25), 2.4);
-	c *= 1.0 - 0.12 * vr * (1.0 - 0.5 * saturate(shadeLuma(c) - 1.0));
+	c *= 1.0 - L.user0.y * vr * (1.0 - 0.5 * saturate(shadeLuma(c) - 1.0)); // (1.1) user0.y: the vignette (0.12 as released)
 	// vibrance: saturate the less saturated colours more
 	float Y = shadeLuma(c);
 	float mx = max(max(c.r, c.g), c.b), mn = min(min(c.r, c.g), c.b);

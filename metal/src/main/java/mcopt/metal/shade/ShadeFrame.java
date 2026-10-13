@@ -64,6 +64,25 @@ public final class ShadeFrame {
 	public final ShadeSky.Result sky = new ShadeSky.Result();
 	public float sunIntensity, moonIntensity, mie = 1f;
 	public final float[] blockLight = {2.4f, 1.2f, 0.48f}; // torches: warm (~2700 K), strong near, falling off fast (shadeBlockCurve)
+	private final float[] torch = new float[3];
+
+	/**
+	 * (1.1) The torch light the shaders get: blockLight times user.torch (strength), and with user.torchKelvin set (1800..6500;
+	 * 0 = as released) its colour that of a blackbody at that temperature with blockLight's luminance. Held lights, entities and
+	 * the rain's glints follow it (their tints are relative to it).
+	 */
+	float[] torchLight() {
+		float k = Live.f(ShadeLook.U + "torch", 1f, 0f, 3f), kelvin = Live.f(ShadeLook.U + "torchKelvin", 0f, 0f, 6500f);
+		float[] base = this.blockLight;
+		if (kelvin >= 1000f) {
+			float[] bb = ShadeLook.blackbody(kelvin);
+			float lb = ShadeSky.luma(base[0], base[1], base[2]), lc = Math.max(ShadeSky.luma(bb[0], bb[1], bb[2]), 1e-4f);
+			for (int i = 0; i < 3; i++) this.torch[i] = bb[i] * lb / lc * k;
+		} else {
+			for (int i = 0; i < 3; i++) this.torch[i] = base[i] * k;
+		}
+		return this.torch;
+	}
 	public float minAmbient = 0.004f;
 	/** sRGB fog colour and weight, vanilla fog distances (FogData). */
 	public final float[] fogColor = new float[4];
@@ -103,8 +122,10 @@ public final class ShadeFrame {
 		this.sunIntensity = s.sunIntensity();
 		this.moonIntensity = s.moonIntensity();
 		this.mie = s.mie();
-		this.hazeDensity = 0.0008f * (1f + 8f * this.rain); // rain closes the distance in
-		this.hazeStrength = 0.5f + 0.4f * this.rain;
+		// (1.1) user.distanceHaze: the far land's haze; user.rainFog: the rain's share of it (ShadeLook.update reads the same key)
+		float rainFog = this.rain * Live.f(ShadeLook.U + "rainFog", 1f, 0f, 3f);
+		this.hazeDensity = 0.0008f * Live.f(ShadeLook.U + "distanceHaze", 1f, 0f, 4f) * (1f + 8f * rainFog); // rain closes the distance in
+		this.hazeStrength = Math.min(0.5f + 0.4f * rainFog, 1f);
 		// Eye adaptation: the light around the camera. Outdoors (sky light 15 at the eye) that's the sky's; deeper in, torches.
 		float eye = this.eyeSkyLight / 15f;
 		float eyeCurve = eye / (4f - 3f * eye);
@@ -165,7 +186,7 @@ public final class ShadeFrame {
 		put4(b, SUN_COLOR, c[0], c[1], c[2], ShadeSky.luma(c[0], c[1], c[2]));
 		put3(b, AMBIENT_SKY, this.sky.ambientSky, 0);
 		put3(b, AMBIENT_GROUND, this.sky.ambientGround, 0);
-		put3(b, AMBIENT_BLOCK, this.blockLight, this.minAmbient);
+		put3(b, AMBIENT_BLOCK, torchLight(), this.minAmbient);
 		put4(b, FOG_COLOR, this.fogColor[0], this.fogColor[1], this.fogColor[2], this.fogColor[3]);
 		put4(b, FOG_RANGE, this.fogEnvStart, this.fogEnvEnd, this.fogRenderStart, this.fogRenderEnd);
 		put4(b, FOG_SKY, this.fogSkyEnd, this.fogCloudEnd, this.hazeDensity, this.hazeStrength);

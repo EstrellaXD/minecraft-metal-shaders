@@ -86,7 +86,7 @@ static float3 shadeLit2(half3 albedo, half3 n, half sky, half block, half shadow
 	float3 Ld = f.lightDirWorld.xyz;
 	half nl = half(dot(float3(n), Ld));
 	half ndl = thin ? half(0.3) + half(0.5) * abs(nl)
-		: foliage ? half(0.25) + half(0.75) * saturate(nl) + half(0.5) * saturate(-nl)
+		: foliage ? half(0.25) + half(0.75) * saturate(nl) + half(0.5 * L.user0.z) * saturate(-nl) // (1.1) user0.z: leaves' light through them
 		: (nl > half(0.0) ? (nl + half(0.08)) / half(1.08) : half(0.0));
 	half gate = f.flags.z != 0 ? smoothstep(half(0.3), half(0.8), sky) : sky * sky * sky * sky;
 	half3 sun = half3(f.sunColor.xyz);
@@ -96,7 +96,7 @@ static float3 shadeLit2(half3 albedo, half3 n, half sky, half block, half shadow
 	half3 side = mix(half3(f.ambientAway.xyz), half3(f.ambientToward.xyz), towardSun);
 	half3 ambient = n.y >= half(0.0) ? mix(side, half3(f.ambientSky.xyz), n.y) : mix(side, half3(f.ambientGround.xyz), -n.y);
 	half g = shadeSkyCurve(sky);
-	ambient *= g * (foliage ? half(1.35) : half(1.0)) * half3(L.ambientArt.rgb);
+	ambient *= g * (foliage ? half(1.0 + 0.35 * L.user0.z) : half(1.0)) * half3(L.ambientArt.rgb);
 	// warm fill where the sun doesn't reach: what the sunlit ground and walls around bounce back
 	half3 fill = sun * (half(L.ambientArt.w) * (half(1.0) - shadow * saturate(nl)) * g * g * gate) * half3(L.bounce.rgb);
 	// block light: F(b) = 2.2 b^7 + 0.55 b^2.4 (normalized to 1 at b = 1), a little weaker in daylight
@@ -156,7 +156,7 @@ static half shadeShadow2(depth2d_array<float> map, sampler cmp, constant ShadeFr
 		float2 uv = shadeShadowUV(c.xyz);
 		float blocksPerTexel = f.cascadeSplits.z;
 		float zBlocks = 1.0 / max(length(float3(f.shadowViewProj[0][0][2], f.shadowViewProj[0][1][2], f.shadowViewProj[0][2][2])), 1e-6);
-		float tanSun = tan(L.sunGeom.y * 1.6) * (foliage ? 1.5 : 1.0);
+		float tanSun = tan(L.user0.x * 1.6) * (foliage ? 1.5 : 1.0); // (1.1) user0.x: the sun's radius for the penumbra (user.shadowSoftness), not the disc's
 		float searchTex = clamp(tanSun * 16.0 / blocksPerTexel, 1.5, 6.0);
 #ifdef SHADE_PCSS_TAA
 		// (FT2.8, audit idx 96) a new rotation every frame under TAA (the project's rule, as the water's SSR): a fixed one gave each

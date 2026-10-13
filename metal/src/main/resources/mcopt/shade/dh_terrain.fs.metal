@@ -170,7 +170,8 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			float3 r = float3(v.xz * (sqrt(max(1.0 - cosV * cosV, 0.0)) / max(length(v.xz), 1e-4)), cosV).xzy;
 			float open = float(shadeSkyCurve(sky));
 			float m = 1.0 - saturate(cosV);
-			float fr = (0.0204 + 0.9796 * m * m * m * m * m) * (0.35 + 0.65 * open);
+			// (1.1) user1.x: the player's reflection strength (the near water's tune.z), at most a full mirror
+			float fr = min((0.0204 + 0.9796 * m * m * m * m * m) * (0.35 + 0.65 * open) * sl.user1.x, 1.0);
 			// (FT2.8, audit idx 115) the screen-space part first; the sky LUT and the clouds' dome only where it doesn't cover it all
 			float3 scr = float3(0.0);
 			float wS = 0.0;
@@ -179,7 +180,7 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			// full resolution, the sunset's colours, the far islands (LODs are not in the depth: they count as sky). Anything the
 			// depth holds nearer than ~500 blocks (the game's own chunks) is not what the far sea mirrors: the dome / LUT there.
 			// Faded out over the last 1/8 of the screen. Needs TAAU's depth of that image (ShadeLook.ssr.y).
-			if (sl.ssr.x > 0.5 && sl.ssr.y > 0.5) {
+			if (sl.ssr.x > 0.5 && sl.ssr.y > 0.5 && sl.user1.y > 0.5) { // (1.1) user1.y 0: the player chose sky-only reflections
 				float3 rm = float3(v.x, -v.y, v.z);
 				float4 pc = sl.prevViewProjNoJitter * float4(rm, 0.0); // (FT2.8, as audit idx 35: the TAA history is unjittered)
 				if (pc.w > 1e-4) {
@@ -221,7 +222,7 @@ fragment float4 main0(DhIn in [[stage_in]], constant DhFrag &u [[buffer(MCOPT_SL
 			float vis = 0.5 / max(nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2), 1e-5);
 			float mh = 1.0 - saturate(dot(h, -v));
 			float spec = a2 / (dd * dd) * vis * nl * (0.0204 + 0.9796 * mh * mh * mh * mh * mh);
-			float3 glint = sf.sunColor.rgb * min(spec, 60.0) * float(smoothstep(0.15h, 0.85h, shadow)) * open;
+			float3 glint = sf.sunColor.rgb * min(spec, 60.0) * float(smoothstep(0.15h, 0.85h, shadow)) * open * (sl.user1.x * sl.user2.x); // (1.1) as the near water's
 			float ba = float(in.color.a);
 			float aw = fr + (1.0 - fr) * ba;
 			radiance = (refl * fr + radiance * ba * (1.0 - fr) + glint) / max(aw, 1e-3);

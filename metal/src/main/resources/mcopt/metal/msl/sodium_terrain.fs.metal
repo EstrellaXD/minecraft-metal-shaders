@@ -373,7 +373,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant u_Globals& g [[buffe
         // glowstone, lava, shroomlights) glow instead of being lit like the rest of the block (stronger in the Nether).
         half tl = shadeLumaH(half3(texel.rgb));
         if (in.v_Light.x > 0.92h && texel.r > 0.9 && tl > 0.62h && texel.r > texel.b + 0.12)
-            radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * (netherLit ? 3.1 : 2.2);
+            radiance += float3(albedo) * float3(sf.ambientBlock.xyz) * ((netherLit ? 3.1 : 2.2) * sl.user0.w); // (1.1) user0.w: glowing blocks
 #ifdef SHADE_WEATHER
 #if defined(SHADE_COLOR_SHADOW) && defined(MCOPT_HDR)
         // light that came through stained glass, ice or water takes their colour (the shadow pass's tint map, near cascade)

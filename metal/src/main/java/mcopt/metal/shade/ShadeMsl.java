@@ -124,10 +124,17 @@ public final class ShadeMsl {
 	 * mcopt.shade.water), the stage.
 	 */
 	public static String ownFragmentSource(boolean translucent, int leanBits) {
-		return (ShadeConfig.HDR ? "#define MCOPT_HDR\n" : "") + leanDefines(leanBits << LEAN_SHIFT) + LEAN_TEST
+		return (ShadeConfig.HDR ? "#define MCOPT_HDR\n" : "") + (OWN_NONCE != null ? "#define SHADE_OWN_NONCE " + OWN_NONCE + "\n" : "")
+			+ leanDefines(leanBits << LEAN_SHIFT) + LEAN_TEST
 			+ (translucent ? "#define SHADE_OWN_TRANSLUCENT\n" : "") + prelude() + ShadeWeather.prelude(translucent)
 			+ (translucent && ShadeWater.MODULE ? ShadeWater.prelude() : "") + resource("terrain_own.metal");
 	}
+
+	/**
+	 * -Dmcopt.shade.terrain.nonce=N (dev only, an integer): own terrain's shaded stages get code of their own (a test no pixel
+	 * passes), so Metal's cache has none of their pipelines: the first launch after an install or an OS update, on demand.
+	 */
+	private static final Integer OWN_NONCE = Integer.getInteger("mcopt.shade.terrain.nonce");
 
 	/** shade_look.metal alone (self-contained): what the game's own fragments need for shadeLdrToHdr. */
 	public static String look() {

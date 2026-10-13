@@ -78,7 +78,14 @@ public final class ShadeTerrain {
 		return t;
 	});
 	private static long own;
-	private static MethodHandle shadeFs, shadeBuilt;
+	private static MethodHandle shadeFs, shadeBuilt, shadePrewarm;
+	/**
+	 * -Dmcopt.shade.terrain.prewarmPipelines (true): the pipelines of the layouts own has drawn with so far are built for every
+	 * other stage variant on the compile thread (mcown.m mco_shade_prewarm; at the world's 300th and 3000th frame, after the
+	 * libraries), so a variant met later finds them in Metal's cache instead of building them in the frame that needs it.
+	 */
+	private static final boolean PREWARM_PIPELINES = !"false".equals(System.getProperty("mcopt.shade.terrain.prewarmPipelines"));
+	private static long frames;
 	private static double builtSeen;
 	private static boolean said, failedSaid, prewarmed;
 
@@ -103,6 +110,7 @@ public final class ShadeTerrain {
 			shade.invokeExact(own, 1);
 			shadeFs = linker.downcallHandle(native_("mco_shade_fs"), FunctionDescriptor.ofVoid(JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT));
 			shadeBuilt = linker.downcallHandle(native_("mco_shade_built"), FunctionDescriptor.ofVoid(JAVA_LONG, JAVA_LONG));
+			shadePrewarm = linker.downcallHandle(native_("mco_shade_prewarm"), FunctionDescriptor.of(JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT));
 		} catch (Throwable t) {
 			throw new IllegalStateException("mcopt-shade: own terrain's shade slots", t);
 		}
@@ -133,6 +141,8 @@ public final class ShadeTerrain {
 			throw new IllegalStateException(t);
 		}
 		logBuilt(key);
+		frames++;
+		if (PREWARM_PIPELINES && (frames == 30 || frames == 1200)) prewarmPipelines();
 		if (!said && opaque != 0) {
 			said = true;
 			System.out.println("[mcopt] shade: mcopt's own terrain lit per pixel (" + LIBRARIES.size() + " stage variants building or built)");
@@ -233,7 +243,42 @@ public final class ShadeTerrain {
 			int key = (translucent ? TRANSLUCENT : 0) | v[1];
 			CompletableFuture<Long> mine = new CompletableFuture<>();
 			if (LIBRARIES.putIfAbsent(key, mine) != null) continue;
-			COMPILER.execute(() -> mine.complete(compile(translucent, v[1])));
+			Runnable task = () -> mine.complete(compile(translucent, v[1]));
+			if (!mcopt.metal.shade.ShadeCompile.background(task)) COMPILER.execute(task); // (v12: on the shader pool when there is one)
+		}
+	}
+
+	private static final java.util.concurrent.atomic.AtomicInteger PREWARM_LEFT = new java.util.concurrent.atomic.AtomicInteger(),
+		PREWARM_BUILT = new java.util.concurrent.atomic.AtomicInteger();
+	private static volatile long prewarmT0;
+
+	/**
+	 * Every stage variant's pipelines for the layouts met so far, built in the background as each variant's library is ready
+	 * (on the shader pool, else the compile thread), then logged once.
+	 */
+	private static void prewarmPipelines() {
+		if (PREWARM_LEFT.get() > 0) return; // (the last round is still going)
+		prewarmT0 = System.nanoTime();
+		PREWARM_BUILT.set(0);
+		List<Map.Entry<Integer, CompletableFuture<Long>>> all = new ArrayList<>(LIBRARIES.entrySet());
+		PREWARM_LEFT.set(all.size());
+		long round = frames;
+		for (Map.Entry<Integer, CompletableFuture<Long>> e : all) {
+			boolean translucent = (e.getKey() & TRANSLUCENT) != 0;
+			e.getValue().whenComplete((lib, ex) -> {
+				Runnable task = () -> {
+					try {
+						if (lib != null && lib != 0) PREWARM_BUILT.addAndGet((int) shadePrewarm.invokeExact(own, (long) lib, translucent ? 1 : 0, ShadeConfig.HDR ? 1 : 0));
+					} catch (Throwable t) {
+						System.out.println("[mcopt] shade: own terrain pipeline prewarm failed: " + t);
+					}
+					if (PREWARM_LEFT.decrementAndGet() == 0) {
+						System.out.println(String.format("[mcopt] shade: own terrain pipelines prewarmed in the background: %d for %d stage variants in %.1f s (from frame %d)",
+							PREWARM_BUILT.get(), all.size(), (System.nanoTime() - prewarmT0) / 1e9, round));
+					}
+				};
+				if (!mcopt.metal.shade.ShadeCompile.background(task)) COMPILER.execute(task);
+			});
 		}
 	}
 

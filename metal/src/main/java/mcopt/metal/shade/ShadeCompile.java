@@ -67,7 +67,7 @@ public final class ShadeCompile {
 	/** World frames after the first one at which the startup summary is logged (mcopt.shade.compile.summaryFrames). */
 	private static final int SUMMARY_FRAMES = Integer.getInteger("mcopt.shade.compile.summaryFrames", 300);
 	/** Queue order: prewarm variants (the reload waits for them) before the warm-up (needed only when a world starts). */
-	private static final int PRIORITY_PREWARM = 0, PRIORITY_WARM = 1;
+	private static final int PRIORITY_PREWARM = 0, PRIORITY_WARM = 1, PRIORITY_BACKGROUND = 2;
 
 	private static @Nullable ThreadPoolExecutor pool;
 	private static int threads, maxTasks;
@@ -142,6 +142,16 @@ public final class ShadeCompile {
 			pool = null;
 			System.out.println("[mcopt] shade shaders: parallel compile unavailable, one after another as before: " + t);
 		}
+	}
+
+	/**
+	 * (v12) A background build on the pool, after the startup ones (own terrain's stage variants and their pipelines,
+	 * ShadeTerrain). False when there is no pool: the caller runs it its own way.
+	 */
+	public static boolean background(Runnable r) {
+		if (pool == null) return false;
+		execute(new Job(r, PRIORITY_BACKGROUND));
+		return true;
 	}
 
 	private static void execute(Job job) {

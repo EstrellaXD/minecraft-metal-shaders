@@ -46,6 +46,10 @@ struct CullFrame {
 	int occ;              // 1: two-phase occlusion (lists A = visible last frame, T = every unit tested in phase B)
 	int fat;              // 1: the lists hold whole instances (Inst) for the vertex stage, not record indices
 	int fatT;             // 1 (with occ 2, -Dmcopt.own.quads.fatT): each tested unit's TUnit also written (buffer 10, same position)
+#ifdef MCOPT_SHADE
+	float4 shadePlanes[2]; // (mcopt-shade, the shadow culls: OwnTerrain.shadowCull) a shadow cascade's light-space depth range as two
+	                       // more planes like planes[] (xyz . p + w >= 0 inside); all zero: none (every other cull)
+#endif
 };
 
 // a tested unit as the per-quad path's phase A and B read it, written by the cull next to its tested-list entry: the record's
@@ -206,6 +210,14 @@ kernel void own_cull(constant CullFrame &f [[buffer(0)]], device const Section *
 		float3 v = o + select(float3(0), float3(16), pl.xyz > 0);
 		if (dot(pl.xyz, v) + pl.w < -0.5) return;
 	}
+#ifdef MCOPT_SHADE
+	for (int p = 0; p < 2; p++) {
+		float4 pl = f.shadePlanes[p];
+		if (all(pl.xyz == 0.0)) continue;
+		float3 v = o + select(float3(0), float3(16), pl.xyz > 0);
+		if (dot(pl.xyz, v) + pl.w < -0.5) return;
+	}
+#endif
 	float3 cam = -o;
 	for (uint r = s.recStart; r < s.recStart + s.recCount; r++) {
 		Rec rec = recs[r];
@@ -3541,13 +3553,15 @@ fragment void own_shadow_cutout_fs(OwnShadowOut in [[stage_in]], texture2d<float
 }
 
 // Coloured shadows (M3 weather): the near cascade's translucent units (water, stained glass and panes, ice, slime, honey) into
-// the tint map. own_shadow_tcull lists the translucent records of the sections inside the cascade's side planes (vanilla's
+// the tint map. own_shadow_tcull lists the translucent records of the sections inside the cascade's box (vanilla's
 // distance rule, as own_cull) with the draw's indexed indirect arguments {64 quads x 6, units, 0, 0, 0} (own_shadow_tcull_reset
 // before, own_shadow_tcull_finish after: the count clamped to the list). own_shadow_tint_vs draws them as own_vs draws the
 // translucent layer (64-byte quads, through the unit's sorted order unless they are a sorted copy) for shade/shadow.metal's
 // shadow_tint_fs (water left out with tp.mode.x, as there); the quads drawn widen this frame's caster rectangle (cascade 0's
-// light clip space, as ordered-int bits: x0, y0 negated, x1, y1) and count them, which ShadowPass reads back a few frames later.
-struct OwnTcullFrame { float4 planes[4]; int4 camBlock; float4 camOffset; int4 camSection; int viewDistance; uint sectionCount, cap, pad; };
+// light clip space, as ordered-int bits: x0, y0 negated, x1, y1) and count them; the finish adds the units listed (slot word 5).
+// ShadowPass reads the slot back a few frames later.
+struct OwnTcullFrame { float4 planes[4]; int4 camBlock; float4 camOffset; int4 camSection; int viewDistance; uint sectionCount, cap, pad;
+	float4 depthPlanes[2]; };  // (planes: the cascade's four sides; depthPlanes: its light-space depth range, as CullFrame.shadePlanes)
 struct OwnShadowTintOut { float4 pos [[position]]; float2 uv; half4 color; };
 struct OwnTintParams { float4 still; float4 flow; float4 mode; };  // = shade/shadow.metal ShadowTintParams
 
@@ -3560,10 +3574,31 @@ kernel void own_shadow_tcull_reset(device uint *args [[buffer(3)]], device atomi
 	args[4] = 0;
 	for (uint k = 0; k < 4; k++) atomic_store_explicit(&rect[k], INT_MIN, memory_order_relaxed);
 	atomic_store_explicit(&rect[4], 0, memory_order_relaxed);
+	atomic_store_explicit(&rect[5], 0, memory_order_relaxed);
 }
 
+// unit rec's quad q: its arena vertex index (corner 0), as own_vs fetches translucent quads
+static uint ownTintVertex(device const void *arenaRaw, Rec rec, uint q) {
+	return (rec.meta & (1u << 18)) == 0 ? (uint(rec.plane) + ((device const uint *) arenaRaw)[rec.quadStart + q]) * 4 : (rec.quadStart + q) * 4;
+}
+
+// the atlas uv of arena vertex vi
+static float2 ownTintUv(device const void *arenaRaw, uint vi) {
+	if (COMPACT) {
+		CVtx k = ((device const CVtx *) arenaRaw)[vi];
+		return float2(k.u, k.v) / 65536.0;
+	}
+	return float2(((device const Vtx *) arenaRaw)[vi].uv0);
+}
+
+static bool ownTintWater(float2 uv, constant OwnTintParams &tp) {
+	return tp.still.z > 0.0 && ((all(uv >= tp.still.xy) && all(uv <= tp.still.zw)) || (all(uv >= tp.flow.xy) && all(uv <= tp.flow.zw)));
+}
+
+// (water left out, tp.mode.x: units of water quads only aren't listed: most of a lake's, which the draw would only drop)
 kernel void own_shadow_tcull(constant OwnTcullFrame &f [[buffer(0)]], device const Section *sections [[buffer(1)]], device const Rec *recs [[buffer(2)]],
-	device atomic_uint *args [[buffer(3)]], device uint *list [[buffer(4)]], uint i [[thread_position_in_grid]]) {
+	device atomic_uint *args [[buffer(3)]], device uint *list [[buffer(4)]], device const void *arenaRaw [[buffer(6)]], constant OwnTintParams &tp [[buffer(7)]],
+	uint i [[thread_position_in_grid]]) {
 	if (i >= f.sectionCount) return;
 	Section s = sections[i];
 	if (s.recCount == 0) return;
@@ -3572,21 +3607,31 @@ kernel void own_shadow_tcull(constant OwnTcullFrame &f [[buffer(0)]], device con
 	if (dx * dx + dz * dz >= f.viewDistance * f.viewDistance) return;
 	if (abs(sec.y - f.camSection.y) > f.viewDistance) return;
 	float3 o = float3(int3(s.x, s.y, s.z) - f.camBlock.xyz) + f.camOffset.xyz;
-	for (int p = 0; p < 4; p++) {
-		float4 pl = f.planes[p];
+	for (int p = 0; p < 6; p++) {
+		float4 pl = p < 4 ? f.planes[p] : f.depthPlanes[p - 4];
+		if (all(pl.xyz == 0.0)) continue;
 		float3 v = o + select(float3(0), float3(16), pl.xyz > 0);
 		if (dot(pl.xyz, v) + pl.w < -0.5) return;
 	}
 	for (uint r = s.recStart; r < s.recStart + s.recCount; r++) {
 		uint meta = recs[r].meta;
 		if (((meta >> 9) & 3) != 2 || (meta & (1u << 18)) != 0) continue;  // (one version: the order-indexed units, not tsorted's copies)
+		if (tp.mode.x > 0.5) {
+			Rec rec = recs[r];
+			bool any = false;
+			for (uint q = 0; q <= (meta & 63) && !any; q++) any = !ownTintWater(ownTintUv(arenaRaw, ownTintVertex(arenaRaw, rec, q)), tp);
+			if (!any) continue;
+		}
 		uint at = atomic_fetch_add_explicit(&args[1], 1, memory_order_relaxed);
 		if (at < f.cap) list[at] = r;
 	}
 }
 
-kernel void own_shadow_tcull_finish(constant OwnTcullFrame &f [[buffer(0)]], device uint *args [[buffer(3)]], uint i [[thread_position_in_grid]]) {
-	if (i == 0) args[1] = min(args[1], f.cap);
+kernel void own_shadow_tcull_finish(constant OwnTcullFrame &f [[buffer(0)]], device uint *args [[buffer(3)]], device int *rect [[buffer(5)]],
+	uint i [[thread_position_in_grid]]) {
+	if (i != 0) return;
+	args[1] = min(args[1], f.cap);
+	rect[5] = int(args[1]);  // (the units listed: ShadowPass draws the tint map only while there are some)
 }
 
 static int ownTintOrdered(float v) { return as_type<int>(v) >= 0 ? as_type<int>(v) : as_type<int>(v) ^ 0x7fffffff; }
@@ -3604,8 +3649,7 @@ vertex OwnShadowTintOut own_shadow_tint_vs(uint vid [[vertex_id]], uint iid [[in
 	uint quad = vid >> 2;
 	if (quad > (rec.meta & 63)) return o;
 	uint corner = vid & 3;
-	uint vi = (rec.meta & (1u << 18)) == 0 ? (uint(rec.plane) + ((device const uint *) arenaRaw)[rec.quadStart + quad]) * 4 + corner
-		: (rec.quadStart + quad) * 4 + corner;
+	uint vi = ownTintVertex(arenaRaw, rec, quad) + corner;
 	Vtx v;
 	if (COMPACT) {
 		CVtx k = ((device const CVtx *) arenaRaw)[vi];
@@ -3619,8 +3663,7 @@ vertex OwnShadowTintOut own_shadow_tint_vs(uint vid [[vertex_id]], uint iid [[in
 	o.pos = cascade.viewProj * float4(p, 1.0);
 	o.uv = float2(v.uv0);
 	o.color = half4(float4(v.color) / 255.0);
-	bool water = tp.still.z > 0.0 && ((all(o.uv >= tp.still.xy) && all(o.uv <= tp.still.zw)) || (all(o.uv >= tp.flow.xy) && all(o.uv <= tp.flow.zw)));
-	if (water && tp.mode.x > 0.5) {
+	if (tp.mode.x > 0.5 && ownTintWater(o.uv, tp)) {
 		o.pos = float4(0, 0, -2, 1);  // (water left out: the water module absorbs the light on its way down; shadow_tint_fs would discard it)
 		return o;
 	}

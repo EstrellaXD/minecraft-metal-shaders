@@ -186,6 +186,9 @@ fragment float4 shade_own_fs(ShadeOwnIn in [[stage_in]], constant SoGlobals &g [
 		}
 	}
 	float4 color = texel * vertexColor;
+#ifdef SHADE_OWN_NONCE
+	if (in.fragCoord.x < -float(SHADE_OWN_NONCE)) discard_fragment(); // (dev: -Dmcopt.shade.terrain.nonce, a cold Metal cache)
+#endif
 	if (SO_CUTOUT && color.a < SO_CUTOUT_LIMIT) discard_fragment();
 	float2 envFog = float2(fog.FogEnvironmentalStart, fog.FogEnvironmentalEnd), renderFog = float2(fog.FogRenderDistanceStart, fog.FogRenderDistanceEnd);
 	float4 fogColor = float4(fog.FogColor);

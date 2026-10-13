@@ -117,6 +117,46 @@ int main(int argc, const char **argv) {
 			if (f && ![dev newComputePipelineStateWithFunction:f error:&e]) { printf("FAIL kernel %s: %s\n", kernels[i], e.localizedDescription.UTF8String); fails++; }
 		}
 		printf("OK   %d kernels (%.0f ms)\n", (int) (sizeof kernels / sizeof kernels[0]), -[t0 timeIntervalSinceNow] * 1000);
+		if (shade) {
+			// (v12 P4) the shadow pass's own stages (mcshadow.m mc_shadow_own_init / mc_shadow_own_tint_init): depth-only casters
+			// (Depth16Unorm), the coloured shadows' cull kernels and tint vertex stage linked with shade/shadow.metal's
+			// shadow_tint_fs (OWNCHECK_SHADOW = its path, from check.sh), for compact / full vertices and FAT lists
+			int failsBefore = fails;
+			const char *shadowPath = getenv("OWNCHECK_SHADOW");
+			NSString *shadowSrc = shadowPath ? [NSString stringWithContentsOfFile:[NSString stringWithUTF8String:shadowPath] encoding:NSUTF8StringEncoding error:nil] : nil;
+			id<MTLLibrary> shadowLib = shadowSrc ? [dev newLibraryWithSource:shadowSrc options:o error:&e] : nil;
+			if (shadowPath && !shadowLib) { printf("FAIL compile %s\n", shadowPath); fails++; }
+			for (int compact = 0; compact < 2; compact++) {
+				for (int fat = 0; fat < 2; fat++) {
+					MTLFunctionConstantValues *cv = [MTLFunctionConstantValues new];
+					bool cc = compact, ff = fat;
+					[cv setConstantValue:&cc type:MTLDataTypeBool atIndex:1];
+					[cv setConstantValue:&ff type:MTLDataTypeBool atIndex:2];
+					MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
+					pd.vertexFunction = fnc(@"own_shadow_vs", cv);
+					pd.depthAttachmentPixelFormat = MTLPixelFormatDepth16Unorm;
+					pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+					if (pd.vertexFunction && ![dev newRenderPipelineStateWithDescriptor:pd error:&e]) { printf("FAIL own_shadow_vs: %s\n", e.localizedDescription.UTF8String); fails++; }
+					pd.fragmentFunction = fnc(@"own_shadow_cutout_fs", nil);
+					if (pd.vertexFunction && pd.fragmentFunction && ![dev newRenderPipelineStateWithDescriptor:pd error:&e]) { printf("FAIL own_shadow_cutout_fs: %s\n", e.localizedDescription.UTF8String); fails++; }
+					if (fat) continue;
+					id<MTLFunction> tc = fnc(@"own_shadow_tcull", cv);
+					if (tc && ![dev newComputePipelineStateWithFunction:tc error:&e]) { printf("FAIL own_shadow_tcull: %s\n", e.localizedDescription.UTF8String); fails++; }
+					if (!shadowLib) continue;
+					MTLRenderPipelineDescriptor *td = [MTLRenderPipelineDescriptor new];
+					td.vertexFunction = fnc(@"own_shadow_tint_vs", cv);
+					td.fragmentFunction = fncIn(shadowLib, @"shadow_tint_fs", nil);
+					td.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+					td.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+					if (td.vertexFunction && td.fragmentFunction && ![dev newRenderPipelineStateWithDescriptor:td error:&e]) { printf("FAIL own_shadow_tint_vs + shadow_tint_fs: %s\n", e.localizedDescription.UTF8String); fails++; }
+				}
+			}
+			for (NSString *k in @[@"own_shadow_tcull_reset", @"own_shadow_tcull_finish"]) {
+				id<MTLFunction> f = fnc(k, nil);
+				if (f && ![dev newComputePipelineStateWithFunction:f error:&e]) { printf("FAIL %s: %s\n", k.UTF8String, e.localizedDescription.UTF8String); fails++; }
+			}
+			printf("%s  shadow pass stages (casters, cutout, coloured-shadow cull and tint%s)\n", fails == failsBefore ? "OK  " : "FAIL", shadowLib ? "" : " without shadow_tint_fs: no OWNCHECK_SHADOW");
+		}
 		// base stages (mco_new): own_fs with constants 0, 5, 6 only
 		for (int c = 0; c < 5; c++) {
 			MTLFunctionConstantValues *cv = [MTLFunctionConstantValues new];

@@ -213,7 +213,8 @@ public final class OwnTerrain {
 	private long qsBuffer, qsAddress, qsFrames;
 	/** Bytes of one quad in the arena. */
 	static final int ARENA_QUAD = COMPACT ? 64 : QUAD_BYTES;
-	private static final int CULL_FRAME_BYTES = 144, BUCKETS = 7;
+	// (mcopt-shade: CullFrame has two more planes under shade, at SHADE_PLANES: terrain.metal CullFrame.shadePlanes, zero = none)
+	private static final int SHADE_PLANES = 144, CULL_FRAME_BYTES = SHADE_PLANES + (mcopt.metal.shade.terrain.ShadeTerrain.ON ? 32 : 0), BUCKETS = 7;
 	static final int DRAW_FRAME_BYTES = 80;
 
 	private static @Nullable OwnTerrain instance;
@@ -2269,6 +2270,20 @@ public final class OwnTerrain {
 
 	/** shadowCull into the lists of slot (0 or 1; mcopt-shade: one per shadow cascade). */
 	public boolean shadowCull(int slot, Matrix4fc clip, float lx, float ly, float lz) {
+		return this.shadowCull(slot, clip, lx, ly, lz, null, -1, 1);
+	}
+
+	// (mcopt-shade) the far cascade spread's part as a section mask per CPU frame copy (see shadowCull below)
+	private final long[] shPartMasks = new long[FRAMES], shPartMaskAddresses = new long[FRAMES];
+	private int shPartMaskCap;
+
+	/**
+	 * mcopt-shade: shadowCull with the cascade's light-space depth range as two more planes (depth: 8 floats, camera-relative
+	 * world, xyz . p + w >= 0 inside, as the frustum planes; null: none; CullFrame.shadePlanes), and only the sections of part
+	 * `part` of the far cascade spread's `parts`-part lattice (part < 0: all; shade/shadow ShadowCasters.part's rule), through
+	 * the cull's section mask.
+	 */
+	public boolean shadowCull(int slot, Matrix4fc clip, float lx, float ly, float lz, float @Nullable [] depth, int part, int parts) {
 		if (this.maxSlot < 0 || this.frame == 0) return false;
 		net.minecraft.client.renderer.ViewArea va = Minecraft.getInstance().levelRenderer.viewArea();
 		if (va == null) return false;
@@ -2284,6 +2299,15 @@ public final class OwnTerrain {
 		final float shift = 4096.0F;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long f = stack.ncalloc(16, 1, CULL_FRAME_BYTES);
+			if (depth != null && CULL_FRAME_BYTES > SHADE_PLANES) {
+				for (int i = 0; i < 2; i++) { // (moved with the cull's camera, as the frustum planes below)
+					float nx = depth[i * 4], ny = depth[i * 4 + 1], nz = depth[i * 4 + 2];
+					MemoryUtil.memPutFloat(f + SHADE_PLANES + i * 16L, nx);
+					MemoryUtil.memPutFloat(f + SHADE_PLANES + i * 16L + 4, ny);
+					MemoryUtil.memPutFloat(f + SHADE_PLANES + i * 16L + 8, nz);
+					MemoryUtil.memPutFloat(f + SHADE_PLANES + i * 16L + 12, depth[i * 4 + 3] + shift * (nx * lx + ny * ly + nz * lz));
+				}
+			}
 			Vector4f pl = new Vector4f();
 			int[] planes = {Matrix4fc.PLANE_NX, Matrix4fc.PLANE_PX, Matrix4fc.PLANE_NY, Matrix4fc.PLANE_PY};
 			for (int i = 0; i < 4; i++) {
@@ -2309,10 +2333,41 @@ public final class OwnTerrain {
 			MemoryUtil.memPutInt(f + 128, RUN);
 			MemoryUtil.memPutInt(f + 136, FAT ? 1 : 0);
 			int k = (int) (this.frame % FRAMES);
-			OwnNative.cull(this.own, this.enc, f, CULL_FRAME_BYTES, this.tables[k], this.recBuffer, this.shArgs[slot], this.shLists[slot], this.masks[k], this.maxSlot + 1,
-				this.prevVis, this.curVis, this.shTested[slot], 0, this.shFat[slot]);
+			long mask = this.masks[k];
+			if (part >= 0 && parts > 1) {
+				mask = this.shadowPartMask(k, part, parts);
+				MemoryUtil.memPutInt(f + 124, 1);
+			}
+			OwnNative.cull(this.own, this.enc, f, CULL_FRAME_BYTES, this.tables[k], this.recBuffer, this.shArgs[slot],
+				this.shLists[slot], mask, this.maxSlot + 1, this.prevVis, this.curVis, this.shTested[slot], 0, this.shFat[slot]);
 		}
 		return true;
+	}
+
+	/** (mcopt-shade) frame copy k's mask of the sections in part `part` of `parts` (origins from the master table, written now). */
+	private long shadowPartMask(int k, int part, int parts) {
+		if (this.shPartMaskCap != this.slotCap) {
+			for (int i = 0; i < FRAMES; i++) {
+				long old = this.shPartMasks[i];
+				if (old != 0) this.later(() -> OwnNative.release(old));
+				this.shPartMasks[i] = OwnNative.buffer(this.ctx, Math.max(16L, this.slotCap / 8L + 4), true);
+				this.shPartMaskAddresses[i] = OwnNative.contents(this.shPartMasks[i]);
+			}
+			this.shPartMaskCap = this.slotCap;
+		}
+		long m = this.shPartMaskAddresses[k];
+		int n = this.maxSlot + 1, stride = (parts + 1) / 2;
+		for (int w = 0; w < (n + 31) >>> 5; w++) {
+			int bits = 0;
+			for (int b = 0; b < 32; b++) {
+				int s = (w << 5) + b;
+				if (s >= n) break;
+				long a = this.master + (long) s * SECTION_BYTES;
+				if (Math.floorMod((MemoryUtil.memGetInt(a) >> 4) + (MemoryUtil.memGetInt(a + 8) >> 4) * stride, parts) == part) bits |= 1 << b;
+			}
+			MemoryUtil.memPutInt(m + 4L * w, bits);
+		}
+		return this.shPartMasks[k];
 	}
 
 	/** What a shadow draw after shadowCull reads: arena, section table, records, lists, indirect arguments (solid at 0, cutout at 20), list capacity

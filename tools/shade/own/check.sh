@@ -16,4 +16,4 @@ clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/owncheck.m" -
 "$JH/bin/javac" -d "$OUT/classes" -cp "$CP" "$HERE/OwnDump.java"
 "$JH/bin/java" -Dmcopt.shade=true -cp "$OUT/classes:$CP" OwnDump "$OUT/src"
 "$OUT/owncheck" "$OUT/src/own_plain.metal" | grep -v '^OK   pso'
-"$OUT/owncheck" "$OUT/src/own_shade.metal" shade "$OUT"/src/frag_*.metal | grep -v '^OK   pso'
+OWNCHECK_SHADOW="$ROOT/metal/src/main/resources/mcopt/shade/shadow.metal" "$OUT/owncheck" "$OUT/src/own_shade.metal" shade "$OUT"/src/frag_*.metal | grep -v '^OK   pso'

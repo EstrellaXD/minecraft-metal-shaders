@@ -500,7 +500,15 @@ public final class ShadowPass {
 			}
 			this.ownReady = 1;
 		}
-		if (!own.shadowCull(c, new org.joml.Matrix4f().set(matrix), (float) this.light[0], (float) this.light[1], (float) this.light[2])) return 0;
+		float[] planes = new float[8];
+		try (MemoryStack s = MemoryStack.stackPush()) {
+			long at = s.nmalloc(16, 32);
+			this.depthPlanes(this.castCascades[c], at);
+			for (int i = 0; i < 8; i++) planes[i] = MemoryUtil.memGetFloat(at + i * 4L);
+		}
+		int part = c == 1 && this.casters.farPart >= 0 ? this.casters.farPart : -1;
+		if (!own.shadowCull(c, new org.joml.Matrix4f().set(matrix), (float) this.light[0], (float) this.light[1], (float) this.light[2], planes, part,
+			this.casters.farParts)) return 0;
 		long[] b = own.shadowBuffers(c);
 		long d = stack.ncalloc(16, OWN_DRAW_BYTES, 1);
 		for (int i = 0; i < 5; i++) MemoryUtil.memPutLong(d + i * 8L, b[i]);
@@ -525,7 +533,7 @@ public final class ShadowPass {
 	}
 
 	/** v12: OwnShadowTint (mcshadow.m) bytes; rect ring slots (OWN_TINT_RING there); the tint list's units. */
-	private static final int OWN_TINT_BYTES = 208, OWN_TINT_RING = 8, OWN_TINT_CAP = 32768;
+	private static final int OWN_TINT_BYTES = 240, OWN_TINT_RING = 8, OWN_TINT_CAP = 32768;
 	/** v12: rect slots are read this many tint passes after they were written (the GPU is done with them by then). */
 	private static final int OWN_TINT_BACK = Math.max(3, Math.min(OWN_TINT_RING - 1, Integer.getInteger("mcopt.metal.inFlight", 2) + 2));
 	/** v12: 1 own's tint pipelines are built, -1 they failed (logged), 0 not tried. */
@@ -534,7 +542,7 @@ public final class ShadowPass {
 	private long ownTintPasses;
 	private final double[] ownTintCam = new double[OWN_TINT_RING * 3];
 	private final float[] ownTintMove = new float[OWN_TINT_RING * 2];
-	private final int[] ownTintRead = new int[5];
+	private final int[] ownTintRead = new int[6];
 
 	/**
 	 * v12 (P4b): the coloured shadows' casters from mcopt's own terrain, for this frame's tint pass (cascade 0, after ownDraw
@@ -563,6 +571,9 @@ public final class ShadowPass {
 		MemoryUtil.memPutLong(d + 8, b[1]);
 		MemoryUtil.memPutLong(d + 16, b[2]);
 		MemoryUtil.memPutInt(d + 24, (int) (this.ownTintPasses % OWN_TINT_RING));
+		// draw: only while the cull listed units lately (the slot OWN_TINT_BACK passes back: the latest the GPU is done with), and
+		// in the first passes; otherwise the cull alone runs (the tint map's 8 MB clear and store were ~0.5 ms a frame)
+		MemoryUtil.memPutInt(d + 28, this.ownTintPasses + 1 < OWN_TINT_BACK || this.ownTintSlot(this.ownTintPasses + 1 - OWN_TINT_BACK)[5] > 0 ? 1 : 0);
 		// OwnTcullFrame: cascade 0's side planes (camera-relative), camera block, offset and section, view distance, sections
 		long f = d + 32;
 		Matrix4f clip = new Matrix4f().set(java.util.Arrays.copyOfRange(this.matrices, 0, 16));
@@ -588,8 +599,9 @@ public final class ShadowPass {
 		MemoryUtil.memPutInt(f + 104, bz >> 4);
 		MemoryUtil.memPutInt(f + 112, va.getViewDistance());
 		MemoryUtil.memPutInt(f + 116, (int) b[6]);
+		this.depthPlanes(this.castCascades[0], f + 128);
 		// own_shadow_tint_vs' OwnShadowFrame
-		long g = d + 160;
+		long g = d + 192;
 		MemoryUtil.memPutInt(g, bx);
 		MemoryUtil.memPutInt(g + 4, by);
 		MemoryUtil.memPutInt(g + 8, bz);
@@ -597,6 +609,25 @@ public final class ShadowPass {
 		MemoryUtil.memPutFloat(g + 20, oy);
 		MemoryUtil.memPutFloat(g + 24, oz);
 		return d;
+	}
+
+	/**
+	 * v12: cascade's light-space depth range as two planes at `at` (2 x float4, camera-relative world, xyz . p + w >= 0 inside),
+	 * as ShadowCascade.casts bounds it (1.1's casters): boxes reaching from zFar up to casterReach past zNear.
+	 */
+	private void depthPlanes(ShadowCascade cascade, long at) {
+		double[] z = cascade.z;
+		double zc = z[0] * this.camX + z[1] * this.camY + z[2] * this.camZ;  // the camera's light-space depth
+		// z . q + (zc - zFar) >= 0: not wholly beyond the far side (away from the light)
+		MemoryUtil.memPutFloat(at, (float) z[0]);
+		MemoryUtil.memPutFloat(at + 4, (float) z[1]);
+		MemoryUtil.memPutFloat(at + 8, (float) z[2]);
+		MemoryUtil.memPutFloat(at + 12, (float) (zc - cascade.zFar));
+		// -z . q + (zNear + casterReach - zc) >= 0: not wholly past the caster reach toward the light
+		MemoryUtil.memPutFloat(at + 16, (float) -z[0]);
+		MemoryUtil.memPutFloat(at + 20, (float) -z[1]);
+		MemoryUtil.memPutFloat(at + 24, (float) -z[2]);
+		MemoryUtil.memPutFloat(at + 28, (float) (cascade.zNear + cascade.casterReach - zc));
 	}
 
 	/** v12: notes this frame's own tint pass (its slot's camera and cascade 0's translation) once it is encoded. */
@@ -619,11 +650,7 @@ public final class ShadowPass {
 	private boolean ownTintRect(boolean any) {
 		if (this.ownTintPasses < OWN_TINT_BACK) return any;
 		int k = (int) ((this.ownTintPasses - OWN_TINT_BACK) % OWN_TINT_RING);
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			long out = stack.ncalloc(4, 5, 4);
-			ShadowNative.ownTintRect(this.shadow, k, out);
-			for (int i = 0; i < 5; i++) this.ownTintRead[i] = MemoryUtil.memGetInt(out + i * 4L);
-		}
+		this.ownTintSlot(this.ownTintPasses - OWN_TINT_BACK);
 		if (this.ownTintRead[4] <= 0) return any;
 		float x0 = -ordered(this.ownTintRead[0]), y0 = -ordered(this.ownTintRead[1]), x1 = ordered(this.ownTintRead[2]), y1 = ordered(this.ownTintRead[3]);
 		if (!(x0 <= x1 && y0 <= y1)) return any;
@@ -646,6 +673,16 @@ public final class ShadowPass {
 			r[3] = b1;
 		}
 		return r[0] < 1f && r[2] > -1f && r[1] < 1f && r[3] > -1f;
+	}
+
+	/** The rect slot of tint pass number pass into ownTintRead (6 ints: rectangle, quads drawn, units listed). */
+	private int[] ownTintSlot(long pass) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			long out = stack.ncalloc(4, 6, 4);
+			ShadowNative.ownTintRect(this.shadow, (int) (pass % OWN_TINT_RING), out);
+			for (int i = 0; i < 6; i++) this.ownTintRead[i] = MemoryUtil.memGetInt(out + i * 4L);
+		}
+		return this.ownTintRead;
 	}
 
 	/** own_shadow_tint_vs' ordered-int bits back to the float. */

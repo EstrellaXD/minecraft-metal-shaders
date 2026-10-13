@@ -3,6 +3,7 @@
 // Only called with -Dmcopt.own; the backend's own paths never reach it.
 #import "mcmetal.h"
 #include <string.h>
+#include <os/lock.h>
 
 #define OWN_MAX_LAYOUTS 64
 
@@ -299,6 +300,7 @@ void mco_shade_fs(Own *w, id<MTLLibrary> opaque, id<MTLLibrary> translucent, int
 	w->shadeHdrLib = hdr;
 }
 
+
 void mco_release(id obj) {
 	[obj release];
 }
@@ -535,6 +537,8 @@ void mco_cull(Own *w, Enc *enc, const void *frame, int frameLength, id<MTLBuffer
 // made on first use and kept. vertex: 0 the fragment stage, 1 the vertex stage, 2 the mesh stage. nil (err set) if it can't be made.
 // shadeHdr (mcopt-shade): bit 0 the fragment stage with terrain.metal's SHADE_OWN_HDR (function constant 40) set; bit 1 the
 // fragment stage is shade_own_fs from this frame's shade library (opaque or translucent), specialized with the same constants.
+static id<MTLFunction> ownStageMake(Own *w, id<MTLLibrary> lib, NSString *name, int kind, int vertex, int shadeHdr, NSError **e);
+
 static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char *err, int errCap) {
 	int frag = kind & 15, vsMode = (kind >> 4) & 3, translucent = frag == 3;
 	bool half = (kind >> 18) & 1, lean = (kind >> 19) & 1, nonidx = (kind >> 20) & 1, rev = (kind >> 22) & 1, quads = (kind >> 7) & 1,
@@ -559,6 +563,24 @@ static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char
 	if (shadeHdr && !vertex) key = [key stringByAppendingFormat:@" hdr%d k%d", shadeHdr, (shadeHdr & 2) ? w->shadeKey : 0];  // (mcopt-shade)
 	id<MTLFunction> fn = w->functions[key];
 	if (fn) return fn;
+	NSError *e = nil;
+	fn = ownStageMake(w, lib, name, kind, vertex, shadeHdr, &e);
+	if (!fn) {
+		ownErr(e, key.UTF8String, err, errCap);
+		return nil;
+	}
+	w->functions[key] = fn;
+	[fn release];
+	return fn;
+}
+
+// ownStage's function, made (+1) without its cache (mcopt-shade: also from the prewarm thread, mco_shade_prewarm)
+static id<MTLFunction> ownStageMake(Own *w, id<MTLLibrary> lib, NSString *name, int kind, int vertex, int shadeHdr, NSError **e) {
+	int frag = kind & 15, vsMode = (kind >> 4) & 3, translucent = frag == 3;
+	bool half = (kind >> 18) & 1, lean = (kind >> 19) & 1, nonidx = (kind >> 20) & 1, rev = (kind >> 22) & 1, quads = (kind >> 7) & 1,
+		tight = (kind >> 25) & 1, posonly = (kind >> 26) & 1, occA = (kind >> 27) & 1, occB = (kind >> 28) & 1, oracle = (kind >> 30) & 1,
+		fogvert = (kind >> 14) & 1, fogvertAll = (kind >> 15) & 1, fogvertT = (kind >> 13) & 1, qflat = (kind >> 12) & 1,
+		group = vertex == 1 && ((kind >> 11) & 1);
 	MTLFunctionConstantValues *cv = [[MTLFunctionConstantValues new] autorelease];
 	// the frag variants' constants 9-13 (8 is QUADS)
 	[cv setConstantValue:&half type:MTLDataTypeBool atIndex:9];
@@ -594,15 +616,7 @@ static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char
 			[cv setConstantValue:&hdr type:MTLDataTypeBool atIndex:40];  // (mcopt-shade: terrain.metal SHADE_OWN_HDR)
 		}
 	}
-	NSError *e = nil;
-	fn = [lib newFunctionWithName:name constantValues:cv error:&e];
-	if (!fn) {
-		ownErr(e, key.UTF8String, err, errCap);
-		return nil;
-	}
-	w->functions[key] = fn;
-	[fn release];
-	return fn;
+	return [lib newFunctionWithName:name constantValues:cv error:e];
 }
 
 // kind: 0 solid, 1 cutout, 2 the probe's flat fragment stage, 3 translucent
@@ -612,6 +626,45 @@ static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char
 static NSString *ownLayerName(int kind) {
 	int k = kind & 15;
 	return k == 3 ? @"own translucent" : k == 1 || k == 5 || k == 6 ? @"own cutout" : @"own solid";
+}
+
+// kind cutout's colour and depth attachments (writes, vanilla's translucent blending), as ownPipeline sets them (mcopt-shade:
+// shared with mco_shade_prewarm, which must describe the same states)
+static void ownAttachments(MTLRenderPipelineDescriptor *pd, int cutout, int colorCount, const MTLPixelFormat *colors, MTLPixelFormat depth) {
+	for (int c = 0; c < colorCount; c++) {
+		if (colors[c] == MTLPixelFormatInvalid) continue;
+		pd.colorAttachments[c].pixelFormat = colors[c];
+		pd.colorAttachments[c].writeMask = c == 0 && (cutout & 15) != 6 && !(cutout & (1 << 30)) ? MTLColorWriteMaskAll : MTLColorWriteMaskNone;
+		if (c == 0 && (cutout & 15) == 3) {
+			// vanilla's BlendFunction.TRANSLUCENT
+			pd.colorAttachments[c].blendingEnabled = YES;
+			pd.colorAttachments[c].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+			pd.colorAttachments[c].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+			pd.colorAttachments[c].rgbBlendOperation = MTLBlendOperationAdd;
+			pd.colorAttachments[c].sourceAlphaBlendFactor = MTLBlendFactorOne;
+			pd.colorAttachments[c].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+			pd.colorAttachments[c].alphaBlendOperation = MTLBlendOperationAdd;
+		}
+	}
+	pd.depthAttachmentPixelFormat = depth;
+	pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+}
+
+// mcopt-shade: the shaded pipelines' layouts met so far (attachments and kind; not the mesh ones), which mco_shade_prewarm builds
+// for the shaded stage's other variants off the render thread, so a variant met later (rain, a light, the Nether) finds its
+// pipelines in Metal's cache instead of compiling them in the frame that needs them
+#define OWN_SEEN_MAX 64
+typedef struct { int colorCount; MTLPixelFormat colors[MAX_COLORS]; MTLPixelFormat depth; int cutout; int hdr; } OwnSeen;
+static OwnSeen ownSeen[OWN_SEEN_MAX];
+static int ownSeenCount;
+static os_unfair_lock ownSeenLock = OS_UNFAIR_LOCK_INIT;
+
+static void ownSeenAdd(const OwnSeen *k) {
+	os_unfair_lock_lock(&ownSeenLock);
+	int found = 0;
+	for (int i = 0; i < ownSeenCount && !found; i++) found = memcmp(&ownSeen[i], k, sizeof *k) == 0;
+	if (!found && ownSeenCount < OWN_SEEN_MAX) ownSeen[ownSeenCount++] = *k;
+	os_unfair_lock_unlock(&ownSeenLock);
 }
 
 static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char *err, int errCap) {
@@ -660,23 +713,14 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 			if (!md.meshFunction || !md.fragmentFunction) return nil;
 			md.maxTotalThreadsPerMeshThreadgroup = (cutout & (1 << 23)) ? 128 : 32;
 		}
-		for (int c = 0; c < enc->colorCount; c++) {
-			if (!enc->colors[c]) continue;
-			pd.colorAttachments[c].pixelFormat = enc->colors[c].pixelFormat;
-			pd.colorAttachments[c].writeMask = c == 0 && (cutout & 15) != 6 && !(cutout & (1 << 30)) ? MTLColorWriteMaskAll : MTLColorWriteMaskNone;
-			if (c == 0 && (cutout & 15) == 3) {
-				// vanilla's BlendFunction.TRANSLUCENT
-				pd.colorAttachments[c].blendingEnabled = YES;
-				pd.colorAttachments[c].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-				pd.colorAttachments[c].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-				pd.colorAttachments[c].rgbBlendOperation = MTLBlendOperationAdd;
-				pd.colorAttachments[c].sourceAlphaBlendFactor = MTLBlendFactorOne;
-				pd.colorAttachments[c].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-				pd.colorAttachments[c].alphaBlendOperation = MTLBlendOperationAdd;
-			}
-		}
-		pd.depthAttachmentPixelFormat = enc->depth ? enc->depth.pixelFormat : MTLPixelFormatInvalid;
-		pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
+		OwnSeen seen;
+		memset(&seen, 0, sizeof seen);
+		seen.colorCount = enc->colorCount;
+		for (int c = 0; c < enc->colorCount; c++) seen.colors[c] = enc->colors[c] ? enc->colors[c].pixelFormat : MTLPixelFormatInvalid;
+		seen.depth = enc->depth ? enc->depth.pixelFormat : MTLPixelFormatInvalid;
+		seen.cutout = cutout;
+		seen.hdr = hdrTarget;
+		ownAttachments(pd, cutout, enc->colorCount, seen.colors, seen.depth);
 		NSError *e = nil;
 		id<MTLRenderPipelineState> pso;
 		if (md) {
@@ -709,9 +753,45 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 		if (shadeFs >= 0) {
 			w->shadeBuilt[0] += 1;
 			w->shadeBuilt[1] += (CFAbsoluteTimeGetCurrent() - shadeT0) * 1000.0;
+			if (!md) ownSeenAdd(&seen);
 		}
 		return pso;
 	}
+}
+
+// mcopt-shade (ShadeTerrain's compile thread): builds and drops the pipelines of the layouts met so far (ownSeen) with lib (a shaded
+// stage's library: the translucent layer's or the opaque ones', built for the HDR target or not), so Metal caches them and
+// ownPipeline finds them there when the frame first needs that variant. Returns how many were built.
+int mco_shade_prewarm(Own *w, id<MTLLibrary> lib, int translucent, int hdrLib) {
+	if (!w || !lib || !w->shade) return 0;
+	OwnSeen seen[OWN_SEEN_MAX];
+	os_unfair_lock_lock(&ownSeenLock);
+	int n = ownSeenCount;
+	memcpy(seen, ownSeen, sizeof(OwnSeen) * (size_t) n);
+	os_unfair_lock_unlock(&ownSeenLock);
+	int built = 0;
+	for (int i = 0; i < n; i++) {
+		OwnSeen *k = &seen[i];
+		if (((k->cutout & 15) == 3) != (translucent != 0) || k->hdr != (hdrLib != 0)) continue;
+		@autoreleasepool {
+			NSError *e = nil;
+			id<MTLFunction> vs = ownStageMake(w, w->library, @"own_vs", k->cutout, 1, 0, &e);
+			id<MTLFunction> fs = vs ? ownStageMake(w, lib, @"shade_own_fs", k->cutout, 0, (k->hdr ? 1 : 0) | 2, &e) : nil;
+			if (vs && fs) {
+				MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
+				pd.label = ownLayerName(k->cutout);
+				pd.vertexFunction = vs;
+				pd.fragmentFunction = fs;
+				ownAttachments(pd, k->cutout, k->colorCount, k->colors, k->depth);
+				id<MTLRenderPipelineState> pso = [w->ctx->device newRenderPipelineStateWithDescriptor:pd error:&e];
+				if (pso) built++;
+				[pso release];
+			}
+			[vs release];
+			[fs release];
+		}
+	}
+	return built;
 }
 
 // The frag occlusion's mesh-stage resources for a draw of kind (bit 27 phase A, 28 phase B; bit 0 the layer): terrain.metal FragOcc.

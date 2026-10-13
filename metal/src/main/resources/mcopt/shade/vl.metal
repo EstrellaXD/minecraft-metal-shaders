@@ -803,7 +803,7 @@ fragment VlMarchOut vl_march(VlOut in [[stage_in]], constant ShadeFrame &f [[buf
 }
 
 // ---- temporal -------------------------------------------------------------------------------------------------------------
-static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlParams &p, texture2d<half> raw, texture2d<half> history) {
+static inline half4 vlTemporalRaw(VlOut in, constant ShadeFrame &f, constant VlParams &p, texture2d<half> raw, texture2d<half> history) {
 	constexpr sampler lin(filter::linear, address::clamp_to_edge);
 	int2 px = int2(in.position.xy);
 	int2 hi = int2(p.size.xy) - 1;
@@ -909,6 +909,13 @@ static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlPara
 	}
 	float3 hc = clamp(float3(h.rgb), mid - ext, mid + ext);
 	return half4(half3(mix(cur, hc, p.temporal.x)), half(d));
+}
+
+// (1.1.1) what the history keeps is never Inf or NaN (shadeBad: fast math may drop isfinite); a bad texel becomes no light at
+// the sky's distance, and the next frames refill it
+static inline half4 vlTemporal(VlOut in, constant ShadeFrame &f, constant VlParams &p, texture2d<half> raw, texture2d<half> history) {
+	half4 r = vlTemporalRaw(in, f, p, raw, history);
+	return shadeBad(r) ? half4(0.0h, 0.0h, 0.0h, 10000.0h) : r;
 }
 
 fragment half4 vl_temporal(VlOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant VlParams &p [[buffer(0)]],

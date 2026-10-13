@@ -33,6 +33,7 @@ final class TaaNative {
 	private static final MethodHandle MOVERS = fn("mc_taa_movers", false, null, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	private static final MethodHandle HISTORY = fn("mc_taa_history", true, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle HISTORY_DEPTH = fn("mc_taa_history_depth", true, JAVA_LONG, JAVA_LONG);
+	private static final MethodHandle FREE = fn("mc_taa_free", false, null, JAVA_LONG);
 
 	private TaaNative() {
 	}
@@ -55,4 +56,5 @@ final class TaaNative {
 	static void movers(long taa, long data, int length) { try { MOVERS.invokeExact(taa, data, length); } catch (Throwable t) { throw rethrow(t); } }
 	static long history(long taa) { try { return (long) HISTORY.invokeExact(taa); } catch (Throwable t) { throw rethrow(t); } }
 	static long historyDepth(long taa) { try { return (long) HISTORY_DEPTH.invokeExact(taa); } catch (Throwable t) { throw rethrow(t); } }
+	static void free(long taa) { try { FREE.invokeExact(taa); } catch (Throwable t) { throw rethrow(t); } }
 }

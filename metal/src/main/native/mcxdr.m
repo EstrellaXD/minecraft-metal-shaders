@@ -90,6 +90,34 @@ static NSScreen *layerScreen(CAMetalLayer *layer) {
 	return [NSScreen mainScreen];
 }
 
+// (1.1.1) The display the layer's window is on (its CGDirectDisplayID), for the present pacer's refresh grid (mc_pace); 0
+// when unknown or off the main thread (AppKit), so the pacer keeps the display it has.
+uint32_t mc_layer_display(CAMetalLayer *layer) {
+	if (!layer || ![NSThread isMainThread]) return 0;
+	@autoreleasepool {
+		NSScreen *s = layerScreen(layer);
+		NSNumber *n = s ? s.deviceDescription[@"NSScreenNumber"] : nil;
+		return n ? n.unsignedIntValue : 0;
+	}
+}
+
+// (1.1.1) One line for bug reports (latest.log): the OS version and build, Low Power Mode, and every screen (pixels, top
+// refresh rate, potential EDR headroom), the window's marked with *.
+void mc_system_info(CAMetalLayer *layer, char *out, int cap) {
+	@autoreleasepool {
+		NSScreen *mine = [NSThread isMainThread] ? layerScreen(layer) : nil;
+		NSProcessInfo *p = [NSProcessInfo processInfo];
+		NSMutableString *s = [NSMutableString stringWithFormat:@"macOS %@%@", p.operatingSystemVersionString, p.lowPowerModeEnabled ? @", Low Power Mode" : @""];
+		for (NSScreen *sc in [NSScreen screens]) {
+			NSSize px = [sc convertRectToBacking:sc.frame].size;
+			[s appendFormat:@"; %@%@ (display %@) %.0fx%.0f %ld Hz EDR %.1f", sc == mine ? @"*" : @"", sc.localizedName,
+				sc.deviceDescription[@"NSScreenNumber"], px.width, px.height, (long) sc.maximumFramesPerSecond,
+				sc.maximumPotentialExtendedDynamicRangeColorComponentValue];
+		}
+		snprintf(out, cap, "%s", s.UTF8String);
+	}
+}
+
 // The current EDR headroom of the layer's screen (1 = SDR only; rises once an EDR layer is on screen; depends on the
 // brightness slider), or its potential with potential = 1.
 float mc_xdr_headroom(CAMetalLayer *layer, int potential) {
@@ -116,7 +144,13 @@ static int ensurePipelines(id<MTLDevice> device) {
 	if (xdrCompose && xdrCompose16 && xdrPresent) return 1;
 	@autoreleasepool {
 		NSError *e = nil;
-		if (!xdrLib) xdrLib = [device newLibraryWithSource:[NSString stringWithUTF8String:xdrSource] options:nil error:&e];
+		if (!xdrLib) {
+			// (1.1.1) pinned to MSL 3.0 like the other shade libraries: with no options a library compiles as the newest MSL
+			// the OS has (4.1 on macOS 27), so the same source would build differently there (math stays the default, relaxed)
+			MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
+			o.languageVersion = MTLLanguageVersion3_0;
+			xdrLib = [device newLibraryWithSource:[NSString stringWithUTF8String:xdrSource] options:o error:&e];
+		}
 		if (!xdrLib) {
 			NSLog(@"mcopt shade xdr: %@", e);
 			return 0;

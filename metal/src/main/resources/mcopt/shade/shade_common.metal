@@ -173,6 +173,13 @@ static inline int shadeWdev(constant ShadeFrame &f) { return f.flags.x == 0 ? (i
 #define SHADE_WDEV_IS(f, k) false
 #endif
 
+// (1.1.1) Inf/NaN tests that fast math can't remove. The shade libraries compile with MTLMathModeFast, under which the
+// compiler may assume no Inf or NaN and fold isfinite() to true (a newer compiler, macOS 27's for one, may start doing so):
+// one bad pixel in a temporal history would then spread frame after frame as a growing black or white block. An all-ones
+// exponent is Inf or NaN; the integer test survives any float optimization.
+static inline bool shadeBad(half4 v) { return any((as_type<ushort4>(v) & ushort4(0x7c00)) == ushort4(0x7c00)); }
+static inline bool shadeBad(float3 v) { return any((as_type<uint3>(v) & uint3(0x7f800000)) == uint3(0x7f800000)); }
+
 // ---- view rays ----------------------------------------------------------------------------------------------------------
 // The eye, camera-relative world (blocks) from an inverse view-projection: the camera's origin, except that view bobbing
 // (GameRenderer.bobView, multiplied into the projection) moves it by up to ~0.1 block. The projection's centre maps to clip

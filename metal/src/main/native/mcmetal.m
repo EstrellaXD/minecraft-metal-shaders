@@ -354,11 +354,17 @@ id<MTLSamplerState> mc_sampler_new(Ctx *ctx, int addressU, int addressV, int min
 
 // ---- pipelines ----
 
+// (1.1.1) -Dmcopt.shade.mathMode=fast|relaxed|safe (MetalDevice): fast as before unless set. Under fast math the compiler may
+// assume no Inf or NaN; relaxed keeps the other fast-math freedoms but honors them (Apple's default on Apple silicon).
+static MTLMathMode mathMode = MTLMathModeFast;
+void mc_math_mode(int mode) { mathMode = mode == 0 ? MTLMathModeSafe : mode == 1 ? MTLMathModeRelaxed : MTLMathModeFast; }
+MTLMathMode mc_math(void) { return mathMode; }
+
 id<MTLLibrary> mc_library_new(Ctx *ctx, const char *source, char *err, int errCap) {
 	@autoreleasepool {
 		MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
 		o.languageVersion = MTLLanguageVersion3_0;
-		o.mathMode = MTLMathModeFast;
+		o.mathMode = mathMode;
 		NSError *e = nil;
 		id<MTLLibrary> lib = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:source] options:o error:&e];
 		if (!lib) copyError(e, err, errCap);
@@ -1729,6 +1735,9 @@ int mc_xdr_ready(id<MTLDevice> device);  // builds its pipelines; turns the outp
 int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, int flip);
 id<MTLRenderPipelineState> mc_xdr_present_pso(id<MTLDevice> device);
 
+uint32_t mc_layer_display(CAMetalLayer *layer); // mcxdr.m: the display the layer's window is on (0 = unknown)
+static CAMetalLayer *paceLayer; // the surface's layer (mc_layer_configure): the pacer can follow its window's display
+
 void mc_layer_configure(Ctx *ctx, CAMetalLayer *layer, int width, int height, int vsync) {
 	layer.device = ctx->device;
 	if (mc_xdr_on() && mc_xdr_ready(ctx->device)) { // EDR: linear extended Display P3 in half floats, values above 1 brighter than SDR white
@@ -1742,6 +1751,7 @@ void mc_layer_configure(Ctx *ctx, CAMetalLayer *layer, int width, int height, in
 	}
 	layer.framebufferOnly = YES;
 	layer.drawableSize = CGSizeMake(width, height);
+	paceLayer = layer;
 	// vsync: bit 0 = display sync; bits 8-15 = maximumDrawableCount (0 = the default, 3; -Dmcopt.metal.drawables)
 	layer.displaySyncEnabled = (vsync & 1) != 0;
 	int drawables = (vsync >> 8) & 0xff;
@@ -1771,11 +1781,34 @@ static CVReturn onRefresh(CVDisplayLinkRef link, const CVTimeStamp *now, const C
 	return kCVReturnSuccess;
 }
 
+// (1.1.1, mc_pace_follow: on with native shading) the link follows the display the game window is on, checked every 64th
+// paced frame: on the main display only, a game on a second screen (the laptop's 120 Hz panel and a 144 Hz monitor) was
+// paced to the other screen's refreshes. Off, the main display as before.
+static int paceFollow;
+static CVDisplayLinkRef paceLink;
+static uint32_t paceDisplay;
+void mc_pace_follow(int on) { paceFollow = on; }
+uint32_t mc_pace_display(void) { return paceDisplay; } // 0 until the first paced frame (MetalSurface logs it)
+
 static void startDisplayLink(void) {
 	CVDisplayLinkRef link;
-	if (CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &link) != kCVReturnSuccess) return;
+	uint32_t display = paceFollow ? mc_layer_display(paceLayer) : 0;
+	if (!display) display = CGMainDisplayID();
+	if (CVDisplayLinkCreateWithCGDisplay(display, &link) != kCVReturnSuccess) return;
 	CVDisplayLinkSetOutputCallback(link, onRefresh, NULL);
 	CVDisplayLinkStart(link); // runs for the life of the process
+	paceLink = link;
+	paceDisplay = display;
+}
+
+static void followDisplay(void) {
+	static int calls;
+	if (!paceFollow || !paceLink || (++calls & 63) != 0) return;
+	uint32_t display = mc_layer_display(paceLayer);
+	if (!display || display == paceDisplay) return;
+	if (CVDisplayLinkSetCurrentCGDisplay(paceLink, display) != kCVReturnSuccess) return;
+	paceDisplay = display;
+	refreshPeriod = 0; // until the new display's first refresh: present everything (mc_pace)
 }
 #pragma clang diagnostic pop
 
@@ -1814,6 +1847,7 @@ int mc_pace(double margin) {
 		started = 1;
 		startDisplayLink();
 	}
+	followDisplay();
 	double now = CACurrentMediaTime(), anchor = nextRefresh, period = refreshPeriod, lead = gpuLatency + margin + paceExtra;
 	if (lastPace > 0) frameInterval += (now - lastPace - frameInterval) * 0.1;
 	lastPace = now;

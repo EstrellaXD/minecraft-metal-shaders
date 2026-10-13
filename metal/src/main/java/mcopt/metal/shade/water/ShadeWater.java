@@ -242,8 +242,10 @@ public final class ShadeWater {
 			state = WaterNative.create(ctx);
 			if (SSR) {
 				try {
+					long t0 = mcopt.metal.shade.ShadeCompile.now();
 					WaterNative.setHz(state, mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_hz_fs", mcopt.metal.shade.ShadeRender.R32F,
 						mcopt.metal.shade.ShadeRender.BLEND_NONE));
+					mcopt.metal.shade.ShadeCompile.setup("water", t0);
 				} catch (Throwable e) {
 					System.out.println("[mcopt] shade: water coarse depth failed, SSR finds nothing: " + e);
 				}
@@ -263,8 +265,13 @@ public final class ShadeWater {
 
 	/** The module's own passes (wave bake, coarse depth): prelude + post (shade_fs_vs) + this prelude. */
 	private static long library() {
-		if (library == 0) library = mcopt.metal.shade.ShadeRender.library(mcopt.metal.shade.ShadeRender.prelude() + mcopt.metal.shade.ShadeRender.postSource() + prelude());
+		if (library == 0) library = mcopt.metal.shade.ShadeRender.library(librarySource());
 		return library;
+	}
+
+	/** The module's own passes' source: prelude + post (shade_fs_vs) + this prelude. */
+	public static String librarySource() {
+		return mcopt.metal.shade.ShadeRender.prelude() + mcopt.metal.shade.ShadeRender.postSource() + prelude();
 	}
 
 	/**
@@ -281,16 +288,20 @@ public final class ShadeWater {
 		bakedOnce = true;
 		try {
 			if (bakePso == 0) {
+				long t0 = mcopt.metal.shade.ShadeCompile.now();
 				bakePso = mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_bake_fs", mcopt.metal.shade.ShadeRender.RGBA16F,
 					mcopt.metal.shade.ShadeRender.BLEND_NONE);
+				mcopt.metal.shade.ShadeCompile.setup("water", t0);
 			}
 			long tex = WaterNative.waves(ctx, state, BAKE_SIZE);
 			mcopt.metal.shade.ShadeRender.pass(enc, bakePso, tex, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: wave bake");
 			if (DETAIL) {
 				// M2.1: the fine-ripple layer (water.metal shade_water_bake_detail_fs: the same waves, faster), texture(22)
 				if (bakeDetailPso == 0) {
+					long t0 = mcopt.metal.shade.ShadeCompile.now();
 					bakeDetailPso = mcopt.metal.shade.ShadeRender.pipeline(library(), "shade_fs_vs", "shade_water_bake_detail_fs",
 						mcopt.metal.shade.ShadeRender.RGBA16F, mcopt.metal.shade.ShadeRender.BLEND_NONE);
+					mcopt.metal.shade.ShadeCompile.setup("water", t0);
 				}
 				long det = WaterNative.wavesDetail(ctx, state, DETAIL_SIZE);
 				mcopt.metal.shade.ShadeRender.pass(enc, bakeDetailPso, det, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade water: ripple bake");

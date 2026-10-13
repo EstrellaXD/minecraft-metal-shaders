@@ -51,6 +51,9 @@ final class ShadeNative {
 	private static final MethodHandle TEX_W = fn("mc_shade_texture_width", true, JAVA_INT, JAVA_LONG);
 	private static final MethodHandle TEX_H = fn("mc_shade_texture_height", true, JAVA_INT, JAVA_LONG);
 	private static final MethodHandle TEX_FORMAT = fn("mc_shade_texture_format", true, JAVA_INT, JAVA_LONG);
+	// parallel compile (native/mccompile.m, ShadeCompile)
+	private static final MethodHandle COMPILE_SETUP = fn("mc_compile_setup", false, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle COMPILE_THREAD_QOS = fn("mc_compile_thread_qos", false, JAVA_INT, JAVA_INT);
 
 	private ShadeNative() {
 	}
@@ -90,4 +93,6 @@ final class ShadeNative {
 	static int textureWidth(long t) { try { return (int) TEX_W.invokeExact(t); } catch (Throwable t2) { throw rethrow(t2); } }
 	static int textureHeight(long t) { try { return (int) TEX_H.invokeExact(t); } catch (Throwable t2) { throw rethrow(t2); } }
 	static int textureFormat(long t) { try { return (int) TEX_FORMAT.invokeExact(t); } catch (Throwable t2) { throw rethrow(t2); } }
+	static int compileSetup(long ctx, int maximize) { try { return (int) COMPILE_SETUP.invokeExact(ctx, maximize); } catch (Throwable t) { throw rethrow(t); } }
+	static int compileThreadQos(int qos) { try { return (int) COMPILE_THREAD_QOS.invokeExact(qos); } catch (Throwable t) { throw rethrow(t); } }
 }

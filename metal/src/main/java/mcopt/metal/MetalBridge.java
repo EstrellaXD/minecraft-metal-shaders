@@ -308,6 +308,11 @@ public final class MetalBridge {
 
 	// ---- native shading (mcopt.metal.shade, -Dmcopt.shade=true) ----
 
+	/** MetalPipeline.compileStats (counts, step times, format variants, the compile window), for shade's startup log line. */
+	public static java.util.Map<String, Object> compileStats() {
+		return MetalPipeline.compileStats();
+	}
+
 	/**
 	 * mcopt 0.3 port: our own terrain is about to draw its translucent layer into the open pass: the water module's scene copy
 	 * (once per pass; MetalRenderPass.captureWater). Nothing without a pass, without the water module or after the copy.

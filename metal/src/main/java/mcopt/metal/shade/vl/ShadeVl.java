@@ -266,7 +266,9 @@ public final class ShadeVl {
 			try {
 				long err = stack.ncalloc(1, ERR, 1);
 				mcopt.metal.shade.ShadeRobust.maybeFail("vl"); // M3.3: dev-only injected failure; inert unset
+				long t0 = mcopt.metal.shade.ShadeCompile.now();
 				long s = VlNative.create(ctx, MemoryUtil.memAddress(source), (VlConfig.LOSSY ? 1 : 0) | (hdr ? 2 : 0), err, ERR);
+				mcopt.metal.shade.ShadeCompile.setup("volumetric light", t0);
 				if (s == 0) throw new IllegalStateException("volumetric light setup: " + MemoryUtil.memUTF8(err));
 				state = s;
 				return true;

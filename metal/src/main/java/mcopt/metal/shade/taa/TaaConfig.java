@@ -157,4 +157,26 @@ public final class TaaConfig {
 		return String.format(Locale.ROOT, "preset %s, scale %.2f (%.2f-%.2f%s), %s, sharpen %.2f%s", PRESET.name().toLowerCase(Locale.ROOT), SCALE, SCALE_MIN, SCALE_MAX,
 			DRS ? ", dynamic to hold " + DRS_FPS + " fps" : ", fixed", STABLE ? "stable" : "responsive", sharpen(SCALE), MIP_BIAS ? "" : ", no mip bias");
 	}
+
+	/** taa.metal as ShadeTaa compiles it ((FT2.8) -Dmcopt.shade.taaCompressTaps=true: the history's Catmull-Rom on compressed taps). */
+	public static String source() {
+		return (Boolean.getBoolean("mcopt.shade.taaCompressTaps") ? "" : "#define TAA_LINEAR_HISTORY\n") + mcopt.metal.shade.ShadeMsl.resource("taa.metal");
+	}
+
+	/**
+	 * (parallel compile, mcopt.metal.shade.ShadeCompile) ShadeTaa's library and resolve pipelines, made off the render thread
+	 * with the flags ShadeTaa starts with and freed again: its own setup then finds them in Metal's shader cache.
+	 */
+	public static void warmUp(long ctx) {
+		java.nio.ByteBuffer source = org.lwjgl.system.MemoryUtil.memUTF8(source());
+		try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+			long err = stack.ncalloc(1, 4096, 1);
+			long taa = TaaNative.create(ctx, org.lwjgl.system.MemoryUtil.memAddress(source), (mcopt.metal.shade.ShadeConfig.HDR ? 1 : 0) | (LOSSY ? 2 : 0) | (DEBUG != 0 ? 4 : 0),
+				err, 4096);
+			if (taa == 0) throw new IllegalStateException(org.lwjgl.system.MemoryUtil.memUTF8(err));
+			TaaNative.free(taa);
+		} finally {
+			org.lwjgl.system.MemoryUtil.memFree(source);
+		}
+	}
 }

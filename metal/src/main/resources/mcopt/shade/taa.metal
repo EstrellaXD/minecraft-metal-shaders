@@ -63,6 +63,10 @@ static inline float3 taaMoverDelta(float3 world, constant TaaMovers &mv) {
 	return float3(0.0);
 }
 
+// (1.1.1) Inf or NaN, by the bit pattern: under fast math (mctaa.m) the compiler may fold isfinite() to true, and a bad
+// pixel kept in the history spreads into a growing black or white block.
+static inline bool taaBad(half4 v) { return any((as_type<ushort4>(v) & ushort4(0x7c00)) == ushort4(0x7c00)); }
+
 struct TaaVOut { float4 position [[position]]; };
 
 // One triangle covering the target.
@@ -242,7 +246,11 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	half newAge = min(age + 1.0h, half(p.blend.z));
 	o.color = half4(half3(max(rgb, 0.0)), newAge);
 	// (FT2.8, audit idx 72) the fallback in the history's own (linear) encoding, not the range-compressed current
-	if (!all(isfinite(o.color))) o.color = half4(half3(clamp(taaExpand(float3(current)), 0.0, 60000.0)), 1.0h);
+	// (1.1.1) tested by bits (fast math may drop isfinite), and black if the current frame is bad too (clamp may pass a NaN)
+	if (taaBad(o.color)) {
+		o.color = half4(half3(clamp(taaExpand(float3(current)), 0.0, 60000.0)), 1.0h);
+		if (taaBad(o.color)) o.color = half4(0.0h, 0.0h, 0.0h, 1.0h);
+	}
 	int view = int(p.misc.w);
 	if (view == 5) debug = half3(saturate(abs(moved) * 4.0));                                                         // M3 movers: per-object motion
 	else if (view == 1) debug = half3(mix(float3(1.0, 0.1, 0.0), float3(0.1, 1.0, 0.2), saturate(float(newAge) / p.blend.z)));   // history age

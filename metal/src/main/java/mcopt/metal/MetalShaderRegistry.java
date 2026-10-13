@@ -89,6 +89,25 @@ public final class MetalShaderRegistry {
 		return p == null ? null : p.apply(pipelineName);
 	}
 
+	/**
+	 * Runs a pipeline's prewarm builds (each builds one variant and may throw), several at once, and returns when all have
+	 * finished; a build that threw is listed in the result (indices into builds), for MetalPipeline to redo alone.
+	 */
+	public interface PrewarmRunner {
+		java.util.List<Integer> runAll(java.util.List<Runnable> builds);
+	}
+
+	private static volatile @Nullable PrewarmRunner prewarmRunner;
+
+	/** How prewarm variants are built: null (the default) = one after another on the thread compiling the pipeline. */
+	public static void setPrewarmRunner(@Nullable PrewarmRunner r) {
+		prewarmRunner = r;
+	}
+
+	static @Nullable PrewarmRunner prewarmRunner() {
+		return prewarmRunner;
+	}
+
 	private MetalShaderRegistry() {
 	}
 

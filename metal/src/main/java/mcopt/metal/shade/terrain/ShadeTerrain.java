@@ -51,8 +51,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * translucents).</li>
  * <li>{@link #beforeTranslucent} (OwnTerrain.drawTranslucent): the water module's scene copy, which Sodium's terrain used to
  * trigger by switching to its translucent pipeline (MetalRenderPass.captureWater).</li>
- * <li>{@link #noUocc} (OwnFrag's per-frame configuration): its two-phase occlusion off while TAAU draws the world into a
- * smaller live sub-rect of its targets, whose depth the occlusion test would read at the wrong texels (port plan P5).</li>
+ * <li>{@link #noUocc} (OwnFrag's per-frame configuration): with -Dmcopt.shade.ownUoccGate, its two-phase occlusion off while TAAU
+ * draws the world into a smaller live sub-rect of its targets (P2's gate; since P5 the test follows the sub-rect).</li>
  * </ul>
  * The shaded stage is a library of its own per variant, built from source like the Sodium terrain's variants were (the lean
  * variants are #ifdefs throughout the modules, the water's tuned by register pressure): 12 opaque and up to 24 translucent
@@ -242,14 +242,16 @@ public final class ShadeTerrain {
 		MetalBridge.captureWater(encoder);
 	}
 
+	/** -Dmcopt.shade.ownUoccGate=true: the P2 gate (uocc off while TAAU's sub-rect is smaller than its textures), for A/B. */
+	private static final boolean UOCC_GATE = Boolean.getBoolean("mcopt.shade.ownUoccGate");
+
 	/**
 	 * OwnFrag's configuration this frame: true to draw it without the two-phase unit occlusion (uocc), while TAAU's world target
-	 * stands in for the main target with a live sub-rect smaller than its textures. The test maps units to the pass's full
-	 * depth size and its pyramid is built from all of it, while this frame's depth is only in the sub-rect (P5 makes the test
-	 * follow the sub-rect).
+	 * stands in for the main target with a live sub-rect smaller than its textures. Off by default since P5: the tests map units
+	 * onto the live sub-rect (mcown.m ownShadeSubRect), so uocc runs under TAAU and dynamic resolution too.
 	 */
 	public static boolean noUocc() {
-		if (!ShadeTaa.ON) return false;
+		if (!UOCC_GATE || !ShadeTaa.ON) return false;
 		ShadeTaa t = ShadeTaa.current();
 		return t != null && t.swapped() && (t.width(Integer.MAX_VALUE) < t.allocWidth() || t.height(Integer.MAX_VALUE) < t.allocHeight());
 	}

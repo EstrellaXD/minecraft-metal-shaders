@@ -1428,6 +1428,16 @@ static id<MTLComputeCommandEncoder> ownNextCompute(Enc *enc, id<MTLComputeComman
 	return c;
 }
 
+// mcopt-shade (TAAU / dynamic resolution): the world target's passes draw into the live sub-rect (0, 0, enc->width, enc->height)
+// of larger textures, so the tests map clip space onto that ("screen" = the viewport, not the depth texture). The pyramid is still
+// built from the whole texture: its texels along the sub-rect's edge also take in pixels outside it, which (the farthest depth
+// wins) only makes those tests more conservative.
+static void ownShadeSubRect(Own *w, Enc *enc, uint32_t *sizes) {
+	if (!w->shade || !enc || enc->width <= 0 || enc->height <= 0) return;
+	sizes[0] = MIN(sizes[0], (uint32_t) enc->width);
+	sizes[1] = MIN(sizes[1], (uint32_t) enc->height);
+}
+
 static void ownPyramid(Own *w, Enc *enc, id<MTLComputeCommandEncoder> c, id<MTLTexture> depth, uint8_t *frame) {
 	int dw = (int) depth.width, dh = (int) depth.height;
 	// mip 0 at a power-of-two scale keeping it about 480+ texels wide (2-4 at 1080p, 8 at 5K): the pyramid's build reads the full
@@ -1462,6 +1472,7 @@ static void ownPyramid(Own *w, Enc *enc, id<MTLComputeCommandEncoder> c, id<MTLT
 		w->hizMips = mips;
 	}
 	uint32_t sizes[5] = {(uint32_t) dw, (uint32_t) dh, (uint32_t) hw, (uint32_t) hh, (uint32_t) w->hizMips};
+	ownShadeSubRect(w, enc, sizes);
 	memcpy(frame + 96, sizes, sizeof sizes);
 	memcpy(frame + 136, &scale, 4);  // QuadFrame.hizScale
 	if (skip > 0 && w->hizMips < skip + 5) skip = 0;  // (too small a pyramid to start up there: the usual build)
@@ -1703,6 +1714,7 @@ int mco_frag_uocc(Own *w, Enc *enc, const void *cullFrame, int cullLength, const
 			mc_render_resume(enc, mc_profiled_compute(enc, cb, MTLDispatchTypeConcurrent));
 			return -1;
 		}
+		ownShadeSubRect(w, enc, sizes);
 		c = mc_profiled_compute(enc, cb, MTLDispatchTypeConcurrent);
 		c.label = @"own frag unit occlusion";
 		[c setComputePipelineState:w->hizPad];

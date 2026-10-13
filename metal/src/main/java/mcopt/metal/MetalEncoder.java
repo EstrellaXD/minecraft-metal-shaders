@@ -556,6 +556,11 @@ final class MetalEncoder implements CommandEncoderBackend {
 		return true;
 	}
 
+	/** Native shading's water scene copy before our own terrain's translucent draws (MetalRenderPass.captureWater); none without a pass. */
+	void captureWater() {
+		if (this.currentPass != null) this.currentPass.captureWater();
+	}
+
 	/** Forgets a pending clear of t: something is about to overwrite all of it (the shaderpack's final pass). */
 	void dropPendingClear(MetalTexture t) {
 		t.pendingColorClear = null;

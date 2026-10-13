@@ -2205,8 +2205,32 @@ static float linear_fog_value(float vertexDistance, float fogStart, float fogEnd
 constant bool CUTOUT [[function_constant(0)]];
 constant float CUTOUT_LIMIT [[function_constant(5)]];  // vanilla's ALPHA_CUTOUT: 0.5 cutout, 0.1 translucent
 
-fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
-	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
+// mcopt-shade (native shading, -Dmcopt.shade=true): its library is built with "#define MCOPT_SHADE" and the shade prelude in
+// front (ShadeMsl.ownPrefix). The fragment stages' game uniforms and atlas then sit above the shade globals' slots (buffers
+// 16-19, 23, 24 and textures 16-25: shade_common.metal), where mcown.m binds them for such a library (mco_shade).
+// SHADE_OWN_HDR (function constant 40, set by mcown.m for pipelines whose colour target is the HDR world target): the colour
+// written is the target's pre-exposed scene-linear value of vanilla's display-referred one (shadeLdrToHdr, as
+// ShadeMsl.hdrFragment does for the game's own pipelines).
+#ifdef MCOPT_SHADE
+#define OWN_FS_GLOBALS 28
+#define OWN_FS_TERRAIN 29
+#define OWN_FS_FOG 30
+#define OWN_FS_ATLAS 26
+constant bool SHADE_OWN_HDR_SET [[function_constant(40)]];
+constant bool SHADE_OWN_HDR = is_function_constant_defined(SHADE_OWN_HDR_SET) && SHADE_OWN_HDR_SET;
+#else
+#define OWN_FS_GLOBALS 22
+#define OWN_FS_TERRAIN 23
+#define OWN_FS_FOG 24
+#define OWN_FS_ATLAS 16
+#endif
+
+fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS_GLOBALS)]], constant Terrain &t [[buffer(OWN_FS_TERRAIN)]],
+	constant Fog &fog [[buffer(OWN_FS_FOG)]], texture2d<float> atlas [[texture(OWN_FS_ATLAS)]], sampler atlasSampler [[sampler(14)]]
+#ifdef MCOPT_SHADE
+	, constant ShadeLook &shadeLook [[buffer(17)]]
+#endif
+	) {
 #ifdef OWN_TPROBE
 	// (probes 1 and 3: the translucent fragment stage returns a constant, blending kept; translucent = cutout at limit 0.1)
 	if ((OWN_TPROBE == 1 || OWN_TPROBE == 3) && CUTOUT && CUTOUT_LIMIT < 0.2) return float4(0.2, 0.3, 0.8, 0.5);
@@ -2229,6 +2253,9 @@ fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(22)]],
 		fogValue = F_FV ? in.sphericalVertexDistance : linear_fog_value(in.sphericalVertexDistance, fog.FogEnvironmentalStart, fog.FogEnvironmentalEnd);
 		if (F_RICH && !F_FV) fogValue = max(fogValue, linear_fog_value(in.cylindricalVertexDistance, fog.FogRenderDistanceStart, fog.FogRenderDistanceEnd));
 	}
+#ifdef MCOPT_SHADE
+	if (SHADE_OWN_HDR) return shadeLdrToHdr(float4(mix(color.rgb, fog.FogColor.rgb, fogValue * fog.FogColor.a), color.a), shadeLook);
+#endif
 	return float4(mix(color.rgb, fog.FogColor.rgb, fogValue * fog.FogColor.a), color.a);
 }
 
@@ -2282,8 +2309,8 @@ fragment float4 own_fs_pos(VOut in [[stage_in]]) {
 
 // measurement only (-Dmcopt.own.frag.aKind=tex, fragment kind 8): own_fs's texture sample times the vertex colour, without the fade
 // mix and the fog
-fragment float4 own_fs_tex(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]],
-	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
+fragment float4 own_fs_tex(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS_GLOBALS)]], constant Terrain &t [[buffer(OWN_FS_TERRAIN)]],
+	texture2d<float> atlas [[texture(OWN_FS_ATLAS)]], sampler atlasSampler [[sampler(14)]]) {
 	float2 pixelSize = 1.0f / float2(t.TextureSize);
 	return (g.UseRgss == 1 ? sampleRGSS(atlas, atlasSampler, in.texCoord0, pixelSize) : sampleNearest(atlas, atlasSampler, in.texCoord0, pixelSize))
 		* getColor(in);
@@ -2291,8 +2318,8 @@ fragment float4 own_fs_tex(VOut in [[stage_in]], constant Globals &g [[buffer(22
 
 // measurement only (-Dmcopt.own.frag.aKind=nofade, fragment kind 9): own_fs without the fade mix (both fogs kept): the shader a
 // fully faded-in unit outside the lean class needs (its chunk visibility is 1, so the mix is the identity there)
-fragment float4 own_fs_nofade(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
-	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
+fragment float4 own_fs_nofade(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS_GLOBALS)]], constant Terrain &t [[buffer(OWN_FS_TERRAIN)]], constant Fog &fog [[buffer(OWN_FS_FOG)]],
+	texture2d<float> atlas [[texture(OWN_FS_ATLAS)]], sampler atlasSampler [[sampler(14)]]) {
 	float2 pixelSize = 1.0f / float2(t.TextureSize);
 	float4 color = (g.UseRgss == 1 ? sampleRGSS(atlas, atlasSampler, in.texCoord0, pixelSize) : sampleNearest(atlas, atlasSampler, in.texCoord0, pixelSize))
 		* getColor(in);
@@ -2302,8 +2329,8 @@ fragment float4 own_fs_nofade(VOut in [[stage_in]], constant Globals &g [[buffer
 }
 
 // measurement only (-Dmcopt.own.frag.aKind=nofog, fragment kind 10): own_fs without the fog (the fade mix kept)
-fragment float4 own_fs_nofog(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
-	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
+fragment float4 own_fs_nofog(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS_GLOBALS)]], constant Terrain &t [[buffer(OWN_FS_TERRAIN)]], constant Fog &fog [[buffer(OWN_FS_FOG)]],
+	texture2d<float> atlas [[texture(OWN_FS_ATLAS)]], sampler atlasSampler [[sampler(14)]]) {
 	float2 pixelSize = 1.0f / float2(t.TextureSize);
 	float4 color = (g.UseRgss == 1 ? sampleRGSS(atlas, atlasSampler, in.texCoord0, pixelSize) : sampleNearest(atlas, atlasSampler, in.texCoord0, pixelSize))
 		* getColor(in);
@@ -2319,8 +2346,8 @@ fragment float4 own_fs_flat(VOut in [[stage_in]]) {
 // the cutout depth pre-pass (-Dmcopt.own.prepass): the same alpha decision as own_fs's cutout (vanilla's colour.a after the
 // fade mix, against 0.5), depth only
 // (alpha only: the fade mix's alpha is mix(FogColor.a * a, a, visibility))
-fragment void own_fs_alpha(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
-	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
+fragment void own_fs_alpha(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS_GLOBALS)]], constant Terrain &t [[buffer(OWN_FS_TERRAIN)]], constant Fog &fog [[buffer(OWN_FS_FOG)]],
+	texture2d<float> atlas [[texture(OWN_FS_ATLAS)]], sampler atlasSampler [[sampler(14)]]) {
 	float2 pixelSize = 1.0f / float2(t.TextureSize);
 	float a = (g.UseRgss == 1 ? sampleRGSS(atlas, atlasSampler, in.texCoord0, pixelSize) : sampleNearest(atlas, atlasSampler, in.texCoord0, pixelSize)).a
 		* getColor(in).a;

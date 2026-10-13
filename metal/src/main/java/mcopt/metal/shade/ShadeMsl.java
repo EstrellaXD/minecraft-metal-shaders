@@ -106,6 +106,17 @@ public final class ShadeMsl {
 		return prelude;
 	}
 
+	/**
+	 * mcopt 0.3 port: what goes in front of mcopt's own terrain library (own/terrain.metal, through ShadeTerrain.prefix), in
+	 * terrain()'s order: the prelude (so its fragment stages build with MCOPT_SHADE: the shade globals' slots kept free,
+	 * SHADE_OWN_HDR's conversion), the weather module (wet surfaces, puddles, ripples, shadow tint) and the water module. One
+	 * library holds every layer's stages, so the weather module comes in its solid/cutout form (ShadeWeather.prelude(false));
+	 * P2/P3 of the port decide what the translucent stage takes from it.
+	 */
+	public static String ownPrefix() {
+		return prelude() + ShadeWeather.prelude(false) + (ShadeWater.MODULE ? ShadeWater.prelude() : "");
+	}
+
 	/** shade_look.metal alone (self-contained): what the game's own fragments need for shadeLdrToHdr. */
 	public static String look() {
 		if (look == null) look = resource("shade_look.metal") + "\n";

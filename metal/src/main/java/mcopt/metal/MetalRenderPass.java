@@ -105,7 +105,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (this.encoder.tracing()) this.encoder.trace("  pipeline", p.name, "after draws:", this.draws, "triangles:", this.indices / 3);
 		if (mcopt.metal.shade.water.ShadeWater.ON && this.hasDepth && !this.waterCaptured && mcopt.metal.shade.water.ShadeWater.translucentTerrain(p.name)) {
 			this.waterCaptured = true; // native shading's scene copy for water (bible hook H6), once per pass
-			if (mcopt.metal.shade.water.ShadeWater.capture(this.encoder.ctx, this.enc)) this.restoreAfterReopen();
+			if (mcopt.metal.shade.water.ShadeWater.capture(this.encoder.ctx, this.enc)) this.restoreAfterSplit();
 		}
 		this.pipeline = p;
 		this.recording = record ? p : null;
@@ -185,6 +185,17 @@ final class MetalRenderPass implements RenderPassBackend {
 		this.reapplyPipeline();
 	}
 
+	/**
+	 * mcopt 0.3 port: our own near terrain is about to draw its translucent layer into this pass (OwnTerrain.drawTranslucent),
+	 * which sets no pipeline here, so native shading's water module takes its scene copy now, once per pass as at the switch
+	 * to the translucent terrain pipeline in setPipeline, and the reopened encoder gets the pass's state back.
+	 */
+	void captureWater() {
+		if (!mcopt.metal.shade.water.ShadeWater.ON || !this.hasDepth || this.waterCaptured || this.delegate != null) return;
+		this.waterCaptured = true;
+		if (mcopt.metal.shade.water.ShadeWater.capture(this.encoder.ctx, this.enc)) this.restoreAfterSplit();
+	}
+
 	/** After MetalTerrain split the pass: the reopened encoder has none of the frontend's state, so bind it all again. */
 	private void rebind() {
 		Arrays.fill(this.bound, null);
@@ -200,27 +211,6 @@ final class MetalRenderPass implements RenderPassBackend {
 			ByteBuffer bytes = stack.malloc(this.pushConstantsLength).put(this.pushConstants, 0, this.pushConstantsLength).flip();
 			Native.bytes(this.enc, MetalConst.PUSH_CONSTANTS_INDEX, MemoryUtil.memAddress(bytes), this.pushConstantsLength);
 		}
-	}
-
-	/**
-	 * The water capture ended and reopened the encoder in setPipeline (before the new pipeline is set): put back what the
-	 * frontend set that outlives a pipeline switch (scissor, vertex buffers, push constants) and the shade globals. The new
-	 * pipeline's uniforms bind at its first draw (the frontend re-sends them all on a switch; bound is cleared).
-	 */
-	private void restoreAfterReopen() {
-		Arrays.fill(this.bound, null);
-		Native.scissor(this.enc, this.scissor[0], this.scissor[1], this.scissor[2], this.scissor[3]);
-		for (int slot = 0; slot < this.vertexBuffers.length; slot++) {
-			GpuBufferSlice vb = this.vertexBuffers[slot];
-			if (vb != null) Native.vertexBuffer(this.enc, MetalConst.VERTEX_BUFFER_BASE + slot, this.encoder.use(vb.buffer()).handle, vb.offset());
-		}
-		if (this.pushConstantsLength > 0) {
-			try (MemoryStack stack = MemoryStack.stackPush()) {
-				ByteBuffer bytes = stack.malloc(this.pushConstantsLength).put(this.pushConstants, 0, this.pushConstantsLength).flip();
-				Native.bytes(this.enc, MetalConst.PUSH_CONSTANTS_INDEX, MemoryUtil.memAddress(bytes), this.pushConstantsLength);
-			}
-		}
-		mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc);
 	}
 
 	/** Binds again what p's draws are bound with now (its uniforms and the scissor), for MetalTerrain to draw more of them after a split. */

@@ -309,6 +309,14 @@ public final class MetalBridge {
 	// ---- native shading (mcopt.metal.shade, -Dmcopt.shade=true) ----
 
 	/**
+	 * mcopt 0.3 port: our own terrain is about to draw its translucent layer into the open pass: the water module's scene copy
+	 * (once per pass; MetalRenderPass.captureWater). Nothing without a pass, without the water module or after the copy.
+	 */
+	public static void captureWater(Object encoder) {
+		((MetalEncoder) encoder).captureWater();
+	}
+
+	/**
 	 * Records now, in order, the Sodium geometry copies MetalTerrain holds back for its split (see MetalTerrain.hold), so
 	 * commands encoded next read the arenas as Sodium's section data describes them. Outside a render pass only.
 	 */

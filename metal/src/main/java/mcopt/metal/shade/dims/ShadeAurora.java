@@ -61,6 +61,11 @@ public final class ShadeAurora {
 	private ShadeAurora() {
 	}
 
+	/** The pass's source: prelude + post (shade_fs_vs) + aurora.metal. */
+	public static String source() {
+		return ShadeRender.prelude() + "\n" + ShadeRender.postSource() + "\n" + ShadeMsl.resource("aurora.metal");
+	}
+
 	/** mcopt.shade.aurora.half (default true, live): false evaluates the aurora per pixel in the sky pass (M3.2). */
 	static boolean enabled() {
 		return !"false".equals(System.getProperty("mcopt.shade.aurora.half"));
@@ -92,8 +97,10 @@ public final class ShadeAurora {
 		if (!want) return;
 		try {
 			if (pipeline == 0) {
-				library = ShadeRender.library(ShadeRender.prelude() + "\n" + ShadeRender.postSource() + "\n" + ShadeMsl.resource("aurora.metal"));
+				long t0 = mcopt.metal.shade.ShadeCompile.now();
+				library = ShadeRender.library(source());
 				pipeline = ShadeRender.pipeline(library, "shade_fs_vs", "shade_aurora_pass", ShadeRender.RGBA16F, ShadeRender.BLEND_NONE);
+				mcopt.metal.shade.ShadeCompile.setup("aurora", t0);
 			}
 			var window = Minecraft.getInstance().getWindow();
 			// (2026-10-09: a share of the chosen output resolution, ShadeOutput, not the window's)

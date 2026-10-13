@@ -150,12 +150,13 @@ public final class ShadeTaa {
 		// (FT2.8, audit idx 69) -Dmcopt.shade.taaCompressTaps=true: the history's Catmull-Rom on compressed taps (no ringing past very
 		// bright edges); off by default: no ring showed around the sun or the glints while turning (bench motion shots, the bloom and
 		// aureole cover it) and it costs +0.08 ms at Retina. Off = FT2.7's filter on linear HDR
-		ByteBuffer source = MemoryUtil.memUTF8((Boolean.getBoolean("mcopt.shade.taaCompressTaps") ? "" : "#define TAA_LINEAR_HISTORY\n")
-			+ ShadeMsl.resource("taa.metal"));
+		ByteBuffer source = MemoryUtil.memUTF8(TaaConfig.source());
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
 			mcopt.metal.shade.ShadeRobust.maybeFail("taa"); // M3.3: dev-only injected failure; inert unset
+			long t0 = mcopt.metal.shade.ShadeCompile.now();
 			long taa = TaaNative.create(MetalBridge.ctx(encoder), MemoryUtil.memAddress(source), (hdrInput ? 1 : 0) | (TaaConfig.LOSSY ? 2 : 0) | (TaaConfig.DEBUG != 0 ? 4 : 0), err, 4096);
+			mcopt.metal.shade.ShadeCompile.setup("TAAU", t0);
 			if (taa == 0) throw new IllegalStateException(MemoryUtil.memUTF8(err));
 			instance = new ShadeTaa(encoder, taa);
 			System.out.println("[mcopt] shade: TAA on, " + TaaConfig.describe()

@@ -255,6 +255,11 @@ public final class MetalBridge {
 
 	// ---- native shading (mcopt.metal.shade, -Dmcopt.shade=true) ----
 
+	/** MetalPipeline.compileStats (counts, step times, format variants, the compile window), for shade's startup log line. */
+	public static java.util.Map<String, Object> compileStats() {
+		return MetalPipeline.compileStats();
+	}
+
 	/**
 	 * buffer's MTLBuffer, marked as used by the submit being recorded: the backend then won't write it from the CPU (or
 	 * rename it) while that submit may still read it on the GPU. Every buffer native shading reads must go through here.

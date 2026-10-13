@@ -415,3 +415,28 @@ void mc_clouds_outputs(CloudState *s, id<MTLTexture> *out) {
 	out[1] = s ? s->domeTex[s->domeCur] : nil;
 	out[2] = s ? s->hist[s->cur] : nil;
 }
+
+// (parallel compile, mcopt.metal.shade.ShadeCompile) mc_clouds_new's pipelines, built from lib (the clouds source compiled
+// with the same options) through the same helpers, so with the same descriptors, and released again: run off the render
+// thread before the clouds start, it leaves them in Metal's shader cache for mc_clouds_new. Returns how many failed.
+int mc_clouds_warm(Ctx *ctx, id<MTLLibrary> lib) {
+	@autoreleasepool {
+		id<MTLDevice> dev = ctx->device;
+		char err[512];
+		id built[7] = {
+			cloudKernel(dev, lib, @"cloud_bake_noise", err, sizeof err),
+			cloudKernel(dev, lib, @"cloud_bake_weather", err, sizeof err),
+			cloudPso(dev, lib, @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float, err, sizeof err),
+			cloudPso(dev, lib, @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatR8Unorm, err, sizeof err),
+			cloudPso(dev, lib, @"cloud_resolve_st", MTLPixelFormatRGBA16Float, MTLPixelFormatR16Uint, err, sizeof err),
+			cloudPso(dev, lib, @"cloud_dome", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, err, sizeof err),
+			cloudPso(dev, lib, @"cloud_shadow", MTLPixelFormatR16Float, MTLPixelFormatInvalid, err, sizeof err),
+		};
+		int failed = 0;
+		for (int i = 0; i < 7; i++) {
+			if (!built[i]) failed++;
+			[built[i] release];
+		}
+		return failed;
+	}
+}

@@ -61,6 +61,7 @@ public final class ShadeBindings {
 	static synchronized boolean init(long context) {
 		if (state != 0) return true;
 		if (failed) return false;
+		ShadeCompile.worldStart();
 		try {
 			ctx = context;
 			state = ShadeNative.create(context);
@@ -90,10 +91,10 @@ public final class ShadeBindings {
 			ShadeRobust.maybeFail("lut"); // M3.3: dev-only injected failure (-Dmcopt.shade.dev.failCompile); inert unset
 			ByteBuffer source = MemoryUtil.memUTF8(ShadeMsl.lut()); // too big for the thread's MemoryStack
 			try (MemoryStack stack = MemoryStack.stackPush()) {
-				long err = stack.nmalloc(1, 4096);
-				if (ShadeNative.lutInit(state, context, MemoryUtil.memAddress(source), ShadeMsl.LUT_WIDTH, ShadeMsl.LUT_HEIGHT, err, 4096) != 0) {
-					throw new IllegalStateException("sky LUT: " + MemoryUtil.memUTF8(err));
-				}
+				long err = stack.nmalloc(1, 4096), t0 = ShadeCompile.now();
+				int r = ShadeNative.lutInit(state, context, MemoryUtil.memAddress(source), ShadeMsl.LUT_WIDTH, ShadeMsl.LUT_HEIGHT, err, 4096);
+				ShadeCompile.setup("sky LUT", t0);
+				if (r != 0) throw new IllegalStateException("sky LUT: " + MemoryUtil.memUTF8(err));
 			} finally {
 				MemoryUtil.memFree(source);
 			}

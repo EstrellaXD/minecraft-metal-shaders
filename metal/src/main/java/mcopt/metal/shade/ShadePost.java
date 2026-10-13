@@ -203,6 +203,7 @@ public final class ShadePost {
 		if (initialized) return true;
 		if (failed || !ShadeConfig.HDR) return false;
 		try {
+			long t0 = ShadeCompile.now();
 			library = ShadeRender.library(ShadeMsl.post());
 			psoDown0 = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down0", ShadeRender.RGBA16F, 0);
 			psoDown = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_down", ShadeRender.RGBA16F, 0);
@@ -222,6 +223,7 @@ public final class ShadePost {
 			psoHistogram = ShadeRender.computePipeline(library, "shade_histogram");
 			psoExposure = ShadeRender.computePipeline(library, "shade_exposure");
 			long bake = ShadeRender.pipeline(library, "shade_fs_vs", "shade_milkyway_bake", ShadeRender.RGBA16F, 0);
+			ShadeCompile.setup("post chain", t0);
 			milkyWay = ShadeRender.texture(ShadeRender.RGBA16F, 1024, 512, false, "mcopt shade: Milky Way");
 			ShadeNative.bake(ShadeBindings.ctx(), bake, milkyWay);
 			MetalBridge.release(bake);

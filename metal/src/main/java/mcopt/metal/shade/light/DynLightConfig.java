@@ -126,4 +126,9 @@ public final class DynLightConfig {
 		return "max " + MAX + ", range " + RANGE + ", volumes " + VOLUMES + ", entities " + ENTITIES + ", hand " + HAND + ", others " + OTHERS
 			+ (STRENGTH != 1f ? ", strength " + STRENGTH : "");
 	}
+
+	/** dynlight.metal's kernels + dynlight_vis.metal, the module's own library (DynLights.init). */
+	public static String source() {
+		return "#define SHADE_DL_KERNELS\n" + mcopt.metal.shade.ShadeMsl.resource("dynlight.metal") + "\n" + mcopt.metal.shade.ShadeMsl.resource("dynlight_vis.metal");
+	}
 }

@@ -387,4 +387,19 @@ public final class CloudConfig {
 	private static int clampInt(int v, int lo, int hi) {
 		return Math.max(lo, Math.min(hi, v));
 	}
+
+	/**
+	 * (parallel compile, mcopt.metal.shade.ShadeCompile) ShadeClouds' library and pipelines, made off the render thread and
+	 * released again (mc_clouds_warm: mc_clouds_new's pipelines without its textures and noise bakes): its own setup then
+	 * finds them in Metal's shader cache.
+	 */
+	public static void warmUp(long ctx) {
+		long lib = mcopt.metal.shade.ShadeCompile.library(ctx, source());
+		try {
+			int failed = CloudNative.warm(ctx, lib);
+			if (failed != 0) throw new IllegalStateException(failed + " cloud pipelines failed");
+		} finally {
+			mcopt.metal.MetalBridge.release(lib);
+		}
+	}
 }

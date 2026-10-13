@@ -73,6 +73,8 @@ final class MetalDevice implements GpuDeviceBackend {
 			System.out.println("[mcopt] metal: shaders compile with " + (math.equals("safe") ? "safe" : "relaxed") + " math");
 		}
 		if (mcopt.metal.cpu.Cpu.PASS || mcopt.metal.cpu.Cpu.CMD_AHEAD) Native.cpuFlags(mcopt.metal.cpu.Cpu.nativeFlags(mcopt.metal.cpu.Cpu.PASS)); // opt-in: see mc_cpu_flags
+		// mcopt-shade: shader compiles off the render thread and several at once (prewarm variants, shade's warm-up)
+		if (mcopt.metal.shade.Shade.ENABLED) mcopt.metal.shade.ShadeCompile.start(this.ctx);
 	}
 
 	/** Queues an ARENA_RESERVE arena for provisioning, and with culling on the two caches MetalTerrain.ArenaCache adds for it. */

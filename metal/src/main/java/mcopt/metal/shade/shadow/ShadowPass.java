@@ -715,17 +715,13 @@ public final class ShadowPass {
 	}
 
 	private void create(long ctx) {
-		String source;
-		try (InputStream in = ShadowPass.class.getResourceAsStream("/mcopt/shade/shadow.metal")) {
-			if (in == null) throw new IllegalStateException("missing /mcopt/shade/shadow.metal");
-			source = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-		} catch (IOException e) {
-			throw new IllegalStateException(e);
-		}
+		String source = ShadowConfig.source();
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.ncalloc(1, 2048, 1);
 			mcopt.metal.shade.ShadeRobust.maybeFail("shadow"); // M3.3: dev-only injected failure; inert unset
+			long t0 = mcopt.metal.shade.ShadeCompile.now();
 			long s = ShadowNative.create(ctx, MemoryUtil.memAddress(stack.UTF8(source)), ShadowConfig.RES, CASCADES, ShadowConfig.DEPTH_BITS, err, 2048);
+			mcopt.metal.shade.ShadeCompile.setup("shadows", t0);
 			if (s == 0) throw new IllegalStateException("shadow pass setup: " + MemoryUtil.memUTF8(err));
 			this.shadow = s;
 		}

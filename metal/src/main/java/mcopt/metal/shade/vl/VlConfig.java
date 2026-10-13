@@ -252,4 +252,20 @@ public final class VlConfig {
 		return "preset " + PRESET + ", scale " + SCALE + ", " + STEPS + " steps + " + NEAR_STEPS + " near + " + SS_TAPS + " screen taps, " + (int) DIST + " blocks"
 			+ (FOLD ? "" : ", no fold") + (TEMPORAL ? (STILL > 0f ? ", still " + STILL : "") + (BOX3 ? "" : ", plus box") + (HIST_DEPTH ? "" : ", bilinear history") + (CREP_SMOOTH ? ", per-texel taps" : "") + (NEAR_DITHER ? "" : ", frame-jittered mist steps") + (WATER_DITHER ? "" : ", frame-jittered water steps") : ", no temporal") + (LOSSY ? ", lossy" : "") + (DEBUG != 0 ? ", debug " + DEBUG : "");
 	}
+
+	/**
+	 * (parallel compile, mcopt.metal.shade.ShadeCompile) ShadeVl's library and pipelines, made off the render thread as
+	 * ShadeVl.init makes them (hdr: the HDR composite) and freed again: its own setup then finds them in Metal's shader cache.
+	 */
+	public static void warmUp(long ctx, boolean hdr) {
+		java.nio.ByteBuffer source = org.lwjgl.system.MemoryUtil.memUTF8(source());
+		try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+			long err = stack.ncalloc(1, 2048, 1);
+			long s = VlNative.create(ctx, org.lwjgl.system.MemoryUtil.memAddress(source), (LOSSY ? 1 : 0) | (hdr ? 2 : 0), err, 2048);
+			if (s == 0) throw new IllegalStateException(org.lwjgl.system.MemoryUtil.memUTF8(err));
+			VlNative.free(s);
+		} finally {
+			org.lwjgl.system.MemoryUtil.memFree(source);
+		}
+	}
 }

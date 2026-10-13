@@ -132,4 +132,37 @@ public final class ShadowConfig {
 	private static float clamp(float v, float lo, float hi) {
 		return Math.max(lo, Math.min(hi, v));
 	}
+
+	/** shadow.metal, the shadow pass's source (ShadowPass). */
+	public static String source() {
+		try (java.io.InputStream in = ShadowConfig.class.getResourceAsStream("/mcopt/shade/shadow.metal")) {
+			if (in == null) throw new IllegalStateException("missing /mcopt/shade/shadow.metal");
+			return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+		} catch (java.io.IOException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	/**
+	 * (parallel compile, mcopt.metal.shade.ShadeCompile) ShadowPass's library and pipelines (and the coloured shadows' tint
+	 * pipeline), made off the render thread and freed again: its own setup then finds them in Metal's shader cache. With one
+	 * 1 x 1 layer: the pipelines depend only on the depth format.
+	 */
+	public static void warmUp(long ctx) {
+		java.nio.ByteBuffer source = org.lwjgl.system.MemoryUtil.memUTF8(source());
+		try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+			long err = stack.ncalloc(1, 2048, 1);
+			long s = ShadowNative.create(ctx, org.lwjgl.system.MemoryUtil.memAddress(source), 1, 1, DEPTH_BITS, err, 2048);
+			if (s == 0) throw new IllegalStateException(org.lwjgl.system.MemoryUtil.memUTF8(err));
+			try {
+				if (mcopt.metal.shade.weather.ShadeWeather.COLOR_SHADOWS && ShadowNative.tintInit(s, 1, err, 2048) != 0) {
+					throw new IllegalStateException(org.lwjgl.system.MemoryUtil.memUTF8(err));
+				}
+			} finally {
+				ShadowNative.free(s);
+			}
+		} finally {
+			org.lwjgl.system.MemoryUtil.memFree(source);
+		}
+	}
 }

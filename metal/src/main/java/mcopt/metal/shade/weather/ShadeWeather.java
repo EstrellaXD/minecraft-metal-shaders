@@ -348,9 +348,11 @@ public final class ShadeWeather {
 	public static void bakeNoise(long enc) {
 		if (!ON || noiseTexture != 0 || noiseFailed || enc == 0 || !(PUDDLES || SNOW)) return;
 		try {
-			long lib = mcopt.metal.shade.ShadeRender.library(mcopt.metal.shade.ShadeRender.prelude() + mcopt.metal.shade.ShadeRender.postSource() + "#define SHADE_WX_NOISE_BAKE\n" + prelude());
+			long t0 = mcopt.metal.shade.ShadeCompile.now();
+			long lib = mcopt.metal.shade.ShadeRender.library(noiseSource());
 			long pso = mcopt.metal.shade.ShadeRender.pipeline(lib, "shade_fs_vs", "shade_wx_noise_fs", mcopt.metal.shade.ShadeRender.RG16F,
 				mcopt.metal.shade.ShadeRender.BLEND_NONE);
+			mcopt.metal.shade.ShadeCompile.setup("weather noise", t0);
 			long tex = mcopt.metal.shade.ShadeRender.texture(mcopt.metal.shade.ShadeRender.RG16F, 1024, 1024, false, "mcopt shade weather noise");
 			mcopt.metal.shade.ShadeRender.pass(enc, pso, tex, mcopt.metal.shade.ShadeRender.DONT_CARE, null, null, "mcopt shade weather: noise bake");
 			mcopt.metal.shade.ShadeRender.resource(RES_NOISE, tex);
@@ -403,6 +405,11 @@ public final class ShadeWeather {
 	/** The MSL in front of the Sodium terrain stages (after ShadeMsl.prelude, before the water module): defines + weather_surface.metal. */
 	public static String prelude() {
 		return prelude(false);
+	}
+
+	/** The puddle/snow noise bake's source (bakeNoise): prelude + post (shade_fs_vs) + this prelude with SHADE_WX_NOISE_BAKE. */
+	public static String noiseSource() {
+		return mcopt.metal.shade.ShadeRender.prelude() + mcopt.metal.shade.ShadeRender.postSource() + "#define SHADE_WX_NOISE_BAKE\n" + prelude();
 	}
 
 	/**

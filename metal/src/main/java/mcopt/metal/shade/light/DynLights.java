@@ -71,8 +71,13 @@ public final class DynLights {
 	public static int activeCount() {
 		return lastCount;
 	}
-	/** The local player's packed light follows what it holds (DynLightEntityRendererMixin). */
+	/** The local player's packed light follows what it holds (DynLightEntityRendererMixin); at startup, see {@link #handLight}. */
 	public static final boolean HAND_LIGHT = ON && DynLightConfig.HAND;
+
+	/** (1.1) live: HAND_LIGHT with mcopt.shade.dynLights.hand read now (the mixin is applied whenever the module is on). */
+	public static boolean handLight() {
+		return ON && DynLightConfig.hand();
+	}
 	static final int MAX = 64, GRID_X = 16, GRID_Y = 12, GRID_Z = 16, CELL = 8;
 	/** Blocks short of its reach where a light stops (dynlight.metal SHADE_DL_CUT). */
 	static final double CUT = 2.0;
@@ -235,7 +240,7 @@ public final class DynLights {
 		ACTIVE.sort((p, q) -> Float.compare(q.score, p.score));
 		// -Dmcopt.shade.dynLights.pause (read every frame; the bench sets it at run time for an A/B in one session): no lights
 		if (Boolean.getBoolean("mcopt.shade.dynLights.pause")) ACTIVE.clear();
-		int count = Math.min(ACTIVE.size(), DynLightConfig.MAX);
+		int count = Math.min(ACTIVE.size(), DynLightConfig.max()); // (1.1) live cap
 		lastCount = count;
 		for (int i = 0; i < ACTIVE.size(); i++) {
 			Src s = ACTIVE.get(i);
@@ -311,14 +316,16 @@ public final class DynLights {
 		int gz0 = Math.floorDiv((int) Math.floor(camZ) + 4, CELL) * CELL - GRID_Z * CELL / 2;
 		b.putInt(0, count).putInt(4, volumes).putInt(8, frame).putInt(12, 0);
 		b.putFloat(16, (float) (gx0 - camX)).putFloat(20, (float) (gy0 - camY)).putFloat(24, (float) (gz0 - camZ)).putFloat(28, 1f / CELL);
-		b.putFloat(32, Math.max(1, DynLightConfig.VOLUMES)).putFloat(36, DynLightConfig.STRENGTH).putFloat(40, DynLightConfig.SPEC).putFloat(44, DynLightConfig.ENTITY);
+		// (1.1) strength, spec and entity live
+		b.putFloat(32, Math.max(1, DynLightConfig.VOLUMES)).putFloat(36, DynLightConfig.strength()).putFloat(40, DynLightConfig.spec()).putFloat(44, DynLightConfig.entity());
 		int ix0 = (int) Math.floor(camX) - IRR_X / 2, iy0 = (int) Math.floor(camY) - IRR_Y / 2, iz0 = (int) Math.floor(camZ) - IRR_Z / 2;
 		b.putFloat(48, (float) (ix0 - camX)).putFloat(52, (float) (iy0 - camY)).putFloat(56, (float) (iz0 - camZ)).putFloat(60, count > 0 ? 1f : 0f);
 		// lights + grid
 		java.util.Arrays.fill(cells, 0L);
+		boolean flickers = DynLightConfig.flicker(); // (1.1) live
 		for (int i = 0; i < count; i++) {
 			Src s = ACTIVE.get(i);
-			float flick = s.fire && DynLightConfig.FLICKER ? flicker(s.seed) : 1f;
+			float flick = s.fire && flickers ? flicker(s.seed) : 1f;
 			float k = s.cur * flick;
 			int at = LIGHTS_OFFSET + i * LIGHT_BYTES;
 			b.putFloat(at + 48, s.core).putFloat(at + 52, s.omni ? 1f : 0f).putFloat(at + 56, s.slab >= 0 && s.volSoft ? 1f : 0f).putFloat(at + 60, 0f);
@@ -466,11 +473,11 @@ public final class DynLights {
 		Minecraft mc = Minecraft.getInstance();
 		LocalPlayer player = mc.player;
 		boolean firstPerson = camera.isFirstPerson && player != null && mc.getCameraEntity() == player;
-		double range = DynLightConfig.RANGE, range2 = range * range;
-		if (player != null && DynLightConfig.HAND && !player.isSpectator()) {
+		double range = DynLightConfig.range(), range2 = range * range; // (1.1) range, hand and others live
+		if (player != null && DynLightConfig.hand() && !player.isSpectator()) {
 			hands(player, partial, firstPerson ? camera : null);
 		}
-		if (!DynLightConfig.OTHERS) return;
+		if (!DynLightConfig.others()) return;
 		for (Entity e : level.entitiesForRendering()) {
 			if (e == player && (firstPerson || player.isSpectator())) {
 				if (e.displayFireAnimation()) fire(e, partial); // burning: the player's own fire lights the scene too
@@ -635,13 +642,13 @@ public final class DynLights {
 	 */
 	public static int levelAt(double x, double y, double z) {
 		if (state == 0) return 0;
-		float best = 0f;
-		for (int i = 0, n = Math.min(ACTIVE.size(), DynLightConfig.MAX); i < n; i++) {
+		float best = 0f, strength = DynLightConfig.strength(); // (1.1) live, as the frame's
+		for (int i = 0, n = Math.min(ACTIVE.size(), DynLightConfig.max()); i < n; i++) {
 			Src s = ACTIVE.get(i);
 			double dx = s.x - x, dy = s.y - y, dz = s.z - z;
 			double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
 			if (d >= s.reach - CUT) continue;
-			float lv = (float) (s.reach - Math.max(d, s.core)) * Math.min(s.cur, 1f) * DynLightConfig.STRENGTH;
+			float lv = (float) (s.reach - Math.max(d, s.core)) * Math.min(s.cur, 1f) * strength;
 			if (lv <= best) continue;
 			if (!s.hand && occupancy != null && occupancy.blocked(s.x, s.y, s.z, x, y, z)) continue;
 			best = lv;

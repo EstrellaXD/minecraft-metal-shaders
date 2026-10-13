@@ -34,7 +34,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class DynLightEntityRendererMixin {
 	@Inject(method = "getPackedLightCoords", at = @At("RETURN"), cancellable = true)
 	private void mcopt$dynLightPlayer(Entity entity, float partialTickTime, CallbackInfoReturnable<Integer> cir) {
-		if (!DynLights.HAND_LIGHT || entity != Minecraft.getInstance().player) return;
+		if (entity != Minecraft.getInstance().player || !DynLights.handLight()) return; // (1.1) mcopt.shade.dynLights.hand live
 		int packed = cir.getReturnValueI();
 		int block = (packed & 0xFFFF) >> 4;
 		if (block >= 15) return;

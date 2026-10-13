@@ -53,14 +53,20 @@ public final class DynamicResolution {
 	private static final int HOLD_SETTLE_UP = 30;
 	/** M3.3: the hold controller's floor (mcopt.shade.drsFloor, 0.40-1; default 0.55, the pause menu's 1080p on the Retina panel). */
 	public static final float HOLD_FLOOR = TaaConfig.clamp(floatProp("mcopt.shade.drsFloor", 0.55f), 0.4f, 1f);
+
+	/** (1.1) live: the hold controller's floor this frame (mcopt.shade.drsFloor, 0.40-1; HOLD_FLOOR at startup). */
+	static float holdFloor() {
+		return mcopt.metal.shade.Live.f("mcopt.shade.drsFloor", HOLD_FLOOR, 0.4f, 1f);
+	}
 	/** M3.3: the share of the frame's GPU time that does not scale with the render scale, for the hold controller's model. */
 	/** The player set mcopt.shade.scaleMin: the hold controller keeps it instead of its own floor. */
 	private static final boolean USER_MIN = System.getProperty("mcopt.shade.scaleMin") != null;
 	private static final double HOLD_FIXED = TaaConfig.clamp(floatProp("mcopt.shade.drsFixed", 0.5f), 0f, 0.9f);
 
 	private final float min, max;
-	private final int fps;
-	private final double targetSeconds;
+	/** (1.1) mutable: mcopt.shade.drsFps is live ({@link #retarget}). */
+	private int fps;
+	private double targetSeconds;
 	private float scale;
 	private double average, lastEnd;
 	private int samples, sinceChange, skip, pinned;
@@ -95,6 +101,17 @@ public final class DynamicResolution {
 
 	public float scale() {
 		return this.scale;
+	}
+
+	/**
+	 * (1.1) A new target frame rate (mcopt.shade.drsFps, live; ShadeTaa.jitter passes it every frame): the budget moves, the
+	 * timing average stays (it is still this scale's GPU time), so the next update steps toward the new target.
+	 */
+	public void retarget(int fps) {
+		if (fps == this.fps || fps <= 0) return;
+		this.fps = fps;
+		this.targetSeconds = 0.86 / fps;
+		this.pinned = 0;
 	}
 
 	/** Average GPU time per frame (ms) as the controller sees it, 0 before any frame. */
@@ -157,7 +174,8 @@ public final class DynamicResolution {
 	 */
 	private float holdMin() {
 		// (an explicit mcopt.shade.scaleMin from the player is kept as the floor: code review M3.4)
-		return TaaConfig.PRESET.ordinal() <= TaaConfig.Preset.BALANCED.ordinal() && !USER_MIN ? Math.min(this.min, HOLD_FLOOR) : this.min;
+		// ((1.1) the floor read live)
+		return TaaConfig.PRESET.ordinal() <= TaaConfig.Preset.BALANCED.ordinal() && !USER_MIN ? Math.min(this.min, holdFloor()) : this.min;
 	}
 
 	/** The scale at which the model puts the frame at time goal (seconds), from time t at the current scale. */

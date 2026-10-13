@@ -16,6 +16,7 @@
 package mcopt.metal.shade.taa;
 
 import java.util.Locale;
+import mcopt.metal.shade.Live;
 
 /**
  * Temporal anti-aliasing / upscaling settings (shader bible E18, §5), read once at startup from system properties (or
@@ -27,9 +28,11 @@ import java.util.Locale;
  * <li>{@code mcopt.shade.preset} (Shade.PRESET_DEFAULT; Shade.TIER, which every module reads): performance | balanced | quality | ultra, see {@link Preset}.</li>
  * <li>{@code mcopt.shade.scale}: start scale (overrides the preset's); {@code mcopt.shade.scaleMin} / {@code scaleMax}: the
  * dynamic resolution range. The world targets are allocated at scaleMax, so a narrower range also saves memory.</li>
- * <li>{@code mcopt.shade.drs} (true): dynamic resolution; {@code mcopt.shade.drsFps}: its target frame rate (preset's).</li>
- * <li>{@code mcopt.shade.taaMode} (preset's): responsive | stable (history weight and clip box).</li>
- * <li>{@code mcopt.shade.sharpen}: sharpening strength 0..1 (default by scale: 0.25 native .. 0.4 at 0.67x).</li>
+ * <li>{@code mcopt.shade.drs} (true): dynamic resolution; {@code mcopt.shade.drsFps}: its target frame rate (preset's). (1.1)
+ * both live ({@link #drs()}, {@link #drsFps()}): on again, the controller starts over at the start scale; a new target
+ * retargets it (ShadeTaa.jitter).</li>
+ * <li>{@code mcopt.shade.taaMode} (preset's): responsive | stable (history weight and clip box). (1.1) live ({@link #stable()}).</li>
+ * <li>{@code mcopt.shade.sharpen}: sharpening strength 0..1 (default by scale: 0.25 native .. 0.4 at 0.67x). (1.1) live.</li>
  * <li>{@code mcopt.shade.mipBias} (true): sharper texture mips at reduced scale (log2 scale), like native.</li>
  * <li>{@code mcopt.shade.taaDebug} (0): 1 history age, 2 rejection (red clip, green disocclusion, blue off-screen), 3 no history, 4 reprojection check (unclipped history 50/50 over the current frame).</li>
  * <li>{@code mcopt.shade.drsLog} (false): one log line per resolution change.</li>
@@ -103,25 +106,51 @@ public final class TaaConfig {
 		return Math.max(lo, Math.min(hi, v));
 	}
 
-	/** Sharpening strength at a scale: the bible's 0.25 at native rising to 0.4 at 0.67x, unless mcopt.shade.sharpen sets it. */
+	/**
+	 * Sharpening strength at a scale: the bible's 0.25 at native rising to 0.4 at 0.67x, unless mcopt.shade.sharpen sets it.
+	 * (1.1) mcopt.shade.sharpen read live (SHARPEN at startup; negative = by scale).
+	 */
 	public static float sharpen(float scale) {
-		if (SHARPEN >= 0f) return Math.min(SHARPEN, 1f);
+		float sharpen = Live.f("mcopt.shade.sharpen", SHARPEN);
+		if (sharpen >= 0f) return Math.min(sharpen, 1f);
 		return 0.25f + 0.15f * clamp((1f - scale) / 0.33f, 0f, 1f);
 	}
 
-	/** Minimum weight of the current frame (Responsive 0.12, Stable 0.08). */
+	/** (1.1) live: mcopt.shade.taaMode this frame, stable or responsive (STABLE at startup: the preset's when unset). */
+	public static boolean stable() {
+		return switch (Live.s("mcopt.shade.taaMode", "")) {
+			case "stable" -> true;
+			case "responsive" -> false;
+			default -> PRESET.stable;
+		};
+	}
+
+	/**
+	 * (1.1) live: dynamic resolution this frame (mcopt.shade.drs; DRS at startup). Never with a fixed range (scaleMin =
+	 * scaleMax), as at startup.
+	 */
+	public static boolean drs() {
+		return SCALE_MIN < SCALE_MAX && Live.b("mcopt.shade.drs", true);
+	}
+
+	/** (1.1) live: the dynamic resolution's target frame rate (mcopt.shade.drsFps, at least 20; DRS_FPS at startup: the preset's). */
+	public static int drsFps() {
+		return Math.max(20, Live.i("mcopt.shade.drsFps", DRS_FPS));
+	}
+
+	/** Minimum weight of the current frame (Responsive 0.12, Stable 0.08). (1.1) taaMode live. */
 	public static float alphaMin() {
-		return STABLE ? 0.08f : 0.12f;
+		return stable() ? 0.08f : 0.12f;
 	}
 
 	/** Floor of the current frame's weight on moving pixels (full from 0.5 px/frame; Responsive 0.25, Stable 0.18): keeps texture detail in motion. */
 	public static float motionAlpha() {
-		return STABLE ? 0.18f : 0.25f;
+		return stable() ? 0.18f : 0.25f;
 	}
 
 	/** Variance clip box size in standard deviations (Responsive 1.0, Stable 1.25), +0.5 while the camera is still. */
 	public static float clipGamma(boolean still) {
-		return (STABLE ? 1.25f : 1.0f) + (still ? 0.5f : 0f);
+		return (stable() ? 1.25f : 1.0f) + (still ? 0.5f : 0f);
 	}
 
 	public static String describe() {

@@ -74,6 +74,8 @@ public final class ShadeTaa {
 	 */
 	private static final boolean FIXED_FOR_DH = mcopt.metal.DhCompat.loaded();
 	private static final DynamicResolution DRS = new DynamicResolution(TaaConfig.SCALE, TaaConfig.SCALE_MIN, TaaConfig.SCALE_MAX, TaaConfig.DRS_FPS);
+	/** (1.1) Whether the last frame ran the dynamic resolution (mcopt.shade.drs is live: on again, the controller starts over). */
+	private static boolean drsLast = TaaConfig.DRS;
 
 	private final Object encoder;
 	private final long ctx, enc, taa;
@@ -191,8 +193,14 @@ public final class ShadeTaa {
 		// M3.1: a resolution the player fixed in the pause menu (ShadeResolution) wins over the preset's dynamic resolution
 		float chosen = mcopt.metal.shade.ShadeResolution.scale(this.outHeight);
 		this.lastAuto = chosen <= 0f;
+		// (1.1) mcopt.shade.drs live: switched on again, the controller starts over at the start scale (its timing and scale are
+		// from before it was off); mcopt.shade.drsFps live: the controller's target follows it
+		boolean drs = TaaConfig.drs();
+		if (drs && !drsLast) DRS.restart(TaaConfig.SCALE);
+		drsLast = drs;
+		DRS.retarget(TaaConfig.drsFps());
 		if (chosen > 0f) this.scale = FIXED_FOR_DH ? Math.min(chosen, this.allocScale) : chosen;
-		else if (TaaConfig.DRS && !FIXED_FOR_DH) {
+		else if (drs && !FIXED_FOR_DH) {
 			// M3.3 dev (mcbench A/B phases, read every frame): mcopt.shade.drs.pause=true holds the preset's start scale (as
 			// mcopt.shade.drs=false), =<number> holds that scale (0.4-1); mcopt.shade.drs.restart (any value, cleared here) starts
 			// the controller over at the start scale

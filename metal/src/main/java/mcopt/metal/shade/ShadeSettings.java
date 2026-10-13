@@ -26,8 +26,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * (1.1, 2026-10-13; players on Reddit asked for shader settings in game) The player's settings of the native shading: the values
- * the settings screen (ShadeSettingsScreen, "Shaders..." in the pause menu) shows and changes. Each one is a system property, so
+ * (1.1, 2026-10-13; players on Reddit asked for shader settings in game) The player's settings that several modules read as
+ * typed values (the rest are read where they are used, through Live; every setting of the screen is in ShadeOptions). Each one is a system property, so
  * config/mcopt.properties and -D flags set it as before; the screen changes it live and writes the changed ones back to
  * config/mcopt.properties when it closes. Everything but the preset applies on the next frame (the preset sizes every module's
  * buffers and passes at startup). The defaults are the look as released: every multiplier at 100.
@@ -37,7 +37,8 @@ import java.util.Map;
  * <li>{@code mcopt.shade.look}: epic, storybook, natural.</li>
  * <li>{@code mcopt.shade.ev} (0): brightness in EV, -2..2.</li>
  * <li>{@code mcopt.shade.user.saturation} (100): percent, 0..150 (2x turned a sunset neon orange, v11-s1).</li>
- * <li>{@code mcopt.shade.user.bloom}, {@code .godrays}, {@code .haze} (100): percent, 0..200.</li>
+ * <li>{@code mcopt.shade.user.bloom}, {@code .godrays}, {@code .haze} (100): percent, 0..200 (haze: the air's haze only; the
+ * ground mist is user.mist, ShadeLook).</li>
  * <li>{@code mcopt.shade.clouds.mode}: volumetric, blocky (12-block cells like vanilla's, ray-traced and lit), vanilla (the
  * game's own, lit by the shaders), off. Default: volumetric, or blocky with mcopt.shade.clouds.style=blocky or the storybook
  * look at startup.</li>
@@ -80,8 +81,6 @@ public final class ShadeSettings {
 	private static volatile int waterColor = indexOf(WATER_COLORS, System.getProperty(WATER_COLOR, "natural"), 0);
 	private static volatile float waves = clamp(floatProp(WAVES, 1f), 0f, 2f), reflect = clamp(floatProp(REFLECT, 1f), 0f, 2f);
 	private static volatile boolean ssr = !"false".equalsIgnoreCase(System.getProperty(SSR, "true").trim());
-	/** The preset chosen in the screen (Shade.TIER is the running one until the next start). */
-	private static volatile int presetChoice = Shade.TIER;
 
 	/** Keys changed since the last save, with their new values (insertion order: the file's order). */
 	private static final Map<String, String> CHANGED = new LinkedHashMap<>();
@@ -179,148 +178,11 @@ public final class ShadeSettings {
 		return ssr;
 	}
 
-	// ---- the screen's side ---------------------------------------------------------------------------------------------
-	public static int presetChoice() {
-		return presetChoice;
-	}
-
-	public static int lookIndex() {
-		return look;
-	}
-
-	public static int evTenths() {
-		return Math.round(ev * 10f);
-	}
-
-	public static int saturationPercent() {
-		return saturation;
-	}
-
-	public static int bloomPercent() {
-		return bloom;
-	}
-
-	public static int godraysPercent() {
-		return godrays;
-	}
-
-	public static int hazePercent() {
-		return haze;
-	}
-
-	public static int cloudsIndex() {
-		return clouds;
-	}
-
-	public static int auroraIndex() {
-		return aurora;
-	}
-
-	public static int waterColorIndex() {
-		return waterColor;
-	}
-
-	public static int clarityPercent() {
-		return clarity;
-	}
-
-	public static int wavesPercent() {
-		return Math.round(waves * 100f);
-	}
-
-	public static int reflectPercent() {
-		return Math.round(reflect * 100f);
-	}
-
-	public static void setSsr(boolean on) {
-		ssr = on;
-		changed(SSR, Boolean.toString(on));
-	}
-
-	public static void setPreset(int i) {
-		presetChoice = i;
-		changed(PRESET, PRESETS[i]);
-	}
-
-	public static void setLook(int i) {
-		look = i;
-		changed(LOOK, LOOKS[i]);
-	}
-
-	public static void setEvTenths(int t) {
-		ev = t / 10f;
-		changed(EV, String.format(Locale.ROOT, "%.1f", ev));
-	}
-
-	public static void setSaturation(int p) {
-		saturation = p;
-		changed(SATURATION, Integer.toString(p));
-	}
-
-	public static void setBloom(int p) {
-		bloom = p;
-		changed(BLOOM, Integer.toString(p));
-	}
-
-	public static void setGodrays(int p) {
-		godrays = p;
-		changed(GODRAYS, Integer.toString(p));
-	}
-
-	public static void setHaze(int p) {
-		haze = p;
-		changed(HAZE, Integer.toString(p));
-	}
-
-	public static void setClouds(int i) {
-		clouds = i;
-		changed(CLOUDS, CLOUD_MODES[i]);
-	}
-
-	public static void setAurora(int i) {
-		aurora = i;
-		changed(AURORA, AURORAS[i]);
-	}
-
-	public static void setWaterColor(int i) {
-		waterColor = i;
-		changed(WATER_COLOR, WATER_COLORS[i]);
-	}
-
-	public static void setClarity(int p) {
-		clarity = p;
-		changed(WATER_CLARITY, Integer.toString(p));
-	}
-
-	public static void setWaves(int p) {
-		waves = p / 100f;
-		changed(WAVES, String.format(Locale.ROOT, "%.2f", waves));
-	}
-
-	public static void setReflect(int p) {
-		reflect = p / 100f;
-		changed(REFLECT, String.format(Locale.ROOT, "%.2f", reflect));
-	}
-
-	/** Every setting back to the released look (the preset stays: it is a performance choice, not a look). */
-	public static void reset() {
-		setLook(0);
-		setEvTenths(0);
-		setSaturation(100);
-		setBloom(100);
-		setGodrays(100);
-		setHaze(100);
-		setClouds(CLOUDS_VOLUMETRIC);
-		setAurora(2);
-		setWaterColor(0);
-		setClarity(100);
-		setWaves(100);
-		setReflect(100);
-		setSsr(true);
-	}
-
-	private static synchronized void changed(String key, String value) {
-		System.setProperty(key, value);
+	/**
+	 * (ShadeOption.set) Records a setting for config/mcopt.properties: its text, or null for its default (the key's line is
+	 * removed, so the default follows the preset and later releases). The property itself is set by the caller.
+	 */
+	static synchronized void changed(String key, String value) {
 		CHANGED.put(key, value);
 	}
 
@@ -333,14 +195,15 @@ public final class ShadeSettings {
 			boolean header = false;
 			for (Map.Entry<String, String> e : CHANGED.entrySet()) {
 				boolean found = false;
-				for (int i = 0; i < lines.size(); i++) {
+				for (int i = lines.size() - 1; i >= 0; i--) {
 					String t = lines.get(i).trim();
 					if (t.startsWith(e.getKey() + "=") || t.startsWith(e.getKey() + " ")) {
-						lines.set(i, e.getKey() + "=" + e.getValue());
+						if (e.getValue() == null) lines.remove(i);
+						else lines.set(i, e.getKey() + "=" + e.getValue());
 						found = true;
 					}
 				}
-				if (!found) {
+				if (!found && e.getValue() != null) {
 					if (!header && lines.stream().noneMatch(l -> l.startsWith("# Ajustes de shaders"))) {
 						lines.add("# Ajustes de shaders (también desde el menú de pausa: Shaders...)");
 						header = true;

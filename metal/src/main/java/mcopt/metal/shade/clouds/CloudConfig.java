@@ -79,6 +79,8 @@ public final class CloudConfig {
 		? "blocky" : "volumetric").trim().equalsIgnoreCase("blocky");
 	/** Blocky style: slab thickness (blocks; vanilla's fancy clouds are 4). */
 	public static final float BLOCK_THICKNESS = clamp(floatProperty("mcopt.shade.clouds.blockThickness", 8f), 2f, 64f);
+	/** (1.1) Blocky style with the game's cloud texture: slab thickness (vanilla's fancy clouds: 4; mcopt.shade.clouds.blockThickness). */
+	public static final float VANILLA_THICKNESS = clamp(floatProperty("mcopt.shade.clouds.blockThickness", 4f), 2f, 64f);
 	/** Absolute y of the cumulus base; NaN = vanilla's cloud height + 8. */
 	public static final float BASE = floatProperty("mcopt.shade.clouds.base", Float.NaN);
 	public static final float THICKNESS = clamp(floatProperty("mcopt.shade.clouds.thickness", 150f), 20f, 600f);

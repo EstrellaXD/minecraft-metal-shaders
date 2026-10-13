@@ -106,6 +106,40 @@ public final class ShadeClouds {
 	/** (1.1) The style last drawn (a switch drops the history once). */
 	private static int lastStyle = -1;
 
+	/**
+	 * (1.1) The game's cloud texture uploaded as a mask (mc_clouds_vanilla): the blocky style then draws vanilla's own cloud
+	 * shapes (12 x 4 x 12 cells drifting as vanilla's do), not the weather map's cells. Tried once per state; false = the
+	 * weather map's cells (the Storybook look's blocky clouds before 1.1).
+	 */
+	private static boolean vanillaMask, vanillaTried;
+	private static int vanillaW = 256, vanillaH = 256;
+	private static double lastVanillaX = Double.NaN;
+
+	/** Loads textures/environment/clouds.png (resource packs included) into the native mask; false when it can't. */
+	private static boolean loadVanillaMask(long ctx) {
+		vanillaTried = true;
+		Minecraft mc = Minecraft.getInstance();
+		try (java.io.InputStream in = mc.getResourceManager().open(net.minecraft.resources.Identifier.withDefaultNamespace("textures/environment/clouds.png"));
+			com.mojang.blaze3d.platform.NativeImage img = com.mojang.blaze3d.platform.NativeImage.read(in)) {
+			int w = img.getWidth(), h = img.getHeight();
+			ByteBuffer mask = MemoryUtil.memAlloc(w * h);
+			try {
+				// a cell holds a cloud as vanilla's CloudRenderer.isCellEmpty says (alpha 10 and up)
+				for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) mask.put(y * w + x, (byte) (ARGB.alpha(img.getPixel(x, y)) >= 10 ? 255 : 0));
+				if (CloudNative.vanilla(state, ctx, MemoryUtil.memAddress(mask), w, h) == 0) return false;
+			} finally {
+				MemoryUtil.memFree(mask);
+			}
+			vanillaW = w;
+			vanillaH = h;
+			System.out.println("[mcopt] shade clouds: blocky style with the game's cloud texture (" + w + "x" + h + ")");
+			return true;
+		} catch (Throwable t) {
+			System.out.println("[mcopt] shade clouds: no vanilla cloud texture for the blocky style (" + t + "); the weather map's cells instead");
+			return false;
+		}
+	}
+
 	/** (1.1) The blocky style this frame (ShadeSettings "Clouds: Blocky", live; was CloudConfig.BLOCKY at startup). */
 	public static boolean blocky() {
 		return mcopt.metal.shade.ShadeSettings.clouds() == mcopt.metal.shade.ShadeSettings.CLOUDS_BLOCKY;
@@ -217,8 +251,25 @@ public final class ShadeClouds {
 			p.windStepX = sx;
 			p.windStepZ = sz;
 			float vanillaHeight = game.levelRenderState.cloudHeight;
-			p.base = Float.isNaN(CloudConfig.BASE) ? (Float.isFinite(vanillaHeight) && vanillaHeight > 0f ? vanillaHeight + 8f : 200f) : CloudConfig.BASE;
-			p.top = p.base + (blocky() ? CloudConfig.BLOCK_THICKNESS : CloudConfig.THICKNESS);
+			// (1.1) the blocky style with the game's cloud texture: vanilla's cells at vanilla's height, 4 blocks thick (its fancy
+			// clouds; mcopt.shade.clouds.blockThickness overrides), drifting as its CloudRenderer moves them (0.03 blocks per tick
+			// along x, the texture offset 3.96 blocks along z)
+			if (blocky() && !vanillaTried) vanillaMask = loadVanillaMask(ctx);
+			boolean cells = blocky() && vanillaMask;
+			p.vanillaCells = cells;
+			if (cells) {
+				double drift = ((level.getGameTime() % (vanillaW * 400L)) + f.partialTick) * 0.03;
+				double step = Double.isNaN(lastVanillaX) ? 0.0 : drift - lastVanillaX;
+				lastVanillaX = drift;
+				p.vanillaX = drift;
+				p.vanillaStepX = Math.abs(step) < 4.0 ? (float) step : 0f; // (the offset wraps once per texture width)
+				p.vanillaPeriodX = vanillaW * 12.0;
+				p.vanillaPeriodZ = vanillaH * 12.0;
+			} else {
+				lastVanillaX = Double.NaN;
+			}
+			p.base = Float.isNaN(CloudConfig.BASE) ? (Float.isFinite(vanillaHeight) && vanillaHeight > 0f ? vanillaHeight + (cells ? 0f : 8f) : 200f) : CloudConfig.BASE;
+			p.top = p.base + (blocky() ? (cells ? CloudConfig.VANILLA_THICKNESS : CloudConfig.BLOCK_THICKNESS) : CloudConfig.THICKNESS);
 			p.histW = hw;
 			p.histH = hh;
 			p.marchW = mw;
@@ -241,7 +292,7 @@ public final class ShadeClouds {
 			p.shadowUpdate = CloudConfig.SHADOWS && ((p.frame & 3) == 3 || p.reset);
 			p.pack(PACKED, f, WEATHER);
 			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (CloudConfig.DOME && (dome || p.reset) ? 4 : 0)
-				| (CloudConfig.GPU_TIMER ? 8 : 0) | ((mode & CloudConfig.MODE_STABLE) != 0 ? 16 : 0);
+				| (CloudConfig.GPU_TIMER ? 8 : 0) | ((mode & CloudConfig.MODE_STABLE) != 0 ? 16 : 0) | (cells ? 32 : 0);
 			if (!p.reset) {
 				if ((dev & CloudConfig.DEV_NO_SCREEN) != 0) flags &= ~2;   // pricing: no march / resolve (the consumers read the old history)
 				if ((dev & CloudConfig.DEV_NO_MAPS) != 0) flags &= ~(1 | 4); // pricing: no shadow map / dome pass
@@ -305,6 +356,7 @@ public final class ShadeClouds {
 				return false;
 			}
 			state = s;
+			vanillaTried = false; // (1.1) a new state has no cloud mask yet
 			System.out.println("[mcopt] shade: volumetric clouds on (" + CloudConfig.describe() + ")");
 			return true;
 		} finally {

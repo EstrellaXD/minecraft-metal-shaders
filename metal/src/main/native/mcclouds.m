@@ -26,6 +26,7 @@ typedef struct {
 	id<MTLRenderPipelineState> over;  // cloud_over for the HDR scene's format (made on first use)
 	MTLPixelFormat overFormat;
 	id<MTLTexture> noise, weather, shadowMap;
+	id<MTLTexture> vanilla; // (1.1) the game's cloud texture as a 0/1 mask (mc_clouds_vanilla): the blocky style's cells
 	id<MTLTexture> marchColor, marchDist, hist[2], data[2], dataSt[2], domeTex[2];
 	int hw, hh, mw, mh, dw, dh, cur, domeCur;
 	// GPU timer (flag 8): fragment start/end per pass, a ring of 4 frames
@@ -215,6 +216,7 @@ void mc_clouds_free(CloudState *s) {
 	[s->over release];
 	[s->noise release];
 	[s->weather release];
+	[s->vanilla release];
 	[s->shadowMap release];
 	[s->marchColor release];
 	[s->marchDist release];
@@ -298,12 +300,33 @@ static void cloudPass(id<MTLCommandBuffer> cb, id<MTLRenderPipelineState> p, id<
 	[r endEncoding];
 }
 
+// (1.1) The game's cloud texture (textures/environment/clouds.png, resource packs included) as an R8 mask, w x h bytes (255 = a
+// cloud cell): with render flag 32 the passes read it in place of the weather map (the blocky style: vanilla's own cloud shapes,
+// ray-traced and lit). Replaces any earlier mask. Returns 1 when made.
+int mc_clouds_vanilla(CloudState *s, Ctx *ctx, const uint8_t *mask, int w, int h) {
+	if (!s || !mask || w <= 0 || h <= 0) return 0;
+	@autoreleasepool {
+		MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:(NSUInteger) w height:(NSUInteger) h mipmapped:NO];
+		td.storageMode = MTLStorageModeShared;
+		td.usage = MTLTextureUsageShaderRead;
+		id<MTLTexture> t = [ctx->device newTextureWithDescriptor:td];
+		if (!t) return 0;
+		t.label = @"mcopt shade: vanilla cloud cells";
+		[t replaceRegion:MTLRegionMake2D(0, 0, (NSUInteger) w, (NSUInteger) h) mipmapLevel:0 withBytes:mask bytesPerRow:(NSUInteger) w];
+		[s->vanilla release]; // frames in flight keep the old one alive (command buffers retain what they use)
+		s->vanilla = t;
+		return 1;
+	}
+}
+
 // One frame of clouds on the frame's command buffer (ending any open render encoder; the backend reopens its own).
 // params: CloudParams (clouds.metal), bytes long. flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer,
-// 16 the M3.3 resolve (cloud_resolve_st with its R16Uint data; the Java side drops the history when this changes).
+// 16 the M3.3 resolve (cloud_resolve_st with its R16Uint data; the Java side drops the history when this changes), 32 (1.1) the
+// vanilla cloud mask (mc_clouds_vanilla) bound in place of the weather map (texture 0).
 void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, int flags) {
 	if (!s || !s->hist[0]) return;
 	@autoreleasepool {
+		id<MTLTexture> weather = (flags & 32) && s->vanilla ? s->vanilla : s->weather;
 		id<MTLCommandBuffer> cb = mc_frame_cmd(enc);
 		id<MTLDevice> dev = cb.device;
 		id<MTLCounterSampleBuffer> times = nil;
@@ -320,11 +343,11 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 			}
 		}
 		if (flags & 1) {
-			id<MTLTexture> in[2] = {s->weather, s->noise};
+			id<MTLTexture> in[2] = {weather, s->noise};
 			cloudPass(cb, s->shadow, s->shadowMap, nil, @"mcopt shade: cloud shadow", params, bytes, in, 2, times, base);
 		}
 		if (flags & 2) {
-			id<MTLTexture> in[2] = {s->weather, s->noise};
+			id<MTLTexture> in[2] = {weather, s->noise};
 			cloudPass(cb, s->march, s->marchColor, s->marchDist, @"mcopt shade: cloud march", params, bytes, in, 2, times, base + 2);
 			int next = s->cur ^ 1;
 			BOOL st = (flags & 16) != 0;
@@ -335,7 +358,7 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 		}
 		if (flags & 4) {
 			int next = s->domeCur ^ 1;
-			id<MTLTexture> in[3] = {s->weather, s->noise, s->domeTex[s->domeCur]};
+			id<MTLTexture> in[3] = {weather, s->noise, s->domeTex[s->domeCur]};
 			cloudPass(cb, s->dome, s->domeTex[next], nil, @"mcopt shade: cloud dome", params, bytes, in, 3, times, base + 6);
 			s->domeCur = next;
 		}

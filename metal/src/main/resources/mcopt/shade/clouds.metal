@@ -299,11 +299,19 @@ static bool cloudSegment(CloudRay r, float yb, float yt, float ground, float max
 
 // Blocky style: whether the 12-block cell at wrapped world xz holds a cloud (the weather map's cells at the cell's centre,
 // with the day's coverage), like vanilla's cloud texture but following our weather.
-static inline bool cloudBlockCell(float2 xz, constant CloudParams &c, texture2d<half> weather) {
-	float2 cell = floor(xz / CLOUD_BLOCK);
+// (1.1) art.w 2: the game's own cloud texture (ShadeClouds: textures/environment/clouds.png as a 0/1 mask, bound in place of the
+// weather map; one texel per 12-block cell, origin.xy in its space as vanilla's CloudRenderer places it).
+static inline bool cloudBlockFilled(float2 cell, constant CloudParams &c, texture2d<half> weather) {
+	if (c.art.w > 1.5) {
+		float2 size = float2(weather.get_width(), weather.get_height());
+		return weather.sample(cloudRep, (cell + 0.5) / size, level(0.0)).r > 0.5h;
+	}
 	half4 w = weather.sample(cloudRep, (cell + 0.5) * (CLOUD_BLOCK / CLOUD_WEATHER_TILE), level(0.0));
 	float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
 	return float(w.g) > 1.0 - cov;
+}
+static inline bool cloudBlockCell(float2 xz, constant CloudParams &c, texture2d<half> weather) {
+	return cloudBlockFilled(floor(xz / CLOUD_BLOCK), c, weather);
 }
 
 // (FT2.10, CloudParams.dome.y) far clouds' bases spread: with every base on the layer's floor, the clouds beyond ~1000 blocks lined up
@@ -812,9 +820,7 @@ static CloudResult cloudBlocky(float3 dir, constant CloudParams &c, texture2d<ha
 	int axis = -1;
 	bool hit = false;
 	for (int i = 0; i < 160; i++) {
-		half4 w = weather.sample(cloudRep, (cell + 0.5) * (CLOUD_BLOCK / CLOUD_WEATHER_TILE), level(0.0));
-		float cov = saturate(c.shape.x + (float(w.r) - 0.5) * 0.55);
-		if (float(w.g) > 1.0 - cov) {
+		if (cloudBlockFilled(cell, c, weather)) {
 			hit = true;
 			break;
 		}

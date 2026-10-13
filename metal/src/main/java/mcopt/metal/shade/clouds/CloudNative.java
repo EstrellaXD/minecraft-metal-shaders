@@ -33,6 +33,7 @@ final class CloudNative {
 	private static final MethodHandle OUTPUTS = fn("mc_clouds_outputs", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle TIMES = fn("mc_clouds_times", null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle FREE = fn("mc_clouds_free", null, JAVA_LONG);
+	private static final MethodHandle VANILLA = fn("mc_clouds_vanilla", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 	private static final MethodHandle OVER = fn("mc_clouds_over", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
 
 	private CloudNative() {
@@ -65,7 +66,19 @@ final class CloudNative {
 		}
 	}
 
-	/** flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer, 16 the M3.3 resolve (cloud_resolve_st, R16Uint data). */
+	/** (1.1) The game's cloud texture as a w x h byte mask (255 = cloud) at address mask; 1 when made. */
+	static int vanilla(long state, long ctx, long mask, int w, int h) {
+		try {
+			return (int) VANILLA.invokeExact(state, ctx, mask, w, h);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/**
+	 * flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer, 16 the M3.3 resolve (cloud_resolve_st, R16Uint data),
+	 * 32 (1.1) the vanilla cloud mask in place of the weather map.
+	 */
 	static void render(long enc, long state, long params, int bytes, int flags) {
 		try {
 			RENDER.invokeExact(enc, state, params, bytes, flags);

@@ -57,6 +57,13 @@ public final class CloudParams {
 	public float base = 200f, top = 350f;
 	/** Accumulated wind displacement (blocks) of the cumulus (2D field), of the 3D noise, and of the cirrus. */
 	public double windX, windZ, wind3X, wind3Z, cirrusX, cirrusZ;
+	/**
+	 * (1.1) The blocky style with the game's cloud texture this frame (ShadeClouds): origin in its space (vanilla's drift along x
+	 * and the 3.96-block z offset, wrapped to the texture's size in blocks), its drift as the history's motion, no cirrus.
+	 */
+	public boolean vanillaCells;
+	public double vanillaX, vanillaPeriodX = 3072.0, vanillaPeriodZ = 3072.0;
+	public float vanillaStepX;
 	/** How far the cumulus moved since last frame (blocks). */
 	public float windStepX, windStepZ;
 	public float opacity = 1f;
@@ -93,9 +100,15 @@ public final class CloudParams {
 		float storm = w.storm;
 		float sigma = 0.15f * CloudConfig.DENSITY * (1f + 0.6f * storm);
 		put4(b, 176, w.coverage, w.type, sigma, 0.78f);
-		put4(b, 192, (float) wrap(f.cameraX + this.windX, WEATHER_PERIOD), (float) wrap(f.cameraZ + this.windZ, WEATHER_PERIOD),
-			(float) wrap(f.cameraX + this.wind3X, NOISE_PERIOD), (float) wrap(f.cameraZ + this.wind3Z, NOISE_PERIOD));
-		put4(b, 208, this.windStepX, this.windStepZ, CloudConfig.CIRRUS ? w.cirrus : 0f, storm);
+		if (this.vanillaCells) {
+			put4(b, 192, (float) wrap(f.cameraX + this.vanillaX, this.vanillaPeriodX), (float) wrap(f.cameraZ + 3.96, this.vanillaPeriodZ),
+				(float) wrap(f.cameraX + this.wind3X, NOISE_PERIOD), (float) wrap(f.cameraZ + this.wind3Z, NOISE_PERIOD));
+			put4(b, 208, this.vanillaStepX, 0f, 0f, storm); // (no cirrus: the mask is bound in place of the weather map it reads)
+		} else {
+			put4(b, 192, (float) wrap(f.cameraX + this.windX, WEATHER_PERIOD), (float) wrap(f.cameraZ + this.windZ, WEATHER_PERIOD),
+				(float) wrap(f.cameraX + this.wind3X, NOISE_PERIOD), (float) wrap(f.cameraZ + this.wind3Z, NOISE_PERIOD));
+			put4(b, 208, this.windStepX, this.windStepZ, CloudConfig.CIRRUS ? w.cirrus : 0f, storm);
+		}
 
 		// the light the layer gets: the sun until it is well below the horizon (the clouds' altitude sees it longer than the
 		// ground), then the moon
@@ -173,7 +186,7 @@ public final class CloudParams {
 		put4(b, 400, sl[0], ly, sl[2], this.mode);
 		// art: a low sun gets fewer, dimmer scattering octaves (more contrast: gold sunlit sides, darker bodies)
 		float low = this.sunLit ? 1f - smoothstep(0.03f, 0.3f, sunY) : 0f;
-		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, ShadeClouds.blocky() ? 1f : 0f);
+		put4(b, 416, OCTAVE_WEIGHT - 0.15f * low, OCTAVE_EXTINCTION, SKY_EXTINCTION, ShadeClouds.blocky() ? (this.vanillaCells ? 2f : 1f) : 0f);
 		// wind shear: the tops lean downwind by ~40 blocks over the layer (more on windy days)
 		float shear = ShadeClouds.blocky() ? 0f : 25f + 3f * w.windSpeed;
 		put4(b, 432, w.windX * shear, w.windZ * shear, OD_STEP, OD_MIN);

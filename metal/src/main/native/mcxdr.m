@@ -101,6 +101,22 @@ uint32_t mc_layer_display(CAMetalLayer *layer) {
 	}
 }
 
+// (1.1.1) One line for bug reports (latest.log): the OS version and build, Low Power Mode, and every screen (pixels, top
+// refresh rate, potential EDR headroom), the window's marked with *.
+void mc_system_info(CAMetalLayer *layer, char *out, int cap) {
+	@autoreleasepool {
+		NSScreen *mine = [NSThread isMainThread] ? layerScreen(layer) : nil;
+		NSProcessInfo *p = [NSProcessInfo processInfo];
+		NSMutableString *s = [NSMutableString stringWithFormat:@"macOS %@%@", p.operatingSystemVersionString, p.lowPowerModeEnabled ? @", Low Power Mode" : @""];
+		for (NSScreen *sc in [NSScreen screens]) {
+			NSSize px = [sc convertRectToBacking:sc.frame].size;
+			[s appendFormat:@"; %@%@ %.0fx%.0f %ld Hz EDR %.1f", sc == mine ? @"*" : @"", sc.localizedName, px.width, px.height,
+				(long) sc.maximumFramesPerSecond, sc.maximumPotentialExtendedDynamicRangeColorComponentValue];
+		}
+		snprintf(out, cap, "%s", s.UTF8String);
+	}
+}
+
 // The current EDR headroom of the layer's screen (1 = SDR only; rises once an EDR layer is on screen; depends on the
 // brightness slider), or its potential with potential = 1.
 float mc_xdr_headroom(CAMetalLayer *layer, int potential) {

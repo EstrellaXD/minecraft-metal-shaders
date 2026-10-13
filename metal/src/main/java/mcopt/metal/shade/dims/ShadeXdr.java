@@ -39,7 +39,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  */
 public final class ShadeXdr {
 	private static final Linker LINKER = Linker.nativeLinker();
-	private static @Nullable MethodHandle enable, isOn, supported, headroom, frame, pso2, pass2;
+	private static @Nullable MethodHandle enable, isOn, supported, headroom, frame, pso2, pass2, systemInfo;
 	private static boolean decided, on, confirmed, edrHere = true;
 	private static long layer;
 	private static float loggedHeadroom = -1f, peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
@@ -72,6 +72,7 @@ public final class ShadeXdr {
 		frame = fn("mc_xdr_frame", null, JAVA_LONG, JAVA_LONG);
 		pso2 = fn("mc_xdr_pso2", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 		pass2 = fn("mc_xdr_pass2", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG);
+		systemInfo = fn("mc_system_info", null, JAVA_LONG, JAVA_LONG, JAVA_INT);
 	}
 
 	/** MetalSurface.configure, before the layer's format is set (every configure; the decision is taken the first time). */
@@ -81,6 +82,12 @@ public final class ShadeXdr {
 		decided = true;
 		try {
 			link();
+			// (1.1.1) the OS build and the screens, for bug reports (e.g. from macOS 27)
+			try (MemoryStack stack = MemoryStack.stackPush()) {
+				long buf = stack.nmalloc(1, 1024);
+				systemInfo.invokeExact(metalLayer, buf, 1024);
+				System.out.println("[mcopt] shade: system: " + MemoryUtil.memUTF8(buf));
+			}
 			int mode = DimsConfig.XDR;
 			boolean can = (int) supported.invokeExact() != 0;
 			potential = (float) headroom.invokeExact(metalLayer, 1);

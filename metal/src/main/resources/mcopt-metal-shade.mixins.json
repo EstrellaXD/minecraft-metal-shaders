@@ -4,6 +4,7 @@
 	"plugin": "mcopt.metal.mixin.shade.ShadeMixinPlugin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"ShadeFaceShadeMixin",
 		"ShadeFogMixin",
 		"ShadeGameRendererMixin",
 		"ShadeLevelRendererMixin",

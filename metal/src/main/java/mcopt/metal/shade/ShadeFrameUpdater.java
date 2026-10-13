@@ -74,7 +74,7 @@ public final class ShadeFrameUpdater {
 	private static volatile int metal;
 
 	/**
-	 * Whether Sodium meshes without vanilla's face shade (Sodium*FaceShadeMixin): Shade.faceShadeOff() and the Metal backend
+	 * Whether chunks mesh without vanilla's face shade (ShadeFaceShadeMixin): Shade.faceShadeOff() and the Metal backend
 	 * actually running (the device's backend name, read once it exists), so falling back to OpenGL keeps vanilla's look.
 	 */
 	public static boolean faceShadeOff() {

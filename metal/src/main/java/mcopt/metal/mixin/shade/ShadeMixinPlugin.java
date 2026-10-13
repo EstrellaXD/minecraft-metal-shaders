@@ -42,6 +42,8 @@ public final class ShadeMixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+		// mcopt 0.3 port: vanilla's face shade off in meshing only once the terrain shader lights faces itself (P2)
+		if (mixinClassName.endsWith(".ShadeFaceShadeMixin")) return mcopt.metal.shade.Shade.ENABLED && mcopt.metal.shade.terrain.ShadeTerrain.LIT;
 		return mcopt.metal.shade.Shade.ENABLED;
 	}
 

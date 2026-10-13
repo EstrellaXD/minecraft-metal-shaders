@@ -74,7 +74,7 @@ public final class Shade {
 		ShadeSky.celestial(angle, out);
 	}
 
-	/** Vertex colours without vanilla's directional face shade (the shaders light faces themselves); see mixin.shade.Sodium*FaceShadeMixin and ShadeFrameUpdater.faceShadeOff. */
+	/** Vertex colours without vanilla's directional face shade (the shaders light faces themselves); see mixin.shade.ShadeFaceShadeMixin and ShadeFrameUpdater.faceShadeOff. */
 	private static volatile boolean faceShadeOff = ENABLED;
 	private static boolean initialized;
 

@@ -143,7 +143,13 @@ static int ensurePipelines(id<MTLDevice> device) {
 	if (xdrCompose && xdrCompose16 && xdrPresent) return 1;
 	@autoreleasepool {
 		NSError *e = nil;
-		if (!xdrLib) xdrLib = [device newLibraryWithSource:[NSString stringWithUTF8String:xdrSource] options:nil error:&e];
+		if (!xdrLib) {
+			// (1.1.1) pinned to MSL 3.0 like the other shade libraries: with no options a library compiles as the newest MSL
+			// the OS has (4.1 on macOS 27), so the same source would build differently there (math stays the default, relaxed)
+			MTLCompileOptions *o = [[MTLCompileOptions new] autorelease];
+			o.languageVersion = MTLLanguageVersion3_0;
+			xdrLib = [device newLibraryWithSource:[NSString stringWithUTF8String:xdrSource] options:o error:&e];
+		}
 		if (!xdrLib) {
 			NSLog(@"mcopt shade xdr: %@", e);
 			return 0;

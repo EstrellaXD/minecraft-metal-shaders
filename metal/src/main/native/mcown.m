@@ -12,6 +12,7 @@ typedef struct {
 	int colorCount;
 	int cutout;
 	id<MTLRenderPipelineState> pso;
+	int shadeFs;  // mcopt-shade: the shade fragment library's key this state was built with, -1 own's own stages
 } OwnLayout;
 
 typedef struct {
@@ -129,8 +130,12 @@ typedef struct {
 	void *a1sGKey[4];  // (a grouped-halves buffer per tl.a1Split out buffer, so frames in flight never share one)
 	id<MTLBuffer> a1sGBufs[4];
 	// mcopt-shade (native shading): the library was built with the shade prefix (mco_shade): the fragment stages' game uniforms
-	// and atlas are bound at terrain.metal's OWN_FS_* slots, and pipelines drawing into the HDR world target get SHADE_OWN_HDR
+	// and atlas are bound at terrain.metal's OWN_FS_* slots, and pipelines drawing into the HDR world target get SHADE_OWN_HDR.
+	// shadeLib: this frame's libraries with shade_own_fs (mcopt/shade/terrain_own.metal) for the opaque layers (0) and the
+	// translucent one (1), built for the HDR world target or not (shadeHdrLib), shadeKey their variant (mco_shade_fs); nil: own_fs
 	int shade;
+	id<MTLLibrary> shadeLib[2];
+	int shadeKey, shadeHdrLib;
 } Own;
 
 static void ownErr(NSError *e, const char *what, char *err, int cap) {
@@ -271,6 +276,15 @@ void *mco_contents(id<MTLBuffer> b) {
 // mcopt-shade (native shading, ShadeTerrain.created): w's library was built with the shade prefix (see Own.shade).
 void mco_shade(Own *w, int on) {
 	w->shade = on;
+}
+
+// mcopt-shade (ShadeTerrain.frame, every frame): the shaded fragment stage's libraries (not retained: Java keeps them for the
+// session) and their variant key; pipeline states are cached per key (ShadeLean: a lean variant changes the stage).
+void mco_shade_fs(Own *w, id<MTLLibrary> opaque, id<MTLLibrary> translucent, int key, int hdr) {
+	w->shadeLib[0] = opaque;
+	w->shadeLib[1] = translucent;
+	w->shadeKey = key;
+	w->shadeHdrLib = hdr;
 }
 
 void mco_release(id obj) {
@@ -507,7 +521,8 @@ void mco_cull(Own *w, Enc *enc, const void *frame, int frameLength, id<MTLBuffer
 // frag variants: a stage specialized for kind (bits 0-3 fragment kind, 4-5 vertex probe mode, 18 F_HALF, 19 F_LEAN, 20 F_NONIDX, 21 mesh,
 // 22 F_REVERSE, 23 mesh with a thread per vertex, 25 F_TIGHT, 26 F_POSONLY (fragment kind 7 = own_fs_pos), 27 F_OCCA, 28 F_OCCB),
 // made on first use and kept. vertex: 0 the fragment stage, 1 the vertex stage, 2 the mesh stage. nil (err set) if it can't be made.
-// shadeHdr (mcopt-shade): the fragment stage with terrain.metal's SHADE_OWN_HDR (function constant 40) set.
+// shadeHdr (mcopt-shade): bit 0 the fragment stage with terrain.metal's SHADE_OWN_HDR (function constant 40) set; bit 1 the
+// fragment stage is shade_own_fs from this frame's shade library (opaque or translucent), specialized with the same constants.
 static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char *err, int errCap) {
 	int frag = kind & 15, vsMode = (kind >> 4) & 3, translucent = frag == 3;
 	bool half = (kind >> 18) & 1, lean = (kind >> 19) & 1, nonidx = (kind >> 20) & 1, rev = (kind >> 22) & 1, quads = (kind >> 7) & 1,
@@ -522,9 +537,14 @@ static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char
 		: frag == 7 ? @"own_fs_pos"
 		: frag == 6 ? @"own_fs_alpha"
 		: frag == 2 ? @"own_fs_flat" : @"own_fs";
+	id<MTLLibrary> lib = w->library;
+	if ((shadeHdr & 2) && !vertex) {  // (mcopt-shade)
+		lib = w->shadeLib[translucent];
+		name = @"shade_own_fs";
+	}
 	NSString *key = [NSString stringWithFormat:@"%@ %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d%@", name, vertex ? vsMode | translucent << 2 | quads << 3 : frag, half, lean, nonidx,
 		rev, tight, posonly, occA, occB, (kind >> 29) & 1, oracle, fogvert, fogvertAll, fogvertT, qflat, group ? @" g" : @""];
-	if (shadeHdr && !vertex) key = [key stringByAppendingString:@" hdr"];  // (mcopt-shade)
+	if (shadeHdr && !vertex) key = [key stringByAppendingFormat:@" hdr%d k%d", shadeHdr, (shadeHdr & 2) ? w->shadeKey : 0];  // (mcopt-shade)
 	id<MTLFunction> fn = w->functions[key];
 	if (fn) return fn;
 	MTLFunctionConstantValues *cv = [[MTLFunctionConstantValues new] autorelease];
@@ -557,13 +577,13 @@ static id<MTLFunction> ownStage(Own *w, int kind, int vertex, int shadeHdr, char
 		[cv setConstantValue:&cut type:MTLDataTypeBool atIndex:0];
 		[cv setConstantValue:&limit type:MTLDataTypeFloat atIndex:5];
 		[cv setConstantValue:&lvl type:MTLDataTypeBool atIndex:6];
-		if (shadeHdr) {
+		if (shadeHdr & 1) {
 			bool hdr = true;
 			[cv setConstantValue:&hdr type:MTLDataTypeBool atIndex:40];  // (mcopt-shade: terrain.metal SHADE_OWN_HDR)
 		}
 	}
 	NSError *e = nil;
-	fn = [w->library newFunctionWithName:name constantValues:cv error:&e];
+	fn = [lib newFunctionWithName:name constantValues:cv error:&e];
 	if (!fn) {
 		ownErr(e, key.UTF8String, err, errCap);
 		return nil;
@@ -583,18 +603,24 @@ static NSString *ownLayerName(int kind) {
 }
 
 static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char *err, int errCap) {
+	// mcopt-shade: a shade library's pipelines into the HDR world target (RGBA16Float or RG11B10Float colour) are specialized
+	// (SHADE_OWN_HDR); solid, cutout and translucent draws into the target this frame's shade library was built for take its
+	// shade_own_fs (not the probes' and measurement kinds, nor the oracle's or position-only stages)
+	int hdrTarget = enc->colorCount > 0 && enc->colors[0]
+		&& (enc->colors[0].pixelFormat == MTLPixelFormatRGBA16Float || enc->colors[0].pixelFormat == MTLPixelFormatRG11B10Float);
+	int shadeHdr = w->shade && hdrTarget;
+	int shadeFrag = cutout & 15;
+	int shadeFs = w->shade && (shadeFrag == 0 || shadeFrag == 1 || shadeFrag == 3) && w->shadeLib[shadeFrag == 3] && hdrTarget == w->shadeHdrLib
+		&& !(cutout & ((1 << 26) | (1 << 30))) ? w->shadeKey : -1;
 	for (int i = 0; i < w->layoutCount; i++) {
 		OwnLayout *k = &w->layouts[i];
-		if (k->colorCount != enc->colorCount || k->cutout != cutout) continue;
+		if (k->colorCount != enc->colorCount || k->cutout != cutout || k->shadeFs != shadeFs) continue;
 		if ((enc->depth ? enc->depth.pixelFormat : MTLPixelFormatInvalid) != k->depth) continue;
 		int same = 1;
 		for (int c = 0; c < enc->colorCount; c++)
 			if ((enc->colors[c] ? enc->colors[c].pixelFormat : MTLPixelFormatInvalid) != k->colors[c]) same = 0;
 		if (same) return k->pso;
 	}
-	// mcopt-shade: a shade library's pipelines into the HDR world target (RGBA16Float or RG11B10Float colour) are specialized
-	int shadeHdr = w->shade && enc->colorCount > 0 && enc->colors[0]
-		&& (enc->colors[0].pixelFormat == MTLPixelFormatRGBA16Float || enc->colors[0].pixelFormat == MTLPixelFormatRG11B10Float);
 	@autoreleasepool {
 		MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
 		pd.label = ownLayerName(cutout);
@@ -605,10 +631,10 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 		pd.fragmentFunction = frag == 6 ? w->fsAlpha : frag == 5 ? w->fsCutoutLevel : frag == 4 ? w->fsSolidLevel : frag == 3 ? w->fsTranslucent : frag == 2 ? w->fsFlat
 			: frag ? w->fsCutout : w->fsSolid;
 		// (bit 12, a1Exact / a2Exact's table draw: its vertex stage must be the F_QFLAT variant; a plain one would read the table as a list)
-		if ((cutout & ((0x1f << 18) | (0x3f << 25) | (7 << 13) | (1 << 12) | (1 << 11))) || frag >= 8 || shadeHdr) {  // (kinds 8-10: own_fs_tex / _nofade / _nofog, made only as variants)
+		if ((cutout & ((0x1f << 18) | (0x3f << 25) | (7 << 13) | (1 << 12) | (1 << 11))) || frag >= 8 || shadeHdr || shadeFs >= 0) {  // (kinds 8-10: own_fs_tex / _nofade / _nofog, made only as variants)
 			// frag variants: both stages specialized alike (the vertex outputs and fragment inputs must match)
 			pd.vertexFunction = ownStage(w, cutout, 1, 0, err, errCap);
-			pd.fragmentFunction = ownStage(w, cutout, 0, shadeHdr, err, errCap);
+			pd.fragmentFunction = ownStage(w, cutout, 0, shadeHdr | (shadeFs >= 0 ? 2 : 0), err, errCap);
 			if (!pd.vertexFunction || !pd.fragmentFunction) return nil;
 		}
 		MTLMeshRenderPipelineDescriptor *md = nil;
@@ -617,7 +643,7 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 			md = [[MTLMeshRenderPipelineDescriptor new] autorelease];
 			md.label = pd.label;
 			md.meshFunction = ownStage(w, cutout, 2, 0, err, errCap);
-			md.fragmentFunction = ownStage(w, cutout, 0, shadeHdr, err, errCap);
+			md.fragmentFunction = ownStage(w, cutout, 0, shadeHdr | (shadeFs >= 0 ? 2 : 0), err, errCap);
 			if (!md.meshFunction || !md.fragmentFunction) return nil;
 			md.maxTotalThreadsPerMeshThreadgroup = (cutout & (1 << 23)) ? 128 : 32;
 		}
@@ -666,6 +692,7 @@ static id<MTLRenderPipelineState> ownPipeline(Own *w, Enc *enc, int cutout, char
 		k->depth = pd.depthAttachmentPixelFormat;
 		k->cutout = cutout;
 		k->pso = pso;
+		k->shadeFs = shadeFs;
 		return pso;
 	}
 }
@@ -824,6 +851,10 @@ int mco_draw(Own *w, Enc *enc, int cutout, const void *frame, int frameLength, i
 	[r setVertexSamplerState:lightSampler atIndex:15];
 	[r setFragmentTexture:atlas atIndex:w->shade ? 26 : 16];
 	[r setFragmentSamplerState:atlasSampler atIndex:14];
+	if (w->shade) {  // (mcopt-shade: the lightmap per pixel, terrain.metal own_fs and shade_own_fs)
+		[r setFragmentTexture:light atIndex:27];
+		[r setFragmentSamplerState:lightSampler atIndex:15];
+	}
 drawCall:
 	if (w->vcount && !mesh) [r setVertexBuffer:w->vcount offset:0 atIndex:28];
 	if (cutout & (1 << 30)) {

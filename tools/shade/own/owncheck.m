@@ -1,23 +1,27 @@
 // Copyright 2026 mcopt-shade contributors. Licensed under the Apache License, Version 2.0
 // (http://www.apache.org/licenses/LICENSE-2.0). Dev tool for mcopt native shading, not part of the mod.
-// owncheck FILE.metal [shade]   (check.sh builds it and runs it on OwnDump's sources)
+// owncheck FILE.metal [shade [FRAG.metal ...]]   (check.sh builds it and runs it on OwnDump's sources)
 // Compiles mcopt's own terrain library like mcown.m mco_new (MSL 3.0, fast math), makes its compute kernels and base stages,
 // then builds render pipeline states for the draw kinds the indie profile uses, specialized as ownStage does (with
 // SHADE_OWN_HDR, function constant 40, when "shade" is given and the colour target is HDR), against RGBA16Float, RG11B10Float
-// and BGRA8Unorm colour + Depth32Float. Prints OK or the first error.
+// and BGRA8Unorm colour + Depth32Float. Each FRAG.metal (ShadeMsl.ownFragmentSource; a name with "_t_" = the translucent
+// layer's) is compiled as its own library and its shade_own_fs linked with own_vs as mcown.m does (opaque: solid and cutout
+// kinds; translucent: the translucent ones) against the HDR targets. Prints OK or the errors.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
 static id<MTLDevice> dev;
-static id<MTLLibrary> lib;
+static id<MTLLibrary> lib, fragLib;
 static int fails;
 
-static id<MTLFunction> fnc(NSString *name, MTLFunctionConstantValues *cv) {
+static id<MTLFunction> fncIn(id<MTLLibrary> from, NSString *name, MTLFunctionConstantValues *cv) {
 	NSError *e = nil;
-	id<MTLFunction> f = cv ? [lib newFunctionWithName:name constantValues:cv error:&e] : [lib newFunctionWithName:name];
+	id<MTLFunction> f = cv ? [from newFunctionWithName:name constantValues:cv error:&e] : [from newFunctionWithName:name];
 	if (!f) { printf("FAIL function %s: %s\n", name.UTF8String, e ? e.localizedDescription.UTF8String : "missing"); fails++; }
 	return f;
 }
+
+static id<MTLFunction> fnc(NSString *name, MTLFunctionConstantValues *cv) { return fncIn(lib, name, cv); }
 
 // ownStage's constants for kind (vertex 1: own_vs, 0: the fragment stage)
 static MTLFunctionConstantValues *stageConstants(int kind, int vertex, int hdr) {
@@ -66,7 +70,7 @@ static void pso(int kind, MTLPixelFormat color, int shade) {
 	NSString *fname = frag == 6 ? @"own_fs_alpha" : frag == 2 ? @"own_fs_flat" : @"own_fs";
 	MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
 	pd.vertexFunction = fnc(@"own_vs", stageConstants(kind, 1, 0));
-	pd.fragmentFunction = fnc(fname, stageConstants(kind, 0, hdr));
+	pd.fragmentFunction = fragLib ? fncIn(fragLib, @"shade_own_fs", stageConstants(kind, 0, hdr)) : fnc(fname, stageConstants(kind, 0, hdr));
 	if (!pd.vertexFunction || !pd.fragmentFunction) return;
 	pd.colorAttachments[0].pixelFormat = color;
 	pd.colorAttachments[0].writeMask = frag == 6 ? MTLColorWriteMaskNone : MTLColorWriteMaskAll;
@@ -86,12 +90,12 @@ static void pso(int kind, MTLPixelFormat color, int shade) {
 	// fragment bindings: report the buffer / texture slots the stage reads (they must be the shade layout with "shade")
 	NSMutableString *b = [NSMutableString string];
 	for (id<MTLBinding> x in refl.fragmentBindings) if (x.used) [b appendFormat:@" %@:%d", x.type == MTLBindingTypeBuffer ? @"b" : x.type == MTLBindingTypeTexture ? @"t" : x.type == MTLBindingTypeSampler ? @"s" : @"?", (int) [(id) x index]];
-	printf("OK   pso kind 0x%08x format %3d hdr %d fragment%s\n", kind, (int) color, hdr, b.UTF8String);
+	printf("OK   pso kind 0x%08x format %3d hdr %d %s fragment%s\n", kind, (int) color, hdr, fragLib ? "shade_own_fs" : "own", b.UTF8String);
 }
 
 int main(int argc, const char **argv) {
 	@autoreleasepool {
-		if (argc < 2) { fprintf(stderr, "usage: owncheck FILE.metal [shade]\n"); return 2; }
+		if (argc < 2) { fprintf(stderr, "usage: owncheck FILE.metal [shade [FRAG.metal ...]]\n"); return 2; }
 		int shade = argc > 2 && strcmp(argv[2], "shade") == 0;
 		dev = MTLCreateSystemDefaultDevice();
 		NSString *src = [NSString stringWithContentsOfFile:[NSString stringWithUTF8String:argv[1]] encoding:NSUTF8StringEncoding error:nil];
@@ -132,6 +136,24 @@ int main(int argc, const char **argv) {
 		for (int k = 0; k < (int) (sizeof kinds / sizeof kinds[0]); k++)
 			for (int f = 0; f < 3; f++) pso(kinds[k], formats[f], shade);
 		printf("%s  %d failures (pipelines %.0f ms)\n", fails ? "FAIL" : "OK  ", fails, -[t0 timeIntervalSinceNow] * 1000);
+		// the shaded fragment stage's libraries, linked with own_vs
+		int oKinds[] = {0, 1, 1 << 18, 1 | 1 << 18, (1 << 18) | (1 << 19), 1 | (1 << 18) | (1 << 19), (1 << 18) | (1 << 25), (1 << 18) | (1 << 11), (1 << 18) | (1 << 12)};
+		int tKinds[] = {3, 3 | 1 << 18, 3 | (1 << 18) | (1 << 19), 3 | (1 << 13) | (1 << 18)};
+		for (int a = 3; a < argc; a++) {
+			int failsBefore = fails;
+			NSString *fsrc = [NSString stringWithContentsOfFile:[NSString stringWithUTF8String:argv[a]] encoding:NSUTF8StringEncoding error:nil];
+			NSDate *t1 = [NSDate date];
+			fragLib = [dev newLibraryWithSource:fsrc options:o error:&e];
+			if (!fragLib) { printf("FAIL compile %s\n%s\n", argv[a], e.localizedDescription.UTF8String); fails++; continue; }
+			double fms = -[t1 timeIntervalSinceNow] * 1000;
+			bool translucent = strstr(argv[a], "_t_") != NULL;
+			int *ks = translucent ? tKinds : oKinds;
+			int nk = translucent ? (int) (sizeof tKinds / sizeof tKinds[0]) : (int) (sizeof oKinds / sizeof oKinds[0]);
+			for (int k = 0; k < nk; k++)
+				for (int f = 0; f < 2; f++) pso(ks[k], formats[f], 1);
+			printf("%s  %s (%.0f ms compile)\n", fails == failsBefore ? "OK  " : "FAIL", argv[a], fms);
+			fragLib = nil;
+		}
 		return fails ? 1 : 0;
 	}
 }

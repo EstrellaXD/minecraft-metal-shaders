@@ -15,10 +15,13 @@ public class OwnDump {
 		Files.writeString(out.resolve("own_plain_nodef.metal"), terrain);
 		String prefix = ShadeMsl.ownPrefix();
 		Files.writeString(out.resolve("own_shade.metal"), defines + prefix + terrain);
-		Files.writeString(out.resolve("own_shade_nodef.metal"), prefix + terrain);
-		// with the weather and water preludes too (the plan's full prefix; P2/P3 decide)
-		Files.writeString(out.resolve("own_shade_full.metal"), defines + prefix + mcopt.metal.shade.weather.ShadeWeather.prelude(false)
-			+ mcopt.metal.shade.water.ShadeWater.prelude() + terrain);
+		// the shaded fragment stage's libraries (ShadeTerrain): the full ones and a lean variant of each kind
+		int ow = ShadeMsl.LEAN_OW, dry = ShadeMsl.LEAN_DRY, nodl = ShadeMsl.LEAN_NODL;
+		int[] opaque = {0, ow, ow | dry | nodl, ShadeMsl.LEAN_NETHER, ShadeMsl.LEAN_NETHER | dry | nodl};
+		int[] translucent = {0, ow, ow | dry | nodl | ShadeMsl.LEAN_ABOVE, ow | dry | nodl | ShadeMsl.LEAN_ABOVE | ShadeMsl.LEAN_NOFALLS, ow | ShadeMsl.LEAN_NOFALLS,
+			ShadeMsl.LEAN_NETHER | dry};
+		for (int b : opaque) Files.writeString(out.resolve("frag_o_" + b + ".metal"), ShadeMsl.ownFragmentSource(false, b));
+		for (int b : translucent) Files.writeString(out.resolve("frag_t_" + b + ".metal"), ShadeMsl.ownFragmentSource(true, b));
 		System.out.println("prefix " + prefix.length() + " chars, terrain " + terrain.length());
 	}
 }

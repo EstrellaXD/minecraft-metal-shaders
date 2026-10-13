@@ -53,6 +53,11 @@ public final class ShadeRender {
 		return ShadeMsl.resource("shade_post.metal");
 	}
 
+	/** Whether the shade globals are set up (ShadeBindings: the device is known, {@link #library} can compile). */
+	public static boolean ready() {
+		return ShadeBindings.ready();
+	}
+
 	/** Compiles a library (MSL 3.0, fast math); throws with the compiler's message. */
 	public static long library(String source) {
 		// M3.3: dev-only injected failure (ShadeRobust, -Dmcopt.shade.dev.failCompile=library:<caller class>); inert unset

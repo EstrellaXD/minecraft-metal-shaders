@@ -107,14 +107,26 @@ public final class ShadeMsl {
 	}
 
 	/**
-	 * mcopt 0.3 port: what goes in front of mcopt's own terrain library (own/terrain.metal, through ShadeTerrain.prefix), in
-	 * terrain()'s order: the prelude (so its fragment stages build with MCOPT_SHADE: the shade globals' slots kept free,
-	 * SHADE_OWN_HDR's conversion), the weather module (wet surfaces, puddles, ripples, shadow tint) and the water module. One
-	 * library holds every layer's stages, so the weather module comes in its solid/cutout form (ShadeWeather.prelude(false));
-	 * P2/P3 of the port decide what the translucent stage takes from it.
+	 * mcopt 0.3 port: what goes in front of mcopt's own terrain library (own/terrain.metal, through ShadeTerrain.prefix):
+	 * MCOPT_SHADE (its fragment stages' slots kept clear of the shade globals, the shading varyings, the lightmap per pixel) and
+	 * shade_look.metal (own_fs's SHADE_OWN_HDR conversion, the vanilla-look fallback). The shading itself is in a library of its
+	 * own per variant: {@link #ownFragmentSource}.
 	 */
 	public static String ownPrefix() {
-		return prelude() + ShadeWeather.prelude(false) + (ShadeWater.MODULE ? ShadeWater.prelude() : "");
+		return "#define MCOPT_SHADE\n" + look();
+	}
+
+	/**
+	 * mcopt 0.3 port: the library with the terrain's shaded fragment stage (terrain_own.metal shade_own_fs) for own's opaque
+	 * layers or its translucent one, for lean variant leanBits (ShadeLean's tag bits, unshifted), assembled as terrain() and
+	 * the format adapter built Sodium's terrain stages up to 1.1: MCOPT_HDR (the world target is HDR), the lean defines, the
+	 * prelude, the weather module (its translucent form for the translucent layer), the water module (translucent layer only,
+	 * mcopt.shade.water), the stage.
+	 */
+	public static String ownFragmentSource(boolean translucent, int leanBits) {
+		return (ShadeConfig.HDR ? "#define MCOPT_HDR\n" : "") + leanDefines(leanBits << LEAN_SHIFT) + LEAN_TEST
+			+ (translucent ? "#define SHADE_OWN_TRANSLUCENT\n" : "") + prelude() + ShadeWeather.prelude(translucent)
+			+ (translucent && ShadeWater.MODULE ? ShadeWater.prelude() : "") + resource("terrain_own.metal");
 	}
 
 	/** shade_look.metal alone (self-contained): what the game's own fragments need for shadeLdrToHdr. */

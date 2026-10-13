@@ -1558,6 +1558,12 @@ struct VOut {
 	uint oracleUnit [[flat]] [[function_constant(F_ORACLE)]];
 	float fogF [[function_constant(F_FVT)]];
 	uint fogIn [[flat]] [[function_constant(F_FVT)]];
+#ifdef MCOPT_SHADE
+	// mcopt-shade (native shading lights per pixel: mcopt/shade/terrain_own.metal shade_own_fs reads these by name): the
+	// camera-relative position and the block / sky light 0..1; vertexColor then leaves the lightmap out
+	float3 shadePos [[function_constant(F_VARY)]];
+	half2 shadeLight [[function_constant(F_VARY)]];
+#endif
 };
 
 static void putColor(thread VOut &o, float4 c) {
@@ -1879,8 +1885,15 @@ static VOut ownShade(Vtx v, int3 origin, int uploadMs, constant DrawFrame &df, c
 		return o;
 	}
 	o.sphericalVertexDistance = length(pos);
+#ifdef MCOPT_SHADE
+	// (mcopt-shade: the lightmap per pixel instead: shade_own_fs, or own_fs below)
+	o.shadePos = pos;
+	o.shadeLight = half2(saturate(float2(int2(v.uv2)) / 240.0));
+	putColor(o, float4(v.color) / 255.0);
+#else
 	float2 luv = clamp(float2(int2(v.uv2)) / 256.0 + 0.5 / 16.0, float2(0.5 / 16.0), float2(15.5 / 16.0));
 	putColor(o, VS_MODE == 1 ? float4(v.color) / 255.0 : float4(v.color) / 255.0 * lightmap.sample(lightSampler, luv, level(0.0)));
+#endif
 	o.texCoord0 = float2(v.uv0);
 #ifdef OWN_TPROBE
 	if (TRANSLUCENT && OWN_TPROBE == 5) {
@@ -2210,7 +2223,9 @@ constant float CUTOUT_LIMIT [[function_constant(5)]];  // vanilla's ALPHA_CUTOUT
 // 16-19, 23, 24 and textures 16-25: shade_common.metal), where mcown.m binds them for such a library (mco_shade).
 // SHADE_OWN_HDR (function constant 40, set by mcown.m for pipelines whose colour target is the HDR world target): the colour
 // written is the target's pre-exposed scene-linear value of vanilla's display-referred one (shadeLdrToHdr, as
-// ShadeMsl.hdrFragment does for the game's own pipelines).
+// ShadeMsl.hdrFragment does for the game's own pipelines). own_fs is then the fallback (vanilla's look) for draws the shaded
+// stage doesn't take (mcopt/shade/terrain_own.metal, from a library of its own): its vertices carry no lightmap, so it samples
+// the lightmap per pixel (texture 27, sampler 15).
 #ifdef MCOPT_SHADE
 #define OWN_FS_GLOBALS 28
 #define OWN_FS_TERRAIN 29
@@ -2228,7 +2243,7 @@ constant bool SHADE_OWN_HDR = is_function_constant_defined(SHADE_OWN_HDR_SET) &&
 fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS_GLOBALS)]], constant Terrain &t [[buffer(OWN_FS_TERRAIN)]],
 	constant Fog &fog [[buffer(OWN_FS_FOG)]], texture2d<float> atlas [[texture(OWN_FS_ATLAS)]], sampler atlasSampler [[sampler(14)]]
 #ifdef MCOPT_SHADE
-	, constant ShadeLook &shadeLook [[buffer(17)]]
+	, constant ShadeLook &shadeLook [[buffer(17)]], texture2d<float> shadeLightmap [[texture(27)]], sampler shadeLightSampler [[sampler(15)]]
 #endif
 	) {
 #ifdef OWN_TPROBE
@@ -2243,6 +2258,9 @@ fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(OWN_FS
 	float2 pixelSize = 1.0f / float2(t.TextureSize);
 	float4 color = (g.UseRgss == 1 ? sampleRGSS(atlas, atlasSampler, in.texCoord0, pixelSize) : sampleNearest(atlas, atlasSampler, in.texCoord0, pixelSize))
 		* getColor(in);
+#ifdef MCOPT_SHADE
+	if (F_VARY) color *= shadeLightmap.sample(shadeLightSampler, clamp(float2(in.shadeLight) * (240.0 / 256.0) + 0.5 / 16.0, float2(0.5 / 16.0), float2(15.5 / 16.0)), level(0.0));
+#endif
 	// F_LEAN: the chunk visibility is 1 (mix(x, y, 1) is y), the render-distance fog value 0 (max(e, 0) is e for e >= 0)
 	if (F_RICH) color = mix(fog.FogColor * float4(1, 1, 1, color.a), color, in.chunkVisibility);
 	if (CUTOUT && color.a < CUTOUT_LIMIT) discard_fragment();

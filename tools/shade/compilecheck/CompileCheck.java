@@ -30,18 +30,38 @@ public final class CompileCheck {
 	public static void main(String[] a) throws Exception {
 		long ctx = MetalBridge.createHeadlessContext();
 		String mode = a[0] + " " + a[1];
+		// the module tasks below are timed as the game's render thread would time them (ShadeCompile.setup counts that thread only)
+		Thread.currentThread().setName("Render thread");
 		switch (mode) {
-			case "modules seq" -> report("one after another (the render thread before)", runEach(ShadeCompile.warmUpTasks(ctx)), -1);
+			case "modules seq" -> {
+				shade("worldStart");
+				report("one after another (the render thread before)", runEach(ShadeCompile.warmUpTasks(ctx)), -1);
+				summary();
+			}
 			case "modules par" -> {
 				long t0 = System.nanoTime();
 				ShadeCompile.start(ctx);
 				while (!ShadeCompile.warmUpDone()) Thread.sleep(2);
 				long wall = System.nanoTime() - t0;
+				shade("worldStart");
 				report("after the warm-up (the render thread now)", runEach(ShadeCompile.warmUpTasks(ctx)), wall);
+				summary();
 			}
 			case "prewarm seq", "prewarm par" -> prewarm(ctx, a[1].equals("par"), a[2], List.of(a).subList(3, a.length));
 			default -> throw new IllegalArgumentException("modes: modules seq|par, prewarm seq|par VS FS...");
 		}
+	}
+
+	/** ShadeCompile's package-private world hooks, as ShadeBindings.init / ShadeFrameUpdater call them. */
+	private static void shade(String method) throws Exception {
+		var m = ShadeCompile.class.getDeclaredMethod(method);
+		m.setAccessible(true);
+		m.invoke(null);
+	}
+
+	/** The startup summary the game logs after mcopt.shade.compile.summaryFrames world frames. */
+	private static void summary() throws Exception {
+		for (int i = 0; i < Integer.getInteger("mcopt.shade.compile.summaryFrames", 300); i++) shade("frame");
 	}
 
 	private static List<String> runEach(List<Map.Entry<String, Runnable>> tasks) {
@@ -54,6 +74,7 @@ public final class CompileCheck {
 			} catch (Throwable e) {
 				failed = " FAILED: " + e;
 			}
+			ShadeCompile.setup(t.getKey(), t0);
 			out.add(String.format(Locale.ROOT, "%.1f %s%s", (System.nanoTime() - t0) / 1e6, t.getKey(), failed));
 		}
 		return out;

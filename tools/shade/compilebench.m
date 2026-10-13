@@ -20,7 +20,7 @@
 //   --split       with -j: every library first, then every pipeline as a task of its own (pipelines of one library in
 //                 parallel too)
 // Prints one line per source (library ms, pipelines ms) and a summary: wall time, the sum of the steps, and the number of
-// steps that failed.
+// steps that failed (COMPILEBENCH_ERRORS=1 prints each pipeline error). compilebench.sh builds it and runs the usual cases.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include <mach/mach_time.h>
@@ -38,7 +38,6 @@ typedef struct {
 	id<MTLLibrary> lib;
 	double libMs, psoMs;
 	int psos, failed;
-	NSMutableArray *descs;  // --split: the pipelines to build (MTLRenderPipelineDescriptor or MTLFunction)
 } Item;
 
 static id<MTLDevice> dev;

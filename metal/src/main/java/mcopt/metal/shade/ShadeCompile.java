@@ -376,7 +376,7 @@ public final class ShadeCompile {
 		long rv = (long) now.get("renderThreadVariants") - (long) b.get("renderThreadVariants");
 		double rvMs = (double) now.get("renderThreadVariantMs") - (double) b.get("renderThreadVariantMs");
 		String slow = (String) now.get("slowRenderThreadVariants");
-		String warm = !WARM ? "no warm-up" : warmDoneNs == 0 ? "warm-up still running (" + (warmTotal - WARM_LEFT.get()) + " of " + warmTotal + " done)"
+		String warm = warmTotal == 0 ? "no warm-up" : warmDoneNs == 0 ? "warm-up still running (" + (warmTotal - WARM_LEFT.get()) + " of " + warmTotal + " done)"
 			: warmDoneNs <= worldNs ? String.format(Locale.ROOT, "warm-up done %.2f s before the world", (worldNs - warmDoneNs) / 1e9)
 			: String.format(Locale.ROOT, "warm-up done %.2f s into the world", (warmDoneNs - worldNs) / 1e9);
 		System.out.println(String.format(Locale.ROOT,

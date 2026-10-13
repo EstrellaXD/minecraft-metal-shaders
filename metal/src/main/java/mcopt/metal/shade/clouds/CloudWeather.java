@@ -28,6 +28,8 @@ public final class CloudWeather {
 	/** Unit wind direction (xz). */
 	public float windX = 1f, windZ = 0f;
 	private boolean started;
+	/** (1.1) The player's coverage offset and type last frame (a change takes the new coverage and type at once). */
+	private float lastUserCoverage, lastUserType = -1f;
 
 	/** Day values: humidity, warmth, wind, cirrus, wind angle (radians). */
 	static float[] day(long day, long seed) {
@@ -59,6 +61,14 @@ public final class CloudWeather {
 		float typ = clamp01(0.15f + 0.75f * humidity * warmth + 0.35f * wind - 0.1f);
 		float cirrusAmount = clamp01(cir * 1.3f - 0.25f) * (1f - 0.5f * humidity) + 0.1f;
 		float speed = 2.5f + 7.5f * wind * wind;
+		// (1.1) the player's cloud settings (live): coverage offset on the day's (0.10..0.72 without it, so the clamp leaves the
+		// default exact) and the day's type forced, both before the rain and thunder below, which still close in and tower
+		float userCoverage = CloudConfig.userCoverage(), userType = CloudConfig.userType();
+		cov = clamp01(cov + userCoverage);
+		if (userType >= 0f) typ = clamp01(userType);
+		boolean userChanged = userCoverage != this.lastUserCoverage || userType != this.lastUserType;
+		this.lastUserCoverage = userCoverage;
+		this.lastUserType = userType;
 		// rain: overcast, darker; thunder: towering storm clouds
 		cov = cov + (0.92f - cov) * rain;
 		typ = lerp(typ, 0.9f, thunder);
@@ -67,7 +77,7 @@ public final class CloudWeather {
 		speed *= 1f + 0.8f * rain + 0.6f * thunder;
 		if (CloudConfig.COVERAGE >= 0f) cov = clamp01(CloudConfig.COVERAGE);
 		if (CloudConfig.TYPE >= 0f) typ = clamp01(CloudConfig.TYPE);
-		speed *= CloudConfig.WIND;
+		speed *= CloudConfig.wind(); // (1.1: live)
 		cirrusAmount *= 1f - 0.7f * rain;
 		if (!this.started || snap) {
 			this.started = true;
@@ -84,6 +94,11 @@ public final class CloudWeather {
 		float f = 1f - (float) Math.exp(-Math.max(dt, 0f) / 4f);
 		this.coverage += (cov - this.coverage) * f;
 		this.type += (typ - this.type) * f;
+		// (1.1: a change in the settings screen shows at once, not over the weather's ~4 s; the history blends it in in ~1 s)
+		if (userChanged) {
+			this.coverage = cov;
+			this.type = typ;
+		}
 		this.cirrus += (cirrusAmount - this.cirrus) * f;
 		this.storm += (stormy - this.storm) * f;
 		this.windSpeed += (speed - this.windSpeed) * f;

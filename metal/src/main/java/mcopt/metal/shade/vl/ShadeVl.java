@@ -172,7 +172,8 @@ public final class ShadeVl {
 		}
 		// the game's fog wins (lava, powder snow, blindness, darkness): nothing to light
 		// (FT2.8, audit idx 18: skipped frames drop the history, so the next frame resets instead of reprojecting an old one)
-		if (f.fogColor[3] > 0.5f && !f.underwater || f.underwater && !VlConfig.UNDERWATER) {
+		// (1.1: mcopt.shade.vl.underwater live)
+		if (f.fogColor[3] > 0.5f && !f.underwater || f.underwater && !VlConfig.underwater()) {
 			hasPrevious = false;
 			return;
 		}
@@ -232,7 +233,8 @@ public final class ShadeVl {
 		if (fold && !FOLD_SKIP) {
 			VlNative.outputs(state, OUTPUTS_OUT);
 			// (air mode: the floor of what the shadows may take out of a surface's light, share of it: mcopt.shade.vl.airFloor, live)
-			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), airActive ? airEndUsed : VlConfig.DIST, (float) lw / vw,
+			// (1.1: the march's end this frame, the air mode's or mcopt.shade.vl.dist, live: pack's airEnd either way)
+			ShadePost.setVolumetric(MemoryUtil.memGetAddress(OUTPUTS_OUT), MemoryUtil.memGetAddress(OUTPUTS_OUT + 8), airEndUsed, (float) lw / vw,
 				(float) lh / vh, airActive ? Math.max(VlConfig.live("mcopt.shade.vl.airFloor", 0.3f), 1e-3f) : 0f);
 		}
 		prevLiveW = lw;
@@ -351,7 +353,8 @@ public final class ShadeVl {
 		// canopy mist (vl.metal: around the camera's height, scaled by the canopy factor): what makes the shafts under
 		// trees and overhangs; densest in the golden hours, humid biomes and rain
 		// (none deep in caves: the canopy factor is 1 there, but the mist would only dim the cave toward black)
-		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.MIST * eyeLight(f)
+		// (1.1: mcopt.shade.vl.mist live)
+		float canopyMist = (sunLight ? mix(0.008f, 0.03f, golden) : 0.01f) * (0.7f + 0.6f * hum) * (1f + rain) * VlConfig.mist() * eyeLight(f)
 			* VlConfig.live("mcopt.shade.vl.mistGain", 1f);
 		// its sky-lit colour in the shade (the canopy hides most of the sky): what it dims the scene behind it toward
 		float[] amb = f.sky.ambientSky;
@@ -362,10 +365,15 @@ public final class ShadeVl {
 		// strength: rain flattens the light; caves have no sun; the sun -> moon handover fades through ~0
 		float eye = eyeLight(f);
 		float lightUp = smoothstep(0.0f, 0.08f, sunLight ? sunY : f.moonDir.y);
-		float strength = VlConfig.STRENGTH * (1f - 0.6f * rain) * (f.underwater ? 1f : eye) * lightUp * (sunLight ? 1f : 2.0f * VlConfig.MOON);
+		// (1.1: mcopt.shade.vl.strength and .moon live)
+		float strength = VlConfig.strength() * (1f - 0.6f * rain) * (f.underwater ? 1f : eye) * lightUp * (sunLight ? 1f : 2.0f * VlConfig.moon());
 		// M2: the art layer's VL keyframe (bible §3.2: strongest at golden hour) and look preset, softened (shafts under a canopy
 		// stay visible at noon)
 		if (hdr) strength *= look.vlFactor() * (f.underwater ? HDR_WATER : HDR_AIR);
+		// (1.1) the player's under-water shafts (mcopt.shade.user.underwaterRays, live; 1 = as released), on top of the god-ray
+		// setting below: under water the march's light is the caustic curtains alone (its scatter x this strength)
+		float userWater = f.underwater ? VlConfig.userUnderwater() : 1f;
+		strength *= userWater;
 		// 2026-10-09 (Gael: "se ven poquito"; look development in game, notes/godrays-2026-10-09; then "como un lente empanado":
 		// notes/godrays-veil-2026-10-09): the shafts' strength comes from the canopy mist's gain and its local contrast (hp), not
 		// from an overall gain (a802352's 1.25 lifted the uniform glow too)
@@ -382,12 +390,13 @@ public final class ShadeVl {
 		boolean air = hdr && VlConfig.FOLD && !f.underwater && VlConfig.look("mcopt.shade.vl.air", 1f, 0f) > 0.5f;
 		airActive = air;
 		// its march's end: the render distance's fog end (the haze reaches as far), else the preset's distance
-		float airEnd = air && f.fogRenderEnd > 16f && f.fogRenderEnd < 1e5f ? Math.min(f.fogRenderEnd, 512f) : VlConfig.DIST;
+		// (1.1: mcopt.shade.vl.dist live)
+		float airEnd = air && f.fogRenderEnd > 16f && f.fogRenderEnd < 1e5f ? Math.min(f.fogRenderEnd, 512f) : VlConfig.dist();
 		airEndUsed = airEnd;
 		if (air) {
 			// the forest air's light follows the light itself, not the art keyframes' VL strength (strongest at the golden hour):
 			// its density has the time of day (below)
-			strength = VlConfig.STRENGTH * (1f - 0.6f * rain) * eye * lightUp * (sunLight ? 1f : VlConfig.MOON)
+			strength = VlConfig.strength() * (1f - 0.6f * rain) * eye * lightUp * (sunLight ? 1f : VlConfig.moon())
 				* VlConfig.live("mcopt.shade.vl.airGain", 1f);
 			// its scattering (1/block) at canopy 1: Photon's morning mist is 0.007 (its noon one 0.0001: shafts only in the morning
 			// and evening); here the forest keeps some all day (Gael's forest at mid-morning), more at the golden hour, in humid
@@ -472,7 +481,8 @@ public final class ShadeVl {
 		// (air mode: its extinction 1 x its scattering, mcopt.shade.vl.airExt, live. It only dims the march's own light along the
 		// ray: the forest air is additive, nothing behind it dims, as in BSL / Complementary: the extinction flag z is 0 there)
 		float airExt = Math.max(VlConfig.live("mcopt.shade.vl.airExt", 1f), 0.05f);
-		put(b, VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f), VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.EXTINCTION && !air ? 1f : 0f,
+		// (1.1: mcopt.shade.vl.extinction live)
+		put(b, VlConfig.look("mcopt.shade.vl.mistRange", 24f, 16f), VlConfig.look("mcopt.shade.vl.mistTop", 16f, 4f), VlConfig.extinction() && !air ? 1f : 0f,
 			air ? airExt : hdr ? HDR_EXT : 0.5f);
 		float sunK = 0.25f * ambK; // plus a little sunlight scattered in from the lit air around (warm at dawn and dusk)
 		// the cuts by the angle to the light (vl.metal mixes them; a802352 lowered them away from the light, which veiled side
@@ -580,6 +590,7 @@ public final class ShadeVl {
 			VlConfig.live("mcopt.shade.vl.crepReproj", 1f));
 		// (air mode: the haze's shadows count wherever the sun is up, even with no forest around)
 		if (userRays <= 0f) return false;
+		if (userWater <= 0f) return false; // (1.1: under water with its shafts at 0 nothing is added: no passes, as above)
 		return strength > 1e-3f || canopyMist > 1e-6f || f.underwater || air && lightUp > 1e-3f;
 	}
 

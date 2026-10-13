@@ -15,11 +15,15 @@
  */
 package mcopt.metal.shade.clouds;
 
+import mcopt.metal.shade.Live;
 import mcopt.metal.shade.Shade;
 
 /**
  * Volumetric cloud settings (M3, bible E05), read once at startup (system properties or config/mcopt.properties). Free of
  * game types. Everything needs mcopt.shade=true and the HDR pipeline (mcopt.shade.hdr, default on).
+ * (1.1) The look and quality keys below are read live (the accessors after the statics: the settings screen changes them
+ * every frame); their static is the default, so with no property set the clouds are exactly as before. The module switch
+ * (mcopt.shade.clouds) stays a startup one.
  *
  * <ul>
  * <li>{@code mcopt.shade.clouds} (true): volumetric cumulus + cirrus replace vanilla's clouds (false: vanilla's, lit by
@@ -39,6 +43,8 @@ import mcopt.metal.shade.Shade;
  * type (0 flat .. 1 towering).</li>
  * <li>{@code mcopt.shade.clouds.wind} (1): wind speed multiplier; {@code .seed} (0): changes the daily weather.</li>
  * <li>{@code mcopt.shade.clouds.density} (1), {@code .detail} (1): extinction and fine-detail multipliers.</li>
+ * <li>(1.1, live) {@code mcopt.shade.user.cloudCoverage} (0: -0.5..0.5 on the day's coverage), {@code .cloudType} (-1 = the
+ * day's), {@code .cloudBrightness} (1), {@code .cloudOpacity} (1), {@code .cirrusAmount} (1): the player's cloud settings.</li>
  * <li>{@code mcopt.shade.clouds.gpuTimer} (false) / {@code .log} (false): a log line every 2 s with the passes' GPU ms and
  * the weather.</li>
  * </ul>
@@ -106,6 +112,135 @@ public final class CloudConfig {
 	/** The visit cap for checkerboard n (mcopt.shade.clouds.maxAge overrides): 12 (n <= 2), 10 (3), 8 (4: ~ the same seconds as 3's 10). */
 	public static int maxAge(int n) {
 		return clampInt(Integer.getInteger("mcopt.shade.clouds.maxAge", n >= 4 ? 8 : n >= 3 ? 10 : 12), 1, 63);
+	}
+
+	// ---- (1.1) live settings: read every frame through Live (parsed only when their text changes). Each default is the static
+	// above (the startup value, the preset's where it has one) with the same clamp; the ones whose change needs a reset get it in
+	// ShadeClouds.update (it remembers the last value) ----
+
+	/** (1.1) live: mcopt.shade.clouds.density, the extinction multiplier ({@link #DENSITY}, 0.1..10). */
+	public static float density() {
+		return Live.f("mcopt.shade.clouds.density", DENSITY, 0.1f, 10f);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.detail, the fine-detail strength ({@link #DETAIL}, 0..3). */
+	public static float detail() {
+		return Live.f("mcopt.shade.clouds.detail", DETAIL, 0f, 3f);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.base, the cumulus base (absolute y; {@link #BASE}, NaN = vanilla's cloud height + 8). A change drops the history. */
+	public static float base() {
+		return Live.f("mcopt.shade.clouds.base", BASE);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.thickness, the cumulus layer ({@link #THICKNESS}, 20..600 blocks). A change drops the history. */
+	public static float thickness() {
+		return Live.f("mcopt.shade.clouds.thickness", THICKNESS, 20f, 600f);
+	}
+
+	/**
+	 * (1.1) live: mcopt.shade.clouds.blockThickness, the blocky style's slab (2..64 blocks): {@link #VANILLA_THICKNESS} (4,
+	 * vanilla's fancy clouds) with the game's cloud texture, else {@link #BLOCK_THICKNESS} (8). A change drops the history.
+	 */
+	public static float blockThickness(boolean vanillaCells) {
+		return Live.f("mcopt.shade.clouds.blockThickness", vanillaCells ? VANILLA_THICKNESS : BLOCK_THICKNESS, 2f, 64f);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.wind, the wind speed multiplier ({@link #WIND}, 0..4). */
+	public static float wind() {
+		return Live.f("mcopt.shade.clouds.wind", WIND, 0f, 4f);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.cirrus, the high cirrus layer ({@link #CIRRUS}). */
+	public static boolean cirrus() {
+		return Live.b("mcopt.shade.clouds.cirrus", CIRRUS);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.cirrusAbove, the cirrus' height over the cumulus base ({@link #CIRRUS_ABOVE}, 100..4000 blocks). */
+	public static float cirrusAbove() {
+		return Live.f("mcopt.shade.clouds.cirrusAbove", CIRRUS_ABOVE, 100f, 4000f);
+	}
+
+	/**
+	 * (1.1) live: mcopt.shade.clouds.shadows ({@link #SHADOWS}): off = no shadow map pass and strength 0 for the consumers
+	 * (terrain, water, god rays read 1); back on, the map is rendered that frame (ShadeClouds).
+	 */
+	public static boolean shadows() {
+		return Live.b("mcopt.shade.clouds.shadows", SHADOWS);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.shadowStrength ({@link #SHADOW_STRENGTH}, 0..1). */
+	public static float shadowStrength() {
+		return Live.f("mcopt.shade.clouds.shadowStrength", SHADOW_STRENGTH, 0f, 1f);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.dome, the reflection dome ({@link #DOME}); turned on, the history drops once (a fresh dome). */
+	public static boolean dome() {
+		return Live.b("mcopt.shade.clouds.dome", DOME);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.steps, the march's primary samples ({@link #STEPS}: the preset's, 6..128). */
+	public static int steps() {
+		return clampInt(Live.i("mcopt.shade.clouds.steps", STEPS), 6, 128);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.lightSteps, the light march's samples ({@link #LIGHT_STEPS}: the preset's, 1..8). */
+	public static int lightSteps() {
+		return clampInt(Live.i("mcopt.shade.clouds.lightSteps", LIGHT_STEPS), 1, 8);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.domeSteps, the dome march's samples ({@link #DOME_STEPS}: the preset's, 4..64). */
+	public static int domeSteps() {
+		return clampInt(Live.i("mcopt.shade.clouds.domeSteps", DOME_STEPS), 4, 64);
+	}
+
+	/**
+	 * (1.1) live: mcopt.shade.clouds.scale, the history's resolution relative to the output ({@link #SCALE}: the preset's,
+	 * 0.2..1). A change resizes the targets (CloudNative.size), which drops the history, as dev bit 4096 already did.
+	 */
+	public static float scale() {
+		return Live.f("mcopt.shade.clouds.scale", SCALE, 0.2f, 1f);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.checker, the checkerboard N ({@link #CHECKER}: the preset's, 1..4). A change resizes the march and drops the history. */
+	public static int checker() {
+		return clampInt(Live.i("mcopt.shade.clouds.checker", CHECKER), 1, 4);
+	}
+
+	/** (1.1) live: mcopt.shade.clouds.altitudeScale, world blocks per km of the sky model's air for the layer's light ({@link #ALTITUDE_SCALE}, 0..50). */
+	public static float altitudeScale() {
+		return Live.f("mcopt.shade.clouds.altitudeScale", ALTITUDE_SCALE, 0f, 50f);
+	}
+
+	/**
+	 * (1.1) live, new: mcopt.shade.user.cloudCoverage (0 = the day's weather, -0.5..0.5), added to the day's coverage before
+	 * rain closes the sky in (CloudWeather), so a storm still overcasts a clear setting.
+	 */
+	public static float userCoverage() {
+		return Live.f("mcopt.shade.user.cloudCoverage", 0f, -0.5f, 0.5f);
+	}
+
+	/**
+	 * (1.1) live, new: mcopt.shade.user.cloudType (-1 = the day's weather, else 0 flat .. 1 towering): the day's type forced;
+	 * rain and thunder still raise it (CloudWeather), unlike mcopt.shade.clouds.type (startup, over the weather too).
+	 */
+	public static float userType() {
+		return Live.f("mcopt.shade.user.cloudType", -1f, -1f, 1f);
+	}
+
+	/** (1.1) live, new: mcopt.shade.user.cloudBrightness (1, 0.25..2): the light the layer gets (sun or moon, the sky above, the ground below). */
+	public static float userBrightness() {
+		return Live.f("mcopt.shade.user.cloudBrightness", 1f, 0.25f, 2f);
+	}
+
+	/** (1.1) live, new: mcopt.shade.user.cloudOpacity (1, 0..1): the clouds' overall opacity (CloudParams.opacity), which also scales their shadows. */
+	public static float userOpacity() {
+		return Live.f("mcopt.shade.user.cloudOpacity", 1f, 0f, 1f);
+	}
+
+	/** (1.1) live, new: mcopt.shade.user.cirrusAmount (1, 0..2): a multiplier on the cirrus layer's coverage. */
+	public static float userCirrus() {
+		return Live.f("mcopt.shade.user.cirrusAmount", 1f, 0f, 2f);
 	}
 	public static final int DEBUG = Integer.getInteger("mcopt.shade.clouds.debug", 0);
 	/**

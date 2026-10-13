@@ -15,11 +15,14 @@
  */
 package mcopt.metal.shade.vl;
 
+import mcopt.metal.shade.Live;
 import mcopt.metal.shade.Shade;
 
 /**
  * Volumetric light settings (read once at startup; any of them can also go in config/mcopt.properties). Free of game types:
- * the mixin plugin reads it while mixins bootstrap.
+ * the mixin plugin reads it while mixins bootstrap. (1.1) strength, moon, mist, extinction, underwater and dist are read live
+ * (the accessors below; their static is the default, so with no property set the light is exactly as before), plus the new
+ * {@code mcopt.shade.user.underwaterRays}; the module switch (mcopt.shade.vl) and the preset's sizes stay startup ones.
  *
  * <ul>
  * <li>{@code mcopt.shade.vl} (true with mcopt.shade): god rays on.</li>
@@ -36,6 +39,8 @@ import mcopt.metal.shade.Shade;
  * <li>{@code mcopt.shade.vl.extinction} (true): the canopy mist also dims what is behind it (off: light is only added).</li>
  * <li>{@code mcopt.shade.vl.moon} (1): moon shafts relative to sun shafts (they're dim anyway).</li>
  * <li>{@code mcopt.shade.vl.underwater} (true): caustic shafts under water.</li>
+ * <li>(1.1, live) {@code mcopt.shade.user.underwaterRays} (1, 0..2): the player's under-water shafts, on top of
+ * {@code mcopt.shade.user.godrays}.</li>
  * <li>{@code mcopt.shade.vl.waterM3} (true, M3): the under-water retune: stronger shafts (HDR 0.6, carve 0.62), history 0.8
  * under water, caustics on the water's clock; false = M2.1 (0.45, 0.55, 0.9, the game time).</li>
  * <li>{@code mcopt.shade.vl.temporal} (true): temporal accumulation (off: raw noisy march, for comparisons).</li>
@@ -119,6 +124,47 @@ public final class VlConfig {
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.vl.log");
 
 	private VlConfig() {
+	}
+
+	// ---- (1.1) live settings: read every frame through Live (parsed only when their text changes); each default is the static
+	// above (the startup value, the preset's where it has one) with the same clamp. None needs a reset: the history follows ----
+
+	/** (1.1) live: mcopt.shade.vl.strength, the shafts' overall brightness ({@link #STRENGTH}, >= 0). */
+	public static float strength() {
+		return Math.max(0f, Live.f("mcopt.shade.vl.strength", STRENGTH));
+	}
+
+	/** (1.1) live: mcopt.shade.vl.moon, moon shafts relative to sun shafts ({@link #MOON}, >= 0). */
+	public static float moon() {
+		return Math.max(0f, Live.f("mcopt.shade.vl.moon", MOON));
+	}
+
+	/** (1.1) live: mcopt.shade.vl.mist, the canopy mist's density ({@link #MIST}, >= 0). */
+	public static float mist() {
+		return Math.max(0f, Live.f("mcopt.shade.vl.mist", MIST));
+	}
+
+	/** (1.1) live: mcopt.shade.vl.extinction, the canopy mist also dims what is behind it ({@link #EXTINCTION}). */
+	public static boolean extinction() {
+		return Live.b("mcopt.shade.vl.extinction", EXTINCTION);
+	}
+
+	/** (1.1) live: mcopt.shade.vl.underwater, the caustic shafts under water ({@link #UNDERWATER}; off = no passes under water). */
+	public static boolean underwater() {
+		return Live.b("mcopt.shade.vl.underwater", UNDERWATER);
+	}
+
+	/** (1.1) live: mcopt.shade.vl.dist, the march distance outside air mode ({@link #DIST}: the preset's, 16..512 blocks). */
+	public static float dist() {
+		return Live.f("mcopt.shade.vl.dist", DIST, 16f, 512f);
+	}
+
+	/**
+	 * (1.1) live, new: mcopt.shade.user.underwaterRays (1, 0..2): the under-water shafts only, on top of the player's god rays
+	 * (mcopt.shade.user.godrays); 0 = no passes under water.
+	 */
+	public static float userUnderwater() {
+		return Live.f("mcopt.shade.user.underwaterRays", 1f, 0f, 2f);
 	}
 
 	/** The MSL the passes compile from: ShadeMsl.prelude() (shade_look + shade_common + shade_m2) + vl.metal (mcvl.m; validate.sh). */

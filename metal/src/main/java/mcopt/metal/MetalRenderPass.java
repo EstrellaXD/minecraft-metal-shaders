@@ -120,6 +120,9 @@ final class MetalRenderPass implements RenderPassBackend {
 	 * pipeline here binds, so the uniforms stay as they are.
 	 */
 	void reapplyPipeline() {
+		// native shading's globals again: far terrain may have opened encoders of its own, and our own near terrain's draws bind
+		// some vertex slots of theirs over them (even in a pass that has no pipeline set yet)
+		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc);
 		MetalPipeline p = this.pipeline;
 		if (p == null) return;
 		if (this.delegate != null) {
@@ -127,7 +130,6 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		Native.pipeline(this.enc, p.state(this.formats, this.hasDepth), p.depthState, p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
-		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, this.enc); // far terrain may have opened encoders of its own
 	}
 
 	/** Called by the encoder when the frontend ends the pass. */

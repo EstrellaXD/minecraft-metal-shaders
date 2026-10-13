@@ -495,13 +495,11 @@ final class MetalEncoder implements CommandEncoderBackend {
 		this.passFormats = formats;
 		if (redirect != null && redirect.depth() != 0) {
 			this.currentPass = new MetalRenderPass(this, true, 0, 0, sub ? width : redirect.width(), sub ? height : redirect.height(), redirect.delegate(), formats);
-			if (sub) this.currentPass.pickPixels = subPixels;
 			return this.currentPass;
 		}
-		if (subPixels != 0) { // the live sub-rect; terrain occlusion's path pick keeps timing by the full size (scale changes don't restart it)
+		if (subPixels != 0) { // the live sub-rect
 			this.currentPass = new MetalRenderPass(this, depth != null, area.x(), area.y(), Math.min(area.width(), width), Math.min(area.height(), height),
 				redirect != null ? redirect.delegate() : keptDelegate, formats);
-			this.currentPass.pickPixels = subPixels;
 			return this.currentPass;
 		}
 		this.currentPass = new MetalRenderPass(this, depth != null, area.x(), area.y(), area.width(), area.height(),

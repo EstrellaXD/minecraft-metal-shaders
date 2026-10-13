@@ -388,7 +388,6 @@ final class MetalTerrain {
 			}
 		}
 		Native.renderResume(enc, compute);
-		if (mcopt.metal.shade.ShadeBindings.ON) mcopt.metal.shade.ShadeBindings.bind(this.encoder.ctx, enc); // shaded twins read them in the draws below
 		for (Waiting w : this.waiting) {
 			w.restore.run();
 			this.drawPulled(enc, w.p, w.arenas, w.tables, w.work, w.second.quads, w.second.args, w.regions, w.regionsOffset);
@@ -475,7 +474,7 @@ final class MetalTerrain {
 	/** The pulled twin of p over the quad list in work, with the draw's arguments at args. */
 	private void drawPulled(long enc, MetalPipeline p, List<MetalBuffer> arenas, long addresses, MetalBuffer work, long list, long args, MetalBuffer regions,
 		long regionsOffset) {
-		Native.pipeline(enc, p.pulledState(this.encoder.passFormats), p.depthState, p.cull ? 1 : 0, 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
+		Native.pipeline(enc, p.pulled, p.depthState, p.cull ? 1 : 0, 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
 		for (MetalBuffer arena : arenas) Native.useResource(enc, arena.handle);
 		Native.bytes(enc, ARENAS_SLOT, addresses, MAX_ARENAS * 8);
 		Native.buffer(enc, QUADS_SLOT, work.handle, list);

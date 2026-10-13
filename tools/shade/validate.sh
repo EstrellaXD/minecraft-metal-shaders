@@ -26,16 +26,18 @@ fail=0
 for f in variants/*.metal; do
 	./pipecheck compile "$f" >/dev/null || { echo "FAIL compile $f"; ./pipecheck compile "$f"; fail=1; }
 done
-./pipecheck sodium variants/shade_translucentnowater.vs.metal variants/shade_translucentnowater.fs.metal || fail=1
+# (v12, mcopt 0.3: no Sodium terrain variants when its sources are gone; own terrain is tools/shade/own/check.sh)
+[ -f variants/shade_translucentnowater.vs.metal ] && { ./pipecheck sodium variants/shade_translucentnowater.vs.metal variants/shade_translucentnowater.fs.metal || fail=1; }
 # Distant Horizons' LOD terrain: our vertex and fragment stages agree (FT2.8: the packed flat word)
 for v in dh_terrain dh_terrain_jitter; do
 	for fs in dh_terrain dh_terrain_water; do
 		PIPECHECK_HDR= ./pipecheck auto "variants/$v.vs.metal" "variants/$fs.fs.metal" || fail=1
 	done
 done
-./pipecheck sodium variants/hdr_translucentnowater.vs.metal variants/hdr_translucentnowater.fs.metal || fail=1
+[ -f variants/hdr_translucentnowater.vs.metal ] && { ./pipecheck sodium variants/hdr_translucentnowater.vs.metal variants/hdr_translucentnowater.fs.metal || fail=1; }
 for k in solid cutout translucent; do
 	for p in up shade hdr; do
+		[ -f variants/${p}_$k.vs.metal ] || continue
 		./pipecheck sodium variants/${p}_$k.vs.metal variants/${p}_$k.fs.metal || fail=1
 		[ -f variants/${p}_$k.pulled.vs.metal ] && { ./pipecheck none variants/${p}_$k.pulled.vs.metal variants/${p}_$k.fs.metal || fail=1; }
 	done

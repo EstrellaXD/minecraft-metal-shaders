@@ -10,12 +10,18 @@ public class ShadeMslDump {
 	static String msl(String name) throws Exception {
 		return new String(ShadeMslDump.class.getResourceAsStream("/mcopt/metal/msl/" + name).readAllBytes());
 	}
+	/** (v12, mcopt 0.3) Sodium's terrain is gone: its variants are dumped only when its sources are there (own terrain: tools/shade/own/check.sh). */
+	static boolean sodium() {
+		return ShadeMslDump.class.getResource("/mcopt/metal/msl/sodium_terrain.vs.metal") != null;
+	}
 	public static void main(String[] a) throws Exception {
 		Path out = Path.of(a[0]);
 		Files.createDirectories(out);
 		String slotsT = MetalShaderRegistry.slotDefines(List.of("u_Globals", "u_SectionTimeInfo", "u_LightTex", "u_BlockTex"));
-		String vs = msl("sodium_terrain.vs.metal"), fs = msl("sodium_terrain.fs.metal");
+		String vs = sodium() ? msl("sodium_terrain.vs.metal") : "", fs = sodium() ? msl("sodium_terrain.fs.metal") : "";
 		Map<String, String> defs = new LinkedHashMap<>();
+		if (!sodium()) System.out.println("ShadeMslDump: no Sodium terrain sources (mcopt 0.3): terrain variants skipped");
+		else {
 		defs.put("solid", ""); defs.put("cutout", "#define ALPHA_CUTOUT 0.5\n"); defs.put("translucent", "#define ALPHA_CUTOUT 0.01\n");
 		for (var e : defs.entrySet()) {
 			// upstream (flag off)
@@ -46,6 +52,7 @@ public class ShadeMslDump {
 				Files.writeString(out.resolve("shade_" + e.getKey() + ".pulled.vs.metal"), slotsT + ShadeMsl.terrain("#define PULLED\n" + vs));
 				Files.writeString(out.resolve("hdr_" + e.getKey() + ".pulled.vs.metal"), "#define MCOPT_HDR\n" + slotsT + ShadeMsl.terrain("#define PULLED\n" + vs));
 			}
+		}
 		}
 		// sky pipelines, with two different uniform orders (renderpearl numbers them by use)
 		List<List<String>> orders = List.of(List.of("Fog", "DynamicTransforms", "Projection"), List.of("Projection", "DynamicTransforms", "Fog"));

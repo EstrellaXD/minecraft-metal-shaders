@@ -49,6 +49,11 @@ public final class ShadeXdr {
 	static final float KNEE = DimsConfig.floatFlag("mcopt.shade.xdrKnee", 2.0f, 0.5f, 16f), RANGE = 3.5f;
 	private static float testClock;
 
+	/** (1.1) live: mcopt.shade.xdrKnee (KNEE at startup; 0.5..16): the final pass's knee and the bloom's hot flag follow it. */
+	static float knee() {
+		return mcopt.metal.shade.Live.f("mcopt.shade.xdrKnee", KNEE, 0.5f, 16f);
+	}
+
 	private ShadeXdr() {
 	}
 
@@ -131,7 +136,9 @@ public final class ShadeXdr {
 				edrHere = nowHere;
 				System.out.println("[mcopt] shade: XDR " + (edrHere ? "resumed (EDR screen, potential " : "paused (this screen is SDR only, potential ") + here + ")");
 			}
-			target = edrHere ? Math.max(1f, Math.min(headroomNow, DimsConfig.XDR_PEAK)) : 1f;
+			// (1.1) mcopt.shade.xdrPeak live (1..16): applies at the next query (0.25 s), eased like a headroom change
+			float cap = mcopt.metal.shade.Live.f("mcopt.shade.xdrPeak", DimsConfig.XDR_PEAK, 1f, 16f);
+			target = edrHere ? Math.max(1f, Math.min(headroomNow, cap)) : 1f;
 			if (Math.abs(headroomNow - loggedHeadroom) > 0.1f) {
 				loggedHeadroom = headroomNow;
 				System.out.println("[mcopt] shade: XDR headroom " + headroomNow + " (potential " + potential + "), highlight peak " + target);
@@ -158,7 +165,7 @@ public final class ShadeXdr {
 	public static float hotThreshold() {
 		if (!(on && edrHere && skip)) return 0f;
 		asked = true;
-		return KNEE * MARGIN;
+		return knee() * MARGIN; // (1.1) live
 	}
 
 	/** The last frame's bloom flagged (no bloom pass, e.g. bloom off: no detection, the highlights stay on). */
@@ -192,7 +199,7 @@ public final class ShadeXdr {
 
 	/** The final pass's XDR parameters (ShadeFinalParams.x): on, peak, knee, octaves to the peak. */
 	public static void params(ByteBuffer b) {
-		b.putFloat(on ? 1f : 0f).putFloat(peak).putFloat(KNEE).putFloat(RANGE);
+		b.putFloat(on ? 1f : 0f).putFloat(peak).putFloat(knee()).putFloat(RANGE); // (1.1) knee live
 	}
 
 	/** A full-screen pipeline with two color targets (the final pass: main RGBA8 + the RG11B10F excess). */

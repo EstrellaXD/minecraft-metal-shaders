@@ -42,6 +42,16 @@ public final class ShadeAurora {
 	static final float SCALE = Math.max(0.1f, Math.min(1f, Float.parseFloat(System.getProperty("mcopt.shade.aurora.scale", "0.5"))
 		* (mcopt.metal.shade.taa.TaaConfig.ENABLED ? mcopt.metal.shade.taa.TaaConfig.SCALE : 1f)));
 
+	/**
+	 * (1.1) live: SCALE with mcopt.shade.aurora.scale read now (its startup value as the default); a new size re-makes the
+	 * texture in {@link #render}, as a new output resolution does.
+	 */
+	static float scale() {
+		float user = mcopt.metal.shade.Live.f("mcopt.shade.aurora.scale", Float.NaN);
+		return Float.isNaN(user) ? SCALE
+			: Math.max(0.1f, Math.min(1f, user * (mcopt.metal.shade.taa.TaaConfig.ENABLED ? mcopt.metal.shade.taa.TaaConfig.SCALE : 1f)));
+	}
+
 	private static long library, pipeline, texture;
 	private static int width, height;
 	private static boolean failed, want;
@@ -88,7 +98,8 @@ public final class ShadeAurora {
 			var window = Minecraft.getInstance().getWindow();
 			// (2026-10-09: a share of the chosen output resolution, ShadeOutput, not the window's)
 			int[] outSize = mcopt.metal.shade.ShadeOutput.current(window.getWidth(), window.getHeight());
-			int w = Math.max(16, Math.round(outSize[0] * SCALE)), h = Math.max(16, Math.round(outSize[1] * SCALE));
+			float scale = scale(); // (1.1) live
+			int w = Math.max(16, Math.round(outSize[0] * scale)), h = Math.max(16, Math.round(outSize[1] * scale));
 			if (texture == 0 || w != width || h != height) {
 				if (texture != 0) retired.add(new long[] {texture, frame + 8});
 				texture = ShadeRender.texture(ShadeRender.RGBA16F, w, h, false, "mcopt shade: aurora");

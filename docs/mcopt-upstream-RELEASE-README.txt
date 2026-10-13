@@ -3,7 +3,7 @@ mcopt Metal @VERSION@
 A Minecraft performance mod for Apple Silicon Macs. VERY MUCH ALPHA: expect bugs, and back up your worlds.
 
 You need
-- An Apple Silicon Mac (M1 or newer) on macOS 26 or later
+- An Apple Silicon Mac (M1 or newer) on macOS 15 or later (frame generation: macOS 26)
 - Java 25 or newer (your launcher has to start the game on Java 25+)
 - Minecraft: Java Edition 26.3
 - Fabric Loader 0.19.5 or newer for 26.3
@@ -25,7 +25,7 @@ For the most fps: Options > Video Settings, VSync off and Max Framerate Unlimite
 To see your fps all the time: press F3 + F6, find fps in the list and set it to Always.
 
 If Sodium is missing or the wrong version, Fabric stops at launch and tells you which version to install.
-On a computer the mod can't run on (not an Apple Silicon Mac, or macOS older than 26), the game stops at launch
+On a computer the mod can't run on (not an Apple Silicon Mac, or macOS older than 15), the game stops at launch
 and says what's missing; remove mcopt-metal from the mods folder to play there.
 To check it's working, the game log says "Using graphics backend Metal".
 

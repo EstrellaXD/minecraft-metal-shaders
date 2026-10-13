@@ -4,7 +4,7 @@ A Minecraft performance mod for Apple Silicon Macs. **Very much alpha:** expect 
 
 ## Requirements
 
-- An Apple Silicon Mac on macOS 26 or later
+- An Apple Silicon Mac on macOS 15 or later (frame generation: macOS 26)
 - Java 25
 - Minecraft 26.3 with Fabric Loader 0.19.5
 - Sodium 0.9.3, a separate download:

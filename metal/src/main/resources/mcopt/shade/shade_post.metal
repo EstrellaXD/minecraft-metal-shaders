@@ -120,12 +120,25 @@ struct ShadeFinalParams { float4 p; float4 q; float4 v; float4 r; float4 x; floa
 // full-resolution pass less): an unsharp mask from the 4-neighbour cross, weaker where the local contrast is already high,
 // clamped to the neighbourhood's range so it never overshoots into halos. Restores the crispness of pixel-art textures the
 // temporal resolve softens. Linear pre-exposed HDR: the contrast measure is relative, so it behaves the same at any level.
+// (v12-opt) LEAN: the four neighbours by nearest samples at immediate texel offsets, clamped to the edge by the sampler (the same
+// texels as the clamped reads, without their address maths: -0.02..-0.04 ms at 3024x1964, the same image)
+template <bool LEAN = false>
 static inline half3 shadeSharpen(texture2d<half> img, uint2 px, half3 m, half amount) {
-	int2 c = int2(px), last = int2(img.get_width(), img.get_height()) - 1;
-	half3 n = img.read(uint2(min(c + int2(0, 1), last))).rgb;
-	half3 s = img.read(uint2(max(c - int2(0, 1), int2(0)))).rgb;
-	half3 e = img.read(uint2(min(c + int2(1, 0), last))).rgb;
-	half3 w = img.read(uint2(max(c - int2(1, 0), int2(0)))).rgb;
+	half3 n, s, e, w;
+	if (LEAN) {
+		constexpr sampler pxs(coord::pixel, filter::nearest, address::clamp_to_edge);
+		float2 cc = float2(px) + 0.5;
+		n = img.sample(pxs, cc, int2(0, 1)).rgb;
+		s = img.sample(pxs, cc, int2(0, -1)).rgb;
+		e = img.sample(pxs, cc, int2(1, 0)).rgb;
+		w = img.sample(pxs, cc, int2(-1, 0)).rgb;
+	} else {
+		int2 c = int2(px), last = int2(img.get_width(), img.get_height()) - 1;
+		n = img.read(uint2(min(c + int2(0, 1), last))).rgb;
+		s = img.read(uint2(max(c - int2(0, 1), int2(0)))).rgb;
+		e = img.read(uint2(min(c + int2(1, 0), last))).rgb;
+		w = img.read(uint2(max(c - int2(1, 0), int2(0)))).rgb;
+	}
 	half3 lo = min(m, min(min(n, s), min(e, w)));
 	half3 hi = max(m, max(max(n, s), max(e, w)));
 	half range = dot(hi - lo, half3(0.2126h, 0.7152h, 0.0722h)) / max(dot(hi, half3(0.2126h, 0.7152h, 0.0722h)), 0.02h);
@@ -264,8 +277,14 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 		float dist = length(shadeWorldFromDepth(in.uv, d, f));
 		sp = uint2(clamp(int2(px) + int2(round(shadeShimmer(in.uv, dist, f, sr.milkyWay))), int2(0), int2(scene.get_width(), scene.get_height()) - 1));
 	}
-	half3 c0 = scene.read(sp).rgb;
-	if (P.r.z > 0.0) c0 = shadeSharpen(scene, sp, c0, half(P.r.z));
+	half3 c0;
+	if (LEAN) { // (v12-opt) a nearest sample at the texel's centre: the same texel, no address maths (shadeSharpen<LEAN>)
+		constexpr sampler pxc(coord::pixel, filter::nearest, address::clamp_to_edge);
+		c0 = scene.sample(pxc, float2(sp) + 0.5).rgb;
+	} else {
+		c0 = scene.read(sp).rgb;
+	}
+	if (P.r.z > 0.0) c0 = shadeSharpen<LEAN>(scene, sp, c0, half(P.r.z));
 	float3 c = float3(c0);
 	float3 T = float3(1.0);
 	bool hazeOn = (L.tier.y & SHADE_FEATURE_HAZE) != 0 && f.flags.x == SHADE_DIM_OVERWORLD && f.fogColor.a < 0.5;

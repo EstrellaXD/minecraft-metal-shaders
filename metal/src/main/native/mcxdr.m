@@ -37,7 +37,16 @@ static const char *xdrSource =
 	"  float2 p = float2((id << 1) & 2, id & 2);\n"
 	"  V v; v.pos = float4(p * 2.0 - 1.0, 0.0, 1.0); v.uv = p; return v;\n"
 	"}\n"
-	"struct XdrParams { int flip; int valid; int pad0; int pad1; };\n"
+	"struct XdrParams { int flip; int valid; int e5; int pad1; };\n"
+	// (v12-opt) e5: the value as the RGB9E5 staging slot of the present queue stores it (shared exponent, mantissas truncated: the
+	// GPU's render-target encode, matched bit for bit on 3.1 M random channels), so a compose straight into the RGBA16Float drawable
+	// (presentQueue off) presents the same pixels as the queued path's slot + copy
+	"static float3 e5(float3 c) {\n"
+	"  c = clamp(c, 0.0, 65408.0); float m = max(c.x, max(c.y, c.z));\n"
+	"  int e = max(-16, int((as_type<uint>(m) >> 23) & 255u) - 127) + 1 + 15;\n"
+	"  float sc = as_type<float>(uint(e - 24 + 127) << 23);\n"
+	"  return min(floor(c / sc), 511.0) * sc;\n"
+	"}\n"
 	"static float3 srgbToLinear(float3 c) { return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045); }\n"
 	// linear Rec.709 -> linear Display P3 (both D65): every coefficient >= 0, so non-negative stays non-negative
 	"constant float3x3 M709toP3 = float3x3(float3(0.822462, 0.033194, 0.017083), float3(0.177538, 0.966806, 0.072397), float3(0.0, 0.0, 0.910520));\n"
@@ -54,7 +63,8 @@ static const char *xdrSource =
 	"    float2 euv = (float2(px) + 0.5) / float2(src.get_width(), src.get_height());\n"
 	"    lin += float3(excess.sample(ls, euv).rgb) * saturate(1.0 - m.a);\n"
 	"  }\n"
-	"  return float4(M709toP3 * lin, 1.0);\n"
+	"  float3 o = M709toP3 * lin;\n"
+	"  return float4(p.e5 != 0 ? e5(o) : o, 1.0);\n"
 	"}\n"
 	// the present side's copy into an RGBA16Float drawable (the staging slot already holds the composed image)
 	"fragment float4 xdr_present_fs(V v [[stage_in]], texture2d<float> t [[texture(0)]]) {\n"
@@ -63,6 +73,9 @@ static const char *xdrSource =
 	"}\n";
 
 void mc_xdr_enable(int on) { xdrOn = on; }
+// (v12-opt) the direct compose (presentQueue off) rounds like the queued path's RGB9E5 slot (default on; ShadeXdr.configure)
+static int xdrE5 = 1;
+void mc_xdr_e5(int on) { xdrE5 = on; }
 int mc_xdr_on(void) { return xdrOn; }
 
 // Whether any screen can show EDR at all (maximumPotentialExtendedDynamicRangeColorComponentValue > 1): "auto".
@@ -239,7 +252,10 @@ int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> d
 		// excess is the output's size, not the window's (the equality dropped every XDR highlight there); this frame's final pass
 		// wrote it (the same command buffer)
 		int valid = xdrValid && (void *) cb == xdrCmd && xdrExcess && xdrExcess.width <= src.width && xdrExcess.height <= src.height;
-		struct { int flip, valid, pad0, pad1; } p = {flip, valid, 0, 0};
+		// (v12-opt) straight into an RGBA16Float drawable (flip, presentQueue off): the staging slot's RGB9E5 rounding too, so both
+		// present paths show the same pixels (mc_xdr_e5(0), -Dmcopt.shade.xdrDirectE5=false: without it, as 1.2)
+		int e5 = flip && dst.pixelFormat == MTLPixelFormatRGBA16Float && xdrE5;
+		struct { int flip, valid, e5, pad1; } p = {flip, valid, e5, 0};
 		[r setFragmentTexture:src atIndex:0];
 		[r setFragmentTexture:valid ? xdrExcess : src atIndex:1];
 		[r setFragmentBytes:&p length:sizeof p atIndex:0];

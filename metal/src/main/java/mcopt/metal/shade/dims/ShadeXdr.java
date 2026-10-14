@@ -39,7 +39,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  */
 public final class ShadeXdr {
 	private static final Linker LINKER = Linker.nativeLinker();
-	private static @Nullable MethodHandle enable, isOn, supported, headroom, frame, pso2, pass2, systemInfo;
+	private static @Nullable MethodHandle enable, isOn, supported, headroom, frame, pso2, pass2, systemInfo, e5;
 	private static boolean decided, on, confirmed, edrHere = true;
 	private static long layer;
 	private static float loggedHeadroom = -1f, peak = 1f, sinceQuery = 1f, target = 1f, headroomNow = 1f, potential = 1f;
@@ -73,6 +73,7 @@ public final class ShadeXdr {
 		pso2 = fn("mc_xdr_pso2", JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_INT);
 		pass2 = fn("mc_xdr_pass2", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG);
 		systemInfo = fn("mc_system_info", null, JAVA_LONG, JAVA_LONG, JAVA_INT);
+		e5 = fn("mc_xdr_e5", null, JAVA_INT);
 	}
 
 	/** MetalSurface.configure, before the layer's format is set (every configure; the decision is taken the first time). */
@@ -93,6 +94,9 @@ public final class ShadeXdr {
 			potential = (float) headroom.invokeExact(metalLayer, 1);
 			on = mode == 2 || mode == 1 && can;
 			enable.invokeExact(on ? 1 : 0);
+			// (v12-opt, mcopt.shade.xdrDirectE5, default true; false = 1.2) without the present queue (-Dmcopt.metal.presentQueue=false) the
+			// compose writes the drawable itself: rounded as the queue's RGB9E5 slot, both paths present the same pixels
+			e5.invokeExact(Boolean.parseBoolean(System.getProperty("mcopt.shade.xdrDirectE5", "true")) ? 1 : 0);
 			System.out.println("[mcopt] shade: XDR output " + (on ? "on" : "off") + " (mcopt.shade.xdr=" + new String[] {"off", "auto", "on"}[mode]
 				+ ", EDR screen " + can + ", this screen's potential headroom " + potential + ")");
 		} catch (Throwable t) {

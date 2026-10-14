@@ -149,6 +149,14 @@ public final class Profile {
 		}
 		String name = System.getProperty("mcopt.profile", file.getProperty("profile", "")).trim();
 		if (name.isEmpty()) name = DEFAULT;
+		// mcopt-shade (1.2): mcopt 0.2's first launch (Metal Shaders 1.0 and 1.1 too) wrote profile=alpha; under 0.3 alpha keeps
+		// vanilla's terrain renderer, which the shaders no longer light. With the shaders on, an alpha read from the config
+		// file becomes indie, and the file's line is changed to match (-Dmcopt.profile=alpha on the command line is kept).
+		if (name.equals("alpha") && System.getProperty("mcopt.profile") == null
+			&& Boolean.parseBoolean(System.getProperty("mcopt.shade", file.getProperty("mcopt.shade", "false")).trim())) {
+			name = "indie";
+			alphaToIndie(cfg);
+		}
 		if (!Files.exists(cfg)) { // first launch: record the effective profile (none stays none) and the shaders' defaults, applied now too
 			writeDefault(cfg, name);
 			if (Files.isRegularFile(cfg)) {
@@ -229,6 +237,28 @@ public final class Profile {
 			return new String(b, StandardCharsets.UTF_8);
 		} catch (Exception e) {
 			return "";
+		}
+	}
+
+	/** The config file's {@code profile=alpha} line becomes {@code profile=indie}; the rest of the file is kept as it is. */
+	private static void alphaToIndie(Path cfg) {
+		try {
+			java.util.List<String> lines = Files.readAllLines(cfg, StandardCharsets.UTF_8);
+			boolean changed = false;
+			for (int i = 0; i < lines.size(); i++) {
+				if (lines.get(i).replace(" ", "").equals("profile=alpha")) {
+					lines.set(i, "profile=indie");
+					changed = true;
+				}
+			}
+			if (!changed) return;
+			Path tmp = cfg.resolveSibling(cfg.getFileName() + ".tmp");
+			Files.write(tmp, lines, StandardCharsets.UTF_8);
+			Files.move(tmp, cfg, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+			System.out.println("[mcopt] profile: " + cfg + " said profile=alpha (written by an older version); now profile=indie, "
+				+ "the terrain renderer the shaders light");
+		} catch (IOException | RuntimeException e) {
+			System.out.println("[mcopt] profile: using indie instead of alpha; can't update " + cfg + ": " + e);
 		}
 	}
 

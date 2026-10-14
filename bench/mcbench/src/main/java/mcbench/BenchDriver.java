@@ -255,6 +255,7 @@ public final class BenchDriver {
 			LightShots.plan(steps); // opt-in -Dmcbench.dynLights=true|field,mobs,perf,cave,walk,nether (M3 dynamic lights)
 			DimShots.plan(steps); // opt-in -Dmcbench.dims=true|nether,end,aurora,lava,snow (M3 sky/dimensions)
 			UiShots.plan(steps); // opt-in -Dmcbench.ui=true (M3.1: the pause menu's resolution button)
+			UiShots.planSettings(steps); // opt-in -Dmcbench.uiSettings=true (1.1: the shader settings screen)
 			ShadowShots.plan(steps); // opt-in -Dmcbench.shadow=tint,glass,far (M3.3 shadow passes)
 			MiscShots.plan(steps); // opt-in -Dmcbench.ab=... / -Dmcbench.variantShots=... (M3.3 misc: generic A/B phases and variant shots)
 			WetShots.plan(steps); // opt-in -Dmcbench.wet=ground,sunset,night,storm,path,sand,stone (M3.3 wet ground A/B shots)

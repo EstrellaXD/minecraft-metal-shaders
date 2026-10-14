@@ -349,6 +349,12 @@ public final class CloudConfig {
 
 	static final boolean SMOOTH_DEFAULT = false; // (run cl1: +0.21 ms with every cloud read smoothed, and the edge specks stay: off)
 	public static final boolean GPU_TIMER = Boolean.getBoolean("mcopt.shade.clouds.gpuTimer");
+	/**
+	 * (v12-opt) The march and resolves specialized for the dev bits, mode bits and style the settings have at startup (clouds.metal
+	 * CLOUD_FC_*: the code of the modes that are off left out; the same arithmetic), bound on the frames that carry exactly those
+	 * values. mcopt.shade.cloudLean: false at startup = never built; false live = the generic passes.
+	 */
+	public static final boolean LEAN_PASSES = !"false".equals(System.getProperty("mcopt.shade.cloudLean"));
 	public static final boolean LOG = GPU_TIMER || Boolean.getBoolean("mcopt.shade.clouds.log");
 
 	private CloudConfig() {
@@ -398,6 +404,8 @@ public final class CloudConfig {
 		try {
 			int failed = CloudNative.warm(ctx, lib);
 			if (failed != 0) throw new IllegalStateException(failed + " cloud pipelines failed");
+			// (v12-opt) and the specialized march and resolves for the startup settings (ShadeClouds.init builds the same)
+			if (LEAN_PASSES) CloudNative.warmLean(ctx, lib, devBits(), modeBits(), ShadeClouds.leanStyle());
 		} finally {
 			mcopt.metal.MetalBridge.release(lib);
 		}

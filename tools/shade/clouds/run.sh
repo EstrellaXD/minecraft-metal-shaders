@@ -18,6 +18,9 @@ SCALE="${4:-0.4}"; FRAMES="${5:-24}"; ONLY="${6:-}"
 JOML="$(find ~/.gradle/caches/modules-2 -name 'joml-1.10*.jar' | grep -v sources | head -1)"
 JSPEC="$(find ~/.gradle/caches -name 'jspecify-*.jar' | grep -v sources | head -1)"
 CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$JOML:$JSPEC"
+# (v12-opt) CloudParams.pack reads the style setting through ShadeClouds, whose static buffers need LWJGL (jar + its macOS natives)
+LWJGL_DIR="$HOME/Library/Application Support/PrismLauncher/libraries/org/lwjgl"
+for j in "$LWJGL_DIR"/lwjgl/3.4.3/lwjgl-3.4.3.jar "$LWJGL_DIR"/lwjgl-natives-macos-arm64/3.4.3/lwjgl-natives-macos-arm64-3.4.3.jar; do [ -f "$j" ] && CP="$CP:$j"; done
 # CLOUDS_RES=<dir>: a directory holding mcopt/shade/*.metal overrides, ahead of the sources (instrumented experiments)
 [ -n "$CLOUDS_RES" ] && CP="$CLOUDS_RES:$CP"
 rm -rf "$OUT/classes" "$OUT/frames" && mkdir -p "$OUT/classes" "$OUT/frames" "$OUT/png"

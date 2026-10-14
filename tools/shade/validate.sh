@@ -16,6 +16,7 @@ JAVA_BIN="${JAVA_HOME:+$JAVA_HOME/bin/}"
 rm -rf "$OUT" && mkdir -p "$OUT/classes"
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/pipecheck.m" -o "$OUT/pipecheck"
 clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/vlcheck.m" -o "$OUT/vlcheck"
+clang -fobjc-arc -O1 -framework Foundation -framework Metal "$HERE/cloudcheck.m" -o "$OUT/cloudcheck"
 CP="$METAL/build/classes/java/main:$METAL/src/main/resources:$(find ~/.gradle/caches -name 'jspecify-*.jar' | grep -v sources | head -1)"
 "${JAVA_BIN}javac" -d "$OUT/classes" -cp "$CP" "$HERE/ShadeMslDump.java"
 # VALIDATE_PROPS="-Dx=y ...": more switches for the dump (e.g. a startup-only shader variant under test)
@@ -61,6 +62,8 @@ for i in 0 1; do ./pipecheck postexcolor variants/endsky$i.vs.metal variants/end
 ./pipecheck compile "$METAL/src/main/resources/mcopt/shade/shadow.metal" || fail=1
 # volumetric light (mcvl.m): every pass, LDR and HDR composite, canopy kernel
 ./vlcheck variants/vl.metal || fail=1
+# (v12-opt) volumetric clouds (mcclouds.m): every pass, the generic ones and the lean march and resolves (function constants)
+./cloudcheck variants/clouds_passes.metal || fail=1
 # dynamic lights (mcdynlight.m): the visibility kernel
 ./pipecheck compile variants/dynlight_vis.metal || fail=1
 # clouds / weather against vanilla's generated stages, when a dump dir is given (MCOPT_GEN_DIR=<-Dmcopt.metal.dumpMsl dir>)

@@ -22,16 +22,20 @@ static id<MTLLibrary> load(NSString *path) {
 	if (!lib) { printf("%s: %s\n", path.UTF8String, e.localizedDescription.UTF8String); exit(1); }
 	return lib;
 }
-static id<MTLRenderPipelineState> pso(id<MTLLibrary> lib, NSString *vs, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1) {
+// (v12-opt) fc: the clouds.metal CLOUD_FC_* specialization (nil: none, as mcclouds.m's generic pipelines)
+static id<MTLRenderPipelineState> psoFc(id<MTLLibrary> lib, NSString *vs, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1, MTLFunctionConstantValues *fc) {
 	MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
 	pd.vertexFunction = [lib newFunctionWithName:vs];
-	pd.fragmentFunction = [lib newFunctionWithName:fs];
+	pd.fragmentFunction = [lib newFunctionWithName:fs constantValues:fc ? fc : [MTLFunctionConstantValues new] error:nil];
 	pd.colorAttachments[0].pixelFormat = f0;
 	if (f1 != MTLPixelFormatInvalid) pd.colorAttachments[1].pixelFormat = f1;
 	NSError *e = nil;
 	id<MTLRenderPipelineState> p = [dev newRenderPipelineStateWithDescriptor:pd error:&e];
 	if (!p) { printf("%s: %s\n", fs.UTF8String, e.localizedDescription.UTF8String); exit(1); }
 	return p;
+}
+static id<MTLRenderPipelineState> pso(id<MTLLibrary> lib, NSString *vs, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1) {
+	return psoFc(lib, vs, fs, f0, f1, nil);
 }
 static id<MTLTexture> tex(MTLPixelFormat f, int w, int h, BOOL shared) {
 	MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:f width:w height:h mipmapped:NO];
@@ -145,7 +149,19 @@ int main(int argc, const char **argv) {
 		const float *p0 = params.bytes;
 		int hw = (int) p0[32], hh = (int) p0[33], mw = (int) p0[34], mh = (int) p0[35];
 		int dw = 128, dh = 64; // CloudConfig.DOME_W / DOME_H (FT2.8: CloudParams.dome.x is the dome's update count, not its width)
-		id<MTLRenderPipelineState> march = pso(cl, @"cloud_vs", @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float);
+		// (v12-opt) CLOUDS_LEAN=1: the march and resolve specialized (CLOUD_FC_DEV / MODE / STYLE) for the first frame's dev bits
+		// (lightDir.w), mode bits (shadowDir.w) and style (art.w), as mcclouds.m's lean pipelines
+		MTLFunctionConstantValues *lfc = nil;
+		if (getenv("CLOUDS_LEAN")) {
+			int ldev = (int) p0[63], lmode = (int) p0[103];
+			float lstyle = p0[107];
+			lfc = [MTLFunctionConstantValues new];
+			[lfc setConstantValue:&ldev type:MTLDataTypeInt atIndex:0];
+			[lfc setConstantValue:&lmode type:MTLDataTypeInt atIndex:1];
+			[lfc setConstantValue:&lstyle type:MTLDataTypeFloat atIndex:2];
+			fprintf(stderr, "lean: dev %d mode %d style %g\n", ldev, lmode, lstyle);
+		}
+		id<MTLRenderPipelineState> march = psoFc(cl, @"cloud_vs", @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float, lfc);
 		// the resolve and its data target: M3.3 mode bit 1 (CloudParams.shadowDir.w) = cloud_resolve_st with R16Uint (age +
 		// distance), else cloud_resolve with R8 (age); CLOUDS_RESOLVE / CLOUDS_DATAFMT (rg16f, r16u, r16f, r16un, r8) override (experiments)
 		BOOL st = (((int) p0[103]) & 1) != 0;
@@ -154,7 +170,7 @@ int main(int argc, const char **argv) {
 			: strcmp(dfe, "r16f") == 0 ? MTLPixelFormatR16Float : strcmp(dfe, "r16un") == 0 ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm)
 			: st ? MTLPixelFormatR16Uint : MTLPixelFormatR8Unorm;
 		const char *rfe = getenv("CLOUDS_RESOLVE");
-		id<MTLRenderPipelineState> resolve = pso(cl, @"cloud_vs", rfe ? @(rfe) : st ? @"cloud_resolve_st" : @"cloud_resolve", MTLPixelFormatRGBA16Float, dfmt);
+		id<MTLRenderPipelineState> resolve = psoFc(cl, @"cloud_vs", rfe ? @(rfe) : st ? @"cloud_resolve_st" : @"cloud_resolve", MTLPixelFormatRGBA16Float, dfmt, lfc);
 		id<MTLRenderPipelineState> domeP = pso(cl, @"cloud_vs", @"cloud_dome", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid);
 		id<MTLRenderPipelineState> shadowP = pso(cl, @"cloud_vs", @"cloud_shadow", MTLPixelFormatR16Float, MTLPixelFormatInvalid);
 		id<MTLRenderPipelineState> comp = pso(cl, @"cloudpreview_vs", @"cloudpreview_fs", MTLPixelFormatRGBA8Unorm, MTLPixelFormatInvalid);

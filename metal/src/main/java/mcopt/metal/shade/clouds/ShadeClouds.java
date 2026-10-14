@@ -150,6 +150,11 @@ public final class ShadeClouds {
 	}
 
 	/** (1.1) The blocky style this frame (ShadeSettings "Clouds: Blocky", live; was CloudConfig.BLOCKY at startup). */
+	/** (v12-opt) The style the specialized passes are built for: CloudParams.art.w with the startup setting (blocky: the game's cells). */
+	static float leanStyle() {
+		return blocky() ? 2f : 0f;
+	}
+
 	public static boolean blocky() {
 		return mcopt.metal.shade.ShadeSettings.clouds() == mcopt.metal.shade.ShadeSettings.CLOUDS_BLOCKY;
 	}
@@ -323,7 +328,8 @@ public final class ShadeClouds {
 			lastShadows = shadows;
 			p.pack(PACKED, f, WEATHER);
 			int flags = 2 | (p.shadowUpdate ? 1 : 0) | (domeOn && (dome || p.reset) ? 4 : 0)
-				| (CloudConfig.GPU_TIMER ? 8 : 0) | ((mode & CloudConfig.MODE_STABLE) != 0 ? 16 : 0) | (cells ? 32 : 0);
+				| (CloudConfig.GPU_TIMER ? 8 : 0) | ((mode & CloudConfig.MODE_STABLE) != 0 ? 16 : 0) | (cells ? 32 : 0)
+				| (mcopt.metal.shade.Live.b("mcopt.shade.cloudLean", true) ? 64 : 0);
 			if (!p.reset) {
 				if ((dev & CloudConfig.DEV_NO_SCREEN) != 0) flags &= ~2;   // pricing: no march / resolve (the consumers read the old history)
 				if ((dev & CloudConfig.DEV_NO_MAPS) != 0) flags &= ~(1 | 4); // pricing: no shadow map / dome pass
@@ -390,6 +396,13 @@ public final class ShadeClouds {
 			}
 			state = s;
 			vanillaTried = false; // (1.1) a new state has no cloud mask yet
+			// (v12-opt) the specialized march and resolves for the startup settings (warmed off the render thread by CloudConfig.warmUp)
+			if (CloudConfig.LEAN_PASSES) {
+				long t1 = mcopt.metal.shade.ShadeCompile.now();
+				int ok = CloudNative.lean(s, ctx, CloudConfig.devBits(), CloudConfig.modeBits(), leanStyle());
+				mcopt.metal.shade.ShadeCompile.setup("clouds (lean)", t1);
+				if (ok == 0) System.out.println("[mcopt] shade: clouds: the specialized passes could not be built (the generic ones run)");
+			}
 			System.out.println("[mcopt] shade: volumetric clouds on (" + CloudConfig.describe() + ")");
 			return true;
 		} finally {

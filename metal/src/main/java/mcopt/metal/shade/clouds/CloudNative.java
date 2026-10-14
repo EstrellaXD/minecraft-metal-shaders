@@ -21,6 +21,7 @@ import java.lang.foreign.MemoryLayout;
 import java.lang.invoke.MethodHandle;
 import mcopt.metal.MetalBridge;
 
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
@@ -36,6 +37,9 @@ final class CloudNative {
 	private static final MethodHandle VANILLA = fn("mc_clouds_vanilla", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 	private static final MethodHandle OVER = fn("mc_clouds_over", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
 	private static final MethodHandle WARM = fn("mc_clouds_warm", JAVA_INT, JAVA_LONG, JAVA_LONG);
+	// (v12-opt) the specialized march and resolves (clouds.metal CLOUD_FC_*)
+	private static final MethodHandle LEAN = fn("mc_clouds_lean", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_FLOAT);
+	private static final MethodHandle WARM_LEAN = fn("mc_clouds_warm_lean", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_FLOAT);
 
 	private CloudNative() {
 	}
@@ -55,6 +59,24 @@ final class CloudNative {
 	static int warm(long ctx, long lib) {
 		try {
 			return (int) WARM.invokeExact(ctx, lib);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** (v12-opt) The march and resolves specialized for dev bits, mode bits and style (art.w): 1 when built. */
+	static int lean(long state, long ctx, int dev, int mode, float style) {
+		try {
+			return (int) LEAN.invokeExact(state, ctx, dev, mode, style);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** (v12-opt, parallel compile) lean()'s pipelines from lib, built and released: how many failed. */
+	static int warmLean(long ctx, long lib, int dev, int mode, float style) {
+		try {
+			return (int) WARM_LEAN.invokeExact(ctx, lib, dev, mode, style);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -87,7 +109,7 @@ final class CloudNative {
 
 	/**
 	 * flags: 1 shadow map, 2 screen (march + resolve), 4 dome, 8 GPU timer, 16 the M3.3 resolve (cloud_resolve_st, R16Uint data),
-	 * 32 (1.1) the vanilla cloud mask in place of the weather map.
+	 * 32 (1.1) the vanilla cloud mask in place of the weather map, 64 (v12-opt) the specialized march and resolves where they apply.
 	 */
 	static void render(long enc, long state, long params, int bytes, int flags) {
 		try {

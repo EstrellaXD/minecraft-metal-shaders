@@ -23,6 +23,11 @@ typedef struct {
 	id<MTLComputePipelineState> bakeNoise, bakeWeather;
 	id<MTLRenderPipelineState> march, resolve, dome, shadow;
 	id<MTLRenderPipelineState> resolveSt; // M3.3 cloud_resolve_st (flag 16): its data target is R16Uint (age + the clouds' distance)
+	// (v12-opt, mc_clouds_lean) the march and resolves specialized for one set of dev bits, mode bits and style (clouds.metal
+	// CLOUD_FC_*), bound (flag 64) on the frames whose CloudParams carry exactly those values
+	id<MTLRenderPipelineState> marchLean, resolveLean, resolveStLean;
+	int leanDev, leanMode;
+	float leanStyle;
 	id<MTLRenderPipelineState> over;  // cloud_over for the HDR scene's format (made on first use)
 	MTLPixelFormat overFormat;
 	id<MTLTexture> noise, weather, shadowMap;
@@ -39,11 +44,20 @@ typedef struct {
 	int timeRan[CLOUD_TIME_RING];  // bit p: pass p was encoded with this ring slot's samples
 } CloudState;
 
-static id<MTLRenderPipelineState> cloudPso(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1, char *err, int errCap) {
+// lean: specialize CLOUD_FC_DEV / MODE / STYLE (function constants 0-2) to dev / mode / style; else none (read from CloudParams)
+static id<MTLRenderPipelineState> cloudPsoFc(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1, int lean,
+	int devBits, int modeBits, float style, char *err, int errCap) {
 	MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
 	pd.label = fs;
 	pd.vertexFunction = [[lib newFunctionWithName:@"cloud_vs"] autorelease];
-	pd.fragmentFunction = [[lib newFunctionWithName:fs] autorelease];
+	MTLFunctionConstantValues *fc = [[MTLFunctionConstantValues new] autorelease];
+	if (lean) {
+		[fc setConstantValue:&devBits type:MTLDataTypeInt atIndex:0];
+		[fc setConstantValue:&modeBits type:MTLDataTypeInt atIndex:1];
+		[fc setConstantValue:&style type:MTLDataTypeFloat atIndex:2];
+	}
+	NSError *fe = nil;
+	pd.fragmentFunction = [[lib newFunctionWithName:fs constantValues:fc error:&fe] autorelease];
 	if (!pd.vertexFunction || !pd.fragmentFunction) {
 		snprintf(err, errCap, "clouds: no function %s", fs.UTF8String);
 		return nil;
@@ -56,8 +70,28 @@ static id<MTLRenderPipelineState> cloudPso(id<MTLDevice> dev, id<MTLLibrary> lib
 	return p;
 }
 
+static id<MTLRenderPipelineState> cloudPso(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *fs, MTLPixelFormat f0, MTLPixelFormat f1, char *err, int errCap) {
+	return cloudPsoFc(dev, lib, fs, f0, f1, 0, 0, 0, 0.0f, err, errCap);
+}
+
+// The three lean pipelines for one key (march, resolve, resolve_st), as mc_clouds_lean and mc_clouds_warm_lean build them.
+static int cloudLeanPsos(id<MTLDevice> dev, id<MTLLibrary> lib, int devBits, int modeBits, float style, id<MTLRenderPipelineState> out[3]) {
+	char err[512];
+	out[0] = cloudPsoFc(dev, lib, @"cloud_march", MTLPixelFormatRGBA16Float, MTLPixelFormatR32Float, 1, devBits, modeBits, style, err, sizeof err);
+	out[1] = cloudPsoFc(dev, lib, @"cloud_resolve", MTLPixelFormatRGBA16Float, MTLPixelFormatR8Unorm, 1, devBits, modeBits, style, err, sizeof err);
+	out[2] = cloudPsoFc(dev, lib, @"cloud_resolve_st", MTLPixelFormatRGBA16Float, MTLPixelFormatR16Uint, 1, devBits, modeBits, style, err, sizeof err);
+	if (out[0] && out[1] && out[2]) return 1;
+	NSLog(@"mcopt clouds: lean pipelines: %s", err);
+	for (int i = 0; i < 3; i++) {
+		[out[i] release];
+		out[i] = nil;
+	}
+	return 0;
+}
+
 static id<MTLComputePipelineState> cloudKernel(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *err, int errCap) {
-	id<MTLFunction> fn = [[lib newFunctionWithName:name] autorelease];
+	// (v12-opt: through constantValues, none set: the library has optional function constants, clouds.metal CLOUD_FC_*)
+	id<MTLFunction> fn = [[lib newFunctionWithName:name constantValues:[[MTLFunctionConstantValues new] autorelease] error:nil] autorelease];
 	if (!fn) {
 		snprintf(err, errCap, "clouds: no kernel %s", name.UTF8String);
 		return nil;
@@ -211,6 +245,9 @@ void mc_clouds_free(CloudState *s) {
 	[s->march release];
 	[s->resolve release];
 	[s->resolveSt release];
+	[s->marchLean release];
+	[s->resolveLean release];
+	[s->resolveStLean release];
 	[s->dome release];
 	[s->shadow release];
 	[s->over release];
@@ -347,13 +384,19 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 			cloudPass(cb, s->shadow, s->shadowMap, nil, @"mcopt shade: cloud shadow", params, bytes, in, 2, times, base);
 		}
 		if (flags & 2) {
+			// (v12-opt, flag 64: mcopt.shade.cloudLean) the specialized march and resolve when this frame's dev bits (lightDir.w, float
+			// 63), mode bits (shadowDir.w, float 103) and style (art.w, float 107) are the ones they were built for
+			const float *pf = (const float *) params;
+			int lean = (flags & 64) && s->marchLean && bytes >= 448 && (int) pf[63] == s->leanDev && (int) pf[103] == s->leanMode && pf[107] == s->leanStyle;
 			id<MTLTexture> in[2] = {weather, s->noise};
-			cloudPass(cb, s->march, s->marchColor, s->marchDist, @"mcopt shade: cloud march", params, bytes, in, 2, times, base + 2);
+			cloudPass(cb, lean ? s->marchLean : s->march, s->marchColor, s->marchDist, lean ? @"mcopt shade: cloud march (lean)" : @"mcopt shade: cloud march", params,
+				bytes, in, 2, times, base + 2);
 			int next = s->cur ^ 1;
 			BOOL st = (flags & 16) != 0;
 			id<MTLTexture> const *data = st ? s->dataSt : s->data;
 			id<MTLTexture> in2[4] = {s->marchColor, s->marchDist, s->hist[s->cur], data[s->cur]};
-			cloudPass(cb, st ? s->resolveSt : s->resolve, s->hist[next], data[next], @"mcopt shade: cloud resolve", params, bytes, in2, 4, times, base + 4);
+			id<MTLRenderPipelineState> rs = st ? (lean ? s->resolveStLean : s->resolveSt) : (lean ? s->resolveLean : s->resolve);
+			cloudPass(cb, rs, s->hist[next], data[next], @"mcopt shade: cloud resolve", params, bytes, in2, 4, times, base + 4);
 			s->cur = next;
 		}
 		if (flags & 4) {
@@ -376,7 +419,7 @@ void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture
 			MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor new] autorelease];
 			pd.label = @"cloud_over";
 			pd.vertexFunction = [[s->lib newFunctionWithName:@"cloud_vs"] autorelease];
-			pd.fragmentFunction = [[s->lib newFunctionWithName:@"cloud_over"] autorelease];
+			pd.fragmentFunction = [[s->lib newFunctionWithName:@"cloud_over" constantValues:[[MTLFunctionConstantValues new] autorelease] error:nil] autorelease];
 			MTLRenderPipelineColorAttachmentDescriptor *c = pd.colorAttachments[0];
 			c.pixelFormat = scene.pixelFormat;
 			c.blendingEnabled = YES;
@@ -438,5 +481,35 @@ int mc_clouds_warm(Ctx *ctx, id<MTLLibrary> lib) {
 			[built[i] release];
 		}
 		return failed;
+	}
+}
+
+// (v12-opt) The march and resolves specialized for these dev bits, mode bits and style (clouds.metal CLOUD_FC_*), bound by
+// mc_clouds_render (flag 64) on the frames whose CloudParams carry exactly them. Replaces any earlier set; 1 when built.
+int mc_clouds_lean(CloudState *s, Ctx *ctx, int devBits, int modeBits, float style) {
+	if (!s || !s->lib) return 0;
+	@autoreleasepool {
+		id<MTLRenderPipelineState> p[3];
+		if (!cloudLeanPsos(ctx->device, s->lib, devBits, modeBits, style, p)) return 0;
+		[s->marchLean release];
+		[s->resolveLean release];
+		[s->resolveStLean release];
+		s->marchLean = p[0];
+		s->resolveLean = p[1];
+		s->resolveStLean = p[2];
+		s->leanDev = devBits;
+		s->leanMode = modeBits;
+		s->leanStyle = style;
+		return 1;
+	}
+}
+
+// (parallel compile) mc_clouds_lean's pipelines from lib, built and released (Metal's shader cache keeps them): how many failed.
+int mc_clouds_warm_lean(Ctx *ctx, id<MTLLibrary> lib, int devBits, int modeBits, float style) {
+	@autoreleasepool {
+		id<MTLRenderPipelineState> p[3];
+		if (!cloudLeanPsos(ctx->device, lib, devBits, modeBits, style, p)) return 3;
+		for (int i = 0; i < 3; i++) [p[i] release];
+		return 0;
 	}
 }

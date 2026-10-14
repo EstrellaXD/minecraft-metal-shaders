@@ -76,7 +76,20 @@ static_assert(sizeof(CloudParams) == 448, "CloudParams layout (CloudParams.java)
 #define CLOUD_DEV_OLD_MARCH 2048   // the march looks the sky up for every ray, cloud or not (M3)
 #define CLOUD_DEV_OLD_MIP 8192     // the billow noise from its full-size level at any distance (M3)
 #define CLOUD_DEV_OLD_SHADOW 1048576 // (FT2.7) the shadow map's 6 fixed slices through the slab at any sun height (FT2.6)
-static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.lightDir.w) & bit) != 0; }
+// (v12-opt) function constants 0-2: the dev bits, mode bits and style (art.w) compiled in. mcclouds.m's lean march and resolves
+// (mc_clouds_lean) are specialized for the values the settings had at startup and bound on the frames whose CloudParams carry
+// exactly those values; unset (every other pipeline), the passes read them from CloudParams as before. The same arithmetic
+// without the code of the modes that are off (fewer live registers in the latency-bound march).
+constant int CLOUD_FC_DEV [[function_constant(0)]];
+constant int CLOUD_FC_MODE [[function_constant(1)]];
+constant float CLOUD_FC_STYLE [[function_constant(2)]];
+constant bool cloudFc = is_function_constant_defined(CLOUD_FC_DEV) && is_function_constant_defined(CLOUD_FC_MODE) && is_function_constant_defined(CLOUD_FC_STYLE);
+constant int cloudFcDev = cloudFc ? CLOUD_FC_DEV : 0;
+constant int cloudFcMode = cloudFc ? CLOUD_FC_MODE : 0;
+constant float cloudFcStyle = cloudFc ? CLOUD_FC_STYLE : 0.0;
+static inline bool cloudDev(constant CloudParams &c, int bit) { return ((cloudFc ? cloudFcDev : int(c.lightDir.w)) & bit) != 0; }
+// the style (art.w: 0 volumetric, 1 blocky, 2 blocky from the game's cloud texture)
+static inline float cloudStyle(constant CloudParams &c) { return cloudFc ? cloudFcStyle : c.art.w; }
 
 // M3.3 mode bits (CloudParams.shadowDir.w; CloudConfig.MODE_*): new behaviour, each bit off = M3.2's way
 #define CLOUD_MODE_STABLE 1 // the march's start offsets from a per-pixel hash (not interleaved gradient noise) and the resolve that
@@ -89,7 +102,7 @@ static inline bool cloudDev(constant CloudParams &c, int bit) { return (int(c.li
 #define CLOUD_MODE_EDGE 16  // the stable resolve's history clamp only where the reprojection depends on the distance (FT1.2)
 #define CLOUD_MODE_ZOOM 64  // (FT2.8, audit idx 12) a zoom in (spyglass, FOV) lowers the history's age by how magnified it is
 #define CLOUD_MODE_DRIFT 32 // the stable resolve trusts less a history that drifts against a pure turn (near clouds: FT2.6)
-static inline bool cloudMode(constant CloudParams &c, int bit) { return (int(c.shadowDir.w) & bit) != 0; }
+static inline bool cloudMode(constant CloudParams &c, int bit) { return ((cloudFc ? cloudFcMode : int(c.shadowDir.w)) & bit) != 0; }
 
 constexpr sampler cloudRep(filter::linear, address::repeat);
 // M3.1: the billow noise from the mip level of the sample's footprint, as cloudDensity's lod always meant (M3's cloudRep has
@@ -302,7 +315,7 @@ static bool cloudSegment(CloudRay r, float yb, float yt, float ground, float max
 // (1.1) art.w 2: the game's own cloud texture (ShadeClouds: textures/environment/clouds.png as a 0/1 mask, bound in place of the
 // weather map; one texel per 12-block cell, origin.xy in its space as vanilla's CloudRenderer places it).
 static inline bool cloudBlockFilled(float2 cell, constant CloudParams &c, texture2d<half> weather) {
-	if (c.art.w > 1.5) {
+	if (cloudStyle(c) > 1.5) {
 		float2 size = float2(weather.get_width(), weather.get_height());
 		return weather.sample(cloudRep, (cell + 0.5) / size, level(0.0)).r > 0.5h;
 	}
@@ -332,7 +345,7 @@ static inline float cloudBaseH(float h, half4 w, float spread) {
 // instead of aliasing it into grain.
 static float cloudDensity(float3 p, float y, int q, constant CloudParams &c, texture2d<half> weather, texture3d<half> noise,
                           float detail = 1.0, float lod = 0.0) {
-	if (c.art.w > 0.5) return y >= c.layer.x && y <= c.layer.y && cloudBlockCell(c.origin.xy + p.xz, c, weather) ? 1.0 : 0.0;
+	if (cloudStyle(c) > 0.5) return y >= c.layer.x && y <= c.layer.y && cloudBlockCell(c.origin.xy + p.xz, c, weather) ? 1.0 : 0.0;
 	float h = (y - c.layer.x) / (c.layer.y - c.layer.x);
 	if (h <= 0.0 || h >= 1.0) return 0.0;
 	float2 xz = c.origin.xy + p.xz;
@@ -898,12 +911,12 @@ static CloudResult cloudSky(float3 dir, int steps, int lsteps, int q, float jitt
 		// batch): a cumulus stretch (cloudSegment, ALU only), the cirrus plane, or the dev path that always takes it
 		CloudRay rs = cloudRay(dir, c);
 		float s0, s1;
-		if (c.art.w > 0.5 || pre.t > 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH) || cloudSegment(rs, c.layer.x, c.layer.y, c.misc.z, c.march.z, s0, s1))
+		if (cloudStyle(c) > 0.5 || pre.t > 0.0 || cloudDev(c, CLOUD_DEV_OLD_MARCH) || cloudSegment(rs, c.layer.x, c.layer.y, c.misc.z, c.march.z, s0, s1))
 			skyPre = shadeSkyLookup(dir, lut, lutS, f);
-		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise, foot);
+		cu = cloudStyle(c) > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise, foot);
 		ci = cloudCirrusEnd(pre, dir, c, weather);
 	} else {
-		cu = c.art.w > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise, foot);
+		cu = cloudStyle(c) > 0.5 ? cloudBlocky(dir, c, weather) : cloudMarch(dir, steps, lsteps, q, jitter, c, weather, noise, foot);
 		ci = cloudCirrus(dir, c, weather);
 	}
 	// the clear sky behind only matters where a cloud is (aerial perspective; M3.1: no lookup for the empty rays)

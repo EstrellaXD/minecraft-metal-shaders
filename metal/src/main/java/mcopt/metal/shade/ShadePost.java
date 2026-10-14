@@ -100,6 +100,13 @@ public final class ShadePost {
 	private static long psoFinalXdr, xdrExcess;
 	// M3: the final pass with the Nether/End fog, End sky, shimmer and camera media compiled in (the plain ones carry none of it)
 	private static long psoFinalDims, psoFinalXdrDims;
+	/**
+	 * (v12-opt) The overworld final pass without the code of settings that are off by default (the volumetric light's edge fix,
+	 * its upsample modes other than 1, the debug views; shade_post.metal LEAN): picked while those are at their defaults, the
+	 * same image ~0.25 ms cheaper at 3024x1964 (fewer live registers). mcopt.shade.finalLean (live, true; false = the full pass).
+	 */
+	private static long psoFinalLean, psoFinalXdrLean;
+	private static boolean loggedLean;
 	private static int xdrWidth, xdrHeight;
 	/**
 	 * (2026-10-09) The output resolution (ShadeOutput, below the window's): the final pass writes this RGBA8 image at the output
@@ -210,11 +217,14 @@ public final class ShadePost {
 			psoUp = ShadeRender.pipeline(library, "shade_fs_vs", "shade_bloom_up", ShadeRender.RGBA16F, 0);
 			psoFinal = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final", ShadeRender.RGBA8, 0);
 			psoUpscale = ShadeRender.pipeline(library, "shade_fs_vs", "shade_upscale", ShadeRender.RGBA8, 0);
+			psoFinalLean = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final_lean", ShadeRender.RGBA8, 0);
 			boolean dimsVariant = mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.MEDIA;
 			if (dimsVariant) psoFinalDims = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final_dims", ShadeRender.RGBA8, 0);
 			if (mcopt.metal.shade.dims.ShadeXdr.active()) {
 				psoFinalXdr = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr", ShadeRender.RGBA8,
 					ShadeRender.RG11B10F);
+				psoFinalXdrLean = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr_lean",
+					ShadeRender.RGBA8, ShadeRender.RG11B10F);
 				if (dimsVariant) psoFinalXdrDims = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr_dims",
 					ShadeRender.RGBA8, ShadeRender.RG11B10F);
 			}
@@ -572,9 +582,10 @@ public final class ShadePost {
 		// q: x bloom level 0's weight, y the volumetric light's upsample mode, z its depth tolerance scale (2026-10-09, live:
 		// mcopt.shade.vl.upMode / upTol, shade_post.metal shadeVlUpsample), w the knee of the light it adds (exposed luminance;
 		// 0 = linear: mcopt.shade.vl.knee, live)
+		float upMode = mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upMode", 1f, 0f);
 		params.putFloat(bloomNorm).putFloat(n > 1 ? 1f : 0f).putFloat(frame & 0xffff).putFloat(f.debug).putFloat(w0)
 			// (2026-10-09 default: mode 1 with 1.6x the tolerance: no dots where the shafts cross leaves; FT2.1: 0, 1)
-			.putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upMode", 1f, 0f)).putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upTol", 1.6f, 1f))
+			.putFloat(upMode).putFloat(mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.upTol", 1.6f, 1f))
 			// (knee 0.4: the brightest glow toward a low sun, the lit air in front of backlit leaves, no longer washes them out
 			// to beige; the shafts stay below it: veil4 i4, notes/godrays-veil-2026-10-09)
 			.putFloat(vl && vlAirFloor > 0f ? 0f : mcopt.metal.shade.vl.VlConfig.look("mcopt.shade.vl.knee", 0.4f, 0f));
@@ -599,9 +610,17 @@ public final class ShadePost {
 		// (a.z, FT2.12: mcopt.shade.vl.airClamp, live, 1; 0 = FT2.11) on surfaces the shadows take out at most the sunlit haze glow the
 		// final pass added to the pixel (all of it in full shadow) instead of at most 70 % of the pixel (airFloor): toward a sun behind
 		// a mountain 30 % of that glow stayed, an orange halo through the mountain (Gael 2026-10-11)
-		params.putFloat(vl ? vlAirFloor : 0f).putFloat(vl && vlAirFloor > 0f ? mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.edgeFix", 0f) : 0f)
+		float edgeFix = vl && vlAirFloor > 0f ? mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.edgeFix", 0f) : 0f;
+		params.putFloat(vl ? vlAirFloor : 0f).putFloat(edgeFix)
 			.putFloat(vl && vlAirFloor > 0f && mcopt.metal.shade.vl.VlConfig.live("mcopt.shade.vl.airClamp", 1f) > 0f ? 1f : 0f).putFloat(0f);
 		params.flip();
+		// (v12-opt) the lean final pass while it computes the same: no debug view (p.w), the upsample's mode 1 (q.y) and no edge fix
+		// (a.y, read as int(a.y) where a.x > 0): what shade_post.metal's LEAN variants hold constant
+		boolean lean = !dimsPass && f.debug == 0f && upMode == 1f && (int) edgeFix == 0 && Live.b("mcopt.shade.finalLean", true);
+		if (lean != loggedLean) {
+			loggedLean = lean;
+			System.out.println("[mcopt] shade: final pass " + (lean ? "lean (mcopt.shade.finalLean)" : "full"));
+		}
 		long mainHandle = MetalBridge.textureHandle(out);
 		MetalBridge.takePendingColorClear(encoder, out);
 		// (2026-10-09) the output resolution below the window's (ShadeOutput): the final pass writes an output-size image, the
@@ -630,10 +649,11 @@ public final class ShadePost {
 				xdrExcess = ShadeRender.texture(ShadeRender.RG11B10F, ow, oh, false, "mcopt shade: XDR excess");
 			}
 			if (encoder != null && MetalBridge.tracing(encoder)) System.out.println("mcopt-metal trace: shade pass 'mcopt shade: final (XDR)'");
-			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, dimsPass && psoFinalXdrDims != 0 ? psoFinalXdrDims : psoFinalXdr, finalTarget, xdrExcess, finalInputs,
-				params, "mcopt shade: final (XDR)");
+			mcopt.metal.shade.dims.ShadeXdr.finalPass(enc, dimsPass && psoFinalXdrDims != 0 ? psoFinalXdrDims : lean && psoFinalXdrLean != 0 ? psoFinalXdrLean : psoFinalXdr,
+				finalTarget, xdrExcess, finalInputs, params, "mcopt shade: final (XDR)");
 		} else {
-			pass(dimsPass && psoFinalDims != 0 ? psoFinalDims : psoFinal, finalTarget, ShadeRender.DONT_CARE, finalInputs, params, "mcopt shade: final");
+			pass(dimsPass && psoFinalDims != 0 ? psoFinalDims : lean && psoFinalLean != 0 ? psoFinalLean : psoFinal, finalTarget, ShadeRender.DONT_CARE, finalInputs,
+				params, "mcopt shade: final");
 		}
 		if (upscale) {
 			// (the XDR excess stays at the output size: the present's compose samples it by uv, mcxdr.m)

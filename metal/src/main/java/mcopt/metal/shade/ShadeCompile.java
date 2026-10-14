@@ -228,7 +228,8 @@ public final class ShadeCompile {
 		if (ShadeConfig.HDR) {
 			// ShadePost.init (without the XDR final passes: whether the screen takes them is known only later)
 			List<Pso> post = new ArrayList<>(List.of(Pso.fullScreen("shade_bloom_down0", ShadeRender.RGBA16F), Pso.fullScreen("shade_bloom_down", ShadeRender.RGBA16F),
-				Pso.fullScreen("shade_bloom_up", ShadeRender.RGBA16F), Pso.fullScreen("shade_final", ShadeRender.RGBA8), Pso.fullScreen("shade_upscale", ShadeRender.RGBA8)));
+				Pso.fullScreen("shade_bloom_up", ShadeRender.RGBA16F), Pso.fullScreen("shade_final", ShadeRender.RGBA8), Pso.fullScreen("shade_final_lean", ShadeRender.RGBA8),
+				Pso.fullScreen("shade_upscale", ShadeRender.RGBA8)));
 			if (mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.MEDIA) post.add(Pso.fullScreen("shade_final_dims", ShadeRender.RGBA8));
 			post.addAll(List.of(Pso.fullScreen("shade_bridge_encode", ShadeRender.RGBA8), Pso.fullScreen("shade_bridge_decode", ShadeConfig.HDR_FORMAT),
 				Pso.kernel("shade_histogram"), Pso.kernel("shade_exposure"), Pso.fullScreen("shade_milkyway_bake", ShadeRender.RGBA16F)));

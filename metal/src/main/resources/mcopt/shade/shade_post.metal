@@ -222,7 +222,10 @@ static inline float3 shadeWorldFromDepth(float2 uv, float d, constant ShadeFrame
 // media, VL, bloom, Purkinje, vignette, vibrance). lum: the scene luminance before exposure (debug view 4).
 // DIMS (M3): compiled with the Nether/End fog, End sky, heat shimmer and camera media; the overworld variant (DIMS false)
 // carries none of that code (ShadePost picks the variant per frame), so the overworld's final pass costs what it did in M2.1.
-template <bool DIMS>
+// LEAN (v12-opt, shade_final_lean / shade_final_xdr_lean; ShadePost picks them while the settings are the defaults they assume,
+// mcopt.shade.finalLean): the volumetric light's edge fix off (a.y 0), its upsample mode 1 (q.y 1) and no debug view, as
+// constants: the same image, without the code those settings never run (and the edge fix's per-texel keys it kept live).
+template <bool DIMS, bool LEAN = false>
 static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth, texture2d<half> bloom0,
                               texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P, constant ShadeFrame &f,
                               constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr, thread float &lum,
@@ -347,15 +350,16 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 	if (P.v.x > 0.5) {
 		float2 vlScale = P.v.z > 0.0 ? P.v.zw : float2(1.0);
 		// (FT2.7, audit idx 47; a.y bits, mcopt.shade.vl.edgeFix: 1 the haze edge's keys, 2 the fallback's negative part uncapped)
-		int edgeFix = P.a.x > 0.0 ? int(P.a.y) : 0;
+		const int edgeFix = LEAN ? 0 : (P.a.x > 0.0 ? int(P.a.y) : 0);
+		const float upMode = LEAN ? 1.0 : P.q.y;
 		half4 v;
 		if (hazeEdge && (edgeFix & 1) != 0) {
 			v = 0.0h;
 			for (int k = 0; k < 4; k++) {
-				if (wqq[k] > 0.0) v += shadeVlUpsample(vlT, vlD, uv, dkq[k], P.v.y, vlScale, P.q.y, P.q.z, (edgeFix & 2) != 0) * half(wqq[k]);
+				if (wqq[k] > 0.0) v += shadeVlUpsample(vlT, vlD, uv, dkq[k], P.v.y, vlScale, upMode, P.q.z, (edgeFix & 2) != 0) * half(wqq[k]);
 			}
 		} else {
-			v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale, P.q.y, P.q.z, (edgeFix & 2) != 0);
+			v = shadeVlUpsample(vlT, vlD, uv, d > 0.0 ? length(wp) : 1e4, P.v.y, vlScale, upMode, P.q.z, (edgeFix & 2) != 0);
 		}
 		tv = P.v.x > 1.5 ? 1.0 : float(v.a); // (v.x 2: vlT is the history, a = distance; no medium dims the scene: FT2.8 idx 2)
 		// v.rgb < 0 on the sky: the crepuscular shadows (dark rays), floored at 55 % of the pixel
@@ -406,6 +410,7 @@ static float3 shadeFinalScene(ShadeFsOut in, texture2d<half> scene, texture2d<ha
 }
 
 // The SDR display value -> what main stores: black floor, sRGB, triangular dither (+-1 LSB), debug view 4.
+template <bool LEAN = false>
 static inline float3 shadeFinalEncode(float3 y, float4 position, constant ShadeFinalParams &P, constant ShadeLook &L, float lum) {
 	float phi = L.grade2.w;
 	// (FT2.8, audit idx 39) only near black: from 8 phi up the term is under half an ulp of y (and 0 when phi is 0)
@@ -414,7 +419,7 @@ static inline float3 shadeFinalEncode(float3 y, float4 position, constant ShadeF
 	// triangular dither, +-1 LSB
 	float n0 = shadeNoise(position.xy, int(P.p.z)), n1 = shadeNoise(position.xy + 17.0, int(P.p.z) + 7);
 	srgb += (n0 + n1 - 1.0) * (L.output.z / 255.0);
-	if (P.p.w == 4.0) srgb = float3(saturate(log2(max(lum, 1e-6)) / 16.0 + 0.6)); // debug: luminance (log)
+	if (!LEAN && P.p.w == 4.0) srgb = float3(saturate(log2(max(lum, 1e-6)) / 16.0 + 0.6)); // debug: luminance (log)
 	return saturate(srgb);
 }
 
@@ -424,17 +429,18 @@ static inline float3 shadeFinalEncode(float3 y, float4 position, constant ShadeF
 	constant ShadeLook &L [[buffer(17)]], constant ShadeGpu &g [[buffer(18)]], constant ShadeResources &sr [[buffer(19)]], \
 	texture2d<half> skyLut [[texture(17)]], sampler lutS [[sampler(13)]]
 
-template <bool DIMS>
+template <bool DIMS, bool LEAN = false>
 static inline float4 shadeFinalSdr(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth, texture2d<half> bloom0,
                                    texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P, constant ShadeFrame &f,
                                    constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr, texture2d<half> skyLut, sampler lutS) {
 	float lum;
-	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum, skyLut, lutS);
-	return float4(shadeFinalEncode(shadeDisplay(c, L), in.position, P, L, lum), 1.0);
+	float3 c = shadeFinalScene<DIMS, LEAN>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum, skyLut, lutS);
+	return float4(shadeFinalEncode<LEAN>(shadeDisplay(c, L), in.position, P, L, lum), 1.0);
 }
 
 fragment float4 shade_final(SHADE_FINAL_ARGS) { return shadeFinalSdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
 fragment float4 shade_final_dims(SHADE_FINAL_ARGS) { return shadeFinalSdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
+fragment float4 shade_final_lean(SHADE_FINAL_ARGS) { return shadeFinalSdr<false, true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
 
 // M3 XDR (E23; mcxdr.m composes at present): main gets the same SDR image with alpha 0 (what later draws -- hand, GUI --
 // cover gets alpha > 0), the second target the highlights' brightness above it, in linear Rec.709 (>= 0): the SDR curve
@@ -442,13 +448,13 @@ fragment float4 shade_final_dims(SHADE_FINAL_ARGS) { return shadeFinalSdr<true>(
 // rises toward the peak over P.x.w octaves (the sun, glints, lava, torches, bloom cores), in the SDR pixel's own hue.
 struct ShadeFinalXdrOut { float4 sdr [[color(0)]]; half4 excess [[color(1)]]; };
 
-template <bool DIMS>
+template <bool DIMS, bool LEAN = false>
 static inline ShadeFinalXdrOut shadeFinalXdr(ShadeFsOut in, texture2d<half> scene, texture2d<half> bloom, depth2d<float> depth,
                                              texture2d<half> bloom0, texture2d<half> vlT, texture2d<half> vlD, constant ShadeFinalParams &P,
                                              constant ShadeFrame &f, constant ShadeLook &L, constant ShadeGpu &g, constant ShadeResources &sr,
                                              texture2d<half> skyLut, sampler lutS) {
 	float lum;
-	float3 c = shadeFinalScene<DIMS>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum, skyLut, lutS);
+	float3 c = shadeFinalScene<DIMS, LEAN>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, lum, skyLut, lutS);
 	float3 y = shadeDisplay(c, L);
 	// (FT2.8, audit idx 39) only above the knee with a peak over SDR white: elsewhere h, boost and the excess are 0
 	float lc = shadeLuma(c), h = 0.0, boost = 0.0;
@@ -459,14 +465,15 @@ static inline ShadeFinalXdrOut shadeFinalXdr(ShadeFsOut in, texture2d<half> scen
 		excess = y / max(shadeLuma(y), 0.05) * boost;
 	}
 	ShadeFinalXdrOut o;
-	o.sdr = float4(shadeFinalEncode(y, in.position, P, L, lum), 0.0);
-	if (P.p.w == 8.0) o.sdr = float4(saturate(float3(boost / max(P.x.y - 1.0, 1e-3), h, 0.0)), 0.0); // debug: XDR boost, knee
+	o.sdr = float4(shadeFinalEncode<LEAN>(y, in.position, P, L, lum), 0.0);
+	if (!LEAN && P.p.w == 8.0) o.sdr = float4(saturate(float3(boost / max(P.x.y - 1.0, 1e-3), h, 0.0)), 0.0); // debug: XDR boost, knee
 	o.excess = half4(half3(min(max(excess, 0.0), 60000.0)), 1.0h);
 	return o;
 }
 
 fragment ShadeFinalXdrOut shade_final_xdr(SHADE_FINAL_ARGS) { return shadeFinalXdr<false>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
 fragment ShadeFinalXdrOut shade_final_xdr_dims(SHADE_FINAL_ARGS) { return shadeFinalXdr<true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
+fragment ShadeFinalXdrOut shade_final_xdr_lean(SHADE_FINAL_ARGS) { return shadeFinalXdr<false, true>(in, scene, bloom, depth, bloom0, vlT, vlD, P, f, L, g, sr, skyLut, lutS); }
 
 // ---- bridge for mods that draw display-referred colours over the HDR world (Distant Horizons) ---------------------------
 fragment float4 shade_bridge_encode(ShadeFsOut in [[stage_in]], texture2d<half> scene [[texture(0)]], constant ShadeLook &L [[buffer(17)]]) {

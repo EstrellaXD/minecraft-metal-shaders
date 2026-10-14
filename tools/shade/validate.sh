@@ -51,6 +51,7 @@ for i in 0 1; do ./pipecheck pos variants/hdrsky$i.vs.metal variants/hdrskylean$
 for i in 0 1; do ./pipecheck postexcolor variants/endsky$i.vs.metal variants/endsky$i.fs.metal || fail=1; ./pipecheck postexcolor variants/hdrendsky$i.vs.metal variants/hdrendsky$i.fs.metal || fail=1; done
 ./pipecheck mrt variants/post.metal variants/post.metal shade_fs_vs shade_final_xdr || fail=1
 ./pipecheck mrt variants/post.metal variants/post.metal shade_fs_vs shade_final_xdr_dims || fail=1
+./pipecheck mrt variants/post.metal variants/post.metal shade_fs_vs shade_final_xdr_lean || fail=1 # (v12-opt) the lean final pass
 ./pipecheck compile variants/post.metal || fail=1
 ./pipecheck compile "$METAL/src/main/resources/mcopt/shade/shadow.metal" || fail=1 # shadow pass + coloured-shadow tint pass
 ./pipecheck postex variants/celestial.vs.metal gen_position_tex.fs.metal || fail=1

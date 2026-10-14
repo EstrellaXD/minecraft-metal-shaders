@@ -156,7 +156,13 @@ public final class ShadeXdr {
 
 	/** Whether this frame's final pass writes highlights above SDR white (on, and the window's screen can show EDR). */
 	public static boolean highlights() {
-		return on && edrHere && (!skip || hot);
+		// (v12-opt, mcopt.shade.xdrPeakSkip, live, default true; false = 1.2) with a peak of SDR white (the screen reports no EDR
+		// headroom: maximumExtendedDynamicRangeColorComponentValue 1, as in many bench runs; or mcopt.shade.xdrPeak=1) the XDR final
+		// pass writes an excess of 0 (shade_final_xdr: boost = (peak - 1) x ... only where peak > 1) and the compose adds it: the SDR
+		// final pass and a compose without the excess present the same pixels (tools: fcmp, 0 texels differ in rgb), without the
+		// RG11B10F write and its read. 1 + 1e-5: the eased peak can stop an ulp above 1 after the headroom falls back to 1; an
+		// excess of at most ~1e-5 x the pixel there changes no RGB9E5 / half value of a pixel above the knee
+		return on && edrHere && (!skip || hot) && !(peak <= 1.00001f && mcopt.metal.shade.Live.b("mcopt.shade.xdrPeakSkip", true));
 	}
 
 	// M3.3 (mcopt.shade.xdrSkip, live, default true; false = M3.2): the XDR final pass and compose only while something on

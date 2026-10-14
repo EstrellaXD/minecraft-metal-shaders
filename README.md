@@ -22,8 +22,8 @@ Every shader pack for Java Edition runs through Iris on OpenGL, and OpenGL on ma
 MacBook Pro M4 at its native 3024×1964, Iris + Complementary Reimagined runs at about **22 FPS**.
 
 Metal Shaders is a fork of [mcopt](https://github.com/noahdunnagan/mcopt), a mod that gives Minecraft 26.3 a Metal
-renderer. On top of it, every effect is written from scratch in Metal Shading Language and runs inside the game's own
-frame, with Apple-GPU-specific tricks (tile memory, compressed render targets, a custom temporal upscaler). Same Mac,
+renderer and, since mcopt 0.3, its own terrain renderer (no Sodium needed). On top of it, every effect is written from
+scratch in Metal Shading Language and runs inside the game's own frame, with Apple-GPU-specific tricks (tile memory, compressed render targets, a custom temporal upscaler). Same Mac,
 same resolution: **90–120 FPS** with the balanced preset, and **135–150 FPS** at 1440p.
 
 ## Videos
@@ -48,8 +48,8 @@ Full-resolution photos (3024×1964) are in the [release](https://github.com/Gael
 
 ## Performance
 
-MacBook Pro 14" M4 (10-core GPU), macOS 26, Minecraft 26.3, measured in-game while recording the videos above
-(the recorder costs a few FPS). F3 shows the numbers in each clip.
+MacBook Pro 14" M4 (10-core GPU), macOS 26, Minecraft 26.3, measured in-game with 1.0-alpha while recording the videos
+above (the recorder costs a few FPS). F3 shows the numbers in each clip. 1.2 (mcopt 0.3, no Sodium) runs at the same speed as before: measured against 1.1 on the same Mac, +0.8 % in a lake test and −1.1 % in a fast flight over new terrain (+1.6 % / −0.5 % with Distant Horizons).
 
 Average FPS over each 10-second clip, 16 chunks, while recording the video (F3 on):
 
@@ -77,7 +77,11 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
 - **Lighting**: sky light, block light and bounce, held lights (a torch in your hand lights the world around you, around
   corners), emissive blocks.
 - **Sky**: physically based atmosphere, sun and moon discs, stars and the Milky Way, **aurora** in cold biomes.
-- **Volumetric clouds** with cloud shadows, lit by the sunset.
+- **An in-game settings menu** (pause menu → **Shaders...**): about 120 settings on 11 pages (lighting, shadows, colour and
+  camera, atmosphere, god rays, clouds, night sky, water, weather, Nether and End, performance), in English and Spanish, most
+  of them applied live while you watch.
+- **Volumetric clouds** with cloud shadows, lit by the sunset; or **blocky clouds**: Minecraft's own cloud shapes with volume,
+  sunlight, shadows and reflections; or the game's normal clouds.
 - **God rays** (volumetric light) through forests, cave mouths and clouds; morning mist and forest air.
 - **Water**: waves, screen-space reflections, refraction, absorption, caustics, foam, **waterfalls with white water**,
   underwater fog and light shafts.
@@ -87,23 +91,33 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
 - Nether and End looks.
 - **Distant Horizons** support: the far LODs are lit by the same shaders (lighting, fog, water reflections).
 - Presets: `performance`, `balanced`, `quality`, `ultra`; looks: `epic`, `storybook`, `natural`.
+- Runs on **macOS 15 Sequoia, 26 and 27**. The shaders compile in the background, so the first world load after installing
+  or updating macOS takes a fraction of a second instead of a few seconds.
 
 ## Install
 
 You need:
 
-- An **Apple Silicon Mac** (M1 or newer) on **macOS 26** or later
+- An **Apple Silicon Mac** (M1 or newer) on **macOS 15 Sequoia** or later
 - **Minecraft: Java Edition 26.3** with **Fabric Loader 0.19.5** or newer, on **Java 25**
-- **Sodium 0.9.3-alpha.1** for 26.3 ([Modrinth](https://modrinth.com/mod/sodium))
+
+That's all: since 1.2 **Sodium is not needed** (mcopt 0.3 draws the terrain itself), and the game won't start with Sodium
+installed next to it.
 
 Steps:
 
 1. Install Fabric for 26.3 ([installer](https://fabricmc.net/use/installer/), or in Prism Launcher: new instance → 26.3 → Fabric).
 2. Put `metal-shaders-<version>.jar` (from [Releases](https://github.com/GaelQuinta/minecraft-metal-shaders/releases/latest))
-   and the Sodium jar in your `mods` folder.
+   in your `mods` folder.
 3. Start the game. The shaders are on from the first launch (balanced preset).
 
-Settings live in `config/mcopt.properties` in your game folder (written on the first launch):
+**Updating from 1.0:** take Sodium out of the `mods` folder and replace the old Metal Shaders jar. Your settings are kept
+(the config's `profile=alpha` line changes to `profile=indie` by itself, the terrain renderer the shaders light).
+
+**Settings:** pause the game and press **Shaders...** (above the Resolution and Output buttons). Changes show at once behind
+the menu; the ones marked with `*` apply after restarting the game. **Reset page** / **Reset all** bring back the defaults.
+Everything you change is saved in `config/mcopt.properties` in your game folder (written on the first launch), where you can
+also edit it by hand:
 
 | Key | Values | Default |
 |---|---|---|
@@ -111,6 +125,7 @@ Settings live in `config/mcopt.properties` in your game folder (written on the f
 | `mcopt.shade.preset` | `performance`, `balanced`, `quality`, `ultra` | `balanced` |
 | `mcopt.shade.look` | `epic`, `storybook`, `natural` | `epic` |
 | `mcopt.shade.output` | `native`, `1440`, `1200`, `1080`, `900` (also the **Output** button in the pause menu) | `native` |
+| `profile` | `indie` (mcopt's own terrain renderer, needed by the shaders), `none` | `indie` |
 
 For the most FPS: Video Settings → VSync off, Max Framerate unlimited. To see your FPS, press **F3**.
 
@@ -124,9 +139,9 @@ too, and its far terrain is lit by the same shaders (DH's own SSAO, anti-aliasin
 
 ## How it was made
 
-- `metal/` — the mod (fork of mcopt 0.2.0-alpha.3). The shading code is in `metal/src/main/resources/mcopt/shade/*.metal`
-  and `metal/src/main/java/mcopt/metal/shade/`. Everything new sits behind `mcopt.shade` flags: with `mcopt.shade=false`
-  the mod behaves like upstream mcopt.
+- `metal/` — the mod (fork of mcopt 0.3.0-alpha.2). The shading code is in `metal/src/main/resources/mcopt/shade/*.metal`
+  (the terrain's in `terrain_own.metal`) and `metal/src/main/java/mcopt/metal/shade/`. Everything new sits behind
+  `mcopt.shade` flags: with `mcopt.shade=false` the mod behaves like upstream mcopt.
 - `docs/shader-bible.md` — the design of every effect (E01–E27), frame budgets and licensing. `docs/research/` — studies
   of Apple GPUs, the 26.3 renderer, Iris, Distant Horizons and other packs' techniques. `docs/releases/` — notes of every
   version (in Spanish).
@@ -137,8 +152,8 @@ Build: `./gradlew :metal:build` with JDK 25 → `metal/build/libs/`.
 
 ## Credits and licences
 
-- **mcopt** by Noah Dunnagan — Apache-2.0. Files derived from **Sodium** (CaffeineMC) keep the PolyForm Shield 1.0.0
-  licence (listed in `NOTICE`).
+- **mcopt** by Noah Dunnagan — Apache-2.0. Since 1.2 (mcopt 0.3) nothing is derived from Sodium; versions up to 1.0-alpha.4
+  had Sodium-derived terrain shaders under the PolyForm Shield 1.0.0 licence.
 - Portions of the clouds and volumetric light are adapted from **Photon Shaders** by sixthsurge, from its MIT-licensed
   snapshot `26c2906e` (`LICENSES/MIT-Photon.txt`). Other techniques credited in `NOTICE` (SE Natural Bloom, MJP's
   Catmull-Rom, public papers). No code from Complementary, BSL or SEUS: those were only studied.
@@ -157,11 +172,17 @@ Made by Gael Quintanilla, with Claude (Anthropic) writing most of the code.
 En una MacBook Pro M4 a resolución completa (3024×1964), Iris + Complementary corre a ~22 FPS. Con Metal Shaders,
 la misma Mac a la misma resolución da **90–120 FPS** (preset balanceado), y **135–150 FPS** a 1440p.
 
-**Instalación:** Mac con Apple Silicon y macOS 26, Minecraft 26.3 con Fabric 0.19.5 y Java 25, y Sodium 0.9.3-alpha.1.
-Pon el jar de [Releases](https://github.com/GaelQuinta/minecraft-metal-shaders/releases/latest) y el de Sodium en la
-carpeta `mods` y abre el juego: los shaders se activan solos (preset balanceado). Para cambiar el preset, edita
-`config/mcopt.properties` (`mcopt.shade.preset=performance|balanced|quality|ultra`); la resolución de salida se cambia con
-el botón **"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional). Si con DH la mitad de
+**Instalación:** Mac con Apple Silicon y macOS 15 Sequoia o más nuevo (también 26 y 27), Minecraft 26.3 con Fabric 0.19.5 y
+Java 25. Desde la 1.2 **ya no hace falta Sodium** (mcopt 0.3 dibuja el terreno por su cuenta; con Sodium instalado el juego no
+arranca). Pon el jar de [Releases](https://github.com/GaelQuinta/minecraft-metal-shaders/releases/latest) en la carpeta `mods`
+y abre el juego: los shaders se activan solos (preset balanceado). **Si vienes de la 1.0:** quita Sodium de `mods` y cambia el
+jar viejo por el nuevo; tus ajustes se conservan.
+
+**Ajustes:** pausa el juego y entra a **Shaders...**: unos 120 ajustes en 11 páginas (iluminación, sombras, color y cámara,
+atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del
+juego. Casi todos se ven al momento; los marcados con `*` se aplican al reiniciar. Nubes: volumétricas, **cuadradas** (las de
+Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. La resolución de salida se cambia con el botón
+**"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional). Si con DH la mitad de
 abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.
 

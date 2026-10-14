@@ -97,7 +97,16 @@ final class OwnFrag {
 	 * cull lists phase A into two banks of the same lists (FragFrame flag 1024): the list count doubles. Exact; the pyramid lacks
 	 * the farther sections' depth, so the test culls a little less.
 	 */
-	static final int SPLIT_NEAR = Integer.getInteger("mcopt.own.frag.splitNear", 0);
+	static final int SPLIT_NEAR = shadeWhole() ? 0 : Integer.getInteger("mcopt.own.frag.splitNear", 0);
+	/**
+	 * (mcopt-shade P8) Under shade phase A is drawn whole, in one pass before the test (splitNear 0, testLate off), unless
+	 * -Dmcopt.shade.ownSplit=profile keeps the profile's split. Our lit fragment stage makes the split's cost (the second pass
+	 * can't hide the first pass's fragments its farther terrain and leaves cover; TBDR shades them) larger than the overlap it
+	 * buys: flight 12.10 / 11.94 -> 11.57 / 11.53 GPU ms a frame, lake spin 12.28 / 12.15 -> 11.97 / 11.97 (P4-P7.md, p8k).
+	 */
+	private static boolean shadeWhole() {
+		return mcopt.metal.shade.terrain.ShadeTerrain.ON && !"profile".equals(System.getProperty("mcopt.shade.ownSplit"));
+	}
 	/**
 	 * -Dmcopt.own.frag.nearOnly (with splitNear=B): phase A draws only its nearer sections' units. A farther section's unit visible at
 	 * the last test is not drawn before or after the test unconditionally: like every other candidate it is tested against the pyramid
@@ -111,7 +120,7 @@ final class OwnFrag {
 	 * pyramid reads the depth, so the later part's fragment work waits for the pyramid alone (with one compute encoder it waited for
 	 * the whole test: a write-after-read on the depth), and the test runs under that fragment work. Same pyramid, draws and order: exact.
 	 */
-	static final boolean TEST_LATE = Boolean.getBoolean("mcopt.own.frag.testLate");
+	static final boolean TEST_LATE = !shadeWhole() && Boolean.getBoolean("mcopt.own.frag.testLate");
 	/**
 	 * -Dmcopt.own.tl.a1Split=P (probe key tl.a1Split; 0 = off, the default; 1-99): phase A's first part (A1) as two render
 	 * passes. A pass's fragment work starts only after all of its vertex work (TBDR), and A1's vertex and fragment work are both on the

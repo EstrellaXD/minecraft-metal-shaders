@@ -214,7 +214,16 @@ public final class OwnTerrain {
 	/** Bytes of one quad in the arena. */
 	static final int ARENA_QUAD = COMPACT ? 64 : QUAD_BYTES;
 	// (mcopt-shade: CullFrame has two more planes under shade, at SHADE_PLANES: terrain.metal CullFrame.shadePlanes, zero = none)
-	private static final int SHADE_PLANES = 144, CULL_FRAME_BYTES = SHADE_PLANES + (mcopt.metal.shade.terrain.ShadeTerrain.ON ? 32 : 0), BUCKETS = 7;
+	/** (mcopt-shade P8) -Dmcopt.shade.shadowCullR (true; false = own_cull, a thread per section): the shadow culls a thread per record (own_cull_r). */
+	private static final boolean SHADOW_CULL_R = !"false".equals(System.getProperty("mcopt.shade.shadowCullR"));
+	/**
+	 * (mcopt-shade P8) -Dmcopt.shade.shadowClasses (true; false = every unit an instance of RUN quads): the shadow culls list units in
+	 * four size classes per layer (terrain.metal SHADE_CLASSES), each drawn with its own quads an instance: fewer padding vertices.
+	 */
+	private static final boolean SHADOW_CLASSES = !"false".equals(System.getProperty("mcopt.shade.shadowClasses")) && !FAT;
+	// (CullFrame.shadeClasses at SHADE_PLANES + 32; the class lists after the layers', the class draws at uint 32 of the arguments)
+	private static final int SHADE_PLANES = 144, CULL_FRAME_BYTES = SHADE_PLANES + (mcopt.metal.shade.terrain.ShadeTerrain.ON ? 48 : 0), BUCKETS = 7,
+		SHADOW_LISTS = SHADOW_CLASSES ? 8 : 4, SHADOW_ARGS_BYTES = SHADOW_CLASSES ? 512 : 128;
 	static final int DRAW_FRAME_BYTES = 80;
 
 	private static @Nullable OwnTerrain instance;
@@ -2289,16 +2298,17 @@ public final class OwnTerrain {
 		if (va == null) return false;
 		if (this.shCap[slot] != this.listCap) {
 			for (long b : new long[] {this.shLists[slot], this.shTested[slot], this.shFat[slot]}) if (b != 0) this.later(() -> OwnNative.release(b));
-			this.shLists[slot] = OwnNative.buffer(this.ctx, 4L * this.listCap * 4, false);
+			this.shLists[slot] = OwnNative.buffer(this.ctx, (long) SHADOW_LISTS * this.listCap * 4, false);
 			this.shTested[slot] = OwnNative.buffer(this.ctx, (long) this.listCap * 4, false);
 			this.shFat[slot] = OwnNative.buffer(this.ctx, FAT ? 4L * this.listCap * 32 : 16, false);
-			if (this.shArgs[slot] == 0) this.shArgs[slot] = OwnNative.buffer(this.ctx, 128, 2);
+			if (this.shArgs[slot] == 0) this.shArgs[slot] = OwnNative.buffer(this.ctx, SHADOW_ARGS_BYTES, 2);
 			this.shCap[slot] = this.listCap;
 		}
 		net.minecraft.world.phys.Vec3 pos = Minecraft.getInstance().gameRenderer.mainCamera().position();
 		final float shift = 4096.0F;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long f = stack.ncalloc(16, 1, CULL_FRAME_BYTES);
+			if (SHADOW_CLASSES && CULL_FRAME_BYTES > SHADE_PLANES) MemoryUtil.memPutInt(f + SHADE_PLANES + 32, 1);
 			if (depth != null && CULL_FRAME_BYTES > SHADE_PLANES) {
 				for (int i = 0; i < 2; i++) { // (moved with the cull's camera, as the frustum planes below)
 					float nx = depth[i * 4], ny = depth[i * 4 + 1], nz = depth[i * 4 + 2];
@@ -2338,8 +2348,11 @@ public final class OwnTerrain {
 				mask = this.shadowPartMask(k, part, parts);
 				MemoryUtil.memPutInt(f + 124, 1);
 			}
+			// (mcopt-shade P8, -Dmcopt.shade.shadowCullR: a thread per record, own_cull_r, as the view's cull with -Dmcopt.own.cullR;
+			// the lists' order differs, the depth-only draws don't care)
+			int recThreads = SHADOW_CULL_R && !FAT ? this.recAlloc.capacity() : 0;
 			OwnNative.cull(this.own, this.enc, f, CULL_FRAME_BYTES, this.tables[k], this.recBuffer, this.shArgs[slot],
-				this.shLists[slot], mask, this.maxSlot + 1, this.prevVis, this.curVis, this.shTested[slot], 0, this.shFat[slot]);
+				this.shLists[slot], mask, this.maxSlot + 1, this.prevVis, this.curVis, this.shTested[slot], 0, this.shFat[slot], recThreads);
 		}
 		return true;
 	}
@@ -2388,6 +2401,11 @@ public final class OwnTerrain {
 
 	public static boolean fat() {
 		return FAT;
+	}
+
+	/** (mcopt-shade P8) the shadow lists' size classes per layer (0: none; lists layer * n + class, draws at uint 32 of the arguments). */
+	public static int shadowClasses() {
+		return SHADOW_CLASSES && mcopt.metal.shade.terrain.ShadeTerrain.ON ? 4 : 0;
 	}
 
 	/** -Dmcopt.own.int.visible: slots whose mesh has translucent units (kept by setSlot), and a scratch count. */

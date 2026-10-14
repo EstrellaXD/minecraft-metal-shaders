@@ -49,8 +49,23 @@ struct CullFrame {
 #ifdef MCOPT_SHADE
 	float4 shadePlanes[2]; // (mcopt-shade, the shadow culls: OwnTerrain.shadowCull) a shadow cascade's light-space depth range as two
 	                       // more planes like planes[] (xyz . p + w >= 0 inside); all zero: none (every other cull)
+	int shadeClasses;      // (mcopt-shade P8, the shadow culls with occ 0 and no fat lists) 1: units listed in SHADE_CLASSES size classes
+	int shadePad0, shadePad1, shadePad2;  // per layer (lists layer * SHADE_CLASSES + class, draws at SHADE_CLASS_ARGS): less padding
 #endif
 };
+
+#ifdef MCOPT_SHADE
+// (mcopt-shade P8) the shadow culls' size classes: a unit of n quads goes to class (n - 1) / step, step = ceil(run / SHADE_CLASSES),
+// drawn with min(run, (class + 1) * step) quads an instance instead of run (own_shadow_vs collapses the padding quads, but every
+// padding vertex still runs). Class draws' indexed indirect arguments at args[SHADE_CLASS_ARGS + id * 5], id = layer * SHADE_CLASSES + class
+// (past ARGS_T and ARGS_DISPATCH).
+#define SHADE_CLASSES 4
+#define SHADE_CLASS_ARGS 32
+static uint shadeClassId(constant CullFrame &f, uint layer, uint meta) {
+	uint step = (uint(f.run) + SHADE_CLASSES - 1) / SHADE_CLASSES;
+	return layer * SHADE_CLASSES + min(uint(SHADE_CLASSES - 1), (meta & 63) / max(step, 1u));
+}
+#endif
 
 // a tested unit as the per-quad path's phase A and B read it, written by the cull next to its tested-list entry: the record's
 // fields they use and its section's origin, so they read one entry instead of index -> record -> section in turn
@@ -132,6 +147,19 @@ kernel void own_reset(constant CullFrame &f [[buffer(0)]], device uint *args [[b
 		args[ARGS_DISPATCH + 1] = 1;
 		args[ARGS_DISPATCH + 2] = 1;
 	}
+#ifdef MCOPT_SHADE
+	if (f.shadeClasses != 0 && i < 2) {  // (P8) layer i's class draws
+		uint step = (uint(f.run) + SHADE_CLASSES - 1) / SHADE_CLASSES;
+		for (uint c = 0; c < SHADE_CLASSES; c++) {
+			device uint *b = args + SHADE_CLASS_ARGS + (i * SHADE_CLASSES + c) * 5;
+			b[0] = min(uint(f.run), (c + 1) * step) * 6;
+			b[1] = 0;
+			b[2] = 0;
+			b[3] = 0;
+			b[4] = 0;
+		}
+	}
+#endif
 }
 
 // this frame's visibility bits, cleared before phase B sets them
@@ -250,6 +278,14 @@ kernel void own_cull(constant CullFrame &f [[buffer(0)]], device const Section *
 			if (t < f.listCap) tested[t] = r | (was ? 0x80000000u : 0u);
 		}
 		if (!was) continue;
+#ifdef MCOPT_SHADE
+		if (f.shadeClasses != 0) {  // (P8, the shadow culls: occ 0, no fat lists) the unit's size class
+			uint id = shadeClassId(f, layer, rec.meta);
+			uint ct = atomic_fetch_add_explicit(&args[SHADE_CLASS_ARGS + id * 5 + 1], 1, memory_order_relaxed);
+			if (ct < f.listCap) lists[id * f.listCap + ct] = r;
+			continue;
+		}
+#endif
 		uint at = atomic_fetch_add_explicit(&args[layer * 5 + 1], 1, memory_order_relaxed);
 		if (at < f.listCap) {
 			if (f.fat != 0) putInst(fat, layer * f.listCap + at, rec, sections);
@@ -309,6 +345,14 @@ kernel void own_cull_r(constant CullFrame &f [[buffer(0)]], device const Section
 					float3 v = o + select(float3(0), float3(16), pl.xyz > 0);
 					if (dot(pl.xyz, v) + pl.w < -0.5) in = false;
 				}
+#ifdef MCOPT_SHADE
+				for (int p = 0; p < 2 && in; p++) {  // (mcopt-shade: a shadow cascade's depth range, CullFrame.shadePlanes)
+					float4 pl = f.shadePlanes[p];
+					if (all(pl.xyz == 0.0)) continue;
+					float3 v = o + select(float3(0), float3(16), pl.xyz > 0);
+					if (dot(pl.xyz, v) + pl.w < -0.5) in = false;
+				}
+#endif
 				layer = (rec.meta >> 9) & 3;
 				if (in && layer <= 1) {
 					float3 cam = -o;
@@ -330,6 +374,14 @@ kernel void own_cull_r(constant CullFrame &f [[buffer(0)]], device const Section
 			}
 		}
 	}
+#ifdef MCOPT_SHADE
+	if (f.shadeClasses != 0) {  // (P8, the shadow culls: occ 0, no fat lists) the unit's size class (f is uniform: every lane gets here)
+		uint id = want ? shadeClassId(f, layer, rec.meta) : 0xFFFFFFFFu;
+		for (uint j = 0; j < 2 * SHADE_CLASSES; j++)
+			cullAppend((device atomic_uint *) &args[SHADE_CLASS_ARGS + j * 5 + 1], lists + j * f.listCap, f.listCap, id == j, r);
+		return;
+	}
+#endif
 	if (f.occ == 2 && f.fatT != 0) {
 		uint at = cullAppendAt(&args[ARGS_T], tested, f.listCap, want, r);
 		if (at != 0xFFFFFFFFu) tfat[at] = TUnit {rec.quadStart, rec.meta, rec.lo, rec.hi, s.x, s.y, s.z, r};
@@ -344,6 +396,10 @@ kernel void own_cull_r(constant CullFrame &f [[buffer(0)]], device const Section
 kernel void own_finish(constant CullFrame &f [[buffer(0)]], device uint *args [[buffer(3)]], uint i [[thread_position_in_grid]]) {
 	if (i >= 2) return;
 	args[i * 5 + 1] = min(args[i * 5 + 1], f.listCap);
+#ifdef MCOPT_SHADE
+	if (f.shadeClasses != 0)  // (P8) layer i's class draws
+		for (uint c = 0; c < SHADE_CLASSES; c++) args[SHADE_CLASS_ARGS + (i * SHADE_CLASSES + c) * 5 + 1] = min(args[SHADE_CLASS_ARGS + (i * SHADE_CLASSES + c) * 5 + 1], f.listCap);
+#endif
 	if (i == 0) {
 		args[ARGS_T] = min(args[ARGS_T], f.listCap);
 		args[ARGS_DISPATCH] = (args[ARGS_T] + 63) / 64;

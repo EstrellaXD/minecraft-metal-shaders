@@ -87,7 +87,7 @@ typedef struct {
 	uint32_t listCap;
 	uint32_t solid;   // 1: draw the solid list
 	uint32_t cutout;  // 0 not drawn, 1 with the alpha test, 2 as opaque without the any-facing units (far cascade)
-	uint32_t pad;
+	uint32_t classes; // (P8) 0, or the size classes per layer (OwnTerrain.shadowClasses: lists layer * classes + class, draws at uint 32)
 	OwnShadowFrame frame;
 } OwnShadowDraw;
 
@@ -265,8 +265,18 @@ static void ownDraw(Shadow *s, id<MTLRenderCommandEncoder> r, const OwnShadowDra
 		OwnShadowFrame f = d->frame;
 		f.listBase = (uint32_t) layer * d->listCap;
 		if (layer == 1 && how == 2) f.flags |= 1u;
-		[r setVertexBytes:&f length:sizeof f atIndex:4];
 		[r setRenderPipelineState:layer == 1 && how == 1 ? s->ownCutout : s->ownSolid];
+		if (d->classes > 0) {  // (P8) a draw per size class, each its own quads an instance
+			for (uint32_t c = 0; c < d->classes; c++) {
+				uint32_t id = (uint32_t) layer * d->classes + c;
+				f.listBase = id * d->listCap;
+				[r setVertexBytes:&f length:sizeof f atIndex:4];
+				[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexType:MTLIndexTypeUInt16 indexBuffer:s->ownIndices indexBufferOffset:0
+					indirectBuffer:d->args indirectBufferOffset:(NSUInteger) (32 + id * 5) * 4];
+			}
+			continue;
+		}
+		[r setVertexBytes:&f length:sizeof f atIndex:4];
 		[r drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexType:MTLIndexTypeUInt16 indexBuffer:s->ownIndices indexBufferOffset:0
 			indirectBuffer:d->args indirectBufferOffset:(NSUInteger) layer * 20];
 	}

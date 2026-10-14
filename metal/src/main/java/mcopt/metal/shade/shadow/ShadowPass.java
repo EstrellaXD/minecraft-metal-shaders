@@ -516,6 +516,7 @@ public final class ShadowPass {
 		MemoryUtil.memPutInt(d + 44, 1);
 		// the far cascade's cutout drawn as opaque without the plants (ShadowConfig.FAR_CUTOUT_OPAQUE), as with Sodium's lists
 		MemoryUtil.memPutInt(d + 48, c == 1 && ShadowConfig.FAR_CUTOUT_OPAQUE ? 2 : 1);
+		MemoryUtil.memPutInt(d + 52, mcopt.metal.own.OwnTerrain.shadowClasses());  // (P8) the lists' size classes per layer
 		int bx = (int) Math.floor(this.camX), by = (int) Math.floor(this.camY), bz = (int) Math.floor(this.camZ);
 		MemoryUtil.memPutInt(d + 56, bx);
 		MemoryUtil.memPutInt(d + 60, by);

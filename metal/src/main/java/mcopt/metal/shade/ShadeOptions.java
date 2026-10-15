@@ -63,7 +63,7 @@ public final class ShadeOptions {
 	public static final List<Page> PAGES = new ArrayList<>();
 
 	private static Page page(String es, String en, String tipEs, String tipEn, Object... items) {
-		Page p = new Page(es, en, tipEs, tipEn, List.of(items));
+		Page p = new Page(es, en, tipEs, tipEn, new ArrayList<>(List.of(items)));
 		PAGES.add(p);
 		return p;
 	}
@@ -357,6 +357,13 @@ public final class ShadeOptions {
 				"Preciso: prueba esto si ves cuadros negros o blancos que crecen (por ejemplo en macOS 27). Puede costar algo de FPS.",
 				"Precise: try this if you see black or white blocks that grow (for example on macOS 27). May cost some FPS.",
 				new String[] {"fast", "relaxed"}, new String[] {"Rápido", "Preciso"}, new String[] {"Fast", "Precise"}, () -> 0).restart());
+		// (1.2.2) with Distant Horizons: its quality as presets tested with the shaders (ShadeDh.PRESETS), on the same page
+		if (mcopt.metal.shade.dh.ShadeDh.LOADED) PAGES.get(PAGES.size() - 1).items().addAll(List.of(h("Distant Horizons", "Distant Horizons"),
+			choice("mcopt.shade.dh.preset", "Distant Horizons", "Distant Horizons",
+				"Distancia y detalle del terreno lejano, probados con los shaders. \"Los de DH\": usa tu configuración de Distant Horizons. Con DH, 8 a 12 chunks normales se ven y corren bien.",
+				"Distance and detail of the far terrain, tested with the shaders. \"DH's own\": uses your Distant Horizons settings. With DH, 8 to 12 normal chunks look and run well.",
+				new String[] {"dh", "performance", "balanced", "quality", "ultra"}, new String[] {"Los de DH", "Rendimiento", "Balanceado", "Calidad", "Ultra"},
+				new String[] {"DH's own", "Performance", "Balanced", "Quality", "Ultra"}, () -> 2)));
 	}
 
 	private ShadeOptions() {

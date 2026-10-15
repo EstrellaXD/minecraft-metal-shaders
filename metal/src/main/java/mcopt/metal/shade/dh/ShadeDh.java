@@ -60,8 +60,26 @@ public final class ShadeDh {
 
 	private static final Entry SSAO = new Entry(CFG, "enableSsao"), AA = new Entry(CFG, "enableAntiAliasing"),
 		FADE = new Entry(CFG + "$Quality", "vanillaFadeMode"), FOG = new Entry(CFG + "$Fog", "enableDhFog"),
-		SHADING = new Entry(CFG + "$Quality", "lodShading"), OVERDRAW = new Entry(CFG + "$Culling", "overdrawPrevention");
-	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING, OVERDRAW};
+		SHADING = new Entry(CFG + "$Quality", "lodShading"), OVERDRAW = new Entry(CFG + "$Culling", "overdrawPrevention"),
+		// (1.2.2) the LODs' water through DH's translucent pipeline (our water stage, SHADE_DH_TRANSLUCENT) and the presets
+		TRANSPARENCY = new Entry(CFG + "$Quality", "transparency"), RADIUS = new Entry(CFG + "$Quality", "lodChunkRenderDistanceRadius"),
+		HQUALITY = new Entry(CFG + "$Quality", "horizontalQuality"), VQUALITY = new Entry(CFG + "$Quality", "verticalQuality"),
+		MAXRES = new Entry(CFG + "$Quality", "maxHorizontalResolution");
+	private static final Entry[] ALL = {SSAO, AA, FADE, FOG, SHADING, OVERDRAW, TRANSPARENCY, RADIUS, HQUALITY, VQUALITY, MAXRES};
+	/**
+	 * (1.2.2, Gael 2026-10-15: "presets de DH para que la gente no tenga que estar 30 minutos experimentando") Shaders... >
+	 * Performance > Distant Horizons (mcopt.shade.dh.preset, live): "dh" = DH's own quality settings, else LOD distance (chunks),
+	 * horizontal quality, vertical quality and the finest horizontal LOD resolution, held as API overrides like the others
+	 * (DH's own file and screen keep the player's values). Values chosen on the M4 with the shaders (notes/v122-2026-10-15).
+	 */
+	private static final String[][] PRESETS = {
+		{"performance", "32", "LOW", "LOW", "TWO_BLOCKS"},
+		{"balanced", "64", "MEDIUM", "MEDIUM", "BLOCK"},
+		{"quality", "96", "HIGH", "MEDIUM", "BLOCK"},
+		{"ultra", "128", "HIGH", "HIGH", "BLOCK"}};
+	/** PRESETS resolved to DH's value objects (the same instances every frame: apply() compares by identity). */
+	private static final java.util.Map<String, Object[]> PRESET_VALUES = new java.util.HashMap<>();
+	private static Object transparencyComplete;
 	private static Method setApi, getTrue;
 	private static boolean warnedFade;
 	private static Class<?> fadeEnum, shadingEnum;
@@ -141,6 +159,15 @@ public final class ShadeDh {
 			// (pricedh1, DH 40 chunks, render distance 16: 0.5 -0.48 to -0.69 ms, 0.8 -1.04 / -1.07 ms; no holes in the still shots;
 			// DH warns of holes when flying into terrain not loaded yet: 0.5 by default, with its fast-movement reduction on)
 			apply(OVERDRAW, shading ? number("mcopt.shade.dh.overdraw", "0.5") : null);
+			// (1.2.2) Gael's DH "Low" (transparency DISABLED) drew the LODs' water opaque in DH's terrain pass: flat vanilla
+			// blue far away, a hard edge where the vanilla water ends (v122-ring-gael). COMPLETE while the shade frame runs
+			// (mcopt.shade.dh.transparency=dh: DH's own); the LODs rebuild with the water in the translucent pipeline
+			apply(TRANSPARENCY, shading && !"dh".equalsIgnoreCase(System.getProperty("mcopt.shade.dh.transparency", "complete")) ? transparencyComplete : null);
+			Object[] preset = shading ? PRESET_VALUES.get(System.getProperty("mcopt.shade.dh.preset", "balanced")) : null;
+			apply(RADIUS, preset == null ? null : preset[0]);
+			apply(HQUALITY, preset == null ? null : preset[1]);
+			apply(VQUALITY, preset == null ? null : preset[2]);
+			apply(MAXRES, preset == null ? null : preset[3]);
 		} catch (Throwable t) {
 			fail(t);
 			return;
@@ -196,12 +223,24 @@ public final class ShadeDh {
 			getTrue = SSAO.entry.getClass().getMethod("getTrueValue"); // the player's own value, under any API override
 			fadeEnum = Class.forName("com.seibel.distanthorizons.api.enums.config.EDhApiMcRenderingFadeMode", true, cl);
 			shadingEnum = Class.forName("com.seibel.distanthorizons.api.enums.config.EDhApiLodShading", true, cl);
+			transparencyComplete = constant(cl, "com.seibel.distanthorizons.api.enums.rendering.EDhApiTransparency", "COMPLETE");
+			for (String[] p : PRESETS) {
+				PRESET_VALUES.put(p[0], new Object[] {Integer.valueOf(p[1]),
+					constant(cl, "com.seibel.distanthorizons.api.enums.config.EDhApiHorizontalQuality", p[2]),
+					constant(cl, "com.seibel.distanthorizons.api.enums.config.EDhApiVerticalQuality", p[3]),
+					constant(cl, "com.seibel.distanthorizons.api.enums.config.EDhApiMaxHorizontalResolution", p[4])});
+			}
 			resolved = true;
 			return true;
 		} catch (Throwable t) {
 			fail(t);
 			return false;
 		}
+	}
+
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private static Object constant(ClassLoader cl, String type, String name) throws ClassNotFoundException {
+		return Enum.valueOf((Class<? extends Enum>) Class.forName(type, true, cl), name);
 	}
 
 	private static void fail(Throwable t) {

@@ -89,6 +89,9 @@ public final class ShadeSettingsScreen extends OptionsSubScreen {
 					.tooltip(Tooltip.create(Component.literal(t(p.tipEs(), p.tipEn())))).build());
 			}
 			this.list.addSmall(buttons);
+			// (1.2.1) the shaders' on/off switch, applied at the next start (off: plain mcopt 0.3)
+			this.list.addHeader(header("General", "General"));
+			this.list.addBig(ShadeToggle.button(this.minecraft.gameDirectory.toPath()));
 			return;
 		}
 		// a page: pairs of options under their headers (an odd one out takes the left half)
@@ -103,6 +106,13 @@ public final class ShadeSettingsScreen extends OptionsSubScreen {
 			}
 		}
 		if (!row.isEmpty()) this.list.addSmall(row.toArray(OptionInstance[]::new));
+	}
+
+	/** (1.2.1) The main page's small "☕" support button in the top-right corner (ShadeToggle.supportButton). */
+	@Override
+	protected void init() {
+		super.init();
+		if (this.page == null) this.addRenderableWidget(ShadeToggle.supportButton(this));
 	}
 
 	@Override

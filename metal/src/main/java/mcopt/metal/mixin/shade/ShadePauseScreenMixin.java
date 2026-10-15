@@ -27,7 +27,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * config/mcopt.properties. Only with the native shading's TAAU (it owns the render scale). (M3.3's hidden frame generation
  * button went with upstream's frame generation in the mcopt 0.3 port.)
  * (1.1) Above them "Shaders..." opens ShadeSettingsScreen (look, light, sky and water settings); with
- * mcopt.shade.settingsButton=false it is left out.
+ * mcopt.shade.settingsButton=false it is left out. (1.2.1) With the shaders off it is the only button, opening ShadeOffScreen.
  */
 @Mixin(PauseScreen.class)
 abstract class ShadePauseScreenMixin extends Screen {
@@ -39,6 +39,12 @@ abstract class ShadePauseScreenMixin extends Screen {
 	private void mcopt$resolutionButton(CallbackInfo ci) {
 		Minecraft mc = Minecraft.getInstance();
 		if (mc.level == null) return;
+		if (!mcopt.metal.shade.Shade.ENABLED) { // (1.2.1) shaders off: only "Shaders..." (ShadeOffScreen: the switch to turn them on)
+			Screen self = this;
+			this.addRenderableWidget(Button.builder(Component.literal("Shaders..."), button -> mc.gui.setScreen(new mcopt.metal.shade.ShadeOffScreen(self)))
+				.bounds(this.width / 2 - 102, this.height - 28, 204, 20).build());
+			return;
+		}
 		// M3.3 robustness: not when TAAU failed to set up (no render scale to choose; the button did nothing, run rb4);
 		// mcopt.shade.robustFallback=false: M3.2 (shown anyway)
 		boolean resolution = mcopt.metal.shade.taa.ShadeTaa.ON

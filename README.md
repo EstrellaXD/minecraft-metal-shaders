@@ -11,6 +11,7 @@ Retina display.
   <a href="#install">Install</a> ·
   <a href="#performance">Performance</a> ·
   <a href="#features">Features</a> ·
+  <a href="#support">☕ Support</a> ·
   <a href="#español">Español</a>
 </p>
 
@@ -150,6 +151,19 @@ too, and its far terrain is lit by the same shaders (DH's own SSAO, anti-aliasin
 
 Build: `./gradlew :metal:build` with JDK 25 → `metal/build/libs/`.
 
+<!-- support:start -->
+## Support
+
+Metal Shaders is free and open source, and it will stay that way. If you enjoy it and want to say thanks, you can buy me a
+coffee on [Ko-fi](https://ko-fi.com/gaelquintanilla) or [GitHub Sponsors](https://github.com/sponsors/GaelQuinta). It helps me keep testing and adding things. It's built on [mcopt](https://github.com/noahdunnagan/mcopt)
+by Noah Dunnagan, so a star on his repo is a nice thank-you too.
+
+<p>
+<a href="https://ko-fi.com/gaelquintanilla"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?logo=kofi&logoColor=white"></a>
+<a href="https://github.com/sponsors/GaelQuinta"><img alt="GitHub Sponsors" src="https://img.shields.io/badge/GitHub%20Sponsors-Sponsor-EA4AAA?logo=githubsponsors&logoColor=white"></a>
+</p>
+<!-- support:end -->
+
 ## Credits and licences
 
 - **mcopt** by Noah Dunnagan — Apache-2.0. Since 1.2 (mcopt 0.3) nothing is derived from Sodium; versions up to 1.0-alpha.4
@@ -187,3 +201,7 @@ abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizo
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.
 
 Es una versión alfa: haz respaldo de tus mundos.
+
+<!-- apoyo:start -->
+**Apoyar el proyecto:** es gratis y lo seguirá siendo. Si te gusta y quieres invitarme un café: [Ko-fi](https://ko-fi.com/gaelquintanilla) o [GitHub Sponsors](https://github.com/sponsors/GaelQuinta).
+<!-- apoyo:end -->

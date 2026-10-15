@@ -117,6 +117,8 @@ Steps:
 
 **Settings:** pause the game and press **Shaders...** (above the Resolution and Output buttons). Changes show at once behind
 the menu; the ones marked with `*` apply after restarting the game. **Reset page** / **Reset all** bring back the defaults.
+**General → Shaders: On/Off** (since 1.2.1) turns the shaders off after a restart, so the game runs plain mcopt 0.3 (Metal
+without effects, more FPS); the pause menu keeps its **Shaders...** button to turn them back on.
 Everything you change is saved in `config/mcopt.properties` in your game folder (written on the first launch), where you can
 also edit it by hand:
 
@@ -195,7 +197,7 @@ jar viejo por el nuevo; tus ajustes se conservan.
 **Ajustes:** pausa el juego y entra a **Shaders...**: unos 120 ajustes en 11 páginas (iluminación, sombras, color y cámara,
 atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del
 juego. Casi todos se ven al momento; los marcados con `*` se aplican al reiniciar. Nubes: volumétricas, **cuadradas** (las de
-Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. La resolución de salida se cambia con el botón
+Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. **General → Shaders: Sí/No** (desde la 1.2.1) los apaga al reiniciar para usar mcopt 0.3 tal cual (más FPS); el botón **Shaders...** sigue en el menú de pausa para volver a prenderlos. La resolución de salida se cambia con el botón
 **"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional). Si con DH la mitad de
 abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.

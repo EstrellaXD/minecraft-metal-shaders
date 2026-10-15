@@ -546,8 +546,12 @@ public final class OwnTerrain {
 		if (layer != ChunkSectionLayer.TRANSLUCENT) return true;
 		// The option itself, not the frame's render state : the option is set before its allChanged() rebuild is
 		// scheduled, the render state follows a frame later, so a section compiled in between would land in a store not drawn.
-		// With improved transparency vanilla keeps translucent terrain (its OIT draws it).
-		return TRANSLUCENT && !Minecraft.getInstance().options.improvedTransparency().get();
+		// With improved transparency vanilla keeps translucent terrain (its OIT draws it). mcopt-shade (1.2.2): not while the
+		// shading runs, which keeps the OIT off (ShadeOitMixin): then nothing drew the water, glass and ice (Gael, the Fabulous
+		// preset: "se desapareció toda el agua"; run v122-fab-before). The same test as ShadeOitMixin's.
+		boolean oit = Minecraft.getInstance().options.improvedTransparency().get()
+			&& !(mcopt.metal.shade.Shade.ENABLED && !"false".equals(System.getProperty("mcopt.shade.oitOff")));
+		return TRANSLUCENT && !oit;
 	}
 
 	// ---- any thread: the section compiler's results and the sections' lifecycle ----

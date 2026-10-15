@@ -117,6 +117,7 @@ Steps:
 
 **Settings:** pause the game and press **Shaders...** (above the Resolution and Output buttons). Changes show at once behind
 the menu; the ones marked with `*` apply after restarting the game. **Reset page** / **Reset all** bring back the defaults.
+The **Fabulous** graphics preset works too (since 1.2.2; before, it made the water invisible).
 **General → Shaders: On/Off** (since 1.2.1) turns the shaders off after a restart, so the game runs plain mcopt 0.3 (Metal
 without effects, more FPS); the pause menu keeps its **Shaders...** button to turn them back on.
 Everything you change is saved in `config/mcopt.properties` in your game folder (written on the first launch), where you can
@@ -134,6 +135,10 @@ For the most FPS: Video Settings → VSync off, Max Framerate unlimited. To see 
 
 **Distant Horizons** (optional): add Distant Horizons 3.3.4 for 26.3 and Fabric API to the mods folder. It runs on Metal
 too, and its far terrain is lit by the same shaders (DH's own SSAO, anti-aliasing and fog are turned off while they run).
+Since **1.2.2**, **Shaders... → Performance → Distant Horizons** picks DH's distance and detail from presets tested with the
+shaders (DH's own / Performance 32 chunks / Balanced 64, the default / Quality 96 / Ultra 128; on an M4 at 1080p with 8 normal
+chunks: about 168 / 134 / 114 / 109 FPS), and DH's far water always gets the shaders' water, even with DH's transparency off.
+With DH, 8 to 12 normal chunks look and run well.
 
 - **Bottom half of the screen dark with DH?** DH's *Vanilla Fade Mode* is on `DOUBLE_PASS` (DH's default), which clashes
   with the shaders. Since **1.0-alpha.2** the mod sets it to `NONE` by itself at startup. On 1.0-alpha: open
@@ -198,7 +203,7 @@ jar viejo por el nuevo; tus ajustes se conservan.
 atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del
 juego. Casi todos se ven al momento; los marcados con `*` se aplican al reiniciar. Nubes: volumétricas, **cuadradas** (las de
 Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. **General → Shaders: Sí/No** (desde la 1.2.1) los apaga al reiniciar para usar mcopt 0.3 tal cual (más FPS); el botón **Shaders...** sigue en el menú de pausa para volver a prenderlos. La resolución de salida se cambia con el botón
-**"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional). Si con DH la mitad de
+**"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional); desde la 1.2.2, en **Shaders... → Rendimiento → Distant Horizons** eliges presets de DH probados con los shaders (Rendimiento, Balanceado, Calidad, Ultra), y el agua lejana de DH siempre tiene los reflejos de los shaders. El preset gráfico **Fabulous** ya funciona (antes el agua se volvía invisible). Si con DH la mitad de
 abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.
 

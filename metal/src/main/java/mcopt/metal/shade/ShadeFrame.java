@@ -84,6 +84,8 @@ public final class ShadeFrame {
 		return this.torch;
 	}
 	public float minAmbient = 0.004f;
+	/** Natural lighting's daylight weight, computed once per frame (0 keeps the released lighting). */
+	public float naturalLighting;
 	/** sRGB fog colour and weight, vanilla fog distances (FogData). */
 	public final float[] fogColor = new float[4];
 	public float fogEnvStart, fogEnvEnd = 1e6f, fogRenderStart, fogRenderEnd = 1e6f, fogSkyEnd = 1e6f, fogCloudEnd = 1e6f, hazeDensity = 0.0008f, hazeStrength = 0.45f;
@@ -127,9 +129,16 @@ public final class ShadeFrame {
 		this.hazeDensity = 0.0008f * Live.f(ShadeLook.U + "distanceHaze", 1f, 0f, 4f) * (1f + 8f * rainFog); // rain closes the distance in
 		this.hazeStrength = Math.min(0.5f + 0.4f * rainFog, 1f);
 		// Eye adaptation: the light around the camera. Outdoors (sky light 15 at the eye) that's the sky's; deeper in, torches.
+		this.naturalLighting = ShadeLighting.strength(this);
 		float eye = this.eyeSkyLight / 15f;
 		float eyeCurve = eye / (4f - 3f * eye);
 		float scene = this.sky.sceneLuma * eyeCurve + 0.05f * (1f - eyeCurve) + this.minAmbient;
+		if (this.naturalLighting > 0f) {
+			// At full strength the reference may lift an interior at most 1.5 EV above open-air exposure
+			// (ADAPTATION = 0.5). Do not let entering a room normalize away the daylight outside its windows.
+			float floor = this.sky.sceneLuma * 0.125f + this.minAmbient;
+			scene += this.naturalLighting * (Math.max(scene, floor) - scene);
+		}
 		float target = ShadeSky.KEY / (float) Math.pow(Math.max(scene, 1e-4f), ShadeSky.ADAPTATION);
 		target *= 1f + 1.5f * this.nightVision;
 		target *= 1f - 0.3f * this.rain; // rain and storms read darker than a clear day, not adapted back up to it
@@ -137,8 +146,10 @@ public final class ShadeFrame {
 		target = Math.min(Math.max(target, ShadeSky.EXPOSURE_MIN), ShadeSky.EXPOSURE_MAX * (1f + this.nightVision));
 		if (snap || !(this.exposure > 0f)) {
 			this.exposure = target;
-		} else { // adapt in log space: equal speed brightening and darkening
-			float k = 1f - (float) Math.exp(-Math.max(dtSeconds, 0f) / ShadeSky.ADAPT_SECONDS);
+		} else { // log space: Natural reveals dark rooms gradually, but settles sooner when stepping into daylight
+			float tau = ShadeSky.ADAPT_SECONDS;
+			if (this.naturalLighting > 0f) tau += this.naturalLighting * ((target > this.exposure ? 2.8f : 0.45f) - tau);
+			float k = 1f - (float) Math.exp(-Math.max(dtSeconds, 0f) / tau);
 			this.exposure = (float) Math.exp(Math.log(this.exposure) + (Math.log(target) - Math.log(this.exposure)) * k);
 		}
 	}

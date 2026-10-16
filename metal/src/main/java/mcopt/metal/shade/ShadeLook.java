@@ -220,6 +220,8 @@ public final class ShadeLook {
 		float skyK = Live.f(U + "skyLight", 1f, 0.2f, 3f);
 		for (int i = 0; i < 3; i++) this.ambientTint[i] *= skyK;
 		// grade the light (sun or moon) in place: chroma power keeps luminance, deepens the colour
+		// Shared sunlight keeps water, shadow tint, clouds and surfaces in the same radiometric scale.
+		if (f.naturalLighting > 0f) lightK *= 1f + 0.35f * f.naturalLighting;
 		gradeLight(f.sky.light, f.sky.sunLight ? this.chromaGamma : 1f, this.lightMul * lightK);
 		// white balance (mired shift from D65: positive = the image warmer), partial strength
 		float mired = 1e6f / 6504f + this.whiteBalance;
@@ -335,7 +337,13 @@ public final class ShadeLook {
 		float nightUp = EV_UP - (EV_UP - EV_UP_NIGHT) * (1f - smooth(-10f, -2f, this.elevation));
 		// (1.1) user.exposureSpeed: how fast the eye adapts (2 = twice as fast)
 		float speed = Live.f(U + "exposureSpeed", 1f, 0.2f, 5f);
-		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, TAU_UP / speed, TAU_DOWN / speed);
+		float tauUp = TAU_UP, tauDown = TAU_DOWN;
+		if (f.naturalLighting > 0f) {
+			nightUp += f.naturalLighting * (0.75f - nightUp);
+			tauUp += f.naturalLighting * (2.5f - tauUp);
+			tauDown += f.naturalLighting * (0.45f - tauDown);
+		}
+		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, tauUp / speed, tauDown / speed);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
 		// (FT2.8, audit idx 78) x the aurora's, End sky's and Nether fog's clock; (FT2.9) mcopt.shade.caveAir (true; read every frame,
 		// false = FT2.8.1): y the sky light the air around the camera gets (from the eye's, smoothed: all of it from 10 of 15 up, none
@@ -369,7 +377,8 @@ public final class ShadeLook {
 		put4(b, USER1, ShadeSettings.reflect(), ShadeSettings.ssr() ? 1f : 0f, Live.f(U + "foam", 1f, 0f, 3f), Live.f(U + "refraction", 1f, 0f, 3f));
 		// user2: x the sun's glint on water (user.glint), y beacon radiance, zw free
 		put4(b, USER2, Live.f(U + "glint", 1f, 0f, 3f), Live.f("mcopt.shade.beaconBrightness", 1f, 1f, 8f), 0f, 0f);
-		put4(b, USER3, 0f, 0f, 0f, 0f);
+		// x: daylight contrast and metering weight. Zero preserves the Current lighting path.
+		put4(b, USER3, f.naturalLighting, 0f, 0f, 0f);
 		mcopt.metal.shade.weather.ShadeWeather.pack(b); // M3 weather: wet, wind, flash
 	}
 

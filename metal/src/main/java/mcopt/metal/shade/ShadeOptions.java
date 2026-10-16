@@ -74,6 +74,11 @@ public final class ShadeOptions {
 
 	static {
 		page("Iluminación", "Lighting", "Sol, luna, cielo, antorchas, cuevas y luces en la mano.", "Sun, moon, sky, torches, caves and held lights.",
+			h("Modo", "Mode"),
+			choice(ShadeLighting.KEY, "Modo de iluminación", "Lighting mode",
+				"Actual: la iluminación original. Natural: más contraste entre exteriores e interiores y adaptación más gradual. Cambia al instante; requiere iluminación mejorada.",
+				"Current keeps the original lighting. Natural adds daylight/interior contrast and gentler dark adaptation. Switch live; requires Improved lighting. Independent of Style.",
+				new String[] {"current", "natural"}, new String[] {"Actual", "Natural"}, new String[] {"Current", "Natural"}, () -> 0),
 			h("Sol y cielo", "Sun and sky"),
 			pct(U + "sunLight", "Luz del sol", "Sunlight", "Qué tan fuerte ilumina el sol.", "How strong the sunlight is.", 20, 300, 100),
 			pct(U + "moonLight", "Luz de la luna", "Moonlight", "Qué tan fuerte ilumina la luna.", "How strong the moonlight is.", 20, 400, 100),

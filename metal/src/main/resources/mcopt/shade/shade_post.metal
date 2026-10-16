@@ -580,8 +580,10 @@ kernel void shade_exposure(device ShadeGpu &g [[buffer(18)]], constant ShadeLook
 	float target = logRef;
 	float mean = g.scene.x;
 	if (total > 0.0) {
-		// weighted mean of log2 luminance between the 40th and 92nd percentiles (ignores the sun and black pockets)
-		float lo = total * 0.40, hi = total * 0.92, acc = 0.0, sum = 0.0, wsum = 0.0;
+		// Current meters the 40th..92nd percentiles. Natural includes more bright window detail,
+		// still ignoring the brightest 2% (sun/small emissives) and the darkest pockets.
+		float upper = L.user3.x > 0.0 ? mix(0.92, 0.98, L.user3.x) : 0.92;
+		float lo = total * 0.40, hi = total * upper, acc = 0.0, sum = 0.0, wsum = 0.0;
 		for (int i = 0; i < 64; i++) {
 			float n = float(g.histogram[i]);
 			float a = max(lo - acc, 0.0), b = min(hi - acc, n);

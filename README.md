@@ -88,6 +88,10 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
   underwater fog and light shafts.
 - **Weather**: wet surfaces and puddles, rain ripples, lightning.
 - **HDR** pipeline with bloom, auto-exposure, a filmic tonemap, and **XDR/EDR** output on Liquid Retina XDR displays.
+  Optional **Full scene** HDR is available under **Shaders → Colour and camera → HDR display → HDR mode**
+  (`mcopt.shade.hdrMode=scene`); the existing Highlights mode remains the default. Scene and HUD brightness have separate
+  controls. Requires HDR output enabled and available display headroom. Pause/inventory screens and F2 screenshots stay
+  SDR. See [the implementation and GPU checks](tools/shade/hdrcheck/README.md).
 - **TAAU** (temporal anti-aliasing and upscaling) and dynamic resolution; an **output resolution** button in the pause menu.
 - Nether and End looks.
 - **Distant Horizons** support: the far LODs are lit by the same shaders (lighting, fog, water reflections).

@@ -107,6 +107,14 @@ public final class ShadeLook {
 	/** Sun and moon disc angular radius (radians). */
 	static final float SUN_RADIUS = (float) Math.toRadians(1.0), MOON_RADIUS = (float) Math.toRadians(0.65);
 
+	/** Full-scene EDR curve through the same mid-grey and a headroom-dependent white. */
+	public void putHdrCurve(ByteBuffer b, float peak) {
+		double white = WHITE * Math.sqrt(peak), a = this.contrast, d = SHOULDER;
+		double ma = Math.pow(MID_IN, a), mad = Math.pow(MID_IN, a * d);
+		double curveB = (Math.pow(white, a) / peak - ma / MID_OUT) / (Math.pow(white, a * d) - mad);
+		b.putFloat((float) curveB).putFloat((float) (ma / MID_OUT - mad * curveB));
+	}
+
 	// ---- per-frame values (read by tools and the debug log) --------------------------------------------------------------
 	public float elevation, rising, chromaGamma, lightMul, saturation, contrast, bloomMix, vlStrength, mistSigma, whiteBalance;
 	public final float[] ambientTint = new float[3], wbGain = new float[3];

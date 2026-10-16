@@ -162,6 +162,8 @@ public final class ShadeOptions {
 				"How much caves get brighter and bright scenes darker.", 0, 200, 100),
 			pct(U + "exposureSpeed", "Rapidez del ojo", "Adaptation speed", "Qué tan rápido se adapta el ojo.", "How fast the eye adapts.", 20, 500, 100),
 			h("Efectos", "Effects"),
+			num("mcopt.shade.beaconBrightness", "Brillo del haz del faro", "Beacon beam brightness", "Intensidad del haz; 1x restaura el brillo anterior.",
+				"Beam intensity before bloom and tone mapping; 1x restores the original brightness.", 1, 8, () -> 4, 1, "x"),
 			pctInt(U + "bloom", "Resplandor", "Bloom", "El brillo que se esparce alrededor del sol, las antorchas y la lava.", "The glow around the sun, torches and lava.",
 				0, 200, 100),
 			pct(U + "vignette", "Viñeta", "Vignette", "Bordes de la imagen un poco más oscuros.", "Slightly darker image corners.", 0, 400, 100),

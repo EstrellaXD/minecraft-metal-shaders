@@ -367,8 +367,8 @@ public final class ShadeLook {
 		// user1: x Distant Horizons' far water: its reflections' strength (= the near water's, user waterReflect), y its screen-space
 		// part (1 on, 0 = the player's "sky only"), z the near water's foam (user.foam), w its refraction (user.refraction)
 		put4(b, USER1, ShadeSettings.reflect(), ShadeSettings.ssr() ? 1f : 0f, Live.f(U + "foam", 1f, 0f, 3f), Live.f(U + "refraction", 1f, 0f, 3f));
-		// user2: x the sun's glint on water (user.glint), yzw free
-		put4(b, USER2, Live.f(U + "glint", 1f, 0f, 3f), 0f, 0f, 0f);
+		// user2: x the sun's glint on water (user.glint), y beacon radiance, zw free
+		put4(b, USER2, Live.f(U + "glint", 1f, 0f, 3f), Live.f("mcopt.shade.beaconBrightness", 4f, 1f, 8f), 0f, 0f);
 		put4(b, USER3, 0f, 0f, 0f, 0f);
 		mcopt.metal.shade.weather.ShadeWeather.pack(b); // M3 weather: wet, wind, flash
 	}

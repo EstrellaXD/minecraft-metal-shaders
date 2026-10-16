@@ -80,7 +80,7 @@ struct ShadeLook {
 	float4 user0;         // 1024 x soft shadows' sun radius (rad), y vignette strength (0.12), z leaves' / plants' light through them, w glowing blocks
 	float4 user1;         // 1040 x Distant Horizons' far water reflection strength, y its screen-space part on (1) / off (0), z foam, w refraction
 	float4 user2;         // 1056 x the sun's glint on water, y beacon radiance multiplier, zw free
-	float4 user3;         // 1072 x Natural lighting daylight weight (0 = Current), yzw free
+	float4 user3;         // 1072 x Natural lighting daylight strength 0..2 (0 = Current, 1 = original Natural), yzw free
 };
 
 // ShadeLook.tier.y feature bits

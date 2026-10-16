@@ -77,9 +77,32 @@ int main(int argc,const char **argv){@autoreleasepool{
    [measurements addObject:@{@"scene":name,@"mode":mode?@"natural":@"current",@"exposure":@(ex),@"raw_indoor":@(lum(raw+7*4)),@"raw_outdoor":@(lum(raw+79*4)),@"hdr_indoor":@(lum(hdr+7*4)),@"hdr_outdoor":@(lum(hdr+79*4)),@"hdr_ratio":@(lum(hdr+79*4)/fmaxf(lum(hdr+7*4),1e-6))}];
   }
  }
+ // Compare the complete metering + HDR path across the slider, not just its uniform value.
+ NSMutableArray *slider=[NSMutableArray array];float lastRatio=0;
+ for(int percent=0;percent<=100;percent+=25){
+  NSData *u=readData([folder stringByAppendingPathComponent:[NSString stringWithFormat:@"strength-%d.bin",percent]]);
+  render(p,u,result,COUNT,nil);float raw[COUNT*4];memcpy(raw,result.contents,sizeof raw);
+  for(int i=0;i<COUNT*4;i++)check(isfinite(raw[i])&&raw[i]>=0,"strong slider cannot produce negative lighting");
+  initGpu(gpu,1);addBin(gpu,lum(raw+7*4),8000);addBin(gpu,lum(raw+79*4),2000);float ex=expose(meter,u,gpu);
+  render(display,u,result,COUNT,gpu);float *hdr=result.contents;
+  for(int i=0;i<COUNT*4;i++)check(isfinite(hdr[i])&&hdr[i]>=0&&hdr[i]<=4.0001,"slider HDR within headroom");
+  float ratio=lum(hdr+79*4)/lum(hdr+7*4);check(ratio>lastRatio,"slider contrast increases monotonically");lastRatio=ratio;
+  [slider addObject:@{@"percent":@(percent),@"hdr_ratio":@(ratio),@"hdr_indoor":@(lum(hdr+7*4)),@"hdr_outdoor":@(lum(hdr+79*4)),@"exposure":@(ex)}];
+  if(percent==50&&baseline){
+   NSData *prior=readData([baselineFolder stringByAppendingPathComponent:@"interior-natural.bin"]);
+   // A baseline predating Natural has no weight and can only serve as a Current control.
+   if(((const float *)prior.bytes)[(FRAME+1072)/4]>0){
+    check([u isEqualToData:prior],"50% keeps previous Natural uniforms exactly");
+    render(old,prior,result,COUNT,nil);float *previous=result.contents;
+    for(int i=0;i<COUNT*4;i++)check(fabsf(raw[i]-previous[i])/fmaxf(fabsf(previous[i]),.001)<.003,"50% retains previous Natural lighting within half precision");
+   }
+  }
+ }
+ [[NSJSONSerialization dataWithJSONObject:slider options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[folder stringByAppendingPathComponent:@"strength.json"] atomically:YES];
+ printf("OK 0/25/50/75/100%% GPU contrast, positive radiance, HDR bounds and preserved midpoint\n");
  // A tiny sun/emissive patch must not drive exposure; a broad window remains part of the meter.
- for(NSString *mode in @[@"current", @"natural"]){
-  NSData *u=readData([folder stringByAppendingPathComponent:[@"interior-" stringByAppendingFormat:@"%@.bin",mode]]);
+ for(NSString *name in @[@"interior-current", @"interior-natural", @"strength-100"]){
+  NSData *u=readData([folder stringByAppendingPathComponent:[name stringByAppendingString:@".bin"]]);
   initGpu(gpu,1);addBin(gpu,.2,10000);float plain=expose(meter,u,gpu);
   initGpu(gpu,1);addBin(gpu,.2,9900);addBin(gpu,1000,100);float tiny=expose(meter,u,gpu);
   check(fabsf(plain-tiny)<1e-5,"small bright sources excluded from metering");
@@ -99,19 +122,23 @@ int main(int argc,const char **argv){@autoreleasepool{
  if(perf){
   int count=3840*2160;id<MTLBuffer> large=[dev newBufferWithLength:(NSUInteger)count*16 options:MTLResourceStorageModePrivate];
   NSData *current=readData([folder stringByAppendingPathComponent:@"outdoor-current.bin"]);natural=readData([folder stringByAppendingPathComponent:@"outdoor-natural.bin"]);
-  NSMutableArray *samples[3]={[NSMutableArray array],[NSMutableArray array],[NSMutableArray array]};
+  NSData *strong=readData([folder stringByAppendingPathComponent:@"strength-100.bin"]);
+  NSMutableArray *samples[4]={[NSMutableArray array],[NSMutableArray array],[NSMutableArray array],[NSMutableArray array]};
   NSMutableString *csv=[NSMutableString stringWithString:@"round,variant,gpu_ms\n"];
-  int variants=baseline?3:2;
+  int variants=baseline?4:3;
   for(int round=-6;round<30;round++)for(int j=0;j<variants;j++){
-   int k=(round&1)?variants-1-j:j;id<MTLComputePipelineState> state=k==2?old:p;
-   double ms=render(state,k==1?natural:current,large,count,nil);check(isfinite(ms)&&ms>0,"valid GPU timing");
-   if(round>=0){[samples[k] addObject:@(ms)];[csv appendFormat:@"%d,%@,%.6f\n",round,(@[@"current",@"natural",@"previous_jar"])[k],ms];}
+   int k=(round&1)?variants-1-j:j;id<MTLComputePipelineState> state=k==3?old:p;
+   double ms=render(state,k==1?natural:k==2?strong:current,large,count,nil);check(isfinite(ms)&&ms>0,"valid GPU timing");
+   if(round>=0){[samples[k] addObject:@(ms)];[csv appendFormat:@"%d,%@,%.6f\n",round,(@[@"current",@"natural_50",@"natural_100",@"previous_jar"])[k],ms];}
   }
   [csv writeToFile:[folder stringByAppendingPathComponent:@"performance.csv"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
   NSMutableArray *deltas=[NSMutableArray array];for(int i=0;i<30;i++)[deltas addObject:@([samples[1][i] doubleValue]-[samples[0][i] doubleValue])];
   NSMutableDictionary *report=[@{@"device":dev.name,@"scope":@"3840x2160 production diffuse lighting kernel + float4 store; excludes full game, shadow/texture reads and other passes",@"samples_per_variant":@30,@"current_median_ms":@(median(samples[0])),@"natural_median_ms":@(median(samples[1])),@"paired_delta_median_ms":@(median(deltas))} mutableCopy];
-  if(baseline)report[@"previous_jar_median_ms"]=@(median(samples[2]));
+  report[@"natural_100_median_ms"]=@(median(samples[2]));
+  NSMutableArray *strongDeltas=[NSMutableArray array];for(int i=0;i<30;i++)[strongDeltas addObject:@([samples[2][i] doubleValue]-[samples[0][i] doubleValue])];
+  report[@"natural_100_paired_delta_median_ms"]=@(median(strongDeltas));
+  if(baseline)report[@"previous_jar_median_ms"]=@(median(samples[3]));
   [[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[folder stringByAppendingPathComponent:@"performance.json"] atomically:YES];
-  printf("4K lighting kernel: Current %.4f ms, Natural %.4f ms, paired delta %+.4f ms GPU\n",median(samples[0]),median(samples[1]),median(deltas));
+  printf("4K lighting kernel: Current %.4f ms, Natural 50%% %.4f ms, 100%% %.4f ms; paired delta %+.4f / %+.4f ms GPU\n",median(samples[0]),median(samples[1]),median(samples[2]),median(deltas),median(strongDeltas));
  }
 }return 0;}

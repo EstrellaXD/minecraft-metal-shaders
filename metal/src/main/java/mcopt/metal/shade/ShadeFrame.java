@@ -84,7 +84,7 @@ public final class ShadeFrame {
 		return this.torch;
 	}
 	public float minAmbient = 0.004f;
-	/** Natural lighting's daylight weight, computed once per frame (0 keeps the released lighting). */
+	/** Natural lighting's daylight weight, 0..2 (0 = Current, 1 = original Natural, 2 = stronger). */
 	public float naturalLighting;
 	/** sRGB fog colour and weight, vanilla fog distances (FogData). */
 	public final float[] fogColor = new float[4];
@@ -134,10 +134,11 @@ public final class ShadeFrame {
 		float eyeCurve = eye / (4f - 3f * eye);
 		float scene = this.sky.sceneLuma * eyeCurve + 0.05f * (1f - eyeCurve) + this.minAmbient;
 		if (this.naturalLighting > 0f) {
-			// At full strength the reference may lift an interior at most 1.5 EV above open-air exposure
-			// (ADAPTATION = 0.5). Do not let entering a room normalize away the daylight outside its windows.
-			float floor = this.sky.sceneLuma * 0.125f + this.minAmbient;
-			scene += this.naturalLighting * (Math.max(scene, floor) - scene);
+			// At the original Natural strength, cap the reference's interior lift at 1.5 EV; at the
+			// stronger endpoint, 1 EV (ADAPTATION = 0.5). Blend without extrapolating past the floor.
+			float extra = Math.max(this.naturalLighting - 1f, 0f);
+			float floor = this.sky.sceneLuma * (0.125f * (1f + extra)) + this.minAmbient;
+			scene += Math.min(this.naturalLighting, 1f) * (Math.max(scene, floor) - scene);
 		}
 		float target = ShadeSky.KEY / (float) Math.pow(Math.max(scene, 1e-4f), ShadeSky.ADAPTATION);
 		target *= 1f + 1.5f * this.nightVision;
@@ -148,7 +149,11 @@ public final class ShadeFrame {
 			this.exposure = target;
 		} else { // log space: Natural reveals dark rooms gradually, but settles sooner when stepping into daylight
 			float tau = ShadeSky.ADAPT_SECONDS;
-			if (this.naturalLighting > 0f) tau += this.naturalLighting * ((target > this.exposure ? 2.8f : 0.45f) - tau);
+			if (this.naturalLighting > 0f) {
+				float extra = Math.max(this.naturalLighting - 1f, 0f);
+				float naturalTau = target > this.exposure ? 2.8f + 0.7f * extra : 0.45f - 0.1f * extra;
+				tau += Math.min(this.naturalLighting, 1f) * (naturalTau - tau);
+			}
 			float k = 1f - (float) Math.exp(-Math.max(dtSeconds, 0f) / tau);
 			this.exposure = (float) Math.exp(Math.log(this.exposure) + (Math.log(target) - Math.log(this.exposure)) * k);
 		}

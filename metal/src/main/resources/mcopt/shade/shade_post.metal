@@ -582,7 +582,7 @@ kernel void shade_exposure(device ShadeGpu &g [[buffer(18)]], constant ShadeLook
 	if (total > 0.0) {
 		// Current meters the 40th..92nd percentiles. Natural includes more bright window detail,
 		// still ignoring the brightest 2% (sun/small emissives) and the darkest pockets.
-		float upper = L.user3.x > 0.0 ? mix(0.92, 0.98, L.user3.x) : 0.92;
+		float upper = L.user3.x > 0.0 ? mix(0.92, 0.98, min(L.user3.x, 1.0)) : 0.92;
 		float lo = total * 0.40, hi = total * upper, acc = 0.0, sum = 0.0, wsum = 0.0;
 		for (int i = 0; i < 64; i++) {
 			float n = float(g.histogram[i]);

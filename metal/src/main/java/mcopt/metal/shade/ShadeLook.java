@@ -339,9 +339,10 @@ public final class ShadeLook {
 		float speed = Live.f(U + "exposureSpeed", 1f, 0.2f, 5f);
 		float tauUp = TAU_UP, tauDown = TAU_DOWN;
 		if (f.naturalLighting > 0f) {
-			nightUp += f.naturalLighting * (0.75f - nightUp);
-			tauUp += f.naturalLighting * (2.5f - tauUp);
-			tauDown += f.naturalLighting * (0.45f - tauDown);
+			float blend = Math.min(f.naturalLighting, 1f), extra = Math.max(f.naturalLighting - 1f, 0f);
+			nightUp += blend * (0.75f - 0.4f * extra - nightUp);
+			tauUp += blend * (2.5f + extra - tauUp);
+			tauDown += blend * (0.45f - 0.1f * extra - tauDown);
 		}
 		put4(b, EXPOSURE_CFG, EV_DOWN, nightUp, tauUp / speed, tauDown / speed);
 		put4(b, DT, this.dt, f.gameTimeSeconds, 0f, this.rising);
@@ -377,7 +378,7 @@ public final class ShadeLook {
 		put4(b, USER1, ShadeSettings.reflect(), ShadeSettings.ssr() ? 1f : 0f, Live.f(U + "foam", 1f, 0f, 3f), Live.f(U + "refraction", 1f, 0f, 3f));
 		// user2: x the sun's glint on water (user.glint), y beacon radiance, zw free
 		put4(b, USER2, Live.f(U + "glint", 1f, 0f, 3f), Live.f("mcopt.shade.beaconBrightness", 1f, 1f, 8f), 0f, 0f);
-		// x: daylight contrast and metering weight. Zero preserves the Current lighting path.
+		// x: daylight contrast strength 0..2. Zero preserves Current; 1 retains the original Natural look.
 		put4(b, USER3, f.naturalLighting, 0f, 0f, 0f);
 		mcopt.metal.shade.weather.ShadeWeather.pack(b); // M3 weather: wet, wind, flash
 	}

@@ -3,7 +3,7 @@ package mcopt.metal.shade;
 
 /** Optional daylight contrast, independent of the colour/style preset. No extra render passes. */
 public final class ShadeLighting {
-	public static final String KEY = "mcopt.shade.lighting";
+	public static final String KEY = "mcopt.shade.lighting", STRENGTH = "mcopt.shade.naturalStrength";
 
 	private ShadeLighting() {
 	}
@@ -14,7 +14,9 @@ public final class ShadeLighting {
 			|| f.fogType != ShadeFrame.FOG_AIR || !Live.b("mcopt.shade.light2", ShadeConfig.LIGHT2)) return 0f;
 		float day = clamp((f.sunDir.y - 0.02f) / 0.33f);
 		day = day * day * (3f - 2f * day);
-		return day * (1f - 0.65f * clamp(f.rain)) * (1f - 0.25f * clamp(f.thunder)) * (1f - clamp(f.nightVision));
+		// UI 0..100% maps to 0..2: 50% retains the original Natural look, including existing configs.
+		return day * (1f - 0.65f * clamp(f.rain)) * (1f - 0.25f * clamp(f.thunder)) * (1f - clamp(f.nightVision))
+			* Live.f(STRENGTH, 1f, 0f, 2f);
 	}
 
 	private static float clamp(float v) {

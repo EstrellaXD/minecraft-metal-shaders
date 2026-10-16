@@ -108,10 +108,18 @@ static float3 shadeLit2(half3 albedo, half3 n, half sky, half block, half shadow
 	if (L.user3.x > 0.0) {
 		// Use the surface's skylight, never the camera's: a bright garden seen through a doorway stays bright.
 		// Open shade retains sky fill; enclosed surfaces lose more of the artistic ambient and bounce.
-		half natural = half(L.user3.x);
+		half natural = half(min(L.user3.x, 1.0));
 		ambient *= mix(half(1.0), mix(half(0.45), half(0.85), g), natural);
 		fill *= mix(half(1.0), mix(half(0.35), half(0.65), g), natural);
 		minimum *= mix(half(1.0), half(0.65), natural);
+		if (L.user3.x > 1.0) {
+			// Above the original Natural look, use another positive attenuation rather than extrapolate
+			// the first blend through zero. Torch light and direct sun visibility remain intact.
+			half extra = half(L.user3.x - 1.0);
+			ambient *= mix(half(1.0), mix(half(0.65), half(0.90), g), extra);
+			fill *= mix(half(1.0), mix(half(0.60), half(0.85), g), extra);
+			minimum *= mix(half(1.0), half(0.75), extra);
+		}
 	}
 	if (SHADE_CAMERA_UNDERWATER(f)) { // the camera is under water: daylight arrives filtered by the water above
 		direct *= half3(0.22h, 0.5h, 0.62h);

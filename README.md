@@ -82,7 +82,8 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
   camera, atmosphere, god rays, clouds, night sky, water, weather, Nether and End, performance), in English and Spanish, most
   of them applied live while you watch.
 - **Volumetric clouds** with cloud shadows, lit by the sunset; or **blocky clouds**: Minecraft's own cloud shapes with volume,
-  sunlight, shadows and reflections; or the game's normal clouds.
+  sunlight, shadows and reflections; or the game's normal clouds. Since 1.2.3, when you're up high (at the clouds' height or
+  above them), the edges of clouds behind a hill or a tree no longer show through it.
 - **God rays** (volumetric light) through forests, cave mouths and clouds; morning mist and forest air.
 - **Water**: waves, screen-space reflections, refraction, absorption, caustics, foam, **waterfalls with white water**,
   underwater fog and light shafts.
@@ -143,7 +144,8 @@ too, and its far terrain is lit by the same shaders (DH's own SSAO, anti-aliasin
 Since **1.2.2**, **Shaders... → Performance → Distant Horizons** picks DH's distance and detail from presets tested with the
 shaders (DH's own / Performance 32 chunks / Balanced 64, the default / Quality 96 / Ultra 128; on an M4 at 1080p with 8 normal
 chunks: about 168 / 134 / 114 / 109 FPS), and DH's far water always gets the shaders' water, even with DH's transparency off.
-With DH, 8 to 12 normal chunks look and run well.
+With DH, 8 to 12 normal chunks look and run well. One known limit: from inside or above the cloud layer, clouds behind a far
+DH mountain below the horizon can still show over it (DH's far terrain has no depth information at that point of the frame).
 
 - **Bottom half of the screen dark with DH?** DH's *Vanilla Fade Mode* is on `DOUBLE_PASS` (DH's default), which clashes
   with the shaders. Since **1.0-alpha.2** the mod sets it to `NONE` by itself at startup. On 1.0-alpha: open
@@ -210,7 +212,7 @@ junto con los mods que lo necesitan (Iris, Sodium Extra, Reese's Sodium Options.
 atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del
 juego. Casi todos se ven al momento; los marcados con `*` se aplican al reiniciar. Nubes: volumétricas, **cuadradas** (las de
 Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. **General → Shaders: Sí/No** (desde la 1.2.1) los apaga al reiniciar para usar mcopt 0.3 tal cual (más FPS); el botón **Shaders...** sigue en el menú de pausa para volver a prenderlos. La resolución de salida se cambia con el botón
-**"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional); desde la 1.2.2, en **Shaders... → Rendimiento → Distant Horizons** eliges presets de DH probados con los shaders (Rendimiento, Balanceado, Calidad, Ultra), y el agua lejana de DH siempre tiene los reflejos de los shaders. El preset gráfico **Fabulous** ya funciona (antes el agua se volvía invisible). Si con DH la mitad de
+**"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional); desde la 1.2.2, en **Shaders... → Rendimiento → Distant Horizons** eliges presets de DH probados con los shaders (Rendimiento, Balanceado, Calidad, Ultra), y el agua lejana de DH siempre tiene los reflejos de los shaders. El preset gráfico **Fabulous** ya funciona (antes el agua se volvía invisible). Desde la 1.2.3, cuando estás alto (a la altura de las nubes o arriba de ellas), los bordes de las nubes ya no se ven a través de las lomas y los árboles que tienes enfrente; con DH, una nube detrás de una montaña lejana de DH, por debajo del horizonte, todavía puede verse encima de ella. Si con DH la mitad de
 abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.
 

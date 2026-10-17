@@ -34,6 +34,7 @@ typedef struct {
 	id<MTLTexture> vanilla; // (1.1) the game's cloud texture as a 0/1 mask (mc_clouds_vanilla): the blocky style's cells
 	id<MTLTexture> marchColor, marchDist, hist[2], data[2], dataSt[2], domeTex[2];
 	int hw, hh, mw, mh, dw, dh, cur, domeCur;
+	int histSt; // (1.2.3) hist[cur] came from cloud_resolve_st (flag 16): dataSt[cur] holds its distances (cloud_over reads them)
 	// GPU timer (flag 8): fragment start/end per pass, a ring of 4 frames
 	id<MTLCounterSampleBuffer> times;
 	int timesTried, timeFrame;
@@ -398,6 +399,7 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 			id<MTLRenderPipelineState> rs = st ? (lean ? s->resolveStLean : s->resolveSt) : (lean ? s->resolveLean : s->resolve);
 			cloudPass(cb, rs, s->hist[next], data[next], @"mcopt shade: cloud resolve", params, bytes, in2, 4, times, base + 4);
 			s->cur = next;
+			s->histSt = st;
 		}
 		if (flags & 4) {
 			int next = s->domeCur ^ 1;
@@ -409,7 +411,8 @@ void mc_clouds_render(Enc *enc, CloudState *s, const void *params, int bytes, in
 }
 
 // Clouds in front of the world (cloud_over): into scene (the HDR target, its live sub-rect liveW x liveH) where the depth
-// lies behind the clouds' apparent distance (this frame's march distances), scene x T + light x exposure.
+// lies behind the clouds' apparent distance (the stable resolve's history distances, else this frame's march distances),
+// scene x T + light x exposure. mode: bit 1 Distant Horizons drew this frame (bit 2, the history's distances, is set here).
 void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture> depth, int liveW, int liveH, int mode) {
 	if (!s || !s->hist[0] || !scene || !depth) return;
 	@autoreleasepool {
@@ -445,7 +448,9 @@ void mc_clouds_over(Enc *enc, CloudState *s, id<MTLTexture> scene, id<MTLTexture
 		[r setFragmentTexture:depth atIndex:0];
 		[r setFragmentTexture:s->marchDist atIndex:1];
 		[r setFragmentTexture:s->hist[s->cur] atIndex:2];
-		uint32_t m = (uint32_t) mode;
+		// (1.2.3, issue #4) bound either way (R16Uint, as cloud_over declares it); read only with bit 2
+		[r setFragmentTexture:s->dataSt[s->cur] atIndex:3];
+		uint32_t m = (uint32_t) mode | (s->histSt ? 2u : 0u);
 		[r setFragmentBytes:&m length:4 atIndex:0];
 		[r drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 		[r endEncoding];

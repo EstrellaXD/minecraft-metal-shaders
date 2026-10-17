@@ -1248,11 +1248,11 @@ fragment CloudResolveStOut cloud_resolve_st(CloudVsOut in [[stage_in]], constant
 // them behind everything else). Blend: One, OneMinusSourceAlpha (scene x T + light x exposure).
 fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[buffer(16)]], constant ShadeLook &L [[buffer(17)]],
                           constant ShadeGpu &g [[buffer(18)]], depth2d<float> depth [[texture(0)]], texture2d<float> cdist [[texture(1)]],
-                          texture2d<half> hist [[texture(2)]], constant uint &mode [[buffer(0)]]) {
+                          texture2d<half> hist [[texture(2)]], texture2d<ushort> hdata [[texture(3)]], constant uint &mode [[buffer(0)]]) {
 	float d = depth.read(uint2(in.position.xy));
-	// mode 1 (Distant Horizons drew this frame): its LODs are not in the world depth, so an empty pixel below the horizon is
+	// mode bit 1 (Distant Horizons drew this frame): its LODs are not in the world depth, so an empty pixel below the horizon is
 	// taken as far terrain behind the clouds (true sky there gets the clouds a second time: rare with the LODs to the horizon)
-	if (d <= 0.0 && mode == 0u) discard_fragment();
+	if (d <= 0.0 && (mode & 1u) == 0u) discard_fragment();
 	// (FT2.7, audit idx 9) ...but only from inside or above the layer: from under its base the clouds below the horizon are the
 	// curved world's far deck, which shadeFogAir2 already puts BEHIND the LODs (wc = smoothstep(0, 24, base - camY)); here its
 	// complement, so they are never drawn twice (a hazy band of far clouds over the LOD mountains under the horizon, popping in
@@ -1271,13 +1271,31 @@ fragment half4 cloud_over(CloudVsOut in [[stage_in]], constant ShadeFrame &f [[b
 	float4 cp = L.viewProjNoJitter * float4(dir, 0.0);
 	if (cp.w <= 1e-6) discard_fragment();
 	float2 uv = cp.xy / cp.w * 0.5 + 0.5;
-	// the march's distances (1/N of the history): bilinear by hand (R32F), the nearest texel drew stair steps along the
-	// clouds' edges in front of the world
-	float2 dsz = float2(cdist.get_width(), cdist.get_height());
-	float2 dp = clamp(uv * dsz - 0.5, float2(0.0), dsz - 1.0);
-	uint2 d0 = uint2(dp), d1 = min(d0 + 1u, uint2(dsz) - 1u);
-	float2 fw = dp - float2(d0);
-	float cd = mix(mix(cdist.read(d0).r, cdist.read(uint2(d1.x, d0.y)).r, fw.x), mix(cdist.read(uint2(d0.x, d1.y)).r, cdist.read(d1).r, fw.x), fw.y);
+	float cd;
+	if ((mode & 2u) != 0u) {
+		// (1.2.3, issue #4) mode bit 2 (the history came from cloud_resolve_st): the distance the history carries with its colour,
+		// over the 2x2 texels the colour below is filtered from, the clear ones (CLOUD_DIST_NONE) left out. The march's distances
+		// are this frame's 1/N-resolution slots, and a clear ray's is the slab's middle (from inside the layer looking down: a few
+		// dozen blocks): along a cloud's soft edge their mix came out in front of the nearer terrain, so from high up the edges
+		// of the clouds far behind a ridge were drawn over it
+		constexpr sampler gatherS(filter::nearest, address::clamp_to_edge);
+		uint4 q = uint4(hdata.gather(gatherS, uv)) & 0xfffu;
+		float2 fh = fract(uv * float2(hdata.get_width(), hdata.get_height()) - 0.5);
+		// (x0,y1) (x1,y1) (x1,y0) (x0,y0), the bilinear weights
+		float4 wq = float4((1.0 - fh.x) * fh.y, fh.x * fh.y, fh.x * (1.0 - fh.y), (1.0 - fh.x) * (1.0 - fh.y));
+		wq = select(float4(0.0), wq, q != CLOUD_DIST_NONE);
+		float wsum = wq.x + wq.y + wq.z + wq.w;
+		if (wsum <= 1e-4) discard_fragment(); // no cloud the history knows of here
+		cd = dot(wq, exp2(float4(q) * (1.0 / 256.0))) / wsum; // (cloudDistDecode)
+	} else {
+		// the march's distances (1/N of the history): bilinear by hand (R32F), the nearest texel drew stair steps along the
+		// clouds' edges in front of the world
+		float2 dsz = float2(cdist.get_width(), cdist.get_height());
+		float2 dp = clamp(uv * dsz - 0.5, float2(0.0), dsz - 1.0);
+		uint2 d0 = uint2(dp), d1 = min(d0 + 1u, uint2(dsz) - 1u);
+		float2 fw = dp - float2(d0);
+		cd = mix(mix(cdist.read(d0).r, cdist.read(uint2(d1.x, d0.y)).r, fw.x), mix(cdist.read(uint2(d0.x, d1.y)).r, cdist.read(d1).r, fw.x), fw.y);
+	}
 	float k = smoothstep(cd * 0.8, cd * 1.05, dist) * kEmpty;
 	if (k <= 0.001) discard_fragment();
 	half4 cl = hist.sample(cloudClamp, uv);

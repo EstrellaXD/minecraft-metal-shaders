@@ -115,6 +115,11 @@ Steps:
 **Updating from 1.0:** take Sodium out of the `mods` folder and replace the old Metal Shaders jar. Your settings are kept
 (the config's `profile=alpha` line changes to `profile=indie` by itself, the terrain renderer the shaders light).
 
+**"Incompatible mods found!" with Sodium?** Fabric's message suggests replacing Metal Shaders with a version that is
+compatible with Sodium. There isn't one, and none is needed: **remove Sodium** (`sodium-*.jar`) from the `mods` folder,
+along with the mods that need it (Iris, Sodium Extra, Reese's Sodium Options...). Since 1.2, Metal Shaders draws the
+terrain itself.
+
 **Settings:** pause the game and press **Shaders...** (above the Resolution and Output buttons). Changes show at once behind
 the menu; the ones marked with `*` apply after restarting the game. **Reset page** / **Reset all** bring back the defaults.
 The **Fabulous** graphics preset works too (since 1.2.2; before, it made the water invisible).
@@ -197,7 +202,9 @@ la misma Mac a la misma resolución da **90–120 FPS** (preset balanceado), y *
 Java 25. Desde la 1.2 **ya no hace falta Sodium** (mcopt 0.3 dibuja el terreno por su cuenta; con Sodium instalado el juego no
 arranca). Pon el jar de [Releases](https://github.com/GaelQuinta/minecraft-metal-shaders/releases/latest) en la carpeta `mods`
 y abre el juego: los shaders se activan solos (preset balanceado). **Si vienes de la 1.0:** quita Sodium de `mods` y cambia el
-jar viejo por el nuevo; tus ajustes se conservan.
+jar viejo por el nuevo; tus ajustes se conservan. **¿Fabric dice "Incompatible mods found!" por Sodium?** Te sugiere cambiar
+Metal Shaders por una versión compatible con Sodium, pero no existe ni hace falta: **quita Sodium** (`sodium-*.jar`) de `mods`,
+junto con los mods que lo necesitan (Iris, Sodium Extra, Reese's Sodium Options...).
 
 **Ajustes:** pausa el juego y entra a **Shaders...**: unos 120 ajustes en 11 páginas (iluminación, sombras, color y cámara,
 atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del

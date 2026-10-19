@@ -89,6 +89,12 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
   underwater fog and light shafts. Since 1.2.4, torch light fades smoothly across water (no flat square per block).
 - **Weather**: wet surfaces and puddles, rain ripples, lightning.
 - **HDR** pipeline with bloom, auto-exposure, a filmic tonemap, and **XDR/EDR** output on Liquid Retina XDR displays.
+  Optional **Full scene** HDR is available under **Shaders → Colour and camera → HDR display → HDR mode**
+  (`mcopt.shade.hdrMode=scene`); the existing Highlights mode remains the default. Scene and HUD brightness have separate
+  controls. Requires HDR output enabled and available display headroom. Pause/inventory screens and F2 screenshots stay
+  SDR. **Beacon beam brightness** under **Colour and camera → Effects** controls beam radiance (default 1x preserves
+  the original brightness; `mcopt.shade.beaconBrightness=1..8`). Beam colour, alpha and fog fading are preserved.
+  See [the implementation and GPU checks](tools/shade/hdrcheck/README.md).
 - **TAAU** (temporal anti-aliasing and upscaling) and dynamic resolution; **Resolution** (since 1.2.4, a share of the output:
   85%, 75%, 67%, 59%, 50%, or Auto) and **Output** buttons in the pause menu.
 - Nether and End looks.

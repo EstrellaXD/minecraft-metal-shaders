@@ -57,7 +57,7 @@ abstract class ShadePauseScreenMixin extends Screen {
 			this.addRenderableWidget(Button.builder(Component.literal(ShadeResolution.label(w, h)), button -> {
 				ShadeResolution.cycle(mc.gameDirectory.toPath());
 				button.setMessage(Component.literal(ShadeResolution.label(mc.getWindow().getWidth(), mc.getWindow().getHeight())));
-			}).bounds(output ? this.width / 2 - 206 : this.width / 2 - 102, this.height - 28, 204, 20).build());
+			}).tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(ShadeResolution.tooltip()))).bounds(output ? this.width / 2 - 206 : this.width / 2 - 102, this.height - 28, 204, 20).build());
 		}
 		if (output) {
 			this.addRenderableWidget(Button.builder(Component.literal(ShadeOutput.label()), button -> {

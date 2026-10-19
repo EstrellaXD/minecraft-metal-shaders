@@ -135,7 +135,7 @@ also edit it by hand:
 | `mcopt.shade` | `true` / `false` (false = mcopt's plain Metal renderer) | `true` |
 | `mcopt.shade.preset` | `performance`, `balanced`, `quality`, `ultra` | `balanced` |
 | `mcopt.shade.look` | `epic`, `storybook`, `natural` | `epic` |
-| `mcopt.shade.output` | `native`, `1440`, `1200`, `1080`, `900` (also the **Output** button in the pause menu) | `native` |
+| `mcopt.shade.output` | `native`, `2160`, `1440`, `1200`, `1080`, `900` (also the **Output** button in the pause menu; `2160` is for 4K/5K monitors) | `native` |
 | `mcopt.shade.resolution` | `auto`, `native`, `85%`, `75%`, `67%`, `59%`, `50%`: the world's internal resolution as a share of the output (also the **Resolution** button in the pause menu and **Shaders... → Performance**) | `auto` |
 | `profile` | `indie` (mcopt's own terrain renderer, needed by the shaders), `none` | `indie` |
 

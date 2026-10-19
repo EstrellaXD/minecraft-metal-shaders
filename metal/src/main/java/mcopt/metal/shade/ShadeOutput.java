@@ -44,6 +44,8 @@ public final class ShadeOutput {
 	private static final int[] CHOICES = {-1, 2160, 1440, 1200, 1080, 900};
 
 	private static volatile int index = parse(System.getProperty("mcopt.shade.output", "native"));
+	/** The window's real framebuffer height, as last seen by framebuffer() / size() (0 before the first). */
+	private static volatile int realHeight;
 
 	private ShadeOutput() {
 	}
@@ -91,6 +93,7 @@ public final class ShadeOutput {
 	 * output resolution's, else the real one. A scaled size maps to itself (its height is the choice).
 	 */
 	public static int[] framebuffer(int width, int height) {
+		realHeight = height;
 		if (taauMode()) return new int[] {width, height};
 		return scaled(width, height, choice());
 	}
@@ -111,6 +114,7 @@ public final class ShadeOutput {
 	public static int[] size(int mainWidth, int mainHeight) {
 		// (the window mode: the window's framebuffer has that size already, nothing to scale here)
 		if (!taauMode() || !available()) return new int[] {mainWidth, mainHeight};
+		realHeight = mainHeight;
 		return scaled(mainWidth, mainHeight, choice());
 	}
 
@@ -149,6 +153,9 @@ public final class ShadeOutput {
 	/** Next choice (the pause-menu button), saved to config/mcopt.properties and applied. */
 	public static void cycle(Path gameDir) {
 		index = (index + 1) % CHOICES.length;
+		// (1.2.5) heights at or above the screen's own are Native there (PR #5's 2160p on a 1964-pixel panel): skipped
+		int real = realHeight;
+		for (int k = 0; k < CHOICES.length && real > 0 && CHOICES[index] >= real; k++) index = (index + 1) % CHOICES.length;
 		int c = CHOICES[index];
 		String value = c < 0 ? "native" : Integer.toString(c);
 		System.setProperty("mcopt.shade.output", value);

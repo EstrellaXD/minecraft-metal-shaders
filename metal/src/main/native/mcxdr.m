@@ -31,7 +31,7 @@ static id<MTLTexture> xdrBase; // SDR compatibility image before hand/HUD; exact
 static float xdrUiWhite = 1.0f, xdrPeak = 1.0f;
 static void *xdrCmd;  // the command buffer the final pass encoded into: the excess counts only for that frame's present
 static id<MTLLibrary> xdrLib;
-static id<MTLRenderPipelineState> xdrCompose, xdrCompose16, xdrPresent;
+static id<MTLRenderPipelineState> xdrCompose, xdrCompose16, xdrPresent, xdrComposeFull, xdrComposeFull16;
 
 static const char *xdrSource =
 	"#include <metal_stdlib>\n"
@@ -54,8 +54,8 @@ static const char *xdrSource =
 	"static float3 srgbToLinear(float3 c) { return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045); }\n"
 	// linear Rec.709 -> linear Display P3 (both D65): every coefficient >= 0, so non-negative stays non-negative
 	"constant float3x3 M709toP3 = float3x3(float3(0.822462, 0.033194, 0.017083), float3(0.177538, 0.966806, 0.072397), float3(0.0, 0.0, 0.910520));\n"
-	"fragment float4 xdr_compose_fs(V v [[stage_in]], texture2d<float> src [[texture(0)]], texture2d<half> excess [[texture(1)]], texture2d<float> base [[texture(2)]],\n"
-	"                               constant XdrParams &p [[buffer(0)]]) {\n"
+	// (1.2.5) two entry points: the full-scene compose (PR #6) is its own pipeline, so the default highlights compose runs 1.2.4's code
+	"template <bool FULL> static float4 xdrCompose(V v, texture2d<float> src, texture2d<half> excess, texture2d<float> base, constant XdrParams &p) {\n"
 	"  uint2 px = uint2(v.pos.xy);\n"
 	"  if (p.flip != 0) px.y = src.get_height() - 1 - px.y;\n"
 	"  float4 m = src.read(px);\n"
@@ -70,7 +70,7 @@ static const char *xdrSource =
 	"    half3 ex = excess.sample(ls, euv).rgb;\n"
 	"    bool bad = any((as_type<ushort3>(ex) & ushort3(0x7c00)) == ushort3(0x7c00));\n"
 	"    float3 hdr = bad ? float3(0.0) : float3(ex);\n"
-	"    if (p.full != 0 && !bad) {\n"
+	"    if (FULL && !bad) {\n"
 	"      float a = saturate(m.a); float3 b = base.read(px).rgb;\n"
 	// Reconstruct the aggregate overlay in the game's sRGB blending space, then
 	// composite it in linear light over the complete HDR world. No HDR world
@@ -86,6 +86,14 @@ static const char *xdrSource =
 	"  }\n"
 	"  float3 o = M709toP3 * lin;\n"
 	"  return float4(p.e5 != 0 ? e5(o) : o, 1.0);\n"
+	"}\n"
+	"fragment float4 xdr_compose_fs(V v [[stage_in]], texture2d<float> src [[texture(0)]], texture2d<half> excess [[texture(1)]],\n"
+	"                               texture2d<float> base [[texture(2)]], constant XdrParams &p [[buffer(0)]]) {\n"
+	"  return xdrCompose<false>(v, src, excess, base, p);\n"
+	"}\n"
+	"fragment float4 xdr_compose_full_fs(V v [[stage_in]], texture2d<float> src [[texture(0)]], texture2d<half> excess [[texture(1)]],\n"
+	"                                    texture2d<float> base [[texture(2)]], constant XdrParams &p [[buffer(0)]]) {\n"
+	"  return xdrCompose<true>(v, src, excess, base, p);\n"
 	"}\n"
 	// the present side's copy into an RGBA16Float drawable (the staging slot already holds the composed image)
 	"fragment float4 xdr_present_fs(V v [[stage_in]], texture2d<float> t [[texture(0)]]) {\n"
@@ -223,6 +231,12 @@ static int ensurePipelines(id<MTLDevice> device) {
 		xdrCompose = [device newRenderPipelineStateWithDescriptor:pd error:&e];
 		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
 		xdrCompose16 = [device newRenderPipelineStateWithDescriptor:pd error:&e];
+		// (1.2.5) PR #6's full-scene compose (nil if it fails: that frame then composes as highlights)
+		pd.fragmentFunction = [[xdrLib newFunctionWithName:@"xdr_compose_full_fs"] autorelease];
+		xdrComposeFull16 = [device newRenderPipelineStateWithDescriptor:pd error:&e];
+		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGB9E5Float;
+		xdrComposeFull = [device newRenderPipelineStateWithDescriptor:pd error:&e];
+		pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
 		pd.fragmentFunction = [[xdrLib newFunctionWithName:@"xdr_present_fs"] autorelease];
 		xdrPresent = [device newRenderPipelineStateWithDescriptor:pd error:&e];
 		if (!xdrCompose || !xdrCompose16 || !xdrPresent) NSLog(@"mcopt shade xdr: %@", e);
@@ -293,7 +307,6 @@ int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> d
 		rp.colorAttachments[0].storeAction = MTLStoreActionStore;
 		id<MTLRenderCommandEncoder> r = [cb renderCommandEncoderWithDescriptor:rp];
 		r.label = @"mcopt shade: XDR compose";
-		[r setRenderPipelineState:dst.pixelFormat == MTLPixelFormatRGB9E5Float ? xdrCompose : xdrCompose16];
 		// (FT2.7, audit idx 42/52) no size test: the compose samples the excess by uv, and with outputMode=taau below native the
 		// excess is the output's size, not the window's (the equality dropped every XDR highlight there); this frame's final pass
 		// wrote it (the same command buffer)
@@ -302,7 +315,10 @@ int mc_xdr_compose(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> d
 		// present paths show the same pixels (mc_xdr_e5(0), -Dmcopt.shade.xdrDirectE5=false: without it, as 1.2)
 		int e5 = flip && dst.pixelFormat == MTLPixelFormatRGBA16Float && xdrE5;
 		int full = valid && xdrFull && xdrBase && xdrBase.width == src.width && xdrBase.height == src.height;
+		if (full && !(dst.pixelFormat == MTLPixelFormatRGB9E5Float ? xdrComposeFull : xdrComposeFull16)) full = 0;
 		if (xdrFull && !full) valid = 0; // never interpret a complete HDR image as highlight excess
+		BOOL e9 = dst.pixelFormat == MTLPixelFormatRGB9E5Float;
+		[r setRenderPipelineState:full ? (e9 ? xdrComposeFull : xdrComposeFull16) : (e9 ? xdrCompose : xdrCompose16)];
 		struct { int flip, valid, e5, full; float uiWhite, peak, pad[2]; } p = {flip, valid, e5, full, xdrUiWhite, xdrPeak, {0, 0}};
 		[r setFragmentTexture:src atIndex:0];
 		[r setFragmentTexture:valid ? xdrExcess : src atIndex:1];

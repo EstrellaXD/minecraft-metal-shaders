@@ -46,6 +46,12 @@ public final class ShadeFluidLight implements VertexConsumer {
 	private final long[] keys = new long[8];
 	private final int[] values = new int[8];
 	private int next;
+	/**
+	 * (1.2.5) Each block's light (or OPAQUE) as read, for the 18^3 blocks a section's corners can reach (the section and 1 around):
+	 * a block is shared by up to 8 corners, so it is read once per compile. Made on the first water vertex (no water, no array).
+	 */
+	private int[] samples;
+	private static final int UNREAD = Integer.MIN_VALUE, OPAQUE = -1, SPAN = 18;
 
 	private ShadeFluidLight(BlockAndTintGetter level, BlockPos origin, FluidRenderer.Output inner) {
 		this.level = level;
@@ -96,9 +102,19 @@ public final class ShadeFluidLight implements VertexConsumer {
 
 	/** Vanilla's light coords of a block, or -1 for an opaque one (no light inside). */
 	private int sample(int x, int y, int z) {
+		int i = (x - this.ox + 1) + SPAN * ((y - this.oy + 1) + SPAN * (z - this.oz + 1));
+		int[] cache = this.samples;
+		if (cache == null) {
+			cache = this.samples = new int[SPAN * SPAN * SPAN];
+			java.util.Arrays.fill(cache, UNREAD);
+		}
+		int v = cache[i];
+		if (v != UNREAD) return v;
 		BlockPos p = this.cursor.set(x, y, z);
-		if (this.level.getBlockState(p).isSolidRender()) return -1;
-		return LightCoordsUtil.getLightCoords(this.level, p);
+		net.minecraft.world.level.block.state.BlockState state = this.level.getBlockState(p);
+		v = state.isSolidRender() ? OPAQUE : LightCoordsUtil.getLightCoords(LightCoordsUtil.BrightnessGetter.DEFAULT, this.level, state, p);
+		cache[i] = v;
+		return v;
 	}
 
 	private static UnsupportedOperationException unsupported() {

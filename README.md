@@ -95,6 +95,8 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
   SDR. **Beacon beam brightness** under **Colour and camera → Effects** controls beam radiance (default 1x preserves
   the original brightness; `mcopt.shade.beaconBrightness=1..8`). Beam colour, alpha and fog fading are preserved.
   See [the implementation and GPU checks](tools/shade/hdrcheck/README.md).
+- Optional **Natural** lighting (since 1.2.5; **Shaders → Lighting → Lighting mode**, `mcopt.shade.lighting=natural`): more
+  contrast between daylight and interiors, slower adaptation to the dark; **Natural strength** sets how much (50% = the original).
 - **TAAU** (temporal anti-aliasing and upscaling) and dynamic resolution; **Resolution** (since 1.2.4, a share of the output:
   85%, 75%, 67%, 59%, 50%, or Auto) and **Output** buttons in the pause menu.
 - Nether and End looks.
@@ -219,7 +221,7 @@ junto con los mods que lo necesitan (Iris, Sodium Extra, Reese's Sodium Options.
 **Ajustes:** pausa el juego y entra a **Shaders...**: unos 120 ajustes en 11 páginas (iluminación, sombras, color y cámara,
 atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del
 juego. Casi todos se ven al momento; los marcados con `*` se aplican al reiniciar. Nubes: volumétricas, **cuadradas** (las de
-Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. **General → Shaders: Sí/No** (desde la 1.2.1) los apaga al reiniciar para usar mcopt 0.3 tal cual (más FPS); el botón **Shaders...** sigue en el menú de pausa para volver a prenderlos. La resolución de salida se cambia con el botón
+Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. **General → Shaders: Sí/No** (desde la 1.2.1) los apaga al reiniciar para usar mcopt 0.3 tal cual (más FPS); el botón **Shaders...** sigue en el menú de pausa para volver a prenderlos. Desde la 1.2.5 (aportes de LiamHuth): HDR de **escena completa** opcional (Shaders... → Color y cámara → Pantalla HDR → Modo HDR), iluminación **Natural** opcional (Iluminación → Modo de iluminación), brillo del haz del faro y salida 2160p para monitores 4K. La resolución de salida se cambia con el botón
 **"Salida"** del menú de pausa, y la interna con **"Resolución"** (desde la 1.2.4, en % de la salida: 85, 75, 67, 59 o 50 %, o Auto; también en **Shaders... → Rendimiento**). Compatible con Distant Horizons 3.3.4 + Fabric API (opcional); desde la 1.2.2, en **Shaders... → Rendimiento → Distant Horizons** eliges presets de DH probados con los shaders (Rendimiento, Balanceado, Calidad, Ultra), y el agua lejana de DH siempre tiene los reflejos de los shaders. El preset gráfico **Fabulous** ya funciona (antes el agua se volvía invisible). Desde la 1.2.3, cuando estás alto (a la altura de las nubes o arriba de ellas), los bordes de las nubes ya no se ven a través de las lomas y los árboles que tienes enfrente; con DH, una nube detrás de una montaña lejana de DH, por debajo del horizonte, todavía puede verse encima de ella. Si con DH la mitad de
 abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.

@@ -66,6 +66,7 @@ static inline float3 taaMoverDelta(float3 world, constant TaaMovers &mv) {
 // (1.1.1) Inf or NaN, by the bit pattern: under fast math (mctaa.m) the compiler may fold isfinite() to true, and a bad
 // pixel kept in the history spreads into a growing black or white block.
 static inline bool taaBad(half4 v) { return any((as_type<ushort4>(v) & ushort4(0x7c00)) == ushort4(0x7c00)); }
+static inline bool taaBad(float3 v) { return any((as_type<uint3>(v) & uint3(0x7f800000)) == uint3(0x7f800000)); }
 
 struct TaaVOut { float4 position [[position]]; };
 
@@ -104,8 +105,12 @@ static inline float3 taaExpand(float3 c) {
 // back at 0.8-0.9). Only with -Dmcopt.shade.taaCompressTaps=true (else TAA_LINEAR_HISTORY, the default: FT2.7's linear filter, then compress;
 // the motion shots showed no ring to remove).
 // (+0.035 ms at Retina 0.8, taatest perf TAAHDR=1; a live switch between the two cost +0.1 ms: two inlined filters)
+// (1.2.4, GitHub issue #8) the linear filter's taps at most 16384: the spline sums in half, and around a sun pre-exposed near
+// half's 65504 (the exposure still high from a dark view) its centre weights (up to ~1.2) overflowed to Inf, then NaN, and the
+// resolve stored the pixel black (max(NaN, 0) = 0) until the exposure came down: black dots in the sun, plain in XDR. 16384 is
+// far past what the display shows (the tone curve and the XDR peak top out ~100 pre-exposed)
 static inline half3 taaTap(half3 c, float rescale, bool comp) {
-	if (!comp) return c;
+	if (!comp) return min(c, half3(16384.0h));
 	float3 x = float3(c) * rescale;
 	return half3(x / (1.0 + dot(x, float3(0.2126, 0.7152, 0.0722))));
 }
@@ -161,7 +166,8 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	float2 centre = float2(base) + 0.5;
 	for (int dy = 0; dy < 3; dy++) {
 		for (int dx = 0; dx < 3; dx++) { // immediate texel offsets: no address maths per tap
-			half3 c = taaCompress(cur.sample(texel, centre, int2(dx - 1, dy - 1)).rgb);
+			// (1.2.4, issue #8) an Inf from a shader's own maths would compress to NaN: at most 60000 (NaN: 0, outweighed by its neighbours)
+			half3 c = taaCompress(clamp(cur.sample(texel, centre, int2(dx - 1, dy - 1)).rgb, 0.0h, 60000.0h));
 			sum += c * (wx[dx] * wy[dy]);
 			m1 += c;
 			m2 += c * c;
@@ -214,7 +220,7 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 #ifndef TAA_LINEAR_HISTORY
 		history = taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age, float(rescale), taaHdr);
 #else
-		history = taaCompress(taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age) * rescale);
+		history = taaCompress(min(taaCatmullRom(hist, linear, uvPrev, p.output.xy, p.output.zw, age) * rescale, half3(60000.0h))); // (1.2.4: x4 rescale)
 #endif
 	}
 	// Rectify: the history may only take colours this frame's neighbourhood could produce (variance box). It is clipped
@@ -247,7 +253,8 @@ static inline TaaOut taauResolve(float2 q, constant TaaParams &p, constant float
 	o.color = half4(half3(max(rgb, 0.0)), newAge);
 	// (FT2.8, audit idx 72) the fallback in the history's own (linear) encoding, not the range-compressed current
 	// (1.1.1) tested by bits (fast math may drop isfinite), and black if the current frame is bad too (clamp may pass a NaN)
-	if (taaBad(o.color)) {
+	// (1.2.4, issue #8) rgb tested too: max(NaN, 0) is 0 where NaN is kept (Precise math, IEEE), which stored a black pixel
+	if (taaBad(o.color) || taaBad(rgb)) {
 		o.color = half4(half3(clamp(taaExpand(float3(current)), 0.0, 60000.0)), 1.0h);
 		if (taaBad(o.color)) o.color = half4(0.0h, 0.0h, 0.0h, 1.0h);
 	}

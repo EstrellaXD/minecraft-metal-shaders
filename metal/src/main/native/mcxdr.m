@@ -61,7 +61,11 @@ static const char *xdrSource =
 	"  if (p.valid != 0) {\n"
 	"    constexpr sampler ls(filter::linear, address::clamp_to_edge);\n"
 	"    float2 euv = (float2(px) + 0.5) / float2(src.get_width(), src.get_height());\n"
-	"    lin += float3(excess.sample(ls, euv).rgb) * saturate(1.0 - m.a);\n"
+	// (1.2.4, GitHub issue #8) an Inf or NaN excess (tested by its bits: this library compiles with fast math) adds nothing: an Inf
+	// times the P3 matrix's zeros is NaN, a black pixel on the EDR drawable
+	"    half3 ex = excess.sample(ls, euv).rgb;\n"
+	"    if (any((as_type<ushort3>(ex) & ushort3(0x7c00)) == ushort3(0x7c00))) ex = half3(0.0h);\n"
+	"    lin += float3(ex) * saturate(1.0 - m.a);\n"
 	"  }\n"
 	"  float3 o = M709toP3 * lin;\n"
 	"  return float4(p.e5 != 0 ? e5(o) : o, 1.0);\n"

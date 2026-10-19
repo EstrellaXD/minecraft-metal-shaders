@@ -289,6 +289,7 @@ public final class ShadeFrameUpdater {
 		LOOK.pack(ShadeBindings.currentLook(), f);
 		mcopt.metal.shade.dims.ShadeDims.pack(ShadeBindings.currentLook(), ShadeBindings.currentSlot(), f);
 		if (mcopt.metal.shade.dims.ShadeXdr.active()) mcopt.metal.shade.dims.ShadeXdr.frame(Math.min(dt, 0.25f));
+		ShadeDiag.frame(); // (1.2.5) a latest.log line a minute: hitches, GC, thermal state
 		ShadeBindings.publish();
 		ShadeBindings.renderSkyLut(enc);
 		mcopt.metal.shade.dims.ShadeAurora.render(enc); // M3.3 (dims): the reduced-resolution aurora the sky pass reads

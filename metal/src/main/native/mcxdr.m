@@ -160,6 +160,13 @@ void mc_system_info(CAMetalLayer *layer, char *out, int cap) {
 	}
 }
 
+// (1.2.5, ShadeDiag) The OS's thermal state: 0 nominal, 1 fair, 2 serious, 3 critical (NSProcessInfoThermalState).
+int mc_thermal_state(void) {
+	@autoreleasepool {
+		return (int) [NSProcessInfo processInfo].thermalState;
+	}
+}
+
 // The current EDR headroom of the layer's screen (1 = SDR only; rises once an EDR layer is on screen; depends on the
 // brightness slider), or its potential with potential = 1.
 float mc_xdr_headroom(CAMetalLayer *layer, int potential) {

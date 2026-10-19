@@ -99,6 +99,7 @@ public final class ShadePost {
 	/** M3 XDR (mcopt.shade.xdr, dims.ShadeXdr): the final pass with a second target, the highlights' excess above SDR white. */
 	private static long psoFinalXdr, xdrExcess;
 	private static long psoFinalHdr, psoFinalHdrDims, psoFinalHdrLean;
+	private static boolean fullHdrFailed;
 	private static int xdrFormat;
 	// M3: the final pass with the Nether/End fog, End sky, shimmer and camera media compiled in (the plain ones carry none of it)
 	private static long psoFinalDims, psoFinalXdrDims;
@@ -223,9 +224,6 @@ public final class ShadePost {
 			boolean dimsVariant = mcopt.metal.shade.dims.DimsConfig.DIMS || mcopt.metal.shade.dims.DimsConfig.MEDIA;
 			if (dimsVariant) psoFinalDims = ShadeRender.pipeline(library, "shade_fs_vs", "shade_final_dims", ShadeRender.RGBA8, 0);
 			if (mcopt.metal.shade.dims.ShadeXdr.active()) {
-				psoFinalHdr = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_hdr", ShadeRender.RGBA8, ShadeRender.RGBA16F);
-				psoFinalHdrLean = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_hdr_lean", ShadeRender.RGBA8, ShadeRender.RGBA16F);
-				if (dimsVariant) psoFinalHdrDims = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_hdr_dims", ShadeRender.RGBA8, ShadeRender.RGBA16F);
 				psoFinalXdr = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr", ShadeRender.RGBA8,
 					ShadeRender.RG11B10F);
 				psoFinalXdrLean = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ShadeBindings.ctx(), library, "shade_fs_vs", "shade_final_xdr_lean",
@@ -344,6 +342,28 @@ public final class ShadePost {
 			bloomAccum[i] = i == 0 ? 0 : ShadeRender.texture(ShadeRender.RGBA16F, lw, lh, true, "mcopt shade: bloom U" + i);
 		}
 		ShadeRender.resource(3, n > 1 ? bloomAccum[1] : 0);
+	}
+
+	/**
+	 * (1.2.5) PR #6's full-scene HDR final passes, built the first time that mode draws instead of at startup: three more final-pass
+	 * pipelines on the render thread while the world loads, for a mode that is off by default. A failure leaves the frame SDR.
+	 */
+	private static boolean fullHdrReady() {
+		if (psoFinalHdr != 0) return true;
+		if (fullHdrFailed || library == 0) return false;
+		try {
+			long t0 = System.nanoTime();
+			long ctx = ShadeBindings.ctx();
+			psoFinalHdrLean = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ctx, library, "shade_fs_vs", "shade_final_hdr_lean", ShadeRender.RGBA8, ShadeRender.RGBA16F);
+			if (psoFinalDims != 0) psoFinalHdrDims = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ctx, library, "shade_fs_vs", "shade_final_hdr_dims", ShadeRender.RGBA8, ShadeRender.RGBA16F);
+			psoFinalHdr = mcopt.metal.shade.dims.ShadeXdr.pipeline2(ctx, library, "shade_fs_vs", "shade_final_hdr", ShadeRender.RGBA8, ShadeRender.RGBA16F);
+			System.out.println(String.format(java.util.Locale.ROOT, "[mcopt] shade: full-scene HDR final passes built (%.0f ms)", (System.nanoTime() - t0) / 1e6));
+			return true;
+		} catch (RuntimeException e) {
+			fullHdrFailed = true;
+			System.out.println("[mcopt] shade: full-scene HDR unavailable, SDR frame instead: " + e);
+			return false;
+		}
 	}
 
 	private static void retire(long t) {
@@ -605,6 +625,8 @@ public final class ShadePost {
 		// x: highlights = (1, peak, knee, range); full scene = (2, peak, curve b, curve beta)
 		boolean xdr = psoFinalXdr != 0 && mcopt.metal.shade.dims.ShadeXdr.highlights()
 			&& (!mcopt.metal.shade.dims.ShadeXdr.fullScene() || f.debug == 0f);
+		// (1.2.5) full scene without its passes (they failed to build): the SDR frame, not the highlights pass with full-scene params
+		if (xdr && mcopt.metal.shade.dims.ShadeXdr.fullScene() && !fullHdrReady()) xdr = false;
 		boolean fullHdr = xdr && mcopt.metal.shade.dims.ShadeXdr.fullSceneFrame();
 		// M3: the dims variant in the Nether / End and with the camera in lava or powder snow (anywhere)
 		boolean dimsPass = f.dimension != ShadeFrame.DIM_OVERWORLD || f.fogType == ShadeFrame.FOG_LAVA || f.fogType == ShadeFrame.FOG_POWDER_SNOW;

@@ -86,10 +86,11 @@ For reference, on the same Mac: Iris + Complementary Reimagined (OpenGL) at 3024
   above them), the edges of clouds behind a hill or a tree no longer show through it.
 - **God rays** (volumetric light) through forests, cave mouths and clouds; morning mist and forest air.
 - **Water**: waves, screen-space reflections, refraction, absorption, caustics, foam, **waterfalls with white water**,
-  underwater fog and light shafts.
+  underwater fog and light shafts. Since 1.2.4, torch light fades smoothly across water (no flat square per block).
 - **Weather**: wet surfaces and puddles, rain ripples, lightning.
 - **HDR** pipeline with bloom, auto-exposure, a filmic tonemap, and **XDR/EDR** output on Liquid Retina XDR displays.
-- **TAAU** (temporal anti-aliasing and upscaling) and dynamic resolution; an **output resolution** button in the pause menu.
+- **TAAU** (temporal anti-aliasing and upscaling) and dynamic resolution; **Resolution** (since 1.2.4, a share of the output:
+  85%, 75%, 67%, 59%, 50%, or Auto) and **Output** buttons in the pause menu.
 - Nether and End looks.
 - **Distant Horizons** support: the far LODs are lit by the same shaders (lighting, fog, water reflections).
 - Presets: `performance`, `balanced`, `quality`, `ultra`; looks: `epic`, `storybook`, `natural`.
@@ -135,6 +136,7 @@ also edit it by hand:
 | `mcopt.shade.preset` | `performance`, `balanced`, `quality`, `ultra` | `balanced` |
 | `mcopt.shade.look` | `epic`, `storybook`, `natural` | `epic` |
 | `mcopt.shade.output` | `native`, `1440`, `1200`, `1080`, `900` (also the **Output** button in the pause menu) | `native` |
+| `mcopt.shade.resolution` | `auto`, `native`, `85%`, `75%`, `67%`, `59%`, `50%`: the world's internal resolution as a share of the output (also the **Resolution** button in the pause menu and **Shaders... → Performance**) | `auto` |
 | `profile` | `indie` (mcopt's own terrain renderer, needed by the shaders), `none` | `indie` |
 
 For the most FPS: Video Settings → VSync off, Max Framerate unlimited. To see your FPS, press **F3**.
@@ -212,7 +214,7 @@ junto con los mods que lo necesitan (Iris, Sodium Extra, Reese's Sodium Options.
 atmósfera, rayos de sol, nubes, cielo de noche, agua, clima, Nether y End, rendimiento), en español e inglés según el idioma del
 juego. Casi todos se ven al momento; los marcados con `*` se aplican al reiniciar. Nubes: volumétricas, **cuadradas** (las de
 Minecraft con volumen, luz y sombras), las normales del juego, o ninguna. **General → Shaders: Sí/No** (desde la 1.2.1) los apaga al reiniciar para usar mcopt 0.3 tal cual (más FPS); el botón **Shaders...** sigue en el menú de pausa para volver a prenderlos. La resolución de salida se cambia con el botón
-**"Salida"** del menú de pausa. Compatible con Distant Horizons 3.3.4 + Fabric API (opcional); desde la 1.2.2, en **Shaders... → Rendimiento → Distant Horizons** eliges presets de DH probados con los shaders (Rendimiento, Balanceado, Calidad, Ultra), y el agua lejana de DH siempre tiene los reflejos de los shaders. El preset gráfico **Fabulous** ya funciona (antes el agua se volvía invisible). Desde la 1.2.3, cuando estás alto (a la altura de las nubes o arriba de ellas), los bordes de las nubes ya no se ven a través de las lomas y los árboles que tienes enfrente; con DH, una nube detrás de una montaña lejana de DH, por debajo del horizonte, todavía puede verse encima de ella. Si con DH la mitad de
+**"Salida"** del menú de pausa, y la interna con **"Resolución"** (desde la 1.2.4, en % de la salida: 85, 75, 67, 59 o 50 %, o Auto; también en **Shaders... → Rendimiento**). Compatible con Distant Horizons 3.3.4 + Fabric API (opcional); desde la 1.2.2, en **Shaders... → Rendimiento → Distant Horizons** eliges presets de DH probados con los shaders (Rendimiento, Balanceado, Calidad, Ultra), y el agua lejana de DH siempre tiene los reflejos de los shaders. El preset gráfico **Fabulous** ya funciona (antes el agua se volvía invisible). Desde la 1.2.3, cuando estás alto (a la altura de las nubes o arriba de ellas), los bordes de las nubes ya no se ven a través de las lomas y los árboles que tienes enfrente; con DH, una nube detrás de una montaña lejana de DH, por debajo del horizonte, todavía puede verse encima de ella. Si con DH la mitad de
 abajo de la pantalla se ve oscura (versión 1.0-alpha): en `config/DistantHorizons.toml` pon `vanillaFadeMode = "NONE"` y
 reinicia el juego; desde la 1.0-alpha.2 el mod lo hace solo.
 
